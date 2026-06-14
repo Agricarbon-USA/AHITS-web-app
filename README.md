@@ -114,3 +114,18 @@ cd src
 make docker-build
 make docker-run
 ```
+
+
+
+Then to get running:
+bashcd "Agricarbon US Codebase"
+cp .env.example .env       # fill in your Supabase + GCP details
+cd src
+make setup                 # installs, migrates, seeds
+make dev                   # → http://localhost:3000
+GCP secrets needed (add to GitHub repo → Settings → Secrets):
+
+GCP_PROJECT_ID
+GCP_SERVICE_ACCOUNT_KEY
+
+Then store each env var in GCP Secret Manager with the AHITS_ prefix (e.g. AHITS_DATABASE_URL) — the deploy workflow pulls them in automatically. Once you have your Supabase connection strings, just drop them in .env and run make db-migrate-dev.
