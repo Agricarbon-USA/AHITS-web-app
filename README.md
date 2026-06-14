@@ -2,7 +2,9 @@
 
 A full-stack PWA for managing vehicles, equipment, and field operations across distributed soil sampling sites.
 
-**Stack:** Next.js 14 · TypeScript · Prisma · Supabase · Material UI · GCP Cloud Run
+**Stack:** Next.js 16 · TypeScript · Prisma · Supabase · Material UI · Serwist PWA · GCP Cloud Run
+
+PWA note: This repo uses Serwist via webpack integration, so run Next commands with webpack (`next dev --webpack`, `next build --webpack`).
 
 ---
 
@@ -15,6 +17,7 @@ make dev                       # Start dev server → http://localhost:3000
 ```
 
 Default seed credentials:
+
 - **Admin:** `ops@agricarbon.com` / password `Admin1234!`
 - **Operator:** `operator1@agricarbon.com` / PIN `123456`
 
@@ -24,17 +27,17 @@ Default seed credentials:
 
 Copy `.env.example` to `.env` and fill in:
 
-| Variable | Description |
-|---|---|
-| `DATABASE_URL` | Supabase pooler connection (port 6543, pgbouncer=true) |
-| `DIRECT_URL` | Supabase direct connection (port 5432, for migrations) |
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key |
-| `PIN_SESSION_SECRET` | 32-byte hex secret (`openssl rand -hex 32`) |
-| `RESEND_API_KEY` | Resend API key for email alerts |
-| `ADMIN_EMAIL` | Email to receive system alerts |
-| `GCP_PROJECT_ID` | GCP project ID for deployment |
+| Variable                        | Description                                            |
+| ------------------------------- | ------------------------------------------------------ |
+| `DATABASE_URL`                  | Supabase pooler connection (port 6543, pgbouncer=true) |
+| `DIRECT_URL`                    | Supabase direct connection (port 5432, for migrations) |
+| `NEXT_PUBLIC_SUPABASE_URL`      | Supabase project URL                                   |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key                                      |
+| `SUPABASE_SERVICE_ROLE_KEY`     | Supabase service role key                              |
+| `PIN_SESSION_SECRET`            | 32-byte hex secret (`openssl rand -hex 32`)            |
+| `RESEND_API_KEY`                | Resend API key for email alerts                        |
+| `ADMIN_EMAIL`                   | Email to receive system alerts                         |
+| `GCP_PROJECT_ID`                | GCP project ID for deployment                          |
 
 ---
 
@@ -57,6 +60,7 @@ make logs            # Tail Cloud Run logs
 ## GCP Deployment
 
 ### Prerequisites
+
 1. GCP project with Cloud Run + Container Registry APIs enabled
 2. Service account with roles: `Cloud Run Admin`, `Storage Admin`, `Service Account User`
 3. Add secrets to GitHub Actions:
@@ -65,6 +69,7 @@ make logs            # Tail Cloud Run logs
 4. Store app secrets in GCP Secret Manager with prefix `AHITS_*`
 
 ### CI/CD
+
 - **`develop` branch** → deploys to `ahits-web-app-staging`
 - **`main` branch** → deploys to `ahits-web-app` (production, min 1 instance)
 
@@ -115,17 +120,15 @@ make docker-build
 make docker-run
 ```
 
-
-
 Then to get running:
 bashcd "Agricarbon US Codebase"
-cp .env.example .env       # fill in your Supabase + GCP details
+cp .env.example .env # fill in your Supabase + GCP details
 cd src
-make setup                 # installs, migrates, seeds
-make dev                   # → http://localhost:3000
+make setup # installs, migrates, seeds
+make dev # → http://localhost:3000
 GCP secrets needed (add to GitHub repo → Settings → Secrets):
 
 GCP_PROJECT_ID
 GCP_SERVICE_ACCOUNT_KEY
 
-Then store each env var in GCP Secret Manager with the AHITS_ prefix (e.g. AHITS_DATABASE_URL) — the deploy workflow pulls them in automatically. Once you have your Supabase connection strings, just drop them in .env and run make db-migrate-dev.
+Then store each env var in GCP Secret Manager with the AHITS\_ prefix (e.g. AHITS_DATABASE_URL) — the deploy workflow pulls them in automatically. Once you have your Supabase connection strings, just drop them in .env and run make db-migrate-dev.
