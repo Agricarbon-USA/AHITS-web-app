@@ -1,0 +1,11 @@
+.git
+.gitignore
+.env*
+node_modules
+.next
+.vercel
+README.md
+Makefile
+*.log
+.DS_Store
+coverage/

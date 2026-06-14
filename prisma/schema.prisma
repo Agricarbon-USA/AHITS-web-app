@@ -1,0 +1,336 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+}
+
+enum VehicleType {
+  TRUCK
+  TRAILER
+  POLARIS_UTV
+  CAN_AM_UTV
+  CHRISTIE_DRILL
+  ATV
+  OTHER
+}
+
+enum VehicleStatus {
+  ACTIVE
+  IN_MAINTENANCE
+  OUT_OF_SERVICE
+  RETIRED
+}
+
+enum EquipmentCategory {
+  SAMPLING_EQUIPMENT
+  POWER_TOOLS
+  HAND_TOOLS
+  SAFETY_GEAR
+  ELECTRONICS_GPS
+  STORAGE
+  OTHER
+}
+
+enum EquipmentStatus {
+  AVAILABLE
+  CHECKED_OUT
+  IN_MAINTENANCE
+  RETIRED
+}
+
+enum CheckAction {
+  CHECK_OUT
+  CHECK_IN
+}
+
+enum Condition {
+  GOOD
+  MINOR_DAMAGE
+  NEEDS_REPAIR
+  MISSING_PARTS
+}
+
+enum Priority {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum MaintenanceStatus {
+  UPCOMING
+  DUE_SOON
+  OVERDUE
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum IntervalType {
+  MILEAGE
+  DAYS
+  MONTHS
+  PER_DEPLOYMENT
+}
+
+enum ProjectType {
+  CROPLAND
+  RANGELAND
+  FORESTRY
+  OTHER
+}
+
+enum ProjectStatus {
+  PLANNED
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+enum AlertType {
+  MAINTENANCE_OVERDUE
+  EQUIPMENT_NOT_RETURNED
+  DAMAGE_REPORTED
+  REPAIR_NEEDED
+  LOW_INVENTORY
+  INSURANCE_EXPIRING
+  REGISTRATION_EXPIRING
+  PIN_LOCKED
+}
+
+enum PhotoContext {
+  DAMAGE
+  DAILY_CHECK
+  MAINTENANCE
+  INVENTORY_REFERENCE
+  VEHICLE_REFERENCE
+}
+
+// ─── Models ───────────────────────────────────────────────────────
+
+model User {
+  id                String      @id @default(cuid())
+  name              String
+  email             String      @unique
+  role              UserRole    @default(OPERATOR)
+  pinHash           String?
+  failedPinAttempts Int         @default(0)
+  pinLockedAt       DateTime?
+  isActive          Boolean     @default(true)
+  lastLoginAt       DateTime?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  checkLogs         CheckLog[]
+  dailyChecks       DailyCheck[]
+  projectsLed       Project[]   @relation("ProjectLead")
+  photos            Photo[]
+  alerts            Alert[]
+
+  @@map("users")
+}
+
+model InventoryItem {
+  id                String            @id @default(cuid())
+  name              String
+  category          EquipmentCategory
+  sku               String?
+  quantity          Int               @default(1)
+  unitCost          Decimal?          @db.Decimal(10, 2)
+  reorderUrl        String?
+  supplier          String?
+  status            EquipmentStatus   @default(AVAILABLE)
+  location          String?
+  qrCodeId          String            @unique @default(cuid())
+  notes             String?
+  lowStockThreshold Int?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  checkLogs         CheckLog[]
+  photos            Photo[]
+  maintenanceTasks  MaintenanceTask[]
+  projectEquipment  ProjectEquipment[]
+
+  @@map("inventory_items")
+}
+
+model Vehicle {
+  id                  String        @id @default(cuid())
+  name                String        @unique
+  type                VehicleType
+  year                Int?
+  makeModel           String?
+  vin                 String?       @unique
+  licensePlate        String?
+  odometer            Int?
+  status              VehicleStatus @default(ACTIVE)
+  location            String?
+  assignedOperatorId  String?
+  insuranceExpires    DateTime?
+  registrationExpires DateTime?
+  qrCodeId            String        @unique @default(cuid())
+  notes               String?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  dailyChecks         DailyCheck[]
+  maintenanceTasks    MaintenanceTask[]
+  photos              Photo[]
+
+  @@map("vehicles")
+}
+
+model DailyCheck {
+  id            String    @id @default(cuid())
+  vehicleId     String
+  operatorId    String
+  date          DateTime  @db.Date
+  site          String?
+  odometer      Int?
+  checklistJson Json      // { itemKey: "yes" | "no" | "na", note?: string }[]
+  issues        String?
+  passFail      Boolean   @default(true)
+  submittedAt   DateTime  @default(now())
+  syncedAt      DateTime?
+
+  vehicle       Vehicle   @relation(fields: [vehicleId], references: [id])
+  operator      User      @relation(fields: [operatorId], references: [id])
+  photos        Photo[]
+
+  @@unique([vehicleId, date, operatorId])
+  @@map("daily_checks")
+}
+
+model CheckLog {
+  id             String      @id @default(cuid())
+  action         CheckAction
+  itemId         String
+  operatorId     String?
+  projectId      String?
+  fromLocation   String?
+  toLocation     String?
+  condition      Condition?
+  expectedReturn DateTime?
+  actualReturn   DateTime?
+  notes          String?
+  submittedAt    DateTime    @default(now())
+  syncedAt       DateTime?
+
+  item           InventoryItem @relation(fields: [itemId], references: [id])
+  operator       User?       @relation(fields: [operatorId], references: [id])
+  project        Project?    @relation(fields: [projectId], references: [id])
+  photos         Photo[]
+
+  @@map("check_logs")
+}
+
+model MaintenanceTask {
+  id             String            @id @default(cuid())
+  vehicleId      String?
+  itemId         String?
+  taskName       String
+  intervalType   IntervalType
+  intervalValue  Int
+  priority       Priority          @default(MEDIUM)
+  lastCompleted  DateTime?
+  lastOdometer   Int?
+  nextDue        DateTime?
+  nextOdometer   Int?
+  status         MaintenanceStatus @default(UPCOMING)
+  estimatedCost  Decimal?          @db.Decimal(10, 2)
+  actualCost     Decimal?          @db.Decimal(10, 2)
+  assigneeId     String?
+  notes          String?
+  completedAt    DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  vehicle        Vehicle?          @relation(fields: [vehicleId], references: [id])
+  item           InventoryItem?    @relation(fields: [itemId], references: [id])
+  photos         Photo[]
+
+  @@map("maintenance_tasks")
+}
+
+model Project {
+  id        String        @id @default(cuid())
+  name      String
+  type      ProjectType   @default(CROPLAND)
+  location  String?
+  startDate DateTime?     @db.Date
+  endDate   DateTime?     @db.Date
+  status    ProjectStatus @default(PLANNED)
+  leadId    String?
+  notes     String?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  lead      User?              @relation("ProjectLead", fields: [leadId], references: [id])
+  checkLogs CheckLog[]
+  equipment ProjectEquipment[]
+
+  @@map("projects")
+}
+
+model ProjectEquipment {
+  projectId String
+  itemId    String
+
+  project   Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  item      InventoryItem @relation(fields: [itemId], references: [id])
+
+  @@id([projectId, itemId])
+  @@map("project_equipment")
+}
+
+model Alert {
+  id          String    @id @default(cuid())
+  type        AlertType
+  triggeredAt DateTime  @default(now())
+  resolved    Boolean   @default(false)
+  resolvedAt  DateTime?
+  adminId     String?
+  sourceTable String?
+  sourceId    String?
+  metadata    Json?
+
+  admin       User?     @relation(fields: [adminId], references: [id])
+
+  @@map("alerts")
+}
+
+model Photo {
+  id              String       @id @default(cuid())
+  url             String
+  thumbnailUrl    String?
+  context         PhotoContext
+  dailyCheckId    String?
+  checkLogId      String?
+  maintenanceId   String?
+  inventoryItemId String?
+  vehicleId       String?
+  uploadedById    String
+  takenAt         DateTime     @default(now())
+  gpsLat          Float?
+  gpsLng          Float?
+
+  uploadedBy      User             @relation(fields: [uploadedById], references: [id])
+  dailyCheck      DailyCheck?      @relation(fields: [dailyCheckId], references: [id])
+  checkLog        CheckLog?        @relation(fields: [checkLogId], references: [id])
+  maintenanceTask MaintenanceTask? @relation(fields: [maintenanceId], references: [id])
+  inventoryItem   InventoryItem?   @relation(fields: [inventoryItemId], references: [id])
+  vehicle         Vehicle?         @relation(fields: [vehicleId], references: [id])
+
+  @@map("photos")
+}
