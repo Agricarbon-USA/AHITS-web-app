@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { jwtVerify } from 'jose'
 
-const PUBLIC_PATHS = ['/login', '/api/auth/login']
+const PUBLIC_PATHS = ['/login', '/api/auth/login', '/~offline']
 const ADMIN_PATHS = ['/admin']
 const OPERATOR_PATHS = ['/operator']
 
@@ -21,7 +21,13 @@ export async function middleware(request: NextRequest) {
   }
 
   // Allow static/api-without-auth paths
-  if (pathname.startsWith('/_next') || pathname.startsWith('/icons') || pathname === '/manifest.json') {
+  if (
+    pathname.startsWith('/_next') ||
+    pathname.startsWith('/icons') ||
+    pathname === '/manifest.json' ||
+    pathname === '/sw.js' ||
+    pathname.startsWith('/swe-worker')
+  ) {
     return NextResponse.next()
   }
 
@@ -40,14 +46,21 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL('/operator/dashboard', request.url))
     }
 
-    if (pathname.startsWith(OPERATOR_PATHS[0]) && role !== 'OPERATOR' && role !== 'ADMIN') {
+    if (
+      pathname.startsWith(OPERATOR_PATHS[0]) &&
+      role !== 'OPERATOR' &&
+      role !== 'ADMIN'
+    ) {
       return NextResponse.redirect(new URL('/login', request.url))
     }
 
     // Root → redirect by role
     if (pathname === '/') {
       return NextResponse.redirect(
-        new URL(role === 'ADMIN' ? '/admin/dashboard' : '/operator/dashboard', request.url)
+        new URL(
+          role === 'ADMIN' ? '/admin/dashboard' : '/operator/dashboard',
+          request.url,
+        ),
       )
     }
 
@@ -58,5 +71,7 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|icons|manifest.json).*)'],
+  matcher: [
+    '/((?!_next/static|_next/image|favicon.ico|icons|manifest.json|sw.js|swe-worker).*)',
+  ],
 }
