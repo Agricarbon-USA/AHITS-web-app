@@ -12,7 +12,7 @@ function getSecret() {
   return new TextEncoder().encode(s)
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   // Allow public paths
@@ -54,7 +54,7 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL('/login', request.url))
     }
 
-    // Root → redirect by role
+    // Root -> redirect by role
     if (pathname === '/') {
       return NextResponse.redirect(
         new URL(

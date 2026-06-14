@@ -6,13 +6,15 @@ A full-stack PWA for managing vehicles, equipment, and field operations across d
 
 PWA note: This repo uses Serwist via webpack integration, so run Next commands with webpack (`next dev --webpack`, `next build --webpack`).
 
+Routing note: Next.js `middleware` was migrated to `proxy` (`src/proxy.ts`) for Next 16 compatibility.
+
 ---
 
 ## Quick Start
 
 ```bash
 cp .env.example .env          # Fill in your values
-cd src && make setup           # Install, migrate, seed
+make setup                    # Install, migrate, seed
 make dev                       # Start dev server → http://localhost:3000
 ```
 
@@ -41,7 +43,7 @@ Copy `.env.example` to `.env` and fill in:
 
 ---
 
-## Makefile Commands (`cd src` first)
+## Makefile Commands
 
 ```bash
 make help            # List all commands
@@ -81,8 +83,8 @@ make logs            # Tail Cloud Run logs
 ├── prisma/
 │   ├── schema.prisma        # Database schema
 │   └── seed.ts              # Development seed data
+├── Makefile                 # Dev/deploy shortcuts
 ├── src/
-│   ├── Makefile             # Dev/deploy shortcuts
 │   ├── app/
 │   │   ├── (auth)/login/    # Login page
 │   │   ├── (admin)/admin/   # Admin routes
@@ -107,7 +109,6 @@ make logs            # Tail Cloud Run logs
 ## Adding a Database Migration
 
 ```bash
-cd src
 make db-migrate-dev           # Prompts for migration name, applies it
 # Commit the generated prisma/migrations/* files
 ```
@@ -115,7 +116,6 @@ make db-migrate-dev           # Prompts for migration name, applies it
 ## Running in Production Locally (Docker)
 
 ```bash
-cd src
 make docker-build
 make docker-run
 ```
@@ -123,7 +123,6 @@ make docker-run
 Then to get running:
 bashcd "Agricarbon US Codebase"
 cp .env.example .env # fill in your Supabase + GCP details
-cd src
 make setup # installs, migrates, seeds
 make dev # → http://localhost:3000
 GCP secrets needed (add to GitHub repo → Settings → Secrets):

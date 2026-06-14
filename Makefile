@@ -4,7 +4,7 @@
 # ============================================================
 
 APP_NAME     := ahits-web-app
-GCP_PROJECT  ?= $(shell grep GCP_PROJECT_ID ../.env | cut -d= -f2)
+GCP_PROJECT  ?= $(shell grep GCP_PROJECT_ID .env | cut -d= -f2)
 GCP_REGION   ?= us-central1
 IMAGE        := gcr.io/$(GCP_PROJECT)/$(APP_NAME)
 TAG          ?= $(shell git rev-parse --short HEAD)
@@ -21,42 +21,42 @@ help: ## Show this help
 
 # ── Local dev ─────────────────────────────────────────────────────
 dev: ## Start Next.js dev server
-	cd .. && npm run dev
+	npm run dev
 
 build: ## Build for production
-	cd .. && npm run build
+	npm run build
 
 start: ## Start production server locally
-	cd .. && npm run start
+	npm run start
 
 lint: ## Run ESLint
-	cd .. && npm run lint
+	npm run lint
 
 typecheck: ## Run TypeScript compiler check
-	cd .. && npm run type-check
+	npm run type-check
 
 # ── Database ──────────────────────────────────────────────────────
 db-generate: ## Generate Prisma client
-	cd .. && npx prisma generate
+	npx prisma generate
 
 db-migrate: ## Apply pending migrations (production)
-	cd .. && npx prisma migrate deploy
+	npx prisma migrate deploy
 
 db-migrate-dev: ## Create + apply migration (development)
-	cd .. && npx prisma migrate dev
+	npx prisma migrate dev
 
 db-studio: ## Open Prisma Studio
-	cd .. && npx prisma studio
+	npx prisma studio
 
 db-seed: ## Seed the database with sample data
-	cd .. && npx tsx prisma/seed.ts
+	npx tsx prisma/seed.ts
 
 db-reset: ## Reset DB and re-seed (DEV ONLY)
-	cd .. && npx prisma migrate reset
+	npx prisma migrate reset
 
 # ── Docker ────────────────────────────────────────────────────────
 docker-build: ## Build Docker image
-	docker build -t $(IMAGE):$(TAG) -t $(IMAGE):latest ..
+	docker build -t $(IMAGE):$(TAG) -t $(IMAGE):latest .
 
 docker-push: ## Push image to GCR
 	docker push $(IMAGE):$(TAG)
@@ -64,7 +64,7 @@ docker-push: ## Push image to GCR
 
 docker-run: ## Run container locally
 	docker run --rm -p 3000:3000 \
-	  --env-file ../.env \
+	  --env-file .env \
 	  $(IMAGE):latest
 
 # ── GCP Deploy ────────────────────────────────────────────────────
@@ -106,7 +106,7 @@ env-check: ## Verify required env vars are set
 	@echo "✅ All required env vars present"
 
 setup: ## First-time local dev setup
-	cd .. && npm install
+	npm install
 	$(MAKE) db-generate
 	$(MAKE) db-migrate-dev
 	$(MAKE) db-seed

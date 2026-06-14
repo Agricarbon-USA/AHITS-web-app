@@ -2,7 +2,7 @@
 
 import { defaultCache } from '@serwist/next/worker'
 import type { PrecacheEntry, SerwistGlobalConfig } from 'serwist'
-import { Serwist } from 'serwist'
+import { ExpirationPlugin, NetworkFirst, Serwist } from 'serwist'
 
 declare global {
   interface WorkerGlobalScope extends SerwistGlobalConfig {
@@ -17,7 +17,28 @@ const serwist = new Serwist({
   skipWaiting: true,
   clientsClaim: true,
   navigationPreload: true,
-  runtimeCaching: defaultCache,
+  runtimeCaching: [
+    {
+      matcher: ({ sameOrigin, url: { pathname } }) =>
+        sameOrigin &&
+        (pathname === '/api/dashboard' ||
+          pathname.startsWith('/api/inventory') ||
+          pathname.startsWith('/api/vehicles') ||
+          pathname.startsWith('/api/maintenance')),
+      method: 'GET',
+      handler: new NetworkFirst({
+        cacheName: 'ahits-field-reads',
+        networkTimeoutSeconds: 5,
+        plugins: [
+          new ExpirationPlugin({
+            maxEntries: 64,
+            maxAgeSeconds: 12 * 60 * 60,
+          }),
+        ],
+      }),
+    },
+    ...defaultCache,
+  ],
   fallbacks: {
     entries: [
       {
