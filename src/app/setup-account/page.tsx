@@ -15,7 +15,7 @@ interface InviteData {
   role: 'ADMIN' | 'OPERATOR'
 }
 
-export default function SetupAccountPage() {
+function SetupAccountContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const token = searchParams.get('token') ?? ''
@@ -152,5 +152,13 @@ export default function SetupAccountPage() {
         </CardContent>
       </Card>
     </Box>
+  )
+}
+
+export default function SetupAccountPage() {
+  return (
+    <React.Suspense>
+      <SetupAccountContent />
+    </React.Suspense>
   )
 }
