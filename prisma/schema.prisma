@@ -335,3 +335,17 @@ model Photo {
 
   @@map("photos")
 }
+
+model InviteToken {
+  id        String    @id @default(cuid())
+  email     String
+  role      UserRole
+  name      String
+  token     String    @unique @default(cuid())
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  createdBy String    // admin user id
+
+  @@map("invite_tokens")
+}

@@ -29,7 +29,21 @@ git commit -m "<short description of change>"
 git push -u origin "$BRANCH"
 ```
 
-## 3. Open a pull request
+## 3. Run Prisma locally before opening the PR
+
+Always run these on the local machine before creating the PR. The Docker build does not run migrations, and a missing Prisma client or unapplied migration will fail the build.
+
+```bash
+# Regenerate the Prisma client if schema changed
+make db-generate
+
+# Apply any pending migrations against the real database
+make db-migrate
+```
+
+If you created a new migration during this change, also commit the generated files in `prisma/migrations/` as part of the same branch.
+
+## 4. Open a pull request
 
 ```bash
 gh pr create \
@@ -40,7 +54,7 @@ gh pr create \
 
 Capture the PR number from the output.
 
-## 4. Trigger the staging deploy
+## 5. Trigger the staging deploy
 
 ```bash
 PR_NUMBER=$(gh pr view --json number --jq .number)

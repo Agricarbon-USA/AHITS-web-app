@@ -86,3 +86,19 @@ export function registrationExpiringEmail(vehicleName: string, expiryDate: strin
      <p>Please renew before the expiry date.</p>`
   )
 }
+
+export function inviteEmail(name: string, role: string, setupUrl: string) {
+  const roleLabel = role === 'ADMIN' ? 'Admin' : 'Field Operator'
+  return base(
+    'Welcome to AHITS',
+    `<h3 style="color:#2e7d32;">👋 Welcome to AHITS, ${name}!</h3>
+     <p>You've been invited to join Agricarbon's Hardware Inventory & Tracking System as a <strong>${roleLabel}</strong>.</p>
+     <p>Click the button below to set your ${role === 'OPERATOR' ? '6-digit PIN' : 'password'} and activate your account:</p>
+     <p style="text-align:center;margin:24px 0;">
+       <a href="${setupUrl}" style="background:#2e7d32;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;display:inline-block;">
+         Set Up My Account
+       </a>
+     </p>
+     <p style="color:#757575;font-size:13px;">This link expires in 48 hours. If you weren't expecting this invitation, you can safely ignore this email.</p>`
+  )
+}
