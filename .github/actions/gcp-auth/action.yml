@@ -1,0 +1,24 @@
+name: GCP Auth & Docker Setup
+description: >
+  Authenticate to Google Cloud, set up the gcloud SDK, and configure Docker
+  to push to GCR. Used by all deploy workflows to avoid duplicating these steps.
+
+inputs:
+  credentials_json:
+    description: GCP service account key JSON (base64-encoded)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Authenticate to Google Cloud
+      uses: google-github-actions/auth@v2
+      with:
+        credentials_json: ${{ inputs.credentials_json }}
+
+    - name: Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+
+    - name: Configure Docker for GCR
+      shell: bash
+      run: gcloud auth configure-docker --quiet

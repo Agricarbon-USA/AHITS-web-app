@@ -6,11 +6,6 @@ on:
       - production # → production
       - development # → staging
 
-env:
-  GCP_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
-  GCP_REGION: us-central1
-  IMAGE: gcr.io/${{ secrets.GCP_PROJECT_ID }}/ahits-web-app
-
 jobs:
   deploy:
     name: Build & Deploy
@@ -19,60 +14,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+      - name: GCP Auth & Docker Setup
+        uses: ./.github/actions/gcp-auth
         with:
           credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
 
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Configure Docker for GCR
-        run: gcloud auth configure-docker --quiet
-
-      - name: Build Docker image
+      - name: Deploy
         run: |
-          docker build \
-            -t $IMAGE:${{ github.sha }} \
-            -t $IMAGE:latest \
-            .
-
-      - name: Push to GCR
-        run: |
-          docker push $IMAGE:${{ github.sha }}
-          docker push $IMAGE:latest
-
-      - name: Determine service name
-        id: svc
-        run: |
-          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            echo "name=ahits-web-app" >> $GITHUB_OUTPUT
+          if [ "${{ github.ref }}" = "refs/heads/production" ]; then
+            make deploy-prod TAG=${{ github.sha }} GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }}
           else
-            echo "name=ahits-web-app-staging" >> $GITHUB_OUTPUT
+            make deploy-staging TAG=${{ github.sha }} GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }}
           fi
-
-      - name: Deploy to Cloud Run
-        run: |
-          gcloud run deploy ${{ steps.svc.outputs.name }} \
-            --image $IMAGE:${{ github.sha }} \
-            --platform managed \
-            --region ${{ env.GCP_REGION }} \
-            --project ${{ env.GCP_PROJECT }} \
-            --allow-unauthenticated \
-            --min-instances=${{ github.ref == 'refs/heads/production' && '1' || '0' }} \
-            --set-secrets "\
-              DATABASE_URL=AHITS_DATABASE_URL:latest,\
-              DIRECT_URL=AHITS_DIRECT_URL:latest,\
-              NEXT_PUBLIC_SUPABASE_URL=NEXT_PUBLIC_AHITS_SUPABASE_URL:latest,\
-              NEXT_PUBLIC_SUPABASE_ANON_KEY=AHITS_NEXT_PUBLIC_SUPABASE_ANON_KEY:latest,\
-              SUPABASE_SERVICE_ROLE_KEY=AHITS_SUPABASE_SERVICE_ROLE_KEY:latest,\
-              PIN_SESSION_SECRET=AHITS_PIN_SESSION_SECRET:latest,\
-              RESEND_API_KEY=AHITS_RESEND_API_KEY:latest,\
-              ADMIN_EMAIL=AHITS_ADMIN_EMAIL:latest"
 
       - name: Show service URL
         run: |
-          gcloud run services describe ${{ steps.svc.outputs.name }} \
-            --region ${{ env.GCP_REGION }} \
-            --project ${{ env.GCP_PROJECT }} \
-            --format="value(status.url)"
+          if [ "${{ github.ref }}" = "refs/heads/production" ]; then
+            make cloud-run-url SERVICE=ahits-web-app GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }}
+          else
+            make cloud-run-url SERVICE=ahits-web-app-staging GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }}
+          fi
