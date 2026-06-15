@@ -2,7 +2,7 @@ import type {
   User, InventoryItem, Vehicle, DailyCheck, CheckLog,
   MaintenanceTask, Project, Alert, Photo,
   UserRole, VehicleType, VehicleStatus, EquipmentStatus,
-  EquipmentCategory, CheckAction, Condition, Priority,
+  CheckAction, Condition, Priority,
   MaintenanceStatus, ProjectStatus, ProjectType, AlertType,
   PhotoContext, IntervalType,
 } from '@prisma/client'
@@ -12,7 +12,7 @@ export type {
   User, InventoryItem, Vehicle, DailyCheck, CheckLog,
   MaintenanceTask, Project, Alert, Photo,
   UserRole, VehicleType, VehicleStatus, EquipmentStatus,
-  EquipmentCategory, CheckAction, Condition, Priority,
+  CheckAction, Condition, Priority,
   MaintenanceStatus, ProjectStatus, ProjectType, AlertType,
   PhotoContext, IntervalType,
 }

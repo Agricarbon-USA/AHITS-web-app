@@ -33,16 +33,6 @@ enum VehicleStatus {
   RETIRED
 }
 
-enum EquipmentCategory {
-  SAMPLING_EQUIPMENT
-  POWER_TOOLS
-  HAND_TOOLS
-  SAFETY_GEAR
-  ELECTRONICS_GPS
-  STORAGE
-  OTHER
-}
-
 enum EquipmentStatus {
   AVAILABLE
   CHECKED_OUT
@@ -122,60 +112,194 @@ enum ItemType {
   CONSUMABLE
 }
 
-enum HubLocation {
-  PIEDMONT_SC
-  WATERLOO_IA
+enum TransferStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
 }
 
 // ─── Models ───────────────────────────────────────────────────────
 
 model User {
-  id                String      @id @default(cuid())
+  id                String       @id @default(cuid())
   name              String
-  email             String      @unique
-  role              UserRole    @default(OPERATOR)
+  email             String       @unique
+  role              UserRole     @default(OPERATOR)
   pinHash           String?
-  failedPinAttempts Int         @default(0)
+  failedPinAttempts Int          @default(0)
   pinLockedAt       DateTime?
-  isActive          Boolean     @default(true)
+  isActive          Boolean      @default(true)
   lastLoginAt       DateTime?
-  createdAt         DateTime    @default(now())
-  updatedAt         DateTime    @updatedAt
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
 
   checkLogs         CheckLog[]
   dailyChecks       DailyCheck[]
-  projectsLed       Project[]   @relation("ProjectLead")
+  projectsLed       Project[]    @relation("ProjectLead")
   photos            Photo[]
   alerts            Alert[]
+  rigs               Rig[]             @relation("OperatorRigs")
+  transfersReceived  TransferRequest[] @relation("TransferTo")
+  transfersInitiated TransferRequest[] @relation("TransferBy")
 
   @@map("users")
 }
 
+model Category {
+  id        String          @id @default(cuid())
+  name      String
+  sortOrder Int             @default(0)
+  createdAt DateTime        @default(now())
+  items     InventoryItem[]
+
+  @@map("categories")
+}
+
+model Hub {
+  id        String          @id @default(cuid())
+  name      String
+  city      String
+  state     String
+  isActive  Boolean         @default(true)
+  createdAt DateTime        @default(now())
+  items     InventoryItem[]
+
+  @@map("hubs")
+}
+
+model Rig {
+  id         String     @id @default(cuid())
+  label      String?
+  operatorId String
+  operator   User       @relation("OperatorRigs", fields: [operatorId], references: [id])
+  projectId  String?
+  project    Project?   @relation(fields: [projectId], references: [id])
+  startedAt  DateTime   @default(now())
+  endedAt    DateTime?
+  notes      String?
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  vehicles          RigVehicle[]
+  kits              Kit[]
+  outgoingTransfers TransferRequest[] @relation("FromRig")
+
+  @@map("rigs")
+}
+
+model RigVehicle {
+  id         String    @id @default(cuid())
+  rigId      String
+  vehicleId  String
+  rig        Rig       @relation(fields: [rigId], references: [id])
+  vehicle    Vehicle   @relation(fields: [vehicleId], references: [id])
+  addedAt    DateTime  @default(now())
+  addNote    String
+  removedAt  DateTime?
+  removeNote String?
+  photoUrls  String[]  @default([])
+
+  @@map("rig_vehicles")
+}
+
+model Kit {
+  id        String    @id @default(cuid())
+  rigId     String
+  rig       Rig       @relation(fields: [rigId], references: [id])
+  label     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  items     KitItem[]
+
+  @@map("kits")
+}
+
+model KitItem {
+  id              String        @id @default(cuid())
+  kitId           String
+  inventoryItemId String
+  quantity        Int           @default(1)
+  kit             Kit           @relation(fields: [kitId], references: [id])
+  item            InventoryItem @relation(fields: [inventoryItemId], references: [id])
+  addedAt         DateTime      @default(now())
+  removedAt       DateTime?
+
+  transferItems TransferItem[]
+
+  @@map("kit_items")
+}
+
+model TransferRequest {
+  id             String         @id @default(cuid())
+  fromRigId      String
+  fromRig        Rig            @relation("FromRig", fields: [fromRigId], references: [id])
+  toOperatorId   String
+  toOperator     User           @relation("TransferTo", fields: [toOperatorId], references: [id])
+  initiatedById  String
+  initiatedBy    User           @relation("TransferBy", fields: [initiatedById], references: [id])
+  note           String
+  photoUrls      String[]       @default([])
+  status         TransferStatus @default(PENDING)
+  responseNote   String?
+  respondedAt    DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  vehicles TransferVehicle[]
+  items    TransferItem[]
+
+  @@map("transfer_requests")
+}
+
+model TransferVehicle {
+  id                String          @id @default(cuid())
+  transferRequestId String
+  vehicleId         String
+  transferRequest   TransferRequest @relation(fields: [transferRequestId], references: [id])
+  vehicle           Vehicle         @relation(fields: [vehicleId], references: [id])
+
+  @@map("transfer_vehicles")
+}
+
+model TransferItem {
+  id                String          @id @default(cuid())
+  transferRequestId String
+  kitItemId         String
+  transferRequest   TransferRequest @relation(fields: [transferRequestId], references: [id])
+  kitItem           KitItem         @relation(fields: [kitItemId], references: [id])
+
+  @@map("transfer_items")
+}
+
 model InventoryItem {
-  id                String            @id @default(cuid())
+  id                String          @id @default(cuid())
   name              String
-  category          EquipmentCategory
+  categoryId        String
+  category          Category        @relation(fields: [categoryId], references: [id])
+  hubId             String?
+  hub               Hub?            @relation(fields: [hubId], references: [id])
   sku               String?
-  quantity          Int               @default(1)
-  unitCost          Decimal?          @db.Decimal(10, 2)
+  quantity          Int             @default(1)
+  unitCost          Decimal?        @db.Decimal(10, 2)
   reorderUrl        String?
   supplier          String?
-  status            EquipmentStatus   @default(AVAILABLE)
+  status            EquipmentStatus @default(AVAILABLE)
   location          String?
-  qrCodeId          String            @unique @default(cuid())
+  qrCodeId          String          @unique @default(cuid())
   notes             String?
   lowStockThreshold Int?
-  itemType         ItemType           @default(CONSUMABLE)
-  unitId           String?
-  expectedQuantity Int?
-  hubLocation      HubLocation?
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
+  itemType          ItemType        @default(CONSUMABLE)
+  unitId            String?
+  expectedQuantity  Int?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
 
-  checkLogs         CheckLog[]
-  photos            Photo[]
-  maintenanceTasks  MaintenanceTask[]
-  projectEquipment  ProjectEquipment[]
+  checkLogs        CheckLog[]
+  photos           Photo[]
+  maintenanceTasks MaintenanceTask[]
+  projectEquipment ProjectEquipment[]
+  kitItems         KitItem[]
 
   @@map("inventory_items")
 }
@@ -199,9 +323,11 @@ model Vehicle {
   createdAt           DateTime      @default(now())
   updatedAt           DateTime      @updatedAt
 
-  dailyChecks         DailyCheck[]
-  maintenanceTasks    MaintenanceTask[]
-  photos              Photo[]
+  dailyChecks      DailyCheck[]
+  maintenanceTasks MaintenanceTask[]
+  photos           Photo[]
+  rigVehicles      RigVehicle[]
+  transferVehicles TransferVehicle[]
 
   @@map("vehicles")
 }
@@ -213,15 +339,15 @@ model DailyCheck {
   date          DateTime  @db.Date
   site          String?
   odometer      Int?
-  checklistJson Json      // { itemKey: "yes" | "no" | "na", note?: string }[]
+  checklistJson Json
   issues        String?
   passFail      Boolean   @default(true)
   submittedAt   DateTime  @default(now())
   syncedAt      DateTime?
 
-  vehicle       Vehicle   @relation(fields: [vehicleId], references: [id])
-  operator      User      @relation(fields: [operatorId], references: [id])
-  photos        Photo[]
+  vehicle  Vehicle  @relation(fields: [vehicleId], references: [id])
+  operator User     @relation(fields: [operatorId], references: [id])
+  photos   Photo[]
 
   @@unique([vehicleId, date, operatorId])
   @@map("daily_checks")
@@ -242,38 +368,38 @@ model CheckLog {
   submittedAt    DateTime    @default(now())
   syncedAt       DateTime?
 
-  item           InventoryItem @relation(fields: [itemId], references: [id])
-  operator       User?       @relation(fields: [operatorId], references: [id])
-  project        Project?    @relation(fields: [projectId], references: [id])
-  photos         Photo[]
+  item     InventoryItem @relation(fields: [itemId], references: [id])
+  operator User?         @relation(fields: [operatorId], references: [id])
+  project  Project?      @relation(fields: [projectId], references: [id])
+  photos   Photo[]
 
   @@map("check_logs")
 }
 
 model MaintenanceTask {
-  id             String            @id @default(cuid())
-  vehicleId      String?
-  itemId         String?
-  taskName       String
-  intervalType   IntervalType
-  intervalValue  Int
-  priority       Priority          @default(MEDIUM)
-  lastCompleted  DateTime?
-  lastOdometer   Int?
-  nextDue        DateTime?
-  nextOdometer   Int?
-  status         MaintenanceStatus @default(UPCOMING)
-  estimatedCost  Decimal?          @db.Decimal(10, 2)
-  actualCost     Decimal?          @db.Decimal(10, 2)
-  assigneeId     String?
-  notes          String?
-  completedAt    DateTime?
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
+  id            String            @id @default(cuid())
+  vehicleId     String?
+  itemId        String?
+  taskName      String
+  intervalType  IntervalType
+  intervalValue Int
+  priority      Priority          @default(MEDIUM)
+  lastCompleted DateTime?
+  lastOdometer  Int?
+  nextDue       DateTime?
+  nextOdometer  Int?
+  status        MaintenanceStatus @default(UPCOMING)
+  estimatedCost Decimal?          @db.Decimal(10, 2)
+  actualCost    Decimal?          @db.Decimal(10, 2)
+  assigneeId    String?
+  notes         String?
+  completedAt   DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
 
-  vehicle        Vehicle?          @relation(fields: [vehicleId], references: [id])
-  item           InventoryItem?    @relation(fields: [itemId], references: [id])
-  photos         Photo[]
+  vehicle Vehicle?          @relation(fields: [vehicleId], references: [id])
+  item    InventoryItem?    @relation(fields: [itemId], references: [id])
+  photos  Photo[]
 
   @@map("maintenance_tasks")
 }
@@ -294,6 +420,7 @@ model Project {
   lead      User?              @relation("ProjectLead", fields: [leadId], references: [id])
   checkLogs CheckLog[]
   equipment ProjectEquipment[]
+  rigs      Rig[]
 
   @@map("projects")
 }
@@ -302,8 +429,8 @@ model ProjectEquipment {
   projectId String
   itemId    String
 
-  project   Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  item      InventoryItem @relation(fields: [itemId], references: [id])
+  project Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  item    InventoryItem @relation(fields: [itemId], references: [id])
 
   @@id([projectId, itemId])
   @@map("project_equipment")
@@ -320,7 +447,7 @@ model Alert {
   sourceId    String?
   metadata    Json?
 
-  admin       User?     @relation(fields: [adminId], references: [id])
+  admin User? @relation(fields: [adminId], references: [id])
 
   @@map("alerts")
 }
@@ -359,7 +486,7 @@ model InviteToken {
   expiresAt DateTime
   usedAt    DateTime?
   createdAt DateTime  @default(now())
-  createdBy String    // admin user id
+  createdBy String
 
   @@map("invite_tokens")
 }

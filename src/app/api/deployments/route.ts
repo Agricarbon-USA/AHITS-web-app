@@ -1,0 +1,126 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
+import { prisma } from '@/lib/prisma'
+import { getSession } from '@/lib/auth/session'
+
+const RIG_INCLUDE = {
+  operator: { select: { id: true, name: true } },
+  project: { select: { id: true, name: true } },
+  vehicles: {
+    where: { removedAt: null },
+    include: { vehicle: { select: { id: true, name: true, type: true } } },
+  },
+  kits: {
+    include: {
+      items: {
+        where: { removedAt: null },
+        include: {
+          item: {
+            select: {
+              id: true,
+              name: true,
+              category: { select: { name: true } },
+            },
+          },
+        },
+      },
+    },
+  },
+} as const
+
+const createSchema = z.object({
+  operatorId: z.string().optional(),
+  projectId: z.string().optional(),
+  label: z.string().optional(),
+  note: z.string().min(1, 'Note is required'),
+  vehicleIds: z.array(z.string()).default([]),
+  kitItems: z.array(z.object({
+    inventoryItemId: z.string(),
+    quantity: z.number().int().min(1),
+  })).default([]),
+})
+
+export async function GET(req: NextRequest) {
+  const session = await getSession()
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { searchParams } = req.nextUrl
+  const activeParam = searchParams.get('active')
+  const active = activeParam === null || activeParam === 'true'
+  const operatorIdParam = searchParams.get('operatorId')
+  const projectId = searchParams.get('projectId')
+
+  const operatorId = session.role === 'OPERATOR' ? session.userId : (operatorIdParam ?? undefined)
+
+  const rigs = await prisma.rig.findMany({
+    where: {
+      ...(active ? { endedAt: null } : { endedAt: { not: null } }),
+      ...(operatorId && { operatorId }),
+      ...(projectId && { projectId }),
+    },
+    include: RIG_INCLUDE,
+    orderBy: { startedAt: 'desc' },
+  })
+
+  return NextResponse.json(rigs)
+}
+
+export async function POST(req: NextRequest) {
+  const session = await getSession()
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const body = await req.json()
+  const parsed = createSchema.safeParse(body)
+  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
+
+  const { note, vehicleIds, kitItems, projectId, label } = parsed.data
+  const operatorId = session.role === 'OPERATOR' ? session.userId : (parsed.data.operatorId ?? session.userId)
+
+  const rig = await prisma.$transaction(async (tx) => {
+    const newRig = await tx.rig.create({
+      data: { operatorId, projectId, label },
+    })
+
+    if (vehicleIds.length > 0) {
+      await tx.rigVehicle.createMany({
+        data: vehicleIds.map((vehicleId) => ({
+          rigId: newRig.id,
+          vehicleId,
+          addNote: note,
+        })),
+      })
+      await tx.vehicle.updateMany({
+        where: { id: { in: vehicleIds } },
+        data: { assignedOperatorId: operatorId },
+      })
+    }
+
+    const kit = await tx.kit.create({ data: { rigId: newRig.id } })
+
+    if (kitItems.length > 0) {
+      await tx.kitItem.createMany({
+        data: kitItems.map(({ inventoryItemId, quantity }) => ({
+          kitId: kit.id,
+          inventoryItemId,
+          quantity,
+        })),
+      })
+      const checkLogData = kitItems.map(({ inventoryItemId }) => ({
+        action: 'CHECK_OUT' as const,
+        itemId: inventoryItemId,
+        operatorId,
+        projectId,
+        notes: note,
+      }))
+      await tx.checkLog.createMany({ data: checkLogData })
+      await tx.inventoryItem.updateMany({
+        where: { id: { in: kitItems.map((ki) => ki.inventoryItemId) } },
+        data: { status: 'CHECKED_OUT' },
+      })
+    }
+
+    return tx.rig.findUniqueOrThrow({ where: { id: newRig.id }, include: RIG_INCLUDE })
+  })
+
+  return NextResponse.json(rig, { status: 201 })
+}

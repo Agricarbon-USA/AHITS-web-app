@@ -8,7 +8,12 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
   const { id } = await params
   const item = await prisma.inventoryItem.findUnique({
     where: { id },
-    include: { checkLogs: { include: { operator: true }, orderBy: { submittedAt: 'desc' }, take: 10 }, photos: true },
+    include: {
+      category: true,
+      hub: true,
+      checkLogs: { include: { operator: true }, orderBy: { submittedAt: 'desc' }, take: 10 },
+      photos: true,
+    },
   })
   if (!item) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   return NextResponse.json({ data: item })

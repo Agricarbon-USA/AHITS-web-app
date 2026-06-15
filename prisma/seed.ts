@@ -1,4 +1,4 @@
-import { PrismaClient, UserRole, VehicleType, VehicleStatus, EquipmentStatus, EquipmentCategory, ProjectStatus, ProjectType } from '@prisma/client'
+import { PrismaClient, UserRole, VehicleType, VehicleStatus, EquipmentStatus, ProjectStatus, ProjectType } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 
 const prisma = new PrismaClient()
@@ -48,13 +48,21 @@ async function main() {
   ])
   console.log(`  ✓ Vehicles: ${vehicles.length}`)
 
+  // Categories
+  const [catElectronics, catSampling, catSafety] = await Promise.all([
+    prisma.category.upsert({ where: { id: 'seed-cat-electronics' }, update: {}, create: { id: 'seed-cat-electronics', name: 'Electronics & GPS', sortOrder: 1 } }),
+    prisma.category.upsert({ where: { id: 'seed-cat-sampling' }, update: {}, create: { id: 'seed-cat-sampling', name: 'Sampling Equipment', sortOrder: 2 } }),
+    prisma.category.upsert({ where: { id: 'seed-cat-safety' }, update: {}, create: { id: 'seed-cat-safety', name: 'Safety Gear', sortOrder: 3 } }),
+  ])
+  console.log('  ✓ Categories: 3')
+
   // Inventory items
   const items = await Promise.all([
-    prisma.inventoryItem.upsert({ where: { qrCodeId: 'seed-gps-001' }, update: {}, create: { name: 'Trimble GPS Unit', category: EquipmentCategory.ELECTRONICS_GPS, quantity: 4, status: EquipmentStatus.AVAILABLE, location: 'Storage A', qrCodeId: 'seed-gps-001' } }),
-    prisma.inventoryItem.upsert({ where: { qrCodeId: 'seed-probe-001' }, update: {}, create: { name: 'Soil Probe Set', category: EquipmentCategory.SAMPLING_EQUIPMENT, quantity: 10, status: EquipmentStatus.AVAILABLE, location: 'Storage A', qrCodeId: 'seed-probe-001' } }),
-    prisma.inventoryItem.upsert({ where: { qrCodeId: 'seed-bag-001' }, update: {}, create: { name: 'Sample Bags (box/100)', category: EquipmentCategory.SAMPLING_EQUIPMENT, quantity: 20, status: EquipmentStatus.AVAILABLE, location: 'Storage B', lowStockThreshold: 5, qrCodeId: 'seed-bag-001' } }),
-    prisma.inventoryItem.upsert({ where: { qrCodeId: 'seed-safety-001' }, update: {}, create: { name: 'Safety Vest', category: EquipmentCategory.SAFETY_GEAR, quantity: 15, status: EquipmentStatus.AVAILABLE, location: 'Storage B', qrCodeId: 'seed-safety-001' } }),
-    prisma.inventoryItem.upsert({ where: { qrCodeId: 'seed-tablet-001' }, update: {}, create: { name: 'Rugged Tablet', category: EquipmentCategory.ELECTRONICS_GPS, quantity: 6, status: EquipmentStatus.AVAILABLE, location: 'Storage A', qrCodeId: 'seed-tablet-001' } }),
+    prisma.inventoryItem.upsert({ where: { qrCodeId: 'seed-gps-001' }, update: {}, create: { name: 'Trimble GPS Unit', categoryId: catElectronics.id, quantity: 4, status: EquipmentStatus.AVAILABLE, location: 'Storage A', qrCodeId: 'seed-gps-001' } }),
+    prisma.inventoryItem.upsert({ where: { qrCodeId: 'seed-probe-001' }, update: {}, create: { name: 'Soil Probe Set', categoryId: catSampling.id, quantity: 10, status: EquipmentStatus.AVAILABLE, location: 'Storage A', qrCodeId: 'seed-probe-001' } }),
+    prisma.inventoryItem.upsert({ where: { qrCodeId: 'seed-bag-001' }, update: {}, create: { name: 'Sample Bags (box/100)', categoryId: catSampling.id, quantity: 20, status: EquipmentStatus.AVAILABLE, location: 'Storage B', lowStockThreshold: 5, qrCodeId: 'seed-bag-001' } }),
+    prisma.inventoryItem.upsert({ where: { qrCodeId: 'seed-safety-001' }, update: {}, create: { name: 'Safety Vest', categoryId: catSafety.id, quantity: 15, status: EquipmentStatus.AVAILABLE, location: 'Storage B', qrCodeId: 'seed-safety-001' } }),
+    prisma.inventoryItem.upsert({ where: { qrCodeId: 'seed-tablet-001' }, update: {}, create: { name: 'Rugged Tablet', categoryId: catElectronics.id, quantity: 6, status: EquipmentStatus.AVAILABLE, location: 'Storage A', qrCodeId: 'seed-tablet-001' } }),
   ])
   console.log(`  ✓ Inventory: ${items.length}`)
 

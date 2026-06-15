@@ -4,10 +4,12 @@ import * as React from 'react'
 import { List, ListItemButton, ListItemIcon, ListItemText, Divider, Box, Typography, Button } from '@mui/material'
 import DashboardIcon from '@mui/icons-material/Dashboard'
 import InventoryIcon from '@mui/icons-material/Inventory'
+import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import DirectionsCarIcon from '@mui/icons-material/DirectionsCar'
 import BuildIcon from '@mui/icons-material/Build'
 import FolderIcon from '@mui/icons-material/Folder'
 import PeopleIcon from '@mui/icons-material/People'
+import SettingsIcon from '@mui/icons-material/Settings'
 import BarChartIcon from '@mui/icons-material/BarChart'
 import LogoutIcon from '@mui/icons-material/Logout'
 import { usePathname, useRouter } from 'next/navigation'
@@ -16,10 +18,12 @@ import { useAuth } from '@/hooks/useAuth'
 const NAV_ITEMS = [
   { label: 'Dashboard', href: '/admin/dashboard', icon: DashboardIcon },
   { label: 'Inventory', href: '/admin/inventory', icon: InventoryIcon },
+  { label: 'Deployments', href: '/admin/deployments', icon: LocalShippingIcon },
   { label: 'Vehicles', href: '/admin/vehicles', icon: DirectionsCarIcon },
   { label: 'Maintenance', href: '/admin/maintenance', icon: BuildIcon },
   { label: 'Projects', href: '/admin/projects', icon: FolderIcon },
   { label: 'Users', href: '/admin/users', icon: PeopleIcon },
+  { label: 'Settings', href: '/admin/settings', icon: SettingsIcon },
   { label: 'Reports', href: '/admin/reports', icon: BarChartIcon },
 ]
 

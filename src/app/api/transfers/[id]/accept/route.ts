@@ -1,0 +1,128 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
+import { prisma } from '@/lib/prisma'
+import { getSession } from '@/lib/auth/session'
+
+const schema = z.object({
+  responseNote: z.string().optional(),
+})
+
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const session = await getSession()
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const { id } = await params
+
+  const transfer = await prisma.transferRequest.findUnique({
+    where: { id },
+    include: {
+      fromRig: {
+        select: {
+          id: true,
+          operatorId: true,
+          operator: { select: { id: true, name: true } },
+        },
+      },
+      vehicles: true,
+      items: { include: { kitItem: true } },
+    },
+  })
+  if (!transfer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (transfer.status !== 'PENDING') {
+    return NextResponse.json({ error: 'Transfer is no longer pending' }, { status: 409 })
+  }
+
+  const isDestination = transfer.toOperatorId === session.userId
+  const isAdmin = session.role === 'ADMIN'
+  if (!isDestination && !isAdmin) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  const body = await req.json()
+  const parsed = schema.safeParse(body)
+  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
+  const { responseNote } = parsed.data
+
+  const now = new Date()
+  const toOperatorId = transfer.toOperatorId
+  const sourceName = transfer.fromRig.operator.name
+
+  const updatedTransfer = await prisma.$transaction(async (tx) => {
+    // Find or create destination rig
+    let destRig = await tx.rig.findFirst({
+      where: { operatorId: toOperatorId, endedAt: null },
+    })
+    if (!destRig) {
+      destRig = await tx.rig.create({
+        data: { operatorId: toOperatorId, startedAt: now },
+      })
+    }
+
+    // Find or create destination kit
+    let destKit = await tx.kit.findFirst({ where: { rigId: destRig.id } })
+    if (!destKit) {
+      destKit = await tx.kit.create({ data: { rigId: destRig.id } })
+    }
+
+    // Transfer vehicles
+    for (const tv of transfer.vehicles) {
+      await tx.rigVehicle.updateMany({
+        where: { rigId: transfer.fromRig.id, vehicleId: tv.vehicleId, removedAt: null },
+        data: { removedAt: now, removeNote: transfer.note },
+      })
+      await tx.rigVehicle.create({
+        data: {
+          rigId: destRig.id,
+          vehicleId: tv.vehicleId,
+          addNote: `Accepted transfer from ${sourceName}`,
+          photoUrls: transfer.photoUrls,
+        },
+      })
+      await tx.vehicle.update({
+        where: { id: tv.vehicleId },
+        data: { assignedOperatorId: toOperatorId },
+      })
+    }
+
+    // Transfer kit items
+    for (const ti of transfer.items) {
+      await tx.kitItem.update({
+        where: { id: ti.kitItemId },
+        data: { removedAt: now },
+      })
+      await tx.kitItem.create({
+        data: {
+          kitId: destKit.id,
+          inventoryItemId: ti.kitItem.inventoryItemId,
+          quantity: ti.kitItem.quantity,
+        },
+      })
+      await tx.checkLog.create({
+        data: {
+          action: 'CHECK_IN',
+          itemId: ti.kitItem.inventoryItemId,
+          operatorId: transfer.fromRig.operatorId,
+          notes: transfer.note,
+        },
+      })
+      await tx.checkLog.create({
+        data: {
+          action: 'CHECK_OUT',
+          itemId: ti.kitItem.inventoryItemId,
+          operatorId: toOperatorId,
+          notes: 'Accepted transfer',
+        },
+      })
+    }
+
+    return tx.transferRequest.update({
+      where: { id },
+      data: {
+        status: 'ACCEPTED',
+        respondedAt: now,
+        responseNote: responseNote ?? null,
+      },
+    })
+  })
+
+  return NextResponse.json({ ok: true, transferRequest: updatedTransfer })
+}

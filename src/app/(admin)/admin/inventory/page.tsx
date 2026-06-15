@@ -20,21 +20,6 @@ import QRCode from 'qrcode'
 
 // ── Helper maps ───────────────────────────────────────────────────
 
-const CATEGORY_LABELS: Record<string, string> = {
-  SAMPLING_EQUIPMENT: 'Sampling Equipment',
-  POWER_TOOLS: 'Power Tools',
-  HAND_TOOLS: 'Hand Tools',
-  SAFETY_GEAR: 'Safety Gear',
-  ELECTRONICS_GPS: 'Electronics & GPS',
-  STORAGE: 'Storage',
-  OTHER: 'Other',
-}
-
-const HUB_LABELS: Record<string, string> = {
-  PIEDMONT_SC: 'Piedmont, SC',
-  WATERLOO_IA: 'Waterloo, IA',
-}
-
 const STATUS_CHIP_COLOR: Record<string, 'success' | 'primary' | 'warning' | 'default' | 'error'> = {
   AVAILABLE: 'success',
   CHECKED_OUT: 'primary',
@@ -51,10 +36,23 @@ const STATUS_LABELS: Record<string, string> = {
 
 // ── Types ─────────────────────────────────────────────────────────
 
+interface CategoryOption {
+  id: string
+  name: string
+}
+
+interface HubOption {
+  id: string
+  name: string
+  city: string
+  state: string
+}
+
 interface InventoryItemRow {
   id: string
   name: string
-  category: string
+  category: { id: string; name: string }
+  hub: { id: string; name: string; city: string; state: string } | null
   sku: string | null
   quantity: number
   unitCost: string | null
@@ -68,7 +66,6 @@ interface InventoryItemRow {
   itemType: string
   unitId: string | null
   expectedQuantity: number | null
-  hubLocation: string | null
   createdAt: string
   updatedAt: string
   currentOperator: { id: string; name: string } | null
@@ -138,10 +135,14 @@ function ConfirmDialog({
 
 function ItemFormDialog({
   item,
+  categories,
+  hubs,
   onClose,
   onSuccess,
 }: {
   item: InventoryItemRow | null
+  categories: CategoryOption[]
+  hubs: HubOption[]
   onClose: () => void
   onSuccess: (msg: string) => void
 }) {
@@ -149,9 +150,9 @@ function ItemFormDialog({
   const [name, setName] = React.useState('')
   const [itemType, setItemType] = React.useState('CONSUMABLE')
   const [unitId, setUnitId] = React.useState('')
-  const [category, setCategory] = React.useState('')
+  const [categoryId, setCategoryId] = React.useState('')
   const [status, setStatus] = React.useState('AVAILABLE')
-  const [hubLocation, setHubLocation] = React.useState('')
+  const [hubId, setHubId] = React.useState('')
   const [quantity, setQuantity] = React.useState(1)
   const [expectedQuantity, setExpectedQuantity] = React.useState('')
   const [lowStockThreshold, setLowStockThreshold] = React.useState('')
@@ -167,9 +168,9 @@ function ItemFormDialog({
       setName(item.name)
       setItemType(item.itemType)
       setUnitId(item.unitId ?? '')
-      setCategory(item.category)
+      setCategoryId(item.category.id)
       setStatus(item.status)
-      setHubLocation(item.hubLocation ?? '')
+      setHubId(item.hub?.id ?? '')
       setQuantity(item.quantity)
       setExpectedQuantity(item.expectedQuantity != null ? String(item.expectedQuantity) : '')
       setLowStockThreshold(item.lowStockThreshold != null ? String(item.lowStockThreshold) : '')
@@ -178,8 +179,8 @@ function ItemFormDialog({
       setReorderUrl(item.reorderUrl ?? '')
       setNotes(item.notes ?? '')
     } else {
-      setName(''); setItemType('CONSUMABLE'); setUnitId(''); setCategory('')
-      setStatus('AVAILABLE'); setHubLocation(''); setQuantity(1)
+      setName(''); setItemType('CONSUMABLE'); setUnitId(''); setCategoryId('')
+      setStatus('AVAILABLE'); setHubId(''); setQuantity(1)
       setExpectedQuantity(''); setLowStockThreshold('')
       setUnitCost(''); setSupplier(''); setReorderUrl(''); setNotes('')
     }
@@ -193,13 +194,13 @@ function ItemFormDialog({
     try {
       const body: Record<string, unknown> = {
         name,
-        category,
+        categoryId,
         itemType,
         quantity,
       }
       if (itemType === 'SERIALIZED' && unitId) body.unitId = unitId
       if (isEdit) body.status = status
-      if (hubLocation) body.hubLocation = hubLocation
+      if (hubId) body.hubId = hubId
       if (expectedQuantity !== '') body.expectedQuantity = parseInt(expectedQuantity)
       if (lowStockThreshold !== '') body.lowStockThreshold = parseInt(lowStockThreshold)
       if (unitCost !== '') body.unitCost = parseFloat(unitCost)
@@ -236,7 +237,6 @@ function ItemFormDialog({
           <Stack spacing={2.5} pt={0.5}>
             {error && <Alert severity="error">{error}</Alert>}
 
-            {/* Section 1 — Basic info */}
             <TextField label="Name" value={name} onChange={(e) => setName(e.target.value)} required fullWidth autoFocus />
 
             <FormControl>
@@ -257,9 +257,9 @@ function ItemFormDialog({
               />
             )}
 
-            <TextField select label="Category" value={category} onChange={(e) => setCategory(e.target.value)} required fullWidth>
-              {Object.entries(CATEGORY_LABELS).map(([val, label]) => (
-                <MenuItem key={val} value={val}>{label}</MenuItem>
+            <TextField select label="Category" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} required fullWidth>
+              {categories.map((c) => (
+                <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
               ))}
             </TextField>
 
@@ -271,14 +271,13 @@ function ItemFormDialog({
               </TextField>
             )}
 
-            <TextField select label="Hub Location" value={hubLocation} onChange={(e) => setHubLocation(e.target.value)} fullWidth>
+            <TextField select label="Hub Location" value={hubId} onChange={(e) => setHubId(e.target.value)} fullWidth>
               <MenuItem value="">Unknown</MenuItem>
-              {Object.entries(HUB_LABELS).map(([val, label]) => (
-                <MenuItem key={val} value={val}>{label}</MenuItem>
+              {hubs.map((h) => (
+                <MenuItem key={h.id} value={h.id}>{h.city}, {h.state}</MenuItem>
               ))}
             </TextField>
 
-            {/* Section 2 — Quantity & stock */}
             <TextField
               label="Current Quantity"
               type="number"
@@ -303,7 +302,6 @@ function ItemFormDialog({
               helperText="Show a warning on the dashboard when current quantity falls to or below this number."
             />
 
-            {/* Section 3 — Purchasing info (collapsible) */}
             <Accordion>
               <AccordionSummary expandIcon={<ExpandMoreIcon />}>
                 <Typography variant="body2">Purchasing Info</Typography>
@@ -323,7 +321,6 @@ function ItemFormDialog({
               </AccordionDetails>
             </Accordion>
 
-            {/* Section 4 — Notes */}
             <TextField label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} fullWidth multiline rows={3} />
           </Stack>
         </DialogContent>
@@ -391,7 +388,6 @@ function DetailDrawer({
 
       {!loading && detail && (
         <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-          {/* Header */}
           <Box px={3} pt={3} pb={2}>
             <Typography variant="h6" fontWeight={700}>{detail.name}</Typography>
             <Stack direction="row" spacing={1} mt={1}>
@@ -404,15 +400,16 @@ function DetailDrawer({
           <Divider />
 
           <Box sx={{ flex: 1, overflow: 'auto', px: 3, py: 2 }}>
-            {/* Detail grid */}
             <Box display="grid" gridTemplateColumns="1fr 1fr" gap={1.5} mb={3}>
               <Box>
                 <Typography variant="caption" color="text.secondary" fontWeight={600}>Category</Typography>
-                <Typography variant="body2">{CATEGORY_LABELS[detail.category] ?? detail.category}</Typography>
+                <Typography variant="body2">{detail.category?.name ?? '—'}</Typography>
               </Box>
               <Box>
                 <Typography variant="caption" color="text.secondary" fontWeight={600}>Hub Location</Typography>
-                <Typography variant="body2">{detail.hubLocation ? HUB_LABELS[detail.hubLocation] ?? detail.hubLocation : '—'}</Typography>
+                <Typography variant="body2">
+                  {detail.hub ? `${detail.hub.city}, ${detail.hub.state}` : '—'}
+                </Typography>
               </Box>
               {detail.itemType === 'SERIALIZED' && (
                 <Box>
@@ -454,7 +451,6 @@ function DetailDrawer({
               )}
             </Box>
 
-            {/* QR Code */}
             <Box mb={3}>
               <Typography variant="subtitle2" fontWeight={600} mb={1}>QR Code</Typography>
               {qrDataUrl && (
@@ -466,7 +462,6 @@ function DetailDrawer({
               )}
             </Box>
 
-            {/* Current status — use row data since /api/inventory/:id does not compute active checkout */}
             {row?.status === 'CHECKED_OUT' && (
               <Box mb={3}>
                 <Typography variant="subtitle2" fontWeight={600} mb={1}>Current Status</Typography>
@@ -479,7 +474,6 @@ function DetailDrawer({
               </Box>
             )}
 
-            {/* Check log */}
             <Box>
               <Typography variant="subtitle2" fontWeight={600} mb={1}>Recent Activity</Typography>
               {detail.checkLogs.length === 0 ? (
@@ -506,7 +500,6 @@ function DetailDrawer({
             </Box>
           </Box>
 
-          {/* Footer */}
           <Divider />
           <Stack direction="row" spacing={1} px={3} py={2} justifyContent="flex-end">
             <Button onClick={onClose}>Close</Button>
@@ -539,7 +532,9 @@ export default function AdminInventoryPage() {
   const [page, setPage] = React.useState(0)
   const [pageSize, setPageSize] = React.useState(25)
 
-  // Filters
+  const [categories, setCategories] = React.useState<CategoryOption[]>([])
+  const [hubs, setHubs] = React.useState<HubOption[]>([])
+
   const [q, setQ] = React.useState('')
   const [debouncedQ, setDebouncedQ] = React.useState('')
   const [filterType, setFilterType] = React.useState('')
@@ -550,17 +545,14 @@ export default function AdminInventoryPage() {
   const [filterProject, setFilterProject] = React.useState('')
   const [showRetired, setShowRetired] = React.useState(false)
 
-  // Dropdown data
   const [operators, setOperators] = React.useState<UserOption[]>([])
   const [projects, setProjects] = React.useState<ProjectOption[]>([])
 
-  // Dialogs/drawers
   const [addOpen, setAddOpen] = React.useState(false)
   const [editItem, setEditItem] = React.useState<InventoryItemRow | null>(null)
   const [drawerRow, setDrawerRow] = React.useState<InventoryItemRow | null>(null)
   const [retireItem, setRetireItem] = React.useState<InventoryItemRow | null>(null)
 
-  // Debounce search
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(q), 300)
     return () => clearTimeout(t)
@@ -574,9 +566,9 @@ export default function AdminInventoryPage() {
       params.set('pageSize', String(pageSize))
       if (debouncedQ) params.set('q', debouncedQ)
       if (filterType) params.set('itemType', filterType)
-      if (filterCategory) params.set('category', filterCategory)
+      if (filterCategory) params.set('categoryId', filterCategory)
       if (filterStatus) params.set('status', filterStatus)
-      if (filterHub) params.set('hubLocation', filterHub)
+      if (filterHub) params.set('hubId', filterHub)
       if (filterOperator) params.set('operatorId', filterOperator)
       if (filterProject) params.set('projectId', filterProject)
       if (showRetired) params.set('includeRetired', 'true')
@@ -592,6 +584,11 @@ export default function AdminInventoryPage() {
   React.useEffect(() => { load() }, [load])
 
   React.useEffect(() => {
+    Promise.all([
+      fetch('/api/categories').then((r) => r.json()),
+      fetch('/api/hubs').then((r) => r.json()),
+    ]).then(([cats, hs]) => { setCategories(cats); setHubs(hs) }).catch(() => {})
+
     fetch('/api/users').then((r) => r.json()).then((d) => {
       setOperators((d.data ?? []).filter((u: UserOption) => u.role === 'OPERATOR'))
     }).catch(() => {})
@@ -622,7 +619,6 @@ export default function AdminInventoryPage() {
 
   return (
     <Box>
-      {/* Header */}
       <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3}>
         <Box>
           <Typography variant="h5">Inventory</Typography>
@@ -637,7 +633,6 @@ export default function AdminInventoryPage() {
 
       {toast && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setToast('')}>{toast}</Alert>}
 
-      {/* Filter row 1 */}
       <Stack direction="row" spacing={1.5} mb={1.5} flexWrap="wrap">
         <TextField
           size="small"
@@ -653,8 +648,8 @@ export default function AdminInventoryPage() {
         </TextField>
         <TextField select size="small" label="All Categories" value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} sx={{ minWidth: 180 }}>
           <MenuItem value="">All Categories</MenuItem>
-          {Object.entries(CATEGORY_LABELS).map(([val, label]) => (
-            <MenuItem key={val} value={val}>{label}</MenuItem>
+          {categories.map((c) => (
+            <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
           ))}
         </TextField>
         <TextField select size="small" label="All Statuses" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} sx={{ minWidth: 160 }}>
@@ -666,13 +661,12 @@ export default function AdminInventoryPage() {
         </TextField>
         <TextField select size="small" label="All Hubs" value={filterHub} onChange={(e) => setFilterHub(e.target.value)} sx={{ minWidth: 140 }}>
           <MenuItem value="">All Hubs</MenuItem>
-          {Object.entries(HUB_LABELS).map(([val, label]) => (
-            <MenuItem key={val} value={val}>{label}</MenuItem>
+          {hubs.map((h) => (
+            <MenuItem key={h.id} value={h.id}>{h.city}, {h.state}</MenuItem>
           ))}
         </TextField>
       </Stack>
 
-      {/* Filter row 2 */}
       <Stack direction="row" spacing={1.5} mb={2.5} alignItems="center" flexWrap="wrap">
         <TextField select size="small" label="All Operators" value={filterOperator} onChange={(e) => setFilterOperator(e.target.value)} sx={{ minWidth: 160 }}>
           <MenuItem value="">All Operators</MenuItem>
@@ -682,7 +676,6 @@ export default function AdminInventoryPage() {
           <MenuItem value="">All Projects</MenuItem>
           {projects.map((p) => <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>)}
         </TextField>
-        {/* TODO: Rig filter — add after vehicleId added to CheckLog */}
         <Box flexGrow={1} />
         <FormControlLabel
           control={<Switch checked={showRetired} onChange={(e) => setShowRetired(e.target.checked)} size="small" />}
@@ -690,7 +683,6 @@ export default function AdminInventoryPage() {
         />
       </Stack>
 
-      {/* Table */}
       <TableContainer component={Paper} sx={{ borderRadius: 2 }}>
         <Table>
           <TableHead>
@@ -726,7 +718,7 @@ export default function AdminInventoryPage() {
                       <TableCell>
                         <Typography variant="body2" fontWeight={600}>{item.name}</Typography>
                         <Stack direction="row" spacing={0.5} mt={0.25} alignItems="center">
-                          <Chip size="small" label={CATEGORY_LABELS[item.category] ?? item.category} sx={{ height: 18, fontSize: 11 }} />
+                          <Chip size="small" label={item.category?.name} sx={{ height: 18, fontSize: 11 }} />
                           {item.unitId && (
                             <Typography variant="caption" sx={{ fontFamily: 'monospace', color: 'text.secondary' }}>{item.unitId}</Typography>
                           )}
@@ -758,7 +750,7 @@ export default function AdminInventoryPage() {
                       <TableCell>
                         {item.status === 'CHECKED_OUT' && item.currentOperator
                           ? <Typography variant="body2" fontStyle="italic">With {item.currentOperator.name}</Typography>
-                          : <Typography variant="body2">{item.hubLocation ? (HUB_LABELS[item.hubLocation] ?? item.hubLocation) : '—'}</Typography>
+                          : <Typography variant="body2">{item.hub ? `${item.hub.city}, ${item.hub.state}` : '—'}</Typography>
                         }
                       </TableCell>
                       <TableCell>
@@ -805,25 +797,26 @@ export default function AdminInventoryPage() {
         />
       </TableContainer>
 
-      {/* Add dialog */}
       {addOpen && (
         <ItemFormDialog
           item={null}
+          categories={categories}
+          hubs={hubs}
           onClose={() => setAddOpen(false)}
           onSuccess={(msg) => { showToast(msg); load() }}
         />
       )}
 
-      {/* Edit dialog */}
       {editItem && (
         <ItemFormDialog
           item={editItem}
+          categories={categories}
+          hubs={hubs}
           onClose={() => setEditItem(null)}
           onSuccess={(msg) => { showToast(msg); load() }}
         />
       )}
 
-      {/* Detail drawer */}
       <DetailDrawer
         row={drawerRow}
         onClose={() => setDrawerRow(null)}
@@ -831,7 +824,6 @@ export default function AdminInventoryPage() {
         onRetire={(item) => setRetireItem(item)}
       />
 
-      {/* Retire confirm */}
       <ConfirmDialog
         open={!!retireItem}
         title={`Retire ${retireItem?.name ?? ''}?`}

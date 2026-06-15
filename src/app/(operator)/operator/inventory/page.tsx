@@ -12,21 +12,6 @@ import QRCode from 'qrcode'
 
 // ── Helper maps ───────────────────────────────────────────────────
 
-const CATEGORY_LABELS: Record<string, string> = {
-  SAMPLING_EQUIPMENT: 'Sampling Equipment',
-  POWER_TOOLS: 'Power Tools',
-  HAND_TOOLS: 'Hand Tools',
-  SAFETY_GEAR: 'Safety Gear',
-  ELECTRONICS_GPS: 'Electronics & GPS',
-  STORAGE: 'Storage',
-  OTHER: 'Other',
-}
-
-const HUB_LABELS: Record<string, string> = {
-  PIEDMONT_SC: 'Piedmont, SC',
-  WATERLOO_IA: 'Waterloo, IA',
-}
-
 const STATUS_CHIP_COLOR: Record<string, 'success' | 'primary' | 'warning' | 'default' | 'error'> = {
   AVAILABLE: 'success',
   CHECKED_OUT: 'primary',
@@ -43,10 +28,23 @@ const STATUS_LABELS: Record<string, string> = {
 
 // ── Types ─────────────────────────────────────────────────────────
 
+interface CategoryOption {
+  id: string
+  name: string
+}
+
+interface HubOption {
+  id: string
+  name: string
+  city: string
+  state: string
+}
+
 interface InventoryItemRow {
   id: string
   name: string
-  category: string
+  category: { id: string; name: string }
+  hub: { id: string; name: string; city: string; state: string } | null
   quantity: number
   status: string
   qrCodeId: string
@@ -55,7 +53,6 @@ interface InventoryItemRow {
   itemType: string
   unitId: string | null
   expectedQuantity: number | null
-  hubLocation: string | null
   unitCost: string | null
   supplier: string | null
   reorderUrl: string | null
@@ -144,11 +141,13 @@ function DetailDrawer({
             <Box display="grid" gridTemplateColumns="1fr 1fr" gap={1.5} mb={3}>
               <Box>
                 <Typography variant="caption" color="text.secondary" fontWeight={600}>Category</Typography>
-                <Typography variant="body2">{CATEGORY_LABELS[detail.category] ?? detail.category}</Typography>
+                <Typography variant="body2">{detail.category?.name ?? '—'}</Typography>
               </Box>
               <Box>
                 <Typography variant="caption" color="text.secondary" fontWeight={600}>Hub Location</Typography>
-                <Typography variant="body2">{detail.hubLocation ? HUB_LABELS[detail.hubLocation] ?? detail.hubLocation : '—'}</Typography>
+                <Typography variant="body2">
+                  {detail.hub ? `${detail.hub.city}, ${detail.hub.state}` : '—'}
+                </Typography>
               </Box>
               {detail.itemType === 'SERIALIZED' && (
                 <Box>
@@ -184,7 +183,6 @@ function DetailDrawer({
               )}
             </Box>
 
-            {/* QR Code */}
             <Box mb={3}>
               <Typography variant="subtitle2" fontWeight={600} mb={1}>QR Code</Typography>
               {qrDataUrl && (
@@ -196,7 +194,6 @@ function DetailDrawer({
               )}
             </Box>
 
-            {/* Current status — use row data since /api/inventory/:id does not compute active checkout */}
             {row?.status === 'CHECKED_OUT' && (
               <Box mb={3}>
                 <Typography variant="subtitle2" fontWeight={600} mb={1}>Current Status</Typography>
@@ -209,7 +206,6 @@ function DetailDrawer({
               </Box>
             )}
 
-            {/* Check log */}
             <Box>
               <Typography variant="subtitle2" fontWeight={600} mb={1}>Recent Activity</Typography>
               {detail.checkLogs.length === 0 ? (
@@ -252,7 +248,9 @@ export default function OperatorInventoryPage() {
   const [items, setItems] = React.useState<InventoryItemRow[]>([])
   const [loading, setLoading] = React.useState(true)
 
-  // Filters
+  const [categories, setCategories] = React.useState<CategoryOption[]>([])
+  const [hubs, setHubs] = React.useState<HubOption[]>([])
+
   const [q, setQ] = React.useState('')
   const [debouncedQ, setDebouncedQ] = React.useState('')
   const [filterHub, setFilterHub] = React.useState('')
@@ -260,12 +258,10 @@ export default function OperatorInventoryPage() {
   const [filterStatus, setFilterStatus] = React.useState('')
   const [filterOperator, setFilterOperator] = React.useState('')
 
-  // Dropdown data
   const [operators, setOperators] = React.useState<UserOption[]>([])
 
   const [drawerRow, setDrawerRow] = React.useState<InventoryItemRow | null>(null)
 
-  // Debounce search
   React.useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(q), 300)
     return () => clearTimeout(t)
@@ -276,8 +272,8 @@ export default function OperatorInventoryPage() {
     try {
       const params = new URLSearchParams()
       if (debouncedQ) params.set('q', debouncedQ)
-      if (filterHub) params.set('hubLocation', filterHub)
-      if (filterCategory) params.set('category', filterCategory)
+      if (filterHub) params.set('hubId', filterHub)
+      if (filterCategory) params.set('categoryId', filterCategory)
       if (filterStatus) params.set('status', filterStatus)
       if (filterOperator) params.set('operatorId', filterOperator)
       const res = await fetch(`/api/inventory?${params.toString()}`)
@@ -291,6 +287,11 @@ export default function OperatorInventoryPage() {
   React.useEffect(() => { load() }, [load])
 
   React.useEffect(() => {
+    Promise.all([
+      fetch('/api/categories').then((r) => r.json()),
+      fetch('/api/hubs').then((r) => r.json()),
+    ]).then(([cats, hs]) => { setCategories(cats); setHubs(hs) }).catch(() => {})
+
     fetch('/api/users').then((r) => r.json()).then((d) => {
       setOperators((d.data ?? []).filter((u: UserOption) => u.role === 'OPERATOR'))
     }).catch(() => {})
@@ -308,7 +309,6 @@ export default function OperatorInventoryPage() {
         </Typography>
       </Box>
 
-      {/* Filter bar */}
       <Stack direction="row" spacing={1.5} mb={2.5} flexWrap="wrap">
         <TextField
           size="small"
@@ -319,14 +319,14 @@ export default function OperatorInventoryPage() {
         />
         <TextField select size="small" label="All Hubs" value={filterHub} onChange={(e) => setFilterHub(e.target.value)} sx={{ minWidth: 140 }}>
           <MenuItem value="">All Hubs</MenuItem>
-          {Object.entries(HUB_LABELS).map(([val, label]) => (
-            <MenuItem key={val} value={val}>{label}</MenuItem>
+          {hubs.map((h) => (
+            <MenuItem key={h.id} value={h.id}>{h.city}, {h.state}</MenuItem>
           ))}
         </TextField>
         <TextField select size="small" label="All Categories" value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} sx={{ minWidth: 180 }}>
           <MenuItem value="">All Categories</MenuItem>
-          {Object.entries(CATEGORY_LABELS).map(([val, label]) => (
-            <MenuItem key={val} value={val}>{label}</MenuItem>
+          {categories.map((c) => (
+            <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
           ))}
         </TextField>
         <TextField select size="small" label="All Statuses" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} sx={{ minWidth: 160 }}>
@@ -342,7 +342,6 @@ export default function OperatorInventoryPage() {
         {/* TODO: Rig filter — add after vehicleId added to CheckLog */}
       </Stack>
 
-      {/* Table */}
       <TableContainer component={Paper} sx={{ borderRadius: 2 }}>
         <Table>
           <TableHead>
@@ -374,7 +373,7 @@ export default function OperatorInventoryPage() {
                     >
                       <TableCell>
                         <Typography variant="body2" fontWeight={600}>{item.name}</Typography>
-                        <Chip size="small" label={CATEGORY_LABELS[item.category] ?? item.category} sx={{ mt: 0.25, height: 18, fontSize: 11 }} />
+                        <Chip size="small" label={item.category?.name} sx={{ mt: 0.25, height: 18, fontSize: 11 }} />
                       </TableCell>
                       <TableCell>
                         <Chip
@@ -392,7 +391,7 @@ export default function OperatorInventoryPage() {
                       <TableCell>
                         {item.status === 'CHECKED_OUT' && item.currentOperator
                           ? <Typography variant="body2" fontStyle="italic">With {item.currentOperator.name}</Typography>
-                          : <Typography variant="body2">{item.hubLocation ? (HUB_LABELS[item.hubLocation] ?? item.hubLocation) : '—'}</Typography>
+                          : <Typography variant="body2">{item.hub ? `${item.hub.city}, ${item.hub.state}` : '—'}</Typography>
                         }
                       </TableCell>
                       <TableCell>
