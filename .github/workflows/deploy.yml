@@ -3,8 +3,8 @@ name: Deploy to Cloud Run
 on:
   push:
     branches:
-      - main        # → production
-      - develop     # → staging
+      - production # → production
+      - development # → staging
 
 env:
   GCP_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
@@ -59,7 +59,7 @@ jobs:
             --region ${{ env.GCP_REGION }} \
             --project ${{ env.GCP_PROJECT }} \
             --allow-unauthenticated \
-            --min-instances=${{ github.ref == 'refs/heads/main' && '1' || '0' }} \
+            --min-instances=${{ github.ref == 'refs/heads/production' && '1' || '0' }} \
             --set-secrets "\
               DATABASE_URL=AHITS_DATABASE_URL:latest,\
               DIRECT_URL=AHITS_DIRECT_URL:latest,\

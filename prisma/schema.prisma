@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
@@ -333,4 +334,18 @@ model Photo {
   vehicle         Vehicle?         @relation(fields: [vehicleId], references: [id])
 
   @@map("photos")
+}
+
+model InviteToken {
+  id        String    @id @default(cuid())
+  email     String
+  role      UserRole
+  name      String
+  token     String    @unique @default(cuid())
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  createdBy String    // admin user id
+
+  @@map("invite_tokens")
 }

@@ -1,6 +1,10 @@
 import { Resend } from 'resend'
 
-export const resend = new Resend(process.env.RESEND_API_KEY)
+function getResend() {
+  const key = process.env.RESEND_API_KEY
+  if (!key) throw new Error('RESEND_API_KEY is not set')
+  return new Resend(key)
+}
 
 export async function sendEmail({
   to,
@@ -11,7 +15,7 @@ export async function sendEmail({
   subject: string
   html: string
 }) {
-  return resend.emails.send({
+  return getResend().emails.send({
     from: process.env.EMAIL_FROM ?? 'AHITS <noreply@agricarbon.com>',
     to,
     subject,
