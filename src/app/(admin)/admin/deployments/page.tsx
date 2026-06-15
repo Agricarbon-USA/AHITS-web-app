@@ -16,6 +16,8 @@ import AgricultureIcon from '@mui/icons-material/Agriculture'
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz'
 import StopCircleIcon from '@mui/icons-material/StopCircle'
 import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
+import { DispositionDialog } from '@/components/shared/DispositionDialog'
+import type { HubOption, UserOption } from '@/components/shared/DispositionDialog'
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -57,12 +59,6 @@ interface Rig {
   project: { id: string; name: string } | null
   vehicles: RigVehicleRow[]
   kits: KitRow[]
-}
-
-interface UserOption {
-  id: string
-  name: string
-  role: string
 }
 
 interface VehicleOption {
@@ -109,11 +105,7 @@ function relativeDate(iso: string) {
 // ── Transfer Dialog ───────────────────────────────────────────────
 
 function TransferDialog({
-  rig,
-  operators,
-  onClose,
-  onSuccess,
-  showToast,
+  rig, operators, onClose, onSuccess, showToast,
 }: {
   rig: Rig
   operators: UserOption[]
@@ -123,14 +115,9 @@ function TransferDialog({
 }) {
   const [step, setStep] = React.useState(0)
   const [toOperatorId, setToOperatorId] = React.useState('')
-  const [selVehicles, setSelVehicles] = React.useState<Set<string>>(
-    new Set(rig.vehicles.map((rv) => rv.vehicle.id))
-  )
-  const [selKitItems, setSelKitItems] = React.useState<Set<string>>(
-    new Set(rig.kits.flatMap((k) => k.items.map((ki) => ki.id)))
-  )
+  const [selVehicles, setSelVehicles] = React.useState<Set<string>>(new Set(rig.vehicles.map((rv) => rv.vehicle.id)))
+  const [selKitItems, setSelKitItems] = React.useState<Set<string>>(new Set(rig.kits.flatMap((k) => k.items.map((ki) => ki.id))))
   const [loading, setLoading] = React.useState(false)
-
   const kitItems = rig.kits.flatMap((k) => k.items)
 
   const doTransfer = async (note: string, photoUrls: string[]) => {
@@ -138,17 +125,10 @@ function TransferDialog({
     await fetch(`/api/deployments/${rig.id}/transfer`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        toOperatorId,
-        note,
-        photoUrls,
-        vehicleIds: Array.from(selVehicles),
-        kitItemIds: Array.from(selKitItems),
-      }),
+      body: JSON.stringify({ toOperatorId, note, photoUrls, vehicleIds: Array.from(selVehicles), kitItemIds: Array.from(selKitItems) }),
     })
     setLoading(false)
-    const destName = operators.find((o) => o.id === toOperatorId)?.name ?? 'operator'
-    showToast(`Transfer request sent — waiting for ${destName} to accept.`)
+    showToast(`Transfer request sent — waiting for ${operators.find((o) => o.id === toOperatorId)?.name ?? 'operator'} to accept.`)
     onSuccess()
     onClose()
   }
@@ -158,11 +138,7 @@ function TransferDialog({
       <NotePhotoDialog
         title="Transfer equipment"
         description={`Transferring to ${operators.find((o) => o.id === toOperatorId)?.name ?? 'operator'}`}
-        open={true}
-        loading={loading}
-        onClose={onClose}
-        onConfirm={doTransfer}
-        confirmLabel="Transfer"
+        open={true} loading={loading} onClose={onClose} onConfirm={doTransfer} confirmLabel="Transfer"
       />
     )
   }
@@ -176,21 +152,13 @@ function TransferDialog({
           <Step><StepLabel>Select Items</StepLabel></Step>
           <Step><StepLabel>Note</StepLabel></Step>
         </Stepper>
-
         {step === 0 && (
-          <TextField
-            select
-            label="Destination Operator"
-            value={toOperatorId}
-            onChange={(e) => setToOperatorId(e.target.value)}
-            fullWidth
-          >
+          <TextField select label="Destination Operator" value={toOperatorId} onChange={(e) => setToOperatorId(e.target.value)} fullWidth>
             {operators.filter((o) => o.id !== rig.operator.id).map((o) => (
               <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>
             ))}
           </TextField>
         )}
-
         {step === 1 && (
           <Stack spacing={2}>
             {rig.vehicles.length > 0 && (
@@ -201,15 +169,8 @@ function TransferDialog({
                     const Icon = VEHICLE_ICON[rv.vehicle.type] ?? LocalShippingIcon
                     return (
                       <Stack key={rv.vehicle.id} direction="row" alignItems="center" spacing={1}>
-                        <Checkbox
-                          size="small"
-                          checked={selVehicles.has(rv.vehicle.id)}
-                          onChange={(e) => {
-                            const s = new Set(selVehicles)
-                            e.target.checked ? s.add(rv.vehicle.id) : s.delete(rv.vehicle.id)
-                            setSelVehicles(s)
-                          }}
-                        />
+                        <Checkbox size="small" checked={selVehicles.has(rv.vehicle.id)}
+                          onChange={(e) => { const s = new Set(selVehicles); e.target.checked ? s.add(rv.vehicle.id) : s.delete(rv.vehicle.id); setSelVehicles(s) }} />
                         <Icon fontSize="small" color="action" />
                         <Typography variant="body2">{rv.vehicle.name}</Typography>
                       </Stack>
@@ -224,15 +185,8 @@ function TransferDialog({
                 <Stack spacing={0.5}>
                   {kitItems.map((ki) => (
                     <Stack key={ki.id} direction="row" alignItems="center" spacing={1}>
-                      <Checkbox
-                        size="small"
-                        checked={selKitItems.has(ki.id)}
-                        onChange={(e) => {
-                          const s = new Set(selKitItems)
-                          e.target.checked ? s.add(ki.id) : s.delete(ki.id)
-                          setSelKitItems(s)
-                        }}
-                      />
+                      <Checkbox size="small" checked={selKitItems.has(ki.id)}
+                        onChange={(e) => { const s = new Set(selKitItems); e.target.checked ? s.add(ki.id) : s.delete(ki.id); setSelKitItems(s) }} />
                       <Typography variant="body2">{ki.item.name}</Typography>
                       <Typography variant="caption" color="text.secondary">×{ki.quantity}</Typography>
                     </Stack>
@@ -246,11 +200,7 @@ function TransferDialog({
       <DialogActions sx={{ px: 3, pb: 2 }}>
         <Button onClick={onClose}>Cancel</Button>
         {step > 0 && <Button onClick={() => setStep((s) => s - 1)}>Back</Button>}
-        <Button
-          variant="contained"
-          onClick={() => setStep((s) => s + 1)}
-          disabled={step === 0 && !toOperatorId}
-        >
+        <Button variant="contained" onClick={() => setStep((s) => s + 1)} disabled={step === 0 && !toOperatorId}>
           {step < 1 ? 'Next' : 'Continue to Note'}
         </Button>
       </DialogActions>
@@ -261,11 +211,7 @@ function TransferDialog({
 // ── New Deployment Dialog ─────────────────────────────────────────
 
 function NewDeploymentDialog({
-  operators,
-  vehicles,
-  inventoryItems,
-  onClose,
-  onSuccess,
+  operators, vehicles, inventoryItems, onClose, onSuccess,
 }: {
   operators: UserOption[]
   vehicles: VehicleOption[]
@@ -288,16 +234,12 @@ function NewDeploymentDialog({
 
   const launch = async () => {
     if (!note.trim()) { setError('Note is required'); return }
-    setLoading(true)
-    setError('')
+    setLoading(true); setError('')
     const res = await fetch('/api/deployments', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        operatorId,
-        projectId: projectId || undefined,
-        label: label || undefined,
-        note,
+        operatorId, projectId: projectId || undefined, label: label || undefined, note,
         vehicleIds: Array.from(selVehicles),
         kitItems: Array.from(kitItems.entries()).map(([inventoryItemId, quantity]) => ({ inventoryItemId, quantity })),
       }),
@@ -317,19 +259,15 @@ function NewDeploymentDialog({
           <Step><StepLabel>Build Kit</StepLabel></Step>
           <Step><StepLabel>Launch</StepLabel></Step>
         </Stepper>
-
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-
         {step === 0 && (
           <Stack spacing={2}>
             <TextField select label="Operator" value={operatorId} onChange={(e) => setOperatorId(e.target.value)} fullWidth required>
               {operators.map((o) => <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>)}
             </TextField>
-            <TextField label="Label (optional)" value={label} onChange={(e) => setLabel(e.target.value)} fullWidth
-              placeholder="e.g. TX Summer Run" />
+            <TextField label="Label (optional)" value={label} onChange={(e) => setLabel(e.target.value)} fullWidth placeholder="e.g. TX Summer Run" />
           </Stack>
         )}
-
         {step === 1 && (
           <Box>
             <Typography variant="body2" color="text.secondary" mb={2}>Select vehicles for this deployment</Typography>
@@ -343,11 +281,7 @@ function NewDeploymentDialog({
                     <ListItem key={v.id} disablePadding>
                       <ListItemIcon sx={{ minWidth: 36 }}>
                         <Checkbox size="small" checked={selVehicles.has(v.id)}
-                          onChange={(e) => {
-                            const s = new Set(selVehicles)
-                            e.target.checked ? s.add(v.id) : s.delete(v.id)
-                            setSelVehicles(s)
-                          }} />
+                          onChange={(e) => { const s = new Set(selVehicles); e.target.checked ? s.add(v.id) : s.delete(v.id); setSelVehicles(s) }} />
                       </ListItemIcon>
                       <ListItemIcon sx={{ minWidth: 32 }}><Icon fontSize="small" /></ListItemIcon>
                       <ListItemText primary={v.name} secondary={v.type} />
@@ -356,12 +290,9 @@ function NewDeploymentDialog({
                 })}
               </List>
             )}
-            {selVehicles.size === 0 && (
-              <Alert severity="warning" sx={{ mt: 1 }}>At least one vehicle is recommended</Alert>
-            )}
+            {selVehicles.size === 0 && <Alert severity="warning" sx={{ mt: 1 }}>At least one vehicle is recommended</Alert>}
           </Box>
         )}
-
         {step === 2 && (
           <Box>
             <Typography variant="body2" color="text.secondary" mb={2}>Select items to pack into this kit</Typography>
@@ -374,52 +305,29 @@ function NewDeploymentDialog({
                   return (
                     <Stack key={item.id} direction="row" alignItems="center" spacing={1}>
                       <Checkbox size="small" checked={qty > 0}
-                        onChange={(e) => {
-                          const m = new Map(kitItems)
-                          e.target.checked ? m.set(item.id, 1) : m.delete(item.id)
-                          setKitItems(m)
-                        }} />
+                        onChange={(e) => { const m = new Map(kitItems); e.target.checked ? m.set(item.id, 1) : m.delete(item.id); setKitItems(m) }} />
                       <Box flexGrow={1}>
                         <Typography variant="body2">{item.name}</Typography>
                         <Chip size="small" label={item.category.name} sx={{ height: 16, fontSize: 10, mt: 0.25 }} />
                       </Box>
                       {qty > 0 && (
-                        <TextField
-                          type="number"
-                          size="small"
-                          value={qty}
-                          onChange={(e) => {
-                            const m = new Map(kitItems)
-                            const v = parseInt(e.target.value) || 1
-                            m.set(item.id, v)
-                            setKitItems(m)
-                          }}
+                        <TextField type="number" size="small" value={qty}
+                          onChange={(e) => { const m = new Map(kitItems); m.set(item.id, parseInt(e.target.value) || 1); setKitItems(m) }}
                           inputProps={{ min: 1, style: { MozAppearance: 'textfield', width: 60 } }}
-                          sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }}
-                        />
+                          sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }} />
                       )}
                     </Stack>
                   )
                 })}
               </Stack>
             )}
-            {kitItems.size === 0 && (
-              <Alert severity="warning" sx={{ mt: 1 }}>Starting with empty kit</Alert>
-            )}
+            {kitItems.size === 0 && <Alert severity="warning" sx={{ mt: 1 }}>Starting with empty kit</Alert>}
           </Box>
         )}
-
         {step === 3 && (
           <Stack spacing={2}>
-            <TextField
-              label="Deployment note (required)"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              multiline rows={3}
-              fullWidth
-              placeholder="e.g. Starting TX deployment with Truck 01 and Christie Drill kit"
-              required
-            />
+            <TextField label="Deployment note (required)" value={note} onChange={(e) => setNote(e.target.value)}
+              multiline rows={3} fullWidth placeholder="e.g. Starting TX deployment with Truck 01 and Christie Drill kit" required />
           </Stack>
         )}
       </DialogContent>
@@ -442,18 +350,13 @@ function NewDeploymentDialog({
 // ── Deployment Detail Drawer ──────────────────────────────────────
 
 function DeploymentDrawer({
-  rig: initialRig,
-  operators,
-  vehicles,
-  inventoryItems,
-  onClose,
-  onUpdated,
-  showToast,
+  rig: initialRig, operators, vehicles, inventoryItems, hubs, onClose, onUpdated, showToast,
 }: {
   rig: Rig
   operators: UserOption[]
   vehicles: VehicleOption[]
   inventoryItems: InventoryOption[]
+  hubs: HubOption[]
   onClose: () => void
   onUpdated: () => void
   showToast: (msg: string) => void
@@ -487,7 +390,6 @@ function DeploymentDrawer({
   React.useEffect(() => { loadTransfers() }, [loadTransfers])
 
   const outgoingTransfers = pendingTransfers.filter((t) => t.fromRig.id === rig.id)
-
   const kitItems = rig.kits.flatMap((k) => k.items)
   const unassignedVehicles = vehicles.filter((v) => !v.assignedOperatorId || v.assignedOperatorId === rig.operator.id)
   const availableItems = inventoryItems.filter((i) => i.status === 'AVAILABLE')
@@ -544,8 +446,7 @@ function DeploymentDrawer({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         items: Array.from(pendingItems.entries()).map(([inventoryItemId, quantity]) => ({ inventoryItemId, quantity })),
-        note,
-        photoUrls,
+        note, photoUrls,
       }),
     })
     setActionLoading(false)
@@ -555,32 +456,13 @@ function DeploymentDrawer({
     await refresh()
   }
 
-  const handleRemoveItems = async (note: string, photoUrls: string[]) => {
-    setActionLoading(true)
-    await fetch(`/api/deployments/${rig.id}/items`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ kitItemIds: Array.from(selItems), note, photoUrls }),
-    })
-    setActionLoading(false)
-    setNoteDialog(null)
-    setRemovingItems(false)
-    setSelItems(new Set())
-    await refresh()
-  }
+  const selectedItems = kitItems
+    .filter((ki) => selItems.has(ki.id))
+    .map((ki) => ({ kitItemId: ki.id, itemId: ki.item.id, name: ki.item.name, quantity: ki.quantity }))
 
-  const handleEnd = async (note: string) => {
-    setActionLoading(true)
-    await fetch(`/api/deployments/${rig.id}/end`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ note }),
-    })
-    setActionLoading(false)
-    setNoteDialog(null)
-    await refresh()
-    onClose()
-  }
+  const allKitItemSummaries = kitItems.map((ki) => ({
+    kitItemId: ki.id, itemId: ki.item.id, name: ki.item.name, quantity: ki.quantity,
+  }))
 
   return (
     <>
@@ -588,39 +470,29 @@ function DeploymentDrawer({
         <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
           <Box px={3} pt={3} pb={2}>
             <Stack direction="row" alignItems="center" spacing={1.5} mb={1}>
-              <Avatar sx={{ bgcolor: 'primary.main', width: 36, height: 36, fontSize: 14 }}>
-                {initials(rig.operator.name)}
-              </Avatar>
+              <Avatar sx={{ bgcolor: 'primary.main', width: 36, height: 36, fontSize: 14 }}>{initials(rig.operator.name)}</Avatar>
               <Box>
                 <Typography variant="h6" fontWeight={700}>{rig.operator.name}</Typography>
                 {rig.label && <Typography variant="body2" color="text.secondary">{rig.label}</Typography>}
               </Box>
               <Box flexGrow={1} />
-              <Chip
-                size="small"
-                label={isActive ? 'Active' : 'Ended'}
-                color={isActive ? 'success' : 'default'}
-              />
+              <Chip size="small" label={isActive ? 'Active' : 'Ended'} color={isActive ? 'success' : 'default'} />
             </Stack>
-            {rig.project && (
-              <Typography variant="body2" color="text.secondary">Project: {rig.project.name}</Typography>
-            )}
-            <Typography variant="caption" color="text.secondary">
-              Started {relativeDate(rig.startedAt)}
-            </Typography>
+            {rig.project && <Typography variant="body2" color="text.secondary">Project: {rig.project.name}</Typography>}
+            <Typography variant="caption" color="text.secondary">Started {relativeDate(rig.startedAt)}</Typography>
           </Box>
           <Divider />
 
           <Box sx={{ flex: 1, overflow: 'auto', px: 3, py: 2 }}>
-            {/* Outgoing Pending Transfers */}
             {outgoingTransfers.length > 0 && (
               <Box mb={2}>
                 <Typography variant="subtitle2" fontWeight={600} mb={1}>Outgoing Pending Transfers</Typography>
                 <Stack spacing={1}>
                   {outgoingTransfers.map((tr) => {
-                    const vehicleNames = tr.vehicles.map((tv) => tv.vehicle.name).join(', ')
-                    const itemNames = tr.items.map((ti) => `${ti.kitItem.item.name} ×${ti.kitItem.quantity}`).join(', ')
-                    const summary = [vehicleNames, itemNames].filter(Boolean).join(', ')
+                    const summary = [
+                      tr.vehicles.map((tv) => tv.vehicle.name).join(', '),
+                      tr.items.map((ti) => `${ti.kitItem.item.name} ×${ti.kitItem.quantity}`).join(', '),
+                    ].filter(Boolean).join(', ')
                     return (
                       <Box key={tr.id} sx={{ p: 1.5, border: '1px solid', borderColor: 'warning.main', borderRadius: 1 }}>
                         <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
@@ -650,8 +522,7 @@ function DeploymentDrawer({
                     <Button size="small" variant="outlined" color="error" onClick={() => setRemovingVehicles(true)}>Remove</Button>
                   )}
                   {removingVehicles && selVehicles.size > 0 && (
-                    <Button size="small" variant="contained" color="error"
-                      onClick={() => setNoteDialog('removeVehicles')}>
+                    <Button size="small" variant="contained" color="error" onClick={() => setNoteDialog('removeVehicles')}>
                       Remove ({selVehicles.size})
                     </Button>
                   )}
@@ -661,7 +532,6 @@ function DeploymentDrawer({
                 </Stack>
               )}
             </Stack>
-
             {rig.vehicles.length === 0 ? (
               <Typography variant="body2" color="text.secondary" mb={2}>No vehicles in this rig.</Typography>
             ) : (
@@ -672,11 +542,7 @@ function DeploymentDrawer({
                     <Stack key={rv.id} direction="row" alignItems="center" spacing={1}>
                       {removingVehicles && (
                         <Checkbox size="small" checked={selVehicles.has(rv.vehicle.id)}
-                          onChange={(e) => {
-                            const s = new Set(selVehicles)
-                            e.target.checked ? s.add(rv.vehicle.id) : s.delete(rv.vehicle.id)
-                            setSelVehicles(s)
-                          }} />
+                          onChange={(e) => { const s = new Set(selVehicles); e.target.checked ? s.add(rv.vehicle.id) : s.delete(rv.vehicle.id); setSelVehicles(s) }} />
                       )}
                       <Icon fontSize="small" color="action" />
                       <Typography variant="body2">{rv.vehicle.name}</Typography>
@@ -699,8 +565,7 @@ function DeploymentDrawer({
                     <Button size="small" variant="outlined" color="error" onClick={() => setRemovingItems(true)}>Remove</Button>
                   )}
                   {removingItems && selItems.size > 0 && (
-                    <Button size="small" variant="contained" color="error"
-                      onClick={() => setNoteDialog('removeItems')}>
+                    <Button size="small" variant="contained" color="error" onClick={() => setNoteDialog('removeItems')}>
                       Remove ({selItems.size})
                     </Button>
                   )}
@@ -710,7 +575,6 @@ function DeploymentDrawer({
                 </Stack>
               )}
             </Stack>
-
             {kitItems.length === 0 ? (
               <Typography variant="body2" color="text.secondary">Empty kit.</Typography>
             ) : (
@@ -719,11 +583,7 @@ function DeploymentDrawer({
                   <Stack key={ki.id} direction="row" alignItems="center" spacing={1}>
                     {removingItems && (
                       <Checkbox size="small" checked={selItems.has(ki.id)}
-                        onChange={(e) => {
-                          const s = new Set(selItems)
-                          e.target.checked ? s.add(ki.id) : s.delete(ki.id)
-                          setSelItems(s)
-                        }} />
+                        onChange={(e) => { const s = new Set(selItems); e.target.checked ? s.add(ki.id) : s.delete(ki.id); setSelItems(s) }} />
                     )}
                     <Typography variant="body2" flexGrow={1}>{ki.item.name}</Typography>
                     <Chip size="small" label={ki.item.category.name} sx={{ height: 18, fontSize: 10 }} />
@@ -738,12 +598,9 @@ function DeploymentDrawer({
             <>
               <Divider />
               <Stack direction="row" spacing={1} px={3} py={2}>
-                <Button variant="outlined" startIcon={<SwapHorizIcon />} onClick={() => setTransferOpen(true)}>
-                  Transfer…
-                </Button>
+                <Button variant="outlined" startIcon={<SwapHorizIcon />} onClick={() => setTransferOpen(true)}>Transfer…</Button>
                 <Box flexGrow={1} />
-                <Button variant="outlined" color="error" startIcon={<StopCircleIcon />}
-                  onClick={() => setNoteDialog('end')}>
+                <Button variant="outlined" color="error" startIcon={<StopCircleIcon />} onClick={() => setNoteDialog('end')}>
                   End Deployment
                 </Button>
               </Stack>
@@ -766,11 +623,7 @@ function DeploymentDrawer({
                   <ListItem key={v.id} disablePadding>
                     <ListItemIcon sx={{ minWidth: 36 }}>
                       <Checkbox size="small" checked={pendingVehicles.has(v.id)}
-                        onChange={(e) => {
-                          const s = new Set(pendingVehicles)
-                          e.target.checked ? s.add(v.id) : s.delete(v.id)
-                          setPendingVehicles(s)
-                        }} />
+                        onChange={(e) => { const s = new Set(pendingVehicles); e.target.checked ? s.add(v.id) : s.delete(v.id); setPendingVehicles(s) }} />
                     </ListItemIcon>
                     <ListItemIcon sx={{ minWidth: 32 }}><Icon fontSize="small" /></ListItemIcon>
                     <ListItemText primary={v.name} />
@@ -783,9 +636,7 @@ function DeploymentDrawer({
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => { setAddVehicleOpen(false); setPendingVehicles(new Set()) }}>Cancel</Button>
           <Button variant="contained" disabled={pendingVehicles.size === 0}
-            onClick={() => { setAddVehicleOpen(false); setNoteDialog('addVehicles') }}>
-            Continue
-          </Button>
+            onClick={() => { setAddVehicleOpen(false); setNoteDialog('addVehicles') }}>Continue</Button>
         </DialogActions>
       </Dialog>
 
@@ -802,28 +653,16 @@ function DeploymentDrawer({
                 return (
                   <Stack key={item.id} direction="row" alignItems="center" spacing={1}>
                     <Checkbox size="small" checked={qty > 0}
-                      onChange={(e) => {
-                        const m = new Map(pendingItems)
-                        e.target.checked ? m.set(item.id, 1) : m.delete(item.id)
-                        setPendingItems(m)
-                      }} />
+                      onChange={(e) => { const m = new Map(pendingItems); e.target.checked ? m.set(item.id, 1) : m.delete(item.id); setPendingItems(m) }} />
                     <Box flexGrow={1}>
                       <Typography variant="body2">{item.name}</Typography>
                       <Chip size="small" label={item.category.name} sx={{ height: 16, fontSize: 10 }} />
                     </Box>
                     {qty > 0 && (
-                      <TextField
-                        type="number"
-                        size="small"
-                        value={qty}
-                        onChange={(e) => {
-                          const m = new Map(pendingItems)
-                          m.set(item.id, parseInt(e.target.value) || 1)
-                          setPendingItems(m)
-                        }}
+                      <TextField type="number" size="small" value={qty}
+                        onChange={(e) => { const m = new Map(pendingItems); m.set(item.id, parseInt(e.target.value) || 1); setPendingItems(m) }}
                         inputProps={{ min: 1, style: { MozAppearance: 'textfield', width: 60 } }}
-                        sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }}
-                      />
+                        sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }} />
                     )}
                   </Stack>
                 )
@@ -834,13 +673,11 @@ function DeploymentDrawer({
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => { setAddItemOpen(false); setPendingItems(new Map()) }}>Cancel</Button>
           <Button variant="contained" disabled={pendingItems.size === 0}
-            onClick={() => { setAddItemOpen(false); setNoteDialog('addItems') }}>
-            Continue
-          </Button>
+            onClick={() => { setAddItemOpen(false); setNoteDialog('addItems') }}>Continue</Button>
         </DialogActions>
       </Dialog>
 
-      {/* Note dialogs */}
+      {/* NotePhotoDialogs — vehicles and addItems only */}
       <NotePhotoDialog
         open={noteDialog === 'addVehicles'}
         title="Add vehicles to rig"
@@ -866,34 +703,47 @@ function DeploymentDrawer({
         onConfirm={handleAddItems}
         confirmLabel="Add Items"
       />
-      <NotePhotoDialog
-        open={noteDialog === 'removeItems'}
-        title={`Remove ${selItems.size} item(s) from kit`}
-        loading={actionLoading}
-        onClose={() => setNoteDialog(null)}
-        onConfirm={handleRemoveItems}
-        confirmLabel="Remove Items"
-        confirmColor="error"
-      />
-      <NotePhotoDialog
-        open={noteDialog === 'end'}
-        title="End this deployment?"
-        description="All kit items will be checked back in and vehicles unassigned."
-        loading={actionLoading}
-        onClose={() => setNoteDialog(null)}
-        onConfirm={(note) => handleEnd(note)}
-        confirmLabel="End Deployment"
-        confirmColor="error"
-      />
+
+      {/* DispositionDialog — remove items */}
+      {noteDialog === 'removeItems' && selectedItems.length > 0 && (
+        <DispositionDialog
+          open={true}
+          mode="remove-items"
+          deploymentId={rig.id}
+          currentOperatorId={rig.operator.id}
+          operators={operators}
+          hubs={hubs}
+          items={selectedItems}
+          onComplete={() => {
+            setNoteDialog(null)
+            setRemovingItems(false)
+            setSelItems(new Set())
+            void refresh()
+          }}
+          onClose={() => setNoteDialog(null)}
+        />
+      )}
+
+      {/* DispositionDialog — end deployment */}
+      {noteDialog === 'end' && (
+        <DispositionDialog
+          open={true}
+          mode="end-deployment"
+          deploymentId={rig.id}
+          currentOperatorId={rig.operator.id}
+          operators={operators}
+          hubs={hubs}
+          items={allKitItemSummaries}
+          onComplete={() => {
+            setNoteDialog(null)
+            void refresh().then(() => onClose())
+          }}
+          onClose={() => setNoteDialog(null)}
+        />
+      )}
 
       {transferOpen && (
-        <TransferDialog
-          rig={rig}
-          operators={operators}
-          onClose={() => setTransferOpen(false)}
-          onSuccess={refresh}
-          showToast={showToast}
-        />
+        <TransferDialog rig={rig} operators={operators} onClose={() => setTransferOpen(false)} onSuccess={refresh} showToast={showToast} />
       )}
 
       {/* Cancel transfer confirm */}
@@ -904,8 +754,7 @@ function DeploymentDrawer({
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => setCancelTransferId(null)} disabled={cancelLoading}>Keep</Button>
-          <Button variant="contained" color="error" onClick={handleCancelTransfer}
-            disabled={cancelLoading}
+          <Button variant="contained" color="error" onClick={handleCancelTransfer} disabled={cancelLoading}
             startIcon={cancelLoading ? <CircularProgress size={16} color="inherit" /> : null}>
             {cancelLoading ? 'Cancelling…' : 'Cancel Transfer'}
           </Button>
@@ -926,6 +775,7 @@ export default function AdminDeploymentsPage() {
   const [operators, setOperators] = React.useState<UserOption[]>([])
   const [vehicles, setVehicles] = React.useState<VehicleOption[]>([])
   const [inventoryItems, setInventoryItems] = React.useState<InventoryOption[]>([])
+  const [hubs, setHubs] = React.useState<HubOption[]>([])
   const [drawerRig, setDrawerRig] = React.useState<Rig | null>(null)
   const [newOpen, setNewOpen] = React.useState(false)
 
@@ -944,6 +794,7 @@ export default function AdminDeploymentsPage() {
     fetch('/api/users').then((r) => r.json()).then((d) => setOperators(d.data ?? [])).catch(() => {})
     fetch('/api/vehicles').then((r) => r.json()).then((d) => setVehicles(d.data ?? d ?? [])).catch(() => {})
     fetch('/api/inventory?pageSize=200').then((r) => r.json()).then((d) => setInventoryItems(d.data ?? [])).catch(() => {})
+    fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(d ?? [])).catch(() => {})
   }, [])
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 4000) }
@@ -992,59 +843,36 @@ export default function AdminDeploymentsPage() {
           <TableBody>
             {loading
               ? Array.from({ length: 4 }).map((_, i) => (
-                  <TableRow key={i}>
-                    {Array.from({ length: 6 }).map((_, j) => (
-                      <TableCell key={j}><Skeleton width={100} /></TableCell>
-                    ))}
-                  </TableRow>
+                  <TableRow key={i}>{Array.from({ length: 6 }).map((_, j) => <TableCell key={j}><Skeleton width={100} /></TableCell>)}</TableRow>
                 ))
               : rigs.map((rig) => {
                   const kitItems = rig.kits.flatMap((k) => k.items)
                   return (
-                    <TableRow key={rig.id} hover sx={{ cursor: 'pointer', '&:last-child td': { border: 0 } }}
-                      onClick={() => setDrawerRig(rig)}>
+                    <TableRow key={rig.id} hover sx={{ cursor: 'pointer', '&:last-child td': { border: 0 } }} onClick={() => setDrawerRig(rig)}>
                       <TableCell>
                         <Stack direction="row" alignItems="center" spacing={1}>
-                          <Avatar sx={{ width: 28, height: 28, fontSize: 12, bgcolor: 'primary.main' }}>
-                            {initials(rig.operator.name)}
-                          </Avatar>
+                          <Avatar sx={{ width: 28, height: 28, fontSize: 12, bgcolor: 'primary.main' }}>{initials(rig.operator.name)}</Avatar>
                           <Typography variant="body2">{rig.operator.name}</Typography>
                         </Stack>
                       </TableCell>
                       <TableCell>
-                        <Typography variant="body2">
-                          {rig.vehicles.length === 0
-                            ? '—'
-                            : rig.vehicles.map((rv) => rv.vehicle.name).join(', ')
-                          }
-                        </Typography>
+                        <Typography variant="body2">{rig.vehicles.length === 0 ? '—' : rig.vehicles.map((rv) => rv.vehicle.name).join(', ')}</Typography>
                       </TableCell>
                       <TableCell>
                         <Tooltip title={kitItems.map((ki) => ki.item.name).join(', ')} arrow>
-                          <Typography variant="body2">
-                            {kitItems.length === 0 ? '—' : `${kitItems.length} item${kitItems.length !== 1 ? 's' : ''}`}
-                          </Typography>
+                          <Typography variant="body2">{kitItems.length === 0 ? '—' : `${kitItems.length} item${kitItems.length !== 1 ? 's' : ''}`}</Typography>
                         </Tooltip>
                       </TableCell>
-                      <TableCell>
-                        <Typography variant="body2">{rig.project?.name ?? '—'}</Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2">{relativeDate(rig.startedAt)}</Typography>
-                      </TableCell>
+                      <TableCell><Typography variant="body2">{rig.project?.name ?? '—'}</Typography></TableCell>
+                      <TableCell><Typography variant="body2">{relativeDate(rig.startedAt)}</Typography></TableCell>
                       <TableCell align="right" onClick={(e) => e.stopPropagation()}>
                         <Stack direction="row" spacing={0.5} justifyContent="flex-end">
                           <Tooltip title="Transfer">
-                            <span>
-                              <IconButton size="small" disabled={!!rig.endedAt}>
-                                <SwapHorizIcon fontSize="small" />
-                              </IconButton>
-                            </span>
+                            <span><IconButton size="small" disabled={!!rig.endedAt}><SwapHorizIcon fontSize="small" /></IconButton></span>
                           </Tooltip>
                           <Tooltip title="End">
                             <span>
-                              <IconButton size="small" color="error" disabled={!!rig.endedAt}
-                                onClick={() => setDrawerRig(rig)}>
+                              <IconButton size="small" color="error" disabled={!!rig.endedAt} onClick={() => setDrawerRig(rig)}>
                                 <StopCircleIcon fontSize="small" />
                               </IconButton>
                             </span>
@@ -1054,7 +882,6 @@ export default function AdminDeploymentsPage() {
                     </TableRow>
                   )
                 })}
-
             {!loading && rigs.length === 0 && (
               <TableRow>
                 <TableCell colSpan={6} align="center" sx={{ py: 6, color: 'text.secondary' }}>
@@ -1072,6 +899,7 @@ export default function AdminDeploymentsPage() {
           operators={operators}
           vehicles={vehicles}
           inventoryItems={inventoryItems}
+          hubs={hubs}
           onClose={() => setDrawerRig(null)}
           onUpdated={load}
           showToast={showToast}

@@ -37,7 +37,15 @@ enum EquipmentStatus {
   AVAILABLE
   CHECKED_OUT
   IN_MAINTENANCE
+  INOPERABLE
   RETIRED
+}
+
+enum RepairType {
+  IN_FIELD
+  AT_SHOP
+  SHIP_TO_HUB
+  SHIP_FOR_REPAIR
 }
 
 enum CheckAction {
@@ -141,6 +149,7 @@ model User {
   rigs               Rig[]             @relation("OperatorRigs")
   transfersReceived  TransferRequest[] @relation("TransferTo")
   transfersInitiated TransferRequest[] @relation("TransferBy")
+  inoperableReports  InventoryItem[]   @relation("InoperableReports")
 
   @@map("users")
 }
@@ -156,13 +165,14 @@ model Category {
 }
 
 model Hub {
-  id        String          @id @default(cuid())
-  name      String
-  city      String
-  state     String
-  isActive  Boolean         @default(true)
-  createdAt DateTime        @default(now())
-  items     InventoryItem[]
+  id          String            @id @default(cuid())
+  name        String
+  city        String
+  state       String
+  isActive    Boolean           @default(true)
+  createdAt   DateTime          @default(now())
+  items       InventoryItem[]
+  repairTasks MaintenanceTask[]
 
   @@map("hubs")
 }
@@ -287,13 +297,17 @@ model InventoryItem {
   status            EquipmentStatus @default(AVAILABLE)
   location          String?
   qrCodeId          String          @unique @default(cuid())
-  notes             String?
-  lowStockThreshold Int?
-  itemType          ItemType        @default(CONSUMABLE)
-  unitId            String?
-  expectedQuantity  Int?
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  notes                  String?
+  lowStockThreshold      Int?
+  itemType               ItemType        @default(CONSUMABLE)
+  unitId                 String?
+  expectedQuantity       Int?
+  inoperableNotes        String?
+  inoperableReportedAt   DateTime?
+  inoperableReportedById String?
+  inoperableReportedBy   User?           @relation("InoperableReports", fields: [inoperableReportedById], references: [id])
+  createdAt              DateTime        @default(now())
+  updatedAt              DateTime        @updatedAt
 
   checkLogs        CheckLog[]
   photos           Photo[]
@@ -377,29 +391,38 @@ model CheckLog {
 }
 
 model MaintenanceTask {
-  id            String            @id @default(cuid())
-  vehicleId     String?
-  itemId        String?
-  taskName      String
-  intervalType  IntervalType
-  intervalValue Int
-  priority      Priority          @default(MEDIUM)
-  lastCompleted DateTime?
-  lastOdometer  Int?
-  nextDue       DateTime?
-  nextOdometer  Int?
-  status        MaintenanceStatus @default(UPCOMING)
-  estimatedCost Decimal?          @db.Decimal(10, 2)
-  actualCost    Decimal?          @db.Decimal(10, 2)
-  assigneeId    String?
-  notes         String?
-  completedAt   DateTime?
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
+  id             String            @id @default(cuid())
+  vehicleId      String?
+  itemId         String?
+  taskName       String
+  intervalType   IntervalType?
+  intervalValue  Int?
+  isDamageReport Boolean           @default(false)
+  repairType     RepairType?
+  shopName       String?
+  shopAddress    String?
+  dateDelivered  DateTime?
+  purchaseOrder  String?
+  invoiceNumber  String?
+  repairHubId    String?
+  priority       Priority          @default(MEDIUM)
+  lastCompleted  DateTime?
+  lastOdometer   Int?
+  nextDue        DateTime?
+  nextOdometer   Int?
+  status         MaintenanceStatus @default(UPCOMING)
+  estimatedCost  Decimal?          @db.Decimal(10, 2)
+  actualCost     Decimal?          @db.Decimal(10, 2)
+  assigneeId     String?
+  notes          String?
+  completedAt    DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
 
-  vehicle Vehicle?          @relation(fields: [vehicleId], references: [id])
-  item    InventoryItem?    @relation(fields: [itemId], references: [id])
-  photos  Photo[]
+  vehicle   Vehicle?          @relation(fields: [vehicleId], references: [id])
+  item      InventoryItem?    @relation(fields: [itemId], references: [id])
+  repairHub Hub?              @relation(fields: [repairHubId], references: [id])
+  photos    Photo[]
 
   @@map("maintenance_tasks")
 }

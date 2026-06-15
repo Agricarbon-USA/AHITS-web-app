@@ -16,6 +16,7 @@ import SwapHorizIcon from '@mui/icons-material/SwapHoriz'
 import StopCircleIcon from '@mui/icons-material/StopCircle'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
+import { DispositionDialog, KitItemSummary } from '@/components/shared/DispositionDialog'
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -82,6 +83,13 @@ interface UserOption {
   id: string
   name: string
   role: string
+}
+
+interface HubOption {
+  id: string
+  name: string
+  city: string
+  state: string
 }
 
 interface TransferRow {
@@ -403,6 +411,7 @@ export default function MyRigPage() {
   const [vehicles, setVehicles] = React.useState<VehicleOption[]>([])
   const [inventoryItems, setInventoryItems] = React.useState<InventoryOption[]>([])
   const [operators, setOperators] = React.useState<UserOption[]>([])
+  const [hubs, setHubs] = React.useState<HubOption[]>([])
 
   const [newOpen, setNewOpen] = React.useState(false)
   const [transferOpen, setTransferOpen] = React.useState(false)
@@ -462,6 +471,7 @@ export default function MyRigPage() {
     fetch('/api/users').then((r) => r.json()).then((d) => {
       setOperators((d.data ?? []).filter((u: UserOption) => u.role === 'OPERATOR'))
     }).catch(() => {})
+    fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(d ?? [])).catch(() => {})
   }, [load])
 
   const handleRespond = async () => {
@@ -886,25 +896,52 @@ export default function MyRigPage() {
         onConfirm={(note, photoUrls) => doAction('addItems', note, photoUrls)}
         confirmLabel="Add Items"
       />
-      <NotePhotoDialog
-        open={noteDialog === 'removeItems'}
-        title={`Remove ${selItems.size} item(s) from kit`}
-        loading={actionLoading}
-        onClose={() => setNoteDialog(null)}
-        onConfirm={(note, photoUrls) => doAction('removeItems', note, photoUrls)}
-        confirmLabel="Remove"
-        confirmColor="error"
-      />
-      <NotePhotoDialog
-        open={noteDialog === 'end'}
-        title="End this deployment?"
-        description="All kit items will be checked back in and vehicles unassigned."
-        loading={actionLoading}
-        onClose={() => setNoteDialog(null)}
-        onConfirm={(note, photoUrls) => doAction('end', note, photoUrls)}
-        confirmLabel="End Deployment"
-        confirmColor="error"
-      />
+      {noteDialog === 'removeItems' && selItems.size > 0 && (
+        <DispositionDialog
+          open={true}
+          mode="remove-items"
+          deploymentId={rig.id}
+          currentOperatorId={rig.operator.id}
+          operators={operators}
+          hubs={hubs}
+          items={kitItems
+            .filter((ki) => selItems.has(ki.id))
+            .map<KitItemSummary>((ki) => ({
+              kitItemId: ki.id,
+              itemId: ki.item.id,
+              name: ki.item.name,
+              quantity: ki.quantity,
+            }))}
+          onComplete={() => {
+            setNoteDialog(null)
+            setRemovingItems(false)
+            setSelItems(new Set())
+            void load()
+          }}
+          onClose={() => setNoteDialog(null)}
+        />
+      )}
+      {noteDialog === 'end' && (
+        <DispositionDialog
+          open={true}
+          mode="end-deployment"
+          deploymentId={rig.id}
+          currentOperatorId={rig.operator.id}
+          operators={operators}
+          hubs={hubs}
+          items={kitItems.map<KitItemSummary>((ki) => ({
+            kitItemId: ki.id,
+            itemId: ki.item.id,
+            name: ki.item.name,
+            quantity: ki.quantity,
+          }))}
+          onComplete={() => {
+            setNoteDialog(null)
+            void load()
+          }}
+          onClose={() => setNoteDialog(null)}
+        />
+      )}
 
       {transferOpen && (
         <TransferDialog

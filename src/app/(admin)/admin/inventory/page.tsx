@@ -24,6 +24,7 @@ const STATUS_CHIP_COLOR: Record<string, 'success' | 'primary' | 'warning' | 'def
   AVAILABLE: 'success',
   CHECKED_OUT: 'primary',
   IN_MAINTENANCE: 'warning',
+  INOPERABLE: 'warning',
   RETIRED: 'default',
 }
 
@@ -31,22 +32,14 @@ const STATUS_LABELS: Record<string, string> = {
   AVAILABLE: 'Available',
   CHECKED_OUT: 'Checked Out',
   IN_MAINTENANCE: 'In Maintenance',
+  INOPERABLE: 'Inoperable',
   RETIRED: 'Retired',
 }
 
 // ── Types ─────────────────────────────────────────────────────────
 
-interface CategoryOption {
-  id: string
-  name: string
-}
-
-interface HubOption {
-  id: string
-  name: string
-  city: string
-  state: string
-}
+interface CategoryOption { id: string; name: string }
+interface HubOption { id: string; name: string; city: string; state: string }
 
 interface InventoryItemRow {
   id: string
@@ -66,6 +59,9 @@ interface InventoryItemRow {
   itemType: string
   unitId: string | null
   expectedQuantity: number | null
+  inoperableNotes: string | null
+  inoperableReportedAt: string | null
+  inoperableReportedById: string | null
   createdAt: string
   updatedAt: string
   currentOperator: { id: string; name: string } | null
@@ -80,46 +76,35 @@ interface CheckLogEntry {
   operator: { id: string; name: string } | null
 }
 
+interface PhotoEntry {
+  id: string
+  url: string
+  context: string
+}
+
 interface ItemDetail extends InventoryItemRow {
   checkLogs: CheckLogEntry[]
+  photos: PhotoEntry[]
+  inoperableReportedBy: { id: string; name: string } | null
 }
 
-interface UserOption {
-  id: string
-  name: string
-  role: string
-}
-
-interface ProjectOption {
-  id: string
-  name: string
-}
+interface UserOption { id: string; name: string; role: string }
+interface ProjectOption { id: string; name: string }
 
 // ── Confirm Dialog ────────────────────────────────────────────────
 
 function ConfirmDialog({
   open, title, message, confirmLabel, confirmColor, onClose, onConfirm,
 }: {
-  open: boolean
-  title: string
-  message: string
-  confirmLabel: string
-  confirmColor?: 'error' | 'warning' | 'primary'
-  onClose: () => void
-  onConfirm: () => Promise<void>
+  open: boolean; title: string; message: string; confirmLabel: string
+  confirmColor?: 'error' | 'warning' | 'primary'; onClose: () => void; onConfirm: () => Promise<void>
 }) {
   const [loading, setLoading] = React.useState(false)
-  const handle = async () => {
-    setLoading(true)
-    await onConfirm()
-    setLoading(false)
-  }
+  const handle = async () => { setLoading(true); await onConfirm(); setLoading(false) }
   return (
     <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
       <DialogTitle>{title}</DialogTitle>
-      <DialogContent>
-        <Typography>{message}</Typography>
-      </DialogContent>
+      <DialogContent><Typography>{message}</Typography></DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
         <Button onClick={onClose} disabled={loading}>Cancel</Button>
         <Button variant="contained" color={confirmColor ?? 'primary'} onClick={handle} disabled={loading}
@@ -131,20 +116,107 @@ function ConfirmDialog({
   )
 }
 
+// ── Repair Dialog (admin review) ──────────────────────────────────
+
+function RepairReviewDialog({
+  open, itemId, hubs, onClose, onSuccess,
+}: {
+  open: boolean; itemId: string; hubs: HubOption[]
+  onClose: () => void; onSuccess: () => void
+}) {
+  const [repairType, setRepairType] = React.useState('')
+  const [shopName, setShopName] = React.useState('')
+  const [shopAddress, setShopAddress] = React.useState('')
+  const [dateDelivered, setDateDelivered] = React.useState('')
+  const [purchaseOrder, setPurchaseOrder] = React.useState('')
+  const [invoiceNumber, setInvoiceNumber] = React.useState('')
+  const [repairHubId, setRepairHubId] = React.useState('')
+  const [note, setNote] = React.useState('')
+  const [loading, setLoading] = React.useState(false)
+  const [error, setError] = React.useState('')
+
+  React.useEffect(() => {
+    if (!open) {
+      setRepairType(''); setShopName(''); setShopAddress(''); setDateDelivered('')
+      setPurchaseOrder(''); setInvoiceNumber(''); setRepairHubId(''); setNote(''); setError('')
+    }
+  }, [open])
+
+  const handleSubmit = async () => {
+    if (!repairType) { setError('Select a repair type'); return }
+    if (!note.trim()) { setError('Note is required'); return }
+    setLoading(true); setError('')
+    const res = await fetch(`/api/inventory/${itemId}/review-inoperable`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        decision: 'REPAIR', repairType, note,
+        shopName: shopName || undefined,
+        shopAddress: shopAddress || undefined,
+        dateDelivered: dateDelivered || undefined,
+        purchaseOrder: purchaseOrder || undefined,
+        invoiceNumber: invoiceNumber || undefined,
+        repairHubId: repairHubId || undefined,
+      }),
+    })
+    setLoading(false)
+    if (res.ok) { onSuccess() }
+    else { const d = await res.json().catch(() => ({})); setError(d.error ?? 'Failed') }
+  }
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>Send for Repair</DialogTitle>
+      <DialogContent>
+        <Stack spacing={2} pt={0.5}>
+          {error && <Alert severity="error">{error}</Alert>}
+          <FormControl required>
+            <FormLabel>Repair Method</FormLabel>
+            <RadioGroup value={repairType} onChange={(e) => setRepairType(e.target.value)}>
+              <FormControlLabel value="IN_FIELD" control={<Radio />} label="Fix it in the field" />
+              <FormControlLabel value="AT_SHOP" control={<Radio />} label="Take it to a shop" />
+              <FormControlLabel value="SHIP_TO_HUB" control={<Radio />} label="Ship it to a hub" />
+              <FormControlLabel value="SHIP_FOR_REPAIR" control={<Radio />} label="Ship for external repair" />
+            </RadioGroup>
+          </FormControl>
+          {(repairType === 'AT_SHOP' || repairType === 'SHIP_FOR_REPAIR') && (
+            <Stack spacing={1.5}>
+              <TextField size="small" label="Shop Name (optional)" value={shopName} onChange={(e) => setShopName(e.target.value)} fullWidth />
+              <TextField size="small" label="Shop Address (optional)" value={shopAddress} onChange={(e) => setShopAddress(e.target.value)} fullWidth />
+              <TextField size="small" label="Date Delivered (optional)" type="date" value={dateDelivered} onChange={(e) => setDateDelivered(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} />
+              <TextField size="small" label="Purchase Order (optional)" value={purchaseOrder} onChange={(e) => setPurchaseOrder(e.target.value)} fullWidth />
+              <TextField size="small" label="Invoice # (optional)" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} fullWidth />
+            </Stack>
+          )}
+          {repairType === 'SHIP_TO_HUB' && (
+            <Stack spacing={1.5}>
+              <TextField select label="Ship to Hub" value={repairHubId} onChange={(e) => setRepairHubId(e.target.value)} fullWidth required>
+                {hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.name} — {h.city}, {h.state}</MenuItem>)}
+              </TextField>
+              <TextField size="small" label="Date Shipped (optional)" type="date" value={dateDelivered} onChange={(e) => setDateDelivered(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} />
+            </Stack>
+          )}
+          <TextField label="Admin note (required)" value={note} onChange={(e) => setNote(e.target.value)} multiline rows={2} fullWidth required />
+        </Stack>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2 }}>
+        <Button onClick={onClose} disabled={loading}>Cancel</Button>
+        <Button variant="contained" onClick={handleSubmit} disabled={loading}
+          startIcon={loading ? <CircularProgress size={16} color="inherit" /> : null}>
+          {loading ? 'Saving…' : 'Send for Repair'}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
+
 // ── Item Form Dialog ──────────────────────────────────────────────
 
 function ItemFormDialog({
-  item,
-  categories,
-  hubs,
-  onClose,
-  onSuccess,
+  item, categories, hubs, onClose, onSuccess,
 }: {
-  item: InventoryItemRow | null
-  categories: CategoryOption[]
-  hubs: HubOption[]
-  onClose: () => void
-  onSuccess: (msg: string) => void
+  item: InventoryItemRow | null; categories: CategoryOption[]; hubs: HubOption[]
+  onClose: () => void; onSuccess: (msg: string) => void
 }) {
   const isEdit = !!item
   const [name, setName] = React.useState('')
@@ -165,19 +237,13 @@ function ItemFormDialog({
 
   React.useEffect(() => {
     if (item) {
-      setName(item.name)
-      setItemType(item.itemType)
-      setUnitId(item.unitId ?? '')
-      setCategoryId(item.category.id)
-      setStatus(item.status)
-      setHubId(item.hub?.id ?? '')
+      setName(item.name); setItemType(item.itemType); setUnitId(item.unitId ?? '')
+      setCategoryId(item.category.id); setStatus(item.status); setHubId(item.hub?.id ?? '')
       setQuantity(item.quantity)
       setExpectedQuantity(item.expectedQuantity != null ? String(item.expectedQuantity) : '')
       setLowStockThreshold(item.lowStockThreshold != null ? String(item.lowStockThreshold) : '')
       setUnitCost(item.unitCost != null ? String(item.unitCost) : '')
-      setSupplier(item.supplier ?? '')
-      setReorderUrl(item.reorderUrl ?? '')
-      setNotes(item.notes ?? '')
+      setSupplier(item.supplier ?? ''); setReorderUrl(item.reorderUrl ?? ''); setNotes(item.notes ?? '')
     } else {
       setName(''); setItemType('CONSUMABLE'); setUnitId(''); setCategoryId('')
       setStatus('AVAILABLE'); setHubId(''); setQuantity(1)
@@ -188,16 +254,9 @@ function ItemFormDialog({
   }, [item])
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError('')
-    setLoading(true)
+    e.preventDefault(); setError(''); setLoading(true)
     try {
-      const body: Record<string, unknown> = {
-        name,
-        categoryId,
-        itemType,
-        quantity,
-      }
+      const body: Record<string, unknown> = { name, categoryId, itemType, quantity }
       if (itemType === 'SERIALIZED' && unitId) body.unitId = unitId
       if (isEdit) body.status = status
       if (hubId) body.hubId = hubId
@@ -207,26 +266,14 @@ function ItemFormDialog({
       if (supplier) body.supplier = supplier
       if (reorderUrl) body.reorderUrl = reorderUrl
       if (notes) body.notes = notes
-
       const url = isEdit ? `/api/inventory/${item!.id}` : '/api/inventory'
-      const res = await fetch(url, {
-        method: isEdit ? 'PATCH' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
+      const res = await fetch(url, { method: isEdit ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       const data = await res.json()
-      if (!res.ok) {
-        const msg = typeof data.error === 'object' ? JSON.stringify(data.error) : (data.error ?? 'Failed to save')
-        setError(msg)
-        return
-      }
+      if (!res.ok) { setError(typeof data.error === 'object' ? JSON.stringify(data.error) : (data.error ?? 'Failed to save')); return }
       onSuccess(isEdit ? `${name} updated` : `${name} added`)
       onClose()
-    } catch {
-      setError('Network error. Please try again.')
-    } finally {
-      setLoading(false)
-    }
+    } catch { setError('Network error. Please try again.') }
+    finally { setLoading(false) }
   }
 
   return (
@@ -236,9 +283,7 @@ function ItemFormDialog({
         <DialogContent>
           <Stack spacing={2.5} pt={0.5}>
             {error && <Alert severity="error">{error}</Alert>}
-
             <TextField label="Name" value={name} onChange={(e) => setName(e.target.value)} required fullWidth autoFocus />
-
             <FormControl>
               <FormLabel>Item Type</FormLabel>
               <RadioGroup row value={itemType} onChange={(e) => setItemType(e.target.value)}>
@@ -246,23 +291,13 @@ function ItemFormDialog({
                 <FormControlLabel value="SERIALIZED" control={<Radio />} label="Serialized Item" />
               </RadioGroup>
             </FormControl>
-
             {itemType === 'SERIALIZED' && (
-              <TextField
-                label="Unit / Serial Number"
-                value={unitId}
-                onChange={(e) => setUnitId(e.target.value)}
-                fullWidth
-                helperText="e.g. GPS-003, DRILL-01 — this will link to a QR sticker"
-              />
+              <TextField label="Unit / Serial Number" value={unitId} onChange={(e) => setUnitId(e.target.value)} fullWidth
+                helperText="e.g. GPS-003, DRILL-01 — this will link to a QR sticker" />
             )}
-
             <TextField select label="Category" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} required fullWidth>
-              {categories.map((c) => (
-                <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
-              ))}
+              {categories.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
             </TextField>
-
             {isEdit && (
               <TextField select label="Status" value={status} onChange={(e) => setStatus(e.target.value)} fullWidth>
                 <MenuItem value="AVAILABLE">Available</MenuItem>
@@ -270,57 +305,27 @@ function ItemFormDialog({
                 <MenuItem value="RETIRED">Retired</MenuItem>
               </TextField>
             )}
-
             <TextField select label="Hub Location" value={hubId} onChange={(e) => setHubId(e.target.value)} fullWidth>
               <MenuItem value="">Unknown</MenuItem>
-              {hubs.map((h) => (
-                <MenuItem key={h.id} value={h.id}>{h.city}, {h.state}</MenuItem>
-              ))}
+              {hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.city}, {h.state}</MenuItem>)}
             </TextField>
-
-            <TextField
-              label="Current Quantity"
-              type="number"
-              value={quantity}
-              onChange={(e) => setQuantity(parseInt(e.target.value) || 0)}
-              required fullWidth inputProps={{ min: 0 }}
-            />
-            <TextField
-              label="Expected / Total Quantity"
-              type="number"
-              value={expectedQuantity}
-              onChange={(e) => setExpectedQuantity(e.target.value)}
-              fullWidth inputProps={{ min: 0 }}
-              helperText="How many of this item should exist in total? Used to spot shrinkage."
-            />
-            <TextField
-              label="Low Stock Alert Threshold"
-              type="number"
-              value={lowStockThreshold}
-              onChange={(e) => setLowStockThreshold(e.target.value)}
-              fullWidth inputProps={{ min: 0 }}
-              helperText="Show a warning on the dashboard when current quantity falls to or below this number."
-            />
-
+            <TextField label="Current Quantity" type="number" value={quantity} onChange={(e) => setQuantity(parseInt(e.target.value) || 0)} required fullWidth inputProps={{ min: 0 }} />
+            <TextField label="Expected / Total Quantity" type="number" value={expectedQuantity} onChange={(e) => setExpectedQuantity(e.target.value)} fullWidth inputProps={{ min: 0 }}
+              helperText="How many of this item should exist in total? Used to spot shrinkage." />
+            <TextField label="Low Stock Alert Threshold" type="number" value={lowStockThreshold} onChange={(e) => setLowStockThreshold(e.target.value)} fullWidth inputProps={{ min: 0 }}
+              helperText="Show a warning on the dashboard when current quantity falls to or below this number." />
             <Accordion>
               <AccordionSummary expandIcon={<ExpandMoreIcon />}>
                 <Typography variant="body2">Purchasing Info</Typography>
               </AccordionSummary>
               <AccordionDetails>
                 <Stack spacing={2}>
-                  <TextField
-                    label="Unit Cost ($)"
-                    type="number"
-                    value={unitCost}
-                    onChange={(e) => setUnitCost(e.target.value)}
-                    fullWidth inputProps={{ min: 0, step: '0.01' }}
-                  />
+                  <TextField label="Unit Cost ($)" type="number" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} fullWidth inputProps={{ min: 0, step: '0.01' }} />
                   <TextField label="Supplier" value={supplier} onChange={(e) => setSupplier(e.target.value)} fullWidth />
                   <TextField label="Reorder URL" value={reorderUrl} onChange={(e) => setReorderUrl(e.target.value)} fullWidth />
                 </Stack>
               </AccordionDetails>
             </Accordion>
-
             <TextField label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} fullWidth multiline rows={3} />
           </Stack>
         </DialogContent>
@@ -339,19 +344,21 @@ function ItemFormDialog({
 // ── Detail Drawer ─────────────────────────────────────────────────
 
 function DetailDrawer({
-  row,
-  onClose,
-  onEdit,
-  onRetire,
+  row, hubs, onClose, onEdit, onRetire, onUpdated,
 }: {
   row: InventoryItemRow | null
+  hubs: HubOption[]
   onClose: () => void
   onEdit: (item: InventoryItemRow) => void
   onRetire: (item: InventoryItemRow) => void
+  onUpdated: () => void
 }) {
   const [detail, setDetail] = React.useState<ItemDetail | null>(null)
   const [loading, setLoading] = React.useState(false)
   const [qrDataUrl, setQrDataUrl] = React.useState<string | null>(null)
+  const [retireConfirmOpen, setRetireConfirmOpen] = React.useState(false)
+  const [repairOpen, setRepairOpen] = React.useState(false)
+  const [reviewLoading, setReviewLoading] = React.useState(false)
 
   React.useEffect(() => {
     if (!row) { setDetail(null); setQrDataUrl(null); return }
@@ -376,14 +383,25 @@ function DetailDrawer({
     a.click()
   }
 
+  const handleApproveRetirement = async () => {
+    if (!detail) return
+    setReviewLoading(true)
+    await fetch(`/api/inventory/${detail.id}/review-inoperable`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision: 'RETIRE', note: 'Approved for retirement by admin' }),
+    })
+    setReviewLoading(false)
+    setRetireConfirmOpen(false)
+    onUpdated()
+  }
+
+  const damagePhotos = detail?.photos.filter((p) => p.context === 'DAMAGE') ?? []
+
   return (
     <Drawer anchor="right" open={!!row} onClose={onClose} PaperProps={{ sx: { width: 500 } }}>
       {loading && (
-        <Box p={3}>
-          <Stack spacing={1.5}>
-            {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} height={32} />)}
-          </Stack>
-        </Box>
+        <Box p={3}><Stack spacing={1.5}>{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} height={32} />)}</Stack></Box>
       )}
 
       {!loading && detail && (
@@ -400,6 +418,45 @@ function DetailDrawer({
           <Divider />
 
           <Box sx={{ flex: 1, overflow: 'auto', px: 3, py: 2 }}>
+
+            {/* INOPERABLE review section */}
+            {detail.status === 'INOPERABLE' && (
+              <Box mb={3}>
+                <Alert severity="warning" icon={<WarningAmberIcon />}>
+                  <Typography variant="subtitle2" fontWeight={700}>Inoperable — Pending Admin Review</Typography>
+                  {detail.inoperableReportedBy && (
+                    <Typography variant="body2">
+                      Reported by {detail.inoperableReportedBy.name}
+                      {detail.inoperableReportedAt && ` on ${new Date(detail.inoperableReportedAt).toLocaleDateString()}`}
+                    </Typography>
+                  )}
+                  {detail.inoperableNotes && (
+                    <Typography variant="body2" sx={{ mt: 0.5, fontStyle: 'italic' }}>
+                      &ldquo;{detail.inoperableNotes}&rdquo;
+                    </Typography>
+                  )}
+                </Alert>
+                {damagePhotos.length > 0 && (
+                  <Stack direction="row" spacing={1} flexWrap="wrap" mt={1.5} mb={1.5}>
+                    {damagePhotos.map((p) => (
+                      <Box key={p.id} component="img" src={p.url} alt="damage"
+                        sx={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 1, border: '1px solid', borderColor: 'divider' }} />
+                    ))}
+                  </Stack>
+                )}
+                <Stack direction="row" spacing={1} mt={1.5}>
+                  <Button variant="outlined" color="error" size="small"
+                    disabled={reviewLoading} onClick={() => setRetireConfirmOpen(true)}>
+                    Approve Retirement
+                  </Button>
+                  <Button variant="outlined" size="small"
+                    disabled={reviewLoading} onClick={() => setRepairOpen(true)}>
+                    Send for Repair
+                  </Button>
+                </Stack>
+              </Box>
+            )}
+
             <Box display="grid" gridTemplateColumns="1fr 1fr" gap={1.5} mb={3}>
               <Box>
                 <Typography variant="caption" color="text.secondary" fontWeight={600}>Category</Typography>
@@ -407,9 +464,7 @@ function DetailDrawer({
               </Box>
               <Box>
                 <Typography variant="caption" color="text.secondary" fontWeight={600}>Hub Location</Typography>
-                <Typography variant="body2">
-                  {detail.hub ? `${detail.hub.city}, ${detail.hub.state}` : '—'}
-                </Typography>
+                <Typography variant="body2">{detail.hub ? `${detail.hub.city}, ${detail.hub.state}` : '—'}</Typography>
               </Box>
               {detail.itemType === 'SERIALIZED' && (
                 <Box>
@@ -465,12 +520,8 @@ function DetailDrawer({
             {row?.status === 'CHECKED_OUT' && (
               <Box mb={3}>
                 <Typography variant="subtitle2" fontWeight={600} mb={1}>Current Status</Typography>
-                {row.currentOperator && (
-                  <Typography variant="body2">Currently with <strong>{row.currentOperator.name}</strong></Typography>
-                )}
-                {row.currentProject && (
-                  <Typography variant="body2">Checked out to <strong>{row.currentProject.name}</strong></Typography>
-                )}
+                {row.currentOperator && <Typography variant="body2">Currently with <strong>{row.currentOperator.name}</strong></Typography>}
+                {row.currentProject && <Typography variant="body2">Checked out to <strong>{row.currentProject.name}</strong></Typography>}
               </Box>
             )}
 
@@ -482,12 +533,8 @@ function DetailDrawer({
                 <Stack spacing={1}>
                   {detail.checkLogs.map((log) => (
                     <Stack key={log.id} direction="row" spacing={1} alignItems="center">
-                      <Chip
-                        size="small"
-                        label={log.action === 'CHECK_OUT' ? 'Out' : 'In'}
-                        color={log.action === 'CHECK_OUT' ? 'primary' : 'success'}
-                        sx={{ minWidth: 40 }}
-                      />
+                      <Chip size="small" label={log.action === 'CHECK_OUT' ? 'Out' : 'In'}
+                        color={log.action === 'CHECK_OUT' ? 'primary' : 'success'} sx={{ minWidth: 40 }} />
                       <Typography variant="body2">{log.operator?.name ?? 'Unknown'}</Typography>
                       {log.condition && <Chip size="small" label={log.condition.replace(/_/g, ' ')} variant="outlined" />}
                       <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto !important' }}>
@@ -503,7 +550,7 @@ function DetailDrawer({
           <Divider />
           <Stack direction="row" spacing={1} px={3} py={2} justifyContent="flex-end">
             <Button onClick={onClose}>Close</Button>
-            {detail.status !== 'RETIRED' && (
+            {detail.status !== 'RETIRED' && detail.status !== 'INOPERABLE' && (
               <>
                 <Button variant="outlined" color="error" startIcon={<ArchiveIcon />}
                   onClick={() => { onClose(); onRetire(detail) }}>
@@ -515,8 +562,36 @@ function DetailDrawer({
                 </Button>
               </>
             )}
+            {detail.status === 'INOPERABLE' && (
+              <Button variant="contained" startIcon={<EditIcon />}
+                onClick={() => { onClose(); onEdit(detail) }}>
+                Edit
+              </Button>
+            )}
           </Stack>
         </Box>
+      )}
+
+      {/* Retire confirmation for INOPERABLE items */}
+      <ConfirmDialog
+        open={retireConfirmOpen}
+        title="Approve Retirement?"
+        message="This will permanently retire this item. The inoperable flag and history are preserved."
+        confirmLabel="Retire Item"
+        confirmColor="error"
+        onClose={() => setRetireConfirmOpen(false)}
+        onConfirm={handleApproveRetirement}
+      />
+
+      {/* Repair dialog for INOPERABLE items */}
+      {detail && (
+        <RepairReviewDialog
+          open={repairOpen}
+          itemId={detail.id}
+          hubs={hubs}
+          onClose={() => setRepairOpen(false)}
+          onSuccess={() => { setRepairOpen(false); onUpdated() }}
+        />
       )}
     </Drawer>
   )
@@ -576,9 +651,7 @@ export default function AdminInventoryPage() {
       const data = await res.json()
       setItems(data.data ?? [])
       setTotal(data.total ?? 0)
-    } finally {
-      setLoading(false)
-    }
+    } finally { setLoading(false) }
   }, [page, pageSize, debouncedQ, filterType, filterCategory, filterStatus, filterHub, filterOperator, filterProject, showRetired])
 
   React.useEffect(() => { load() }, [load])
@@ -588,20 +661,15 @@ export default function AdminInventoryPage() {
       fetch('/api/categories').then((r) => r.json()),
       fetch('/api/hubs').then((r) => r.json()),
     ]).then(([cats, hs]) => { setCategories(cats); setHubs(hs) }).catch(() => {})
-
     fetch('/api/users').then((r) => r.json()).then((d) => {
       setOperators((d.data ?? []).filter((u: UserOption) => u.role === 'OPERATOR'))
     }).catch(() => {})
-
     fetch('/api/projects').then((r) => r.json()).then((d) => {
       setProjects(d.data ?? [])
     }).catch(() => {})
   }, [])
 
-  const showToast = (msg: string) => {
-    setToast(msg)
-    setTimeout(() => setToast(''), 4000)
-  }
+  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 4000) }
 
   const handleRetire = async () => {
     if (!retireItem) return
@@ -634,13 +702,7 @@ export default function AdminInventoryPage() {
       {toast && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setToast('')}>{toast}</Alert>}
 
       <Stack direction="row" spacing={1.5} mb={1.5} flexWrap="wrap">
-        <TextField
-          size="small"
-          placeholder="Search by name…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          sx={{ minWidth: 200 }}
-        />
+        <TextField size="small" placeholder="Search by name…" value={q} onChange={(e) => setQ(e.target.value)} sx={{ minWidth: 200 }} />
         <TextField select size="small" label="All Types" value={filterType} onChange={(e) => setFilterType(e.target.value)} sx={{ minWidth: 140 }}>
           <MenuItem value="">All Types</MenuItem>
           <MenuItem value="SERIALIZED">Serialized</MenuItem>
@@ -648,22 +710,19 @@ export default function AdminInventoryPage() {
         </TextField>
         <TextField select size="small" label="All Categories" value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} sx={{ minWidth: 180 }}>
           <MenuItem value="">All Categories</MenuItem>
-          {categories.map((c) => (
-            <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
-          ))}
+          {categories.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
         </TextField>
         <TextField select size="small" label="All Statuses" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} sx={{ minWidth: 160 }}>
           <MenuItem value="">All Statuses</MenuItem>
           <MenuItem value="AVAILABLE">Available</MenuItem>
           <MenuItem value="CHECKED_OUT">Checked Out</MenuItem>
           <MenuItem value="IN_MAINTENANCE">In Maintenance</MenuItem>
+          <MenuItem value="INOPERABLE">Inoperable</MenuItem>
           {showRetired && <MenuItem value="RETIRED">Retired</MenuItem>}
         </TextField>
         <TextField select size="small" label="All Hubs" value={filterHub} onChange={(e) => setFilterHub(e.target.value)} sx={{ minWidth: 140 }}>
           <MenuItem value="">All Hubs</MenuItem>
-          {hubs.map((h) => (
-            <MenuItem key={h.id} value={h.id}>{h.city}, {h.state}</MenuItem>
-          ))}
+          {hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.city}, {h.state}</MenuItem>)}
         </TextField>
       </Stack>
 
@@ -699,22 +758,15 @@ export default function AdminInventoryPage() {
           <TableBody>
             {loading
               ? Array.from({ length: 5 }).map((_, i) => (
-                  <TableRow key={i}>
-                    {Array.from({ length: 7 }).map((_, j) => (
-                      <TableCell key={j}><Skeleton width={j === 6 ? 64 : 100} /></TableCell>
-                    ))}
-                  </TableRow>
+                  <TableRow key={i}>{Array.from({ length: 7 }).map((_, j) => <TableCell key={j}><Skeleton width={j === 6 ? 64 : 100} /></TableCell>)}</TableRow>
                 ))
               : items.map((item) => {
                   const isLow = item.lowStockThreshold != null && item.quantity <= item.lowStockThreshold
                   const isRetired = item.status === 'RETIRED'
                   return (
-                    <TableRow
-                      key={item.id}
-                      hover
+                    <TableRow key={item.id} hover
                       sx={{ opacity: isRetired ? 0.5 : 1, cursor: 'pointer', '&:last-child td': { border: 0 } }}
-                      onClick={() => setDrawerRow(item)}
-                    >
+                      onClick={() => setDrawerRow(item)}>
                       <TableCell>
                         <Typography variant="body2" fontWeight={600}>{item.name}</Typography>
                         <Stack direction="row" spacing={0.5} mt={0.25} alignItems="center">
@@ -725,12 +777,8 @@ export default function AdminInventoryPage() {
                         </Stack>
                       </TableCell>
                       <TableCell>
-                        <Chip
-                          size="small"
-                          label={item.itemType === 'SERIALIZED' ? 'Serialized' : 'Consumable'}
-                          variant="outlined"
-                          color={item.itemType === 'SERIALIZED' ? 'primary' : 'default'}
-                        />
+                        <Chip size="small" label={item.itemType === 'SERIALIZED' ? 'Serialized' : 'Consumable'}
+                          variant="outlined" color={item.itemType === 'SERIALIZED' ? 'primary' : 'default'} />
                       </TableCell>
                       <TableCell>
                         <Stack direction="row" alignItems="center" spacing={0.5}>
@@ -741,11 +789,8 @@ export default function AdminInventoryPage() {
                         </Stack>
                       </TableCell>
                       <TableCell>
-                        <Chip
-                          size="small"
-                          label={STATUS_LABELS[item.status] ?? item.status}
-                          color={STATUS_CHIP_COLOR[item.status] ?? 'default'}
-                        />
+                        <Chip size="small" label={STATUS_LABELS[item.status] ?? item.status}
+                          color={STATUS_CHIP_COLOR[item.status] ?? 'default'} />
                       </TableCell>
                       <TableCell>
                         {item.status === 'CHECKED_OUT' && item.currentOperator
@@ -759,11 +804,9 @@ export default function AdminInventoryPage() {
                       <TableCell align="right" onClick={(e) => e.stopPropagation()}>
                         <Stack direction="row" spacing={0.5} justifyContent="flex-end">
                           <Tooltip title="Edit">
-                            <IconButton size="small" onClick={() => setEditItem(item)}>
-                              <EditIcon fontSize="small" />
-                            </IconButton>
+                            <IconButton size="small" onClick={() => setEditItem(item)}><EditIcon fontSize="small" /></IconButton>
                           </Tooltip>
-                          {!isRetired && (
+                          {!isRetired && item.status !== 'INOPERABLE' && (
                             <Tooltip title="Retire">
                               <IconButton size="small" color="error" onClick={() => setRetireItem(item)}>
                                 <ArchiveIcon fontSize="small" />
@@ -775,7 +818,6 @@ export default function AdminInventoryPage() {
                     </TableRow>
                   )
                 })}
-
             {!loading && items.length === 0 && (
               <TableRow>
                 <TableCell colSpan={7} align="center" sx={{ py: 6, color: 'text.secondary' }}>
@@ -785,43 +827,30 @@ export default function AdminInventoryPage() {
             )}
           </TableBody>
         </Table>
-
         <TablePagination
-          component="div"
-          count={total}
-          page={page}
-          onPageChange={(_, p) => setPage(p)}
-          rowsPerPage={pageSize}
+          component="div" count={total} page={page}
+          onPageChange={(_, p) => setPage(p)} rowsPerPage={pageSize}
           onRowsPerPageChange={(e) => { setPageSize(parseInt(e.target.value)); setPage(0) }}
           rowsPerPageOptions={[10, 25, 50]}
         />
       </TableContainer>
 
       {addOpen && (
-        <ItemFormDialog
-          item={null}
-          categories={categories}
-          hubs={hubs}
-          onClose={() => setAddOpen(false)}
-          onSuccess={(msg) => { showToast(msg); load() }}
-        />
+        <ItemFormDialog item={null} categories={categories} hubs={hubs}
+          onClose={() => setAddOpen(false)} onSuccess={(msg) => { showToast(msg); load() }} />
       )}
-
       {editItem && (
-        <ItemFormDialog
-          item={editItem}
-          categories={categories}
-          hubs={hubs}
-          onClose={() => setEditItem(null)}
-          onSuccess={(msg) => { showToast(msg); load() }}
-        />
+        <ItemFormDialog item={editItem} categories={categories} hubs={hubs}
+          onClose={() => setEditItem(null)} onSuccess={(msg) => { showToast(msg); load() }} />
       )}
 
       <DetailDrawer
         row={drawerRow}
+        hubs={hubs}
         onClose={() => setDrawerRow(null)}
         onEdit={(item) => setEditItem(item)}
         onRetire={(item) => setRetireItem(item)}
+        onUpdated={() => { setDrawerRow(null); showToast('Item updated'); void load() }}
       />
 
       <ConfirmDialog

@@ -19,6 +19,7 @@ const RIG_INCLUDE = {
             select: {
               id: true,
               name: true,
+              itemType: true,
               category: { select: { name: true } },
             },
           },
@@ -37,10 +38,26 @@ const addSchema = z.object({
   photoUrls: z.array(z.string()).default([]),
 })
 
-const removeSchema = z.object({
-  kitItemIds: z.array(z.string()).min(1),
-  note: z.string().min(1, 'Note is required'),
+const dispositionSchema = z.object({
+  kitItemId: z.string(),
+  type: z.enum(['HUB', 'TRANSFER', 'INOPERABLE']),
+  hubId: z.string().optional(),
+  toOperatorId: z.string().optional(),
+  canBeFixed: z.boolean().optional(),
+  repairType: z.enum(['IN_FIELD', 'AT_SHOP', 'SHIP_TO_HUB', 'SHIP_FOR_REPAIR']).optional(),
+  shopName: z.string().optional(),
+  shopAddress: z.string().optional(),
+  dateDelivered: z.string().optional(),
+  purchaseOrder: z.string().optional(),
+  invoiceNumber: z.string().optional(),
+  repairHubId: z.string().optional(),
+  inoperableNotes: z.string().optional(),
   photoUrls: z.array(z.string()).default([]),
+})
+
+const removeSchema = z.object({
+  note: z.string().min(1, 'Note is required'),
+  itemDispositions: z.array(dispositionSchema).min(1),
 })
 
 async function getAuthorizedActiveRig(id: string, session: { userId: string; role: string }) {
@@ -62,32 +79,35 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
   const { items, note, photoUrls } = parsed.data
-
   const kit = await prisma.kit.findFirst({ where: { rigId: id } })
   if (!kit) return NextResponse.json({ error: 'Kit not found' }, { status: 404 })
 
   await prisma.$transaction(async (tx) => {
     await tx.kitItem.createMany({
-      data: items.map(({ inventoryItemId, quantity }) => ({
-        kitId: kit.id,
-        inventoryItemId,
-        quantity,
+      data: items.map(({ inventoryItemId, quantity }) => ({ kitId: kit.id, inventoryItemId, quantity })),
+    })
+    await tx.checkLog.createMany({
+      data: items.map(({ inventoryItemId }) => ({
+        action: 'CHECK_OUT' as const,
+        itemId: inventoryItemId,
+        operatorId: rig.operatorId,
+        projectId: rig.projectId ?? undefined,
+        notes: note,
       })),
     })
-
-    const checkLogData = items.map(({ inventoryItemId }) => ({
-      action: 'CHECK_OUT' as const,
-      itemId: inventoryItemId,
-      operatorId: rig.operatorId,
-      projectId: rig.projectId ?? undefined,
-      notes: note,
-    }))
-    await tx.checkLog.createMany({ data: checkLogData })
-
     await tx.inventoryItem.updateMany({
       where: { id: { in: items.map((i) => i.inventoryItemId) } },
       data: { status: 'CHECKED_OUT' },
     })
+    if (photoUrls.length > 0) {
+      await tx.photo.createMany({
+        data: photoUrls.map((url) => ({
+          url,
+          context: 'MAINTENANCE' as const,
+          uploadedById: session.userId,
+        })),
+      })
+    }
   })
 
   const updated = await prisma.rig.findUniqueOrThrow({ where: { id }, include: RIG_INCLUDE })
@@ -105,30 +125,114 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const parsed = removeSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const { kitItemIds, note } = parsed.data
+  const { note, itemDispositions } = parsed.data
   const now = new Date()
 
+  const kitItemIds = itemDispositions.map((d) => d.kitItemId)
+  const kitItems = await prisma.kitItem.findMany({
+    where: { id: { in: kitItemIds }, removedAt: null },
+    include: { item: { select: { id: true, name: true } } },
+  })
+
   await prisma.$transaction(async (tx) => {
-    const kitItems = await tx.kitItem.findMany({
-      where: { id: { in: kitItemIds }, removedAt: null },
-    })
-    await tx.kitItem.updateMany({
-      where: { id: { in: kitItemIds } },
-      data: { removedAt: now },
-    })
-    const inventoryItemIds = kitItems.map((ki) => ki.inventoryItemId)
-    await tx.checkLog.createMany({
-      data: inventoryItemIds.map((itemId) => ({
-        action: 'CHECK_IN' as const,
-        itemId,
-        operatorId: rig.operatorId,
-        notes: note,
-      })),
-    })
-    await tx.inventoryItem.updateMany({
-      where: { id: { in: inventoryItemIds } },
-      data: { status: 'AVAILABLE' },
-    })
+    for (const disp of itemDispositions) {
+      const kitItem = kitItems.find((ki) => ki.id === disp.kitItemId)
+      if (!kitItem) continue
+      const inventoryItemId = kitItem.inventoryItemId
+
+      await tx.kitItem.update({ where: { id: disp.kitItemId }, data: { removedAt: now } })
+
+      if (disp.type === 'HUB') {
+        await tx.checkLog.create({
+          data: { action: 'CHECK_IN', itemId: inventoryItemId, operatorId: rig.operatorId, notes: note },
+        })
+        await tx.inventoryItem.update({
+          where: { id: inventoryItemId },
+          data: { status: 'AVAILABLE', hubId: disp.hubId ?? null },
+        })
+      } else if (disp.type === 'INOPERABLE') {
+        await tx.checkLog.create({
+          data: { action: 'CHECK_IN', itemId: inventoryItemId, operatorId: rig.operatorId, notes: note },
+        })
+        if (disp.canBeFixed) {
+          await tx.inventoryItem.update({
+            where: { id: inventoryItemId },
+            data: {
+              status: 'IN_MAINTENANCE',
+              inoperableNotes: disp.inoperableNotes ?? null,
+              inoperableReportedAt: now,
+              inoperableReportedById: session.userId,
+            },
+          })
+          const task = await tx.maintenanceTask.create({
+            data: {
+              itemId: inventoryItemId,
+              taskName: `Damage repair: ${kitItem.item.name}`,
+              isDamageReport: true,
+              repairType: disp.repairType ?? null,
+              shopName: disp.shopName ?? null,
+              shopAddress: disp.shopAddress ?? null,
+              dateDelivered: disp.dateDelivered ? new Date(disp.dateDelivered) : null,
+              purchaseOrder: disp.purchaseOrder ?? null,
+              invoiceNumber: disp.invoiceNumber ?? null,
+              repairHubId: disp.repairHubId ?? null,
+              status: 'IN_PROGRESS',
+            },
+          })
+          if (disp.photoUrls.length > 0) {
+            await tx.photo.createMany({
+              data: disp.photoUrls.map((url) => ({
+                url,
+                context: 'DAMAGE' as const,
+                inventoryItemId,
+                maintenanceId: task.id,
+                uploadedById: session.userId,
+              })),
+            })
+          }
+        } else {
+          await tx.inventoryItem.update({
+            where: { id: inventoryItemId },
+            data: {
+              status: 'INOPERABLE',
+              inoperableNotes: disp.inoperableNotes ?? null,
+              inoperableReportedAt: now,
+              inoperableReportedById: session.userId,
+            },
+          })
+          if (disp.photoUrls.length > 0) {
+            await tx.photo.createMany({
+              data: disp.photoUrls.map((url) => ({
+                url,
+                context: 'DAMAGE' as const,
+                inventoryItemId,
+                uploadedById: session.userId,
+              })),
+            })
+          }
+        }
+      }
+    }
+
+    // TRANSFER: group by toOperatorId
+    const transferDisps = itemDispositions.filter((d) => d.type === 'TRANSFER' && d.toOperatorId)
+    const byOperator = new Map<string, typeof transferDisps>()
+    for (const d of transferDisps) {
+      const key = d.toOperatorId!
+      byOperator.set(key, [...(byOperator.get(key) ?? []), d])
+    }
+    for (const [toOperatorId, disps] of byOperator) {
+      await tx.transferRequest.create({
+        data: {
+          fromRigId: id,
+          toOperatorId,
+          initiatedById: session.userId,
+          note,
+          status: 'PENDING',
+          items: { create: disps.map((d) => ({ kitItemId: d.kitItemId })) },
+        },
+      })
+    }
   })
 
   const updated = await prisma.rig.findUniqueOrThrow({ where: { id }, include: RIG_INCLUDE })

@@ -3,6 +3,9 @@
 # Usage: make <target>
 # ============================================================
 
+SHELL         := /bin/zsh
+export PATH   := /opt/homebrew/bin:$(PATH)
+
 APP_NAME      := ahits-web-app
 GCP_PROJECT   ?= $(shell grep GCP_PROJECT_ID .env | cut -d= -f2)
 GCP_REGION    ?= us-central1
