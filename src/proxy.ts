@@ -2,7 +2,15 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { jwtVerify } from 'jose'
 
-const PUBLIC_PATHS = ['/login', '/setup-account', '/api/auth/login', '/api/users/invite/validate', '/api/users/invite/complete', '/~offline']
+const PUBLIC_PATHS = [
+  '/login',
+  '/setup-account',
+  '/api/auth/login',
+  '/api/users/invite/validate',
+  '/api/users/invite/complete',
+  '/~offline',
+]
+
 const ADMIN_PATHS = ['/admin']
 const OPERATOR_PATHS = ['/operator']
 
