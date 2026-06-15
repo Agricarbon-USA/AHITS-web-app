@@ -3,7 +3,6 @@
 # Usage: make <target>
 # ============================================================
 
-SHELL         := /bin/zsh
 export PATH   := /opt/homebrew/bin:$(PATH)
 
 APP_NAME      := ahits-web-app
