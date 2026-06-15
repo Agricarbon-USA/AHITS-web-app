@@ -117,6 +117,16 @@ enum PhotoContext {
   VEHICLE_REFERENCE
 }
 
+enum ItemType {
+  SERIALIZED
+  CONSUMABLE
+}
+
+enum HubLocation {
+  PIEDMONT_SC
+  WATERLOO_IA
+}
+
 // ─── Models ───────────────────────────────────────────────────────
 
 model User {
@@ -155,6 +165,10 @@ model InventoryItem {
   qrCodeId          String            @unique @default(cuid())
   notes             String?
   lowStockThreshold Int?
+  itemType         ItemType           @default(CONSUMABLE)
+  unitId           String?
+  expectedQuantity Int?
+  hubLocation      HubLocation?
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 

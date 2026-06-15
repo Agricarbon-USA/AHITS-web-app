@@ -6,12 +6,14 @@ import DashboardIcon from '@mui/icons-material/Dashboard'
 import ChecklistIcon from '@mui/icons-material/Checklist'
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz'
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner'
+import InventoryIcon from '@mui/icons-material/Inventory'
 import LogoutIcon from '@mui/icons-material/Logout'
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuth } from '@/hooks/useAuth'
 
 const NAV_ITEMS = [
   { label: 'My Dashboard', href: '/operator/dashboard', icon: DashboardIcon },
+  { label: 'Equipment', href: '/operator/inventory', icon: InventoryIcon },
   { label: 'Daily Check', href: '/operator/daily-check', icon: ChecklistIcon },
   { label: 'Check Out / In', href: '/operator/checkout', icon: SwapHorizIcon },
   { label: 'Scan QR', href: '/operator/scan', icon: QrCodeScannerIcon },
