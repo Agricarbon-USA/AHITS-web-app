@@ -15,10 +15,16 @@ export async function sendEmail({
   subject: string
   html: string
 }) {
-  return getResend().emails.send({
+  const { data, error } = await getResend().emails.send({
     from: process.env.EMAIL_FROM ?? 'AHITS <noreply@agricarbon.com>',
     to,
     subject,
     html,
   })
+
+  if (error) {
+    throw new Error(`Resend error: ${error.message}`)
+  }
+
+  return data
 }
