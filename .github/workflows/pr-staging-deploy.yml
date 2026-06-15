@@ -1,0 +1,108 @@
+name: Deploy PR to Staging
+
+on:
+  # Manual trigger via: gh workflow run pr-staging-deploy.yml -f pr_number=<N>
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to deploy to staging'
+        required: true
+        type: number
+
+  # Also triggers when the "deploy-staging" label is added to a PR
+  pull_request:
+    types: [labeled]
+
+jobs:
+  deploy:
+    name: Build & Deploy PR to Staging
+    runs-on: ubuntu-latest
+
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.label.name == 'deploy-staging')
+
+    steps:
+      - name: Resolve PR metadata
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = context.eventName === 'workflow_dispatch'
+              ? parseInt(context.payload.inputs.pr_number)
+              : context.payload.pull_request.number;
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+
+            core.setOutput('number', prNumber);
+            core.setOutput('ref', pr.head.ref);
+            core.setOutput('sha', pr.head.sha);
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.ref }}
+
+      - name: GCP Auth & Docker Setup
+        uses: ./.github/actions/gcp-auth
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: Build & push image
+        run: |
+          make docker-build TAG=pr-${{ steps.pr.outputs.sha }} GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }}
+          make docker-push  TAG=pr-${{ steps.pr.outputs.sha }} GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Deploy to staging
+        run: |
+          make cloud-run-deploy \
+            SERVICE=ahits-web-app-staging \
+            TAG=pr-${{ steps.pr.outputs.sha }} \
+            MIN_INSTANCES=0 \
+            GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Get staging URL & comment on PR
+        uses: actions/github-script@v7
+        env:
+          GCP_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+        with:
+          script: |
+            const { execSync } = require('child_process');
+            const url = execSync(
+              `make cloud-run-url SERVICE=ahits-web-app-staging GCP_PROJECT=${process.env.GCP_PROJECT}`
+            ).toString().trim();
+
+            const prNumber = ${{ steps.pr.outputs.number }};
+            const shortSha = '${{ steps.pr.outputs.sha }}'.substring(0, 7);
+
+            // Replace any previous staging deploy comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+            });
+            for (const c of comments) {
+              if (c.body.includes('<!-- staging-deploy -->')) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: c.id,
+                });
+              }
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: [
+                '<!-- staging-deploy -->',
+                '### 🚀 Staging deploy complete',
+                `**URL:** ${url}`,
+                `**Commit:** \`${shortSha}\``,
+                `**PR:** #${prNumber}`,
+              ].join('\n'),
+            });
