@@ -4,11 +4,10 @@ import * as React from 'react'
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
   Button, TextField, Stack, Box, Typography, IconButton,
-  CircularProgress,
+  CircularProgress, Alert,
 } from '@mui/material'
 import CameraAltIcon from '@mui/icons-material/CameraAlt'
 import CloseIcon from '@mui/icons-material/Close'
-import { createClient } from '@/lib/supabase/client'
 
 interface Props {
   title: string
@@ -23,6 +22,7 @@ interface Props {
 }
 
 interface UploadingPhoto {
+  id: string
   name: string
   uploading: boolean
   url: string | null
@@ -41,44 +41,52 @@ export function NotePhotoDialog({
 }: Props) {
   const [note, setNote] = React.useState('')
   const [photos, setPhotos] = React.useState<UploadingPhoto[]>([])
-  const fileInputRef = React.useRef<HTMLInputElement>(null)
+  const [uploadError, setUploadError] = React.useState<string | null>(null)
+  const stillUploading = photos.some((p) => p.uploading)
+  const hasFailedUploads = photos.some((p) => !p.uploading && p.url === null)
 
   React.useEffect(() => {
     if (!open) {
       setNote('')
       setPhotos([])
+      setUploadError(null)
     }
   }, [open])
 
   const handleFiles = async (files: FileList) => {
-    const supabase = createClient()
-    const newPhotos: UploadingPhoto[] = Array.from(files).map((f) => ({
-      name: f.name,
-      uploading: true,
-      url: null,
+    setUploadError(null)
+    // Assign stable IDs upfront so concurrent uploads don't clobber each other
+    const entries = Array.from(files).map((f) => ({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      file: f,
     }))
-    setPhotos((prev) => [...prev, ...newPhotos])
+    setPhotos((prev) => [
+      ...prev,
+      ...entries.map(({ id, file }) => ({ id, name: file.name, uploading: true, url: null })),
+    ])
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i]
-      const path = `rig-events/${Date.now()}-${file.name.replace(/\s+/g, '-')}`
-      const { data, error } = await supabase.storage.from('photos').upload(path, file, { upsert: false })
-      const url = error || !data
-        ? null
-        : supabase.storage.from('photos').getPublicUrl(data.path).data.publicUrl
-
-      setPhotos((prev) =>
-        prev.map((p, idx) =>
-          idx === prev.length - files.length + i
-            ? { ...p, uploading: false, url }
-            : p
-        )
-      )
-    }
+    const errors: string[] = []
+    await Promise.all(
+      entries.map(async ({ id, file }) => {
+        const form = new FormData()
+        form.append('file', file)
+        try {
+          const res = await fetch('/api/uploads', { method: 'POST', body: form })
+          const json = await res.json()
+          const url: string | null = res.ok ? (json.url ?? null) : null
+          if (!res.ok) errors.push(json.error ?? `Upload failed for ${file.name}`)
+          setPhotos((prev) => prev.map((p) => p.id === id ? { ...p, uploading: false, url } : p))
+        } catch {
+          errors.push(`Network error uploading ${file.name}`)
+          setPhotos((prev) => prev.map((p) => p.id === id ? { ...p, uploading: false, url: null } : p))
+        }
+      })
+    )
+    if (errors.length) setUploadError(errors.join('; '))
   }
 
-  const removePhoto = (idx: number) => {
-    setPhotos((prev) => prev.filter((_, i) => i !== idx))
+  const removePhoto = (id: string) => {
+    setPhotos((prev) => prev.filter((p) => p.id !== id))
   }
 
   const handleConfirm = () => {
@@ -86,8 +94,7 @@ export function NotePhotoDialog({
     onConfirm(note, urls)
   }
 
-  const stillUploading = photos.some((p) => p.uploading)
-  const canSubmit = note.trim().length >= 5 && !stillUploading && !loading
+  const canSubmit = note.trim().length >= 5 && !stillUploading && !hasFailedUploads && !loading
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
@@ -109,29 +116,36 @@ export function NotePhotoDialog({
             autoFocus
           />
 
+          {uploadError && (
+            <Alert severity="error" onClose={() => setUploadError(null)}>
+              {uploadError} — remove the failed photos (!) and try again.
+            </Alert>
+          )}
+
           <Box>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              style={{ display: 'none' }}
-              onChange={(e) => { if (e.target.files?.length) handleFiles(e.target.files) }}
-            />
+            {/* component="label" renders a <label> so the browser opens the file picker
+                directly on click — programmatic .click() is blocked on iOS Safari */}
             <Button
+              component="label"
               size="small"
               variant="outlined"
               startIcon={<CameraAltIcon />}
-              onClick={() => fileInputRef.current?.click()}
-              disabled={loading}
+              disabled={loading || stillUploading}
             >
               Attach photos
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                style={{ display: 'none' }}
+                onChange={(e) => { if (e.target.files?.length) handleFiles(e.target.files) }}
+              />
             </Button>
 
             {photos.length > 0 && (
               <Stack direction="row" spacing={1} mt={1.5} flexWrap="wrap">
-                {photos.map((p, i) => (
-                  <Box key={i} sx={{ position: 'relative', width: 48, height: 48 }}>
+                {photos.map((p) => (
+                  <Box key={p.id} sx={{ position: 'relative', width: 48, height: 48 }}>
                     {p.uploading ? (
                       <Box sx={{ width: 48, height: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
                         <CircularProgress size={20} />
@@ -150,7 +164,7 @@ export function NotePhotoDialog({
                     )}
                     <IconButton
                       size="small"
-                      onClick={() => removePhoto(i)}
+                      onClick={() => removePhoto(p.id)}
                       sx={{ position: 'absolute', top: -8, right: -8, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: 0.25 }}
                     >
                       <CloseIcon sx={{ fontSize: 12 }} />

@@ -46,8 +46,36 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const toOperatorId = transfer.toOperatorId
   const sourceName = transfer.fromRig.operator.name
 
-  const updatedTransfer = await prisma.$transaction(async (tx) => {
-    // Find or create destination rig
+  let updatedTransfer
+  try {
+    updatedTransfer = await prisma.$transaction(async (tx) => {
+    // Guard: verify source rig is still active (not ended since transfer was created)
+    const sourceRig = await tx.rig.findUnique({ where: { id: transfer.fromRig.id }, select: { endedAt: true } })
+    if (sourceRig?.endedAt) {
+      throw new Error('Source deployment has ended — transfer is no longer valid')
+    }
+
+    // Guard: verify each vehicle is still in the source rig (not double-transferred)
+    for (const tv of transfer.vehicles) {
+      const stillPresent = await tx.rigVehicle.findFirst({
+        where: { rigId: transfer.fromRig.id, vehicleId: tv.vehicleId, removedAt: null },
+      })
+      if (!stillPresent) {
+        throw new Error(`Vehicle is no longer in the source deployment`)
+      }
+    }
+
+    // Guard: verify each kit item is still in the source rig (not double-transferred)
+    for (const ti of transfer.items) {
+      const stillPresent = await tx.kitItem.findFirst({
+        where: { id: ti.kitItemId, removedAt: null },
+      })
+      if (!stillPresent) {
+        throw new Error(`Kit item is no longer in the source deployment`)
+      }
+    }
+
+    // Find or create destination rig (source rig stays active regardless)
     let destRig = await tx.rig.findFirst({
       where: { operatorId: toOperatorId, endedAt: null },
     })
@@ -63,7 +91,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       destKit = await tx.kit.create({ data: { rigId: destRig.id } })
     }
 
-    // Transfer vehicles
+    // Transfer vehicles (only removes transferred ones — source deployment stays active)
     for (const tv of transfer.vehicles) {
       await tx.rigVehicle.updateMany({
         where: { rigId: transfer.fromRig.id, vehicleId: tv.vehicleId, removedAt: null },
@@ -83,7 +111,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       })
     }
 
-    // Transfer kit items
+    // Transfer kit items (only removes transferred items — remaining items stay in source rig)
     for (const ti of transfer.items) {
       await tx.kitItem.update({
         where: { id: ti.kitItemId },
@@ -114,15 +142,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       })
     }
 
-    return tx.transferRequest.update({
-      where: { id },
-      data: {
-        status: 'ACCEPTED',
-        respondedAt: now,
-        responseNote: responseNote ?? null,
-      },
+      return tx.transferRequest.update({
+        where: { id },
+        data: {
+          status: 'ACCEPTED',
+          respondedAt: now,
+          responseNote: responseNote ?? null,
+        },
+      })
     })
-  })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Transfer failed'
+    return NextResponse.json({ error: msg }, { status: 409 })
+  }
 
   return NextResponse.json({ ok: true, transferRequest: updatedTransfer })
 }

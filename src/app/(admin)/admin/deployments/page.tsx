@@ -779,6 +779,12 @@ export default function AdminDeploymentsPage() {
   const [drawerRig, setDrawerRig] = React.useState<Rig | null>(null)
   const [newOpen, setNewOpen] = React.useState(false)
 
+  // Pending transfers — admin can accept or decline on behalf of the destination operator
+  const [pendingTransfers, setPendingTransfers] = React.useState<TransferRow[]>([])
+  const [respondDialog, setRespondDialog] = React.useState<{ transfer: TransferRow; action: 'accept' | 'decline' } | null>(null)
+  const [responseNote, setResponseNote] = React.useState('')
+  const [respondLoading, setRespondLoading] = React.useState(false)
+
   const load = React.useCallback(async () => {
     setLoading(true)
     const params = new URLSearchParams({ active: showEnded ? 'false' : 'true' })
@@ -788,7 +794,13 @@ export default function AdminDeploymentsPage() {
     setLoading(false)
   }, [showEnded, filterOperator])
 
+  const loadTransfers = React.useCallback(async () => {
+    const res = await fetch('/api/transfers?status=PENDING')
+    if (res.ok) setPendingTransfers(await res.json())
+  }, [])
+
   React.useEffect(() => { load() }, [load])
+  React.useEffect(() => { loadTransfers() }, [loadTransfers])
 
   React.useEffect(() => {
     fetch('/api/users').then((r) => r.json()).then((d) => setOperators(d.data ?? [])).catch(() => {})
@@ -799,6 +811,22 @@ export default function AdminDeploymentsPage() {
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 4000) }
   const activeCount = rigs.filter((r) => !r.endedAt).length
+
+  const handleRespond = async () => {
+    if (!respondDialog) return
+    setRespondLoading(true)
+    const { transfer, action } = respondDialog
+    await fetch(`/api/transfers/${transfer.id}/${action}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ responseNote: responseNote || undefined }),
+    })
+    setRespondLoading(false)
+    setRespondDialog(null)
+    setResponseNote('')
+    showToast(action === 'accept' ? 'Transfer accepted' : 'Transfer declined')
+    await Promise.all([load(), loadTransfers()])
+  }
 
   return (
     <Box>
@@ -813,6 +841,44 @@ export default function AdminDeploymentsPage() {
       </Stack>
 
       {toast && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setToast('')}>{toast}</Alert>}
+
+      {/* Pending transfers — admin accept / decline */}
+      {pendingTransfers.length > 0 && (
+        <Box mb={3}>
+          <Typography variant="subtitle2" fontWeight={600} mb={1}>
+            Pending Transfers ({pendingTransfers.length})
+          </Typography>
+          <Stack spacing={1}>
+            {pendingTransfers.map((tr) => {
+              const vehicleNames = tr.vehicles.map((tv) => tv.vehicle.name).join(', ')
+              const itemNames = tr.items.map((ti) => `${ti.kitItem.item.name} ×${ti.kitItem.quantity}`).join(', ')
+              const summary = [vehicleNames, itemNames].filter(Boolean).join(', ')
+              return (
+                <Alert key={tr.id} severity="warning" icon={false}
+                  action={
+                    <Stack direction="row" spacing={1} sx={{ mt: -0.5 }}>
+                      <Button size="small" color="error" variant="outlined"
+                        onClick={() => { setRespondDialog({ transfer: tr, action: 'decline' }); setResponseNote('') }}>
+                        Decline
+                      </Button>
+                      <Button size="small" color="success" variant="contained"
+                        onClick={() => { setRespondDialog({ transfer: tr, action: 'accept' }); setResponseNote('') }}>
+                        Accept
+                      </Button>
+                    </Stack>
+                  }
+                >
+                  <Typography variant="body2" fontWeight={600}>
+                    {tr.fromRig.operator.name} → {tr.toOperator.name}
+                  </Typography>
+                  <Typography variant="body2">{summary}</Typography>
+                  {tr.note && <Typography variant="caption" color="text.secondary">&ldquo;{tr.note}&rdquo;</Typography>}
+                </Alert>
+              )
+            })}
+          </Stack>
+        </Box>
+      )}
 
       <Stack direction="row" spacing={1.5} mb={2.5} alignItems="center" flexWrap="wrap">
         <TextField select size="small" label="All Operators" value={filterOperator}
@@ -915,6 +981,36 @@ export default function AdminDeploymentsPage() {
           onSuccess={() => { showToast('Deployment created'); load() }}
         />
       )}
+
+      {/* Accept / Decline respond dialog */}
+      <Dialog open={!!respondDialog} onClose={() => setRespondDialog(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>{respondDialog?.action === 'accept' ? 'Accept Transfer' : 'Decline Transfer'}</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" mb={1.5}>
+            {respondDialog?.action === 'accept'
+              ? `Accept transfer from ${respondDialog.transfer.fromRig.operator.name} to ${respondDialog.transfer.toOperator.name}?`
+              : `Decline transfer from ${respondDialog?.transfer.fromRig.operator.name} to ${respondDialog?.transfer.toOperator.name}?`}
+          </Typography>
+          <TextField
+            label="Response note (optional)"
+            value={responseNote}
+            onChange={(e) => setResponseNote(e.target.value)}
+            multiline rows={2} fullWidth
+          />
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setRespondDialog(null)} disabled={respondLoading}>Cancel</Button>
+          <Button
+            variant="contained"
+            color={respondDialog?.action === 'accept' ? 'success' : 'error'}
+            onClick={handleRespond}
+            disabled={respondLoading}
+            startIcon={respondLoading ? <CircularProgress size={16} color="inherit" /> : null}
+          >
+            {respondLoading ? 'Saving…' : respondDialog?.action === 'accept' ? 'Accept' : 'Decline'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }

@@ -36,12 +36,20 @@ const createSchema = z.object({
   notes: z.string().optional(),
 })
 
+// Vehicle types operators are permitted to create/edit (rental assets they manage in the field)
+const OPERATOR_ALLOWED_VEHICLE_TYPES = ['TRAILER', 'POLARIS_UTV', 'CAN_AM_UTV']
+
 export async function POST(req: NextRequest) {
   const session = await getSession()
-  if (!session || session.role !== 'ADMIN') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const parsed = createSchema.safeParse(await req.json())
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
+
+  // Operators can only create trailers and UTVs; company trucks are admin-only
+  if (session.role !== 'ADMIN' && !OPERATOR_ALLOWED_VEHICLE_TYPES.includes(parsed.data.type)) {
+    return NextResponse.json({ error: 'Operators may only add trailers and UTVs' }, { status: 403 })
+  }
 
   const vehicle = await prisma.vehicle.create({ data: parsed.data as never })
   return NextResponse.json({ data: vehicle }, { status: 201 })

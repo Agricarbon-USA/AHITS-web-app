@@ -39,8 +39,9 @@ const createSchema = z.object({
 })
 
 export async function POST(req: NextRequest) {
+  // Both admins and operators can create maintenance tasks
   const session = await getSession()
-  if (!session || session.role !== 'ADMIN') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const parsed = createSchema.safeParse(await req.json())
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
