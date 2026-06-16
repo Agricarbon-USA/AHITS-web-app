@@ -150,6 +150,7 @@ model User {
   transfersReceived  TransferRequest[] @relation("TransferTo")
   transfersInitiated TransferRequest[] @relation("TransferBy")
   inoperableReports  InventoryItem[]   @relation("InoperableReports")
+  rigAssignments     RigOperator[]     @relation("RigSecondaryOperators")
 
   @@map("users")
 }
@@ -190,11 +191,25 @@ model Rig {
   createdAt  DateTime   @default(now())
   updatedAt  DateTime   @updatedAt
 
-  vehicles          RigVehicle[]
-  kits              Kit[]
-  outgoingTransfers TransferRequest[] @relation("FromRig")
+  vehicles           RigVehicle[]
+  kits               Kit[]
+  outgoingTransfers  TransferRequest[] @relation("FromRig")
+  secondaryOperators RigOperator[]
 
   @@map("rigs")
+}
+
+model RigOperator {
+  id         String   @id @default(cuid())
+  rigId      String
+  operatorId String
+  addedAt    DateTime @default(now())
+
+  rig      Rig  @relation(fields: [rigId], references: [id])
+  operator User @relation("RigSecondaryOperators", fields: [operatorId], references: [id])
+
+  @@unique([rigId, operatorId])
+  @@map("rig_operators")
 }
 
 model RigVehicle {
@@ -319,23 +334,31 @@ model InventoryItem {
 }
 
 model Vehicle {
-  id                  String        @id @default(cuid())
-  name                String        @unique
-  type                VehicleType
-  year                Int?
-  makeModel           String?
-  vin                 String?       @unique
-  licensePlate        String?
-  odometer            Int?
-  status              VehicleStatus @default(ACTIVE)
-  location            String?
-  assignedOperatorId  String?
-  insuranceExpires    DateTime?
-  registrationExpires DateTime?
-  qrCodeId            String        @unique @default(cuid())
-  notes               String?
-  createdAt           DateTime      @default(now())
-  updatedAt           DateTime      @updatedAt
+  id                    String        @id @default(cuid())
+  name                  String        @unique
+  type                  VehicleType
+  year                  Int?
+  makeModel             String?
+  vin                   String?       @unique
+  licensePlate          String?
+  odometer              Int?
+  status                VehicleStatus @default(ACTIVE)
+  location              String?
+  assignedOperatorId    String?
+  insuranceExpires      DateTime?
+  registrationExpires   DateTime?
+  qrCodeId              String        @unique @default(cuid())
+  notes                 String?
+  isRental              Boolean       @default(false)
+  rentalMake            String?
+  rentalModel           String?
+  rentalYear            Int?
+  rentalLength          String?
+  rentalAgreementUrl    String?
+  rentalPickupLocation  String?
+  rentalDropoffLocation String?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
 
   dailyChecks      DailyCheck[]
   maintenanceTasks MaintenanceTask[]

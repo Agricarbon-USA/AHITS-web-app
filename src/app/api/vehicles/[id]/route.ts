@@ -25,11 +25,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { id } = await params
 
-  // Operators can only edit trailers and UTVs; company trucks are admin-only
+  // Operators can edit rentals regardless of type; non-rental restricted to trailers/UTVs
   if (session.role !== 'ADMIN') {
-    const existing = await prisma.vehicle.findUnique({ where: { id }, select: { type: true } })
+    const existing = await prisma.vehicle.findUnique({ where: { id }, select: { type: true, isRental: true } })
     if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-    if (!OPERATOR_ALLOWED_VEHICLE_TYPES.includes(existing.type as string)) {
+    if (!existing.isRental && !OPERATOR_ALLOWED_VEHICLE_TYPES.includes(existing.type as string)) {
       return NextResponse.json({ error: 'Operators may only edit trailers and UTVs' }, { status: 403 })
     }
   }

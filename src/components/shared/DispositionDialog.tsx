@@ -13,7 +13,7 @@ import PersonIcon from '@mui/icons-material/Person'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import CameraAltIcon from '@mui/icons-material/CameraAlt'
 import CloseIcon from '@mui/icons-material/Close'
-import { createClient } from '@/lib/supabase/client'
+import { compressImage } from '@/lib/compress-image'
 
 export interface KitItemSummary {
   kitItemId: string
@@ -47,7 +47,7 @@ interface ItemDisp {
 
 type Phase = 'bulk' | 'review' | 'inop-photo-desc' | 'inop-can-fix' | 'inop-repair-type' | 'confirm'
 
-interface UploadingPhoto { name: string; uploading: boolean; url: string | null }
+interface UploadingPhoto { id: string; name: string; uploading: boolean; url: string | null }
 
 export interface DispositionDialogProps {
   open: boolean
@@ -84,7 +84,6 @@ export function DispositionDialog({
   const [overallNote, setOverallNote] = React.useState('')
   const [submitting, setSubmitting] = React.useState(false)
   const [error, setError] = React.useState('')
-  const fileInputRef = React.useRef<HTMLInputElement>(null)
 
   React.useEffect(() => {
     if (!open) {
@@ -113,27 +112,41 @@ export function DispositionDialog({
 
   const handleFiles = async (files: FileList) => {
     if (!currentInopId) return
-    const supabase = createClient()
-    const offset = (inopPhotos[currentInopId] ?? []).length
-    const newPhotos: UploadingPhoto[] = Array.from(files).map((f) => ({ name: f.name, uploading: true, url: null }))
-    setInopPhotos((prev) => ({ ...prev, [currentInopId]: [...(prev[currentInopId] ?? []), ...newPhotos] }))
-
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i]
-      const path = `rig-events/${Date.now()}-${file.name.replace(/\s+/g, '-')}`
-      const { data, error: upErr } = await supabase.storage.from('photos').upload(path, file, { upsert: false })
-      const url = upErr || !data ? null : supabase.storage.from('photos').getPublicUrl(data.path).data.publicUrl
-      setInopPhotos((prev) => {
-        const list = [...(prev[currentInopId] ?? [])]
-        list[offset + i] = { ...list[offset + i], uploading: false, url }
-        return { ...prev, [currentInopId]: list }
+    const id = currentInopId
+    const entries = Array.from(files).map((f) => ({
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      file: f,
+    }))
+    setInopPhotos((prev) => ({
+      ...prev,
+      [id]: [...(prev[id] ?? []), ...entries.map(({ id: eid, file }) => ({ id: eid, name: file.name, uploading: true, url: null }))],
+    }))
+    await Promise.all(
+      entries.map(async ({ id: eid, file }) => {
+        const compressed = await compressImage(file)
+        const form = new FormData()
+        form.append('file', compressed)
+        try {
+          const res = await fetch('/api/uploads', { method: 'POST', body: form })
+          const json = await res.json()
+          const url: string | null = res.ok ? (json.url ?? null) : null
+          setInopPhotos((prev) => ({
+            ...prev,
+            [id]: (prev[id] ?? []).map((p) => p.id === eid ? { ...p, uploading: false, url } : p),
+          }))
+        } catch {
+          setInopPhotos((prev) => ({
+            ...prev,
+            [id]: (prev[id] ?? []).map((p) => p.id === eid ? { ...p, uploading: false, url: null } : p),
+          }))
+        }
       })
-    }
+    )
   }
 
-  const removePhoto = (idx: number) => {
+  const removePhoto = (id: string) => {
     if (!currentInopId) return
-    setInopPhotos((prev) => ({ ...prev, [currentInopId]: (prev[currentInopId] ?? []).filter((_, i) => i !== idx) }))
+    setInopPhotos((prev) => ({ ...prev, [currentInopId]: (prev[currentInopId] ?? []).filter((p) => p.id !== id) }))
   }
 
   const buildDisps = (): Record<string, ItemDisp> => {
@@ -246,7 +259,6 @@ export function DispositionDialog({
   }
 
   const stillUploading = currentPhotos.some((p) => p.uploading)
-  const hasEnoughPhotos = currentPhotos.filter((p) => p.url).length >= 1
   const hasEnoughNote = currentNote.length >= 10
   const bulkCanProceed = bulkType !== null
     && (bulkType !== 'HUB' || !!bulkHubId)
@@ -419,24 +431,28 @@ export function DispositionDialog({
           <DialogTitle>{currentInopItem.name} — What happened?</DialogTitle>
           <DialogContent>
             <Stack spacing={2} pt={0.5}>
-              <Alert severity="warning">Attach at least one photo showing the damage</Alert>
+              <Alert severity="info">Optionally attach photos showing the damage</Alert>
               <Box>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  style={{ display: 'none' }}
-                  onChange={(e) => { if (e.target.files?.length) void handleFiles(e.target.files) }}
-                />
-                <Button size="small" variant="outlined" startIcon={<CameraAltIcon />}
-                  onClick={() => fileInputRef.current?.click()} disabled={stillUploading}>
+                <Button
+                  component="label"
+                  size="small"
+                  variant="outlined"
+                  startIcon={<CameraAltIcon />}
+                  disabled={stillUploading}
+                >
                   Add Photos
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    style={{ display: 'none' }}
+                    onChange={(e) => { if (e.target.files?.length) void handleFiles(e.target.files) }}
+                  />
                 </Button>
                 {currentPhotos.length > 0 && (
                   <Stack direction="row" spacing={1} mt={1.5} flexWrap="wrap">
-                    {currentPhotos.map((p, i) => (
-                      <Box key={i} sx={{ position: 'relative', width: 64, height: 64 }}>
+                    {currentPhotos.map((p) => (
+                      <Box key={p.id} sx={{ position: 'relative', width: 64, height: 64 }}>
                         {p.uploading ? (
                           <Box sx={{ width: 64, height: 64, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
                             <CircularProgress size={24} />
@@ -449,7 +465,7 @@ export function DispositionDialog({
                             <Typography variant="caption" color="error">!</Typography>
                           </Box>
                         )}
-                        <IconButton size="small" onClick={() => removePhoto(i)}
+                        <IconButton size="small" onClick={() => removePhoto(p.id)}
                           sx={{ position: 'absolute', top: -8, right: -8, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', p: 0.25 }}>
                           <CloseIcon sx={{ fontSize: 12 }} />
                         </IconButton>
@@ -470,7 +486,7 @@ export function DispositionDialog({
           <DialogActions sx={{ px: 3, pb: 2 }}>
             <Button onClick={() => setPhase(items.length > 1 ? 'review' : 'bulk')}>Back</Button>
             <Button variant="contained"
-              disabled={!hasEnoughPhotos || !hasEnoughNote || stillUploading}
+              disabled={!hasEnoughNote || stillUploading}
               onClick={() => setPhase('inop-can-fix')}>
               Next
             </Button>

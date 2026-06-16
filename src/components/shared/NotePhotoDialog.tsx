@@ -8,6 +8,7 @@ import {
 } from '@mui/material'
 import CameraAltIcon from '@mui/icons-material/CameraAlt'
 import CloseIcon from '@mui/icons-material/Close'
+import { compressImage } from '@/lib/compress-image'
 
 interface Props {
   title: string
@@ -68,8 +69,9 @@ export function NotePhotoDialog({
     const errors: string[] = []
     await Promise.all(
       entries.map(async ({ id, file }) => {
+        const compressed = await compressImage(file)
         const form = new FormData()
-        form.append('file', file)
+        form.append('file', compressed)
         try {
           const res = await fetch('/api/uploads', { method: 'POST', body: form })
           const json = await res.json()

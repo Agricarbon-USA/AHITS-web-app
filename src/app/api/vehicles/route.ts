@@ -34,9 +34,16 @@ const createSchema = z.object({
   insuranceExpires: z.string().datetime().optional(),
   registrationExpires: z.string().datetime().optional(),
   notes: z.string().optional(),
+  isRental: z.boolean().optional().default(false),
+  rentalMake: z.string().optional(),
+  rentalModel: z.string().optional(),
+  rentalYear: z.number().int().optional(),
+  rentalLength: z.string().optional(),
+  rentalAgreementUrl: z.string().url().optional(),
+  rentalPickupLocation: z.string().optional(),
+  rentalDropoffLocation: z.string().optional(),
 })
 
-// Vehicle types operators are permitted to create/edit (rental assets they manage in the field)
 const OPERATOR_ALLOWED_VEHICLE_TYPES = ['TRAILER', 'POLARIS_UTV', 'CAN_AM_UTV']
 
 export async function POST(req: NextRequest) {
@@ -46,8 +53,8 @@ export async function POST(req: NextRequest) {
   const parsed = createSchema.safeParse(await req.json())
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  // Operators can only create trailers and UTVs; company trucks are admin-only
-  if (session.role !== 'ADMIN' && !OPERATOR_ALLOWED_VEHICLE_TYPES.includes(parsed.data.type)) {
+  // Operators can create any type when it's a rental; non-rental is restricted to trailers/UTVs
+  if (session.role !== 'ADMIN' && !parsed.data.isRental && !OPERATOR_ALLOWED_VEHICLE_TYPES.includes(parsed.data.type)) {
     return NextResponse.json({ error: 'Operators may only add trailers and UTVs' }, { status: 403 })
   }
 

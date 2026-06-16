@@ -15,6 +15,7 @@ import TerrainIcon from '@mui/icons-material/Terrain'
 import AgricultureIcon from '@mui/icons-material/Agriculture'
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz'
 import StopCircleIcon from '@mui/icons-material/StopCircle'
+import CloseIcon from '@mui/icons-material/Close'
 import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
 import { DispositionDialog } from '@/components/shared/DispositionDialog'
 import type { HubOption, UserOption } from '@/components/shared/DispositionDialog'
@@ -36,7 +37,7 @@ interface RigVehicleRow {
   addNote: string
   photoUrls: string[]
   addedAt: string
-  vehicle: { id: string; name: string; type: string }
+  vehicle: { id: string; name: string; type: string; isRental: boolean }
 }
 
 interface KitItemRow {
@@ -50,6 +51,12 @@ interface KitRow {
   items: KitItemRow[]
 }
 
+interface SecondaryOperatorRow {
+  id: string
+  operatorId: string
+  operator: { id: string; name: string; email: string }
+}
+
 interface Rig {
   id: string
   label: string | null
@@ -59,6 +66,7 @@ interface Rig {
   project: { id: string; name: string } | null
   vehicles: RigVehicleRow[]
   kits: KitRow[]
+  secondaryOperators: SecondaryOperatorRow[]
 }
 
 interface VehicleOption {
@@ -376,6 +384,8 @@ function DeploymentDrawer({
   const [pendingTransfers, setPendingTransfers] = React.useState<TransferRow[]>([])
   const [cancelTransferId, setCancelTransferId] = React.useState<string | null>(null)
   const [cancelLoading, setCancelLoading] = React.useState(false)
+  const [addingOperator, setAddingOperator] = React.useState(false)
+  const [operatorToAdd, setOperatorToAdd] = React.useState('')
 
   React.useEffect(() => { setRig(initialRig) }, [initialRig])
 
@@ -400,6 +410,26 @@ function DeploymentDrawer({
     if (res.ok) { const d = await res.json(); setRig(d) }
     await loadTransfers()
     onUpdated()
+  }
+
+  const handleAddOperator = async (rigId: string) => {
+    await fetch(`/api/deployments/${rigId}/operators`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ operatorId: operatorToAdd }),
+    })
+    setOperatorToAdd('')
+    setAddingOperator(false)
+    await refresh()
+  }
+
+  const handleRemoveOperator = async (rigId: string, operatorId: string) => {
+    await fetch(`/api/deployments/${rigId}/operators`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ operatorId }),
+    })
+    await refresh()
   }
 
   const handleCancelTransfer = async () => {
@@ -546,6 +576,9 @@ function DeploymentDrawer({
                       )}
                       <Icon fontSize="small" color="action" />
                       <Typography variant="body2">{rv.vehicle.name}</Typography>
+                      {rv.vehicle.isRental && (
+                        <Chip label="Rental" size="small" color="warning" variant="outlined" sx={{ height: 18, fontSize: 10 }} />
+                      )}
                       <Chip size="small" label={rv.vehicle.type} variant="outlined" sx={{ ml: 'auto !important', height: 18, fontSize: 10 }} />
                     </Stack>
                   )
@@ -592,6 +625,48 @@ function DeploymentDrawer({
                 ))}
               </Stack>
             )}
+
+            <Divider sx={{ my: 2 }} />
+
+            {/* Team */}
+            <Box mt={2}>
+              <Typography variant="subtitle2" fontWeight={600} mb={0.75}>Team</Typography>
+              <Stack spacing={0.5}>
+                <Stack direction="row" justifyContent="space-between" alignItems="center">
+                  <Typography variant="body2">{rig.operator.name}</Typography>
+                  <Typography variant="caption" color="text.secondary">Primary</Typography>
+                </Stack>
+                {rig.secondaryOperators?.map((ro) => (
+                  <Stack key={ro.id} direction="row" justifyContent="space-between" alignItems="center">
+                    <Typography variant="body2">{ro.operator.name}</Typography>
+                    {isActive && (
+                      <IconButton size="small" onClick={() => handleRemoveOperator(rig.id, ro.operatorId)}>
+                        <CloseIcon fontSize="small" />
+                      </IconButton>
+                    )}
+                  </Stack>
+                ))}
+              </Stack>
+              {isActive && (addingOperator ? (
+                <Stack direction="row" spacing={1} mt={1}>
+                  <TextField
+                    select size="small" label="Add operator" value={operatorToAdd}
+                    onChange={(e) => setOperatorToAdd(e.target.value)} sx={{ flex: 1 }}
+                  >
+                    {operators
+                      .filter((u) => u.role === 'OPERATOR' && u.id !== rig.operator.id && !rig.secondaryOperators?.some((ro) => ro.operatorId === u.id))
+                      .map((u) => <MenuItem key={u.id} value={u.id}>{u.name}</MenuItem>)}
+                  </TextField>
+                  <Button size="small" variant="contained" disabled={!operatorToAdd}
+                    onClick={() => handleAddOperator(rig.id)}>Add</Button>
+                  <Button size="small" onClick={() => { setAddingOperator(false); setOperatorToAdd('') }}>Cancel</Button>
+                </Stack>
+              ) : (
+                <Button size="small" sx={{ mt: 0.5 }} onClick={() => setAddingOperator(true)}>
+                  + Add Operator
+                </Button>
+              ))}
+            </Box>
           </Box>
 
           {isActive && (

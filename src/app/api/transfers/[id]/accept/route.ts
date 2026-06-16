@@ -142,6 +142,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       })
     }
 
+    // Auto-end source deployment if now completely empty
+    const remainingVehicles = await tx.rigVehicle.count({
+      where: { rigId: transfer.fromRig.id, removedAt: null },
+    })
+    const sourceKits = await tx.kit.findMany({
+      where: { rigId: transfer.fromRig.id },
+      select: { items: { where: { removedAt: null }, select: { id: true } } },
+    })
+    const remainingItems = sourceKits.reduce((sum, k) => sum + k.items.length, 0)
+    if (remainingVehicles === 0 && remainingItems === 0) {
+      await tx.rig.update({ where: { id: transfer.fromRig.id }, data: { endedAt: now } })
+    }
+
       return tx.transferRequest.update({
         where: { id },
         data: {

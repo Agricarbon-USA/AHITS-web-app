@@ -8,7 +8,7 @@ const RIG_INCLUDE = {
   project: { select: { id: true, name: true } },
   vehicles: {
     where: { removedAt: null },
-    include: { vehicle: { select: { id: true, name: true, type: true } } },
+    include: { vehicle: { select: { id: true, name: true, type: true, isRental: true } } },
   },
   kits: {
     include: {
@@ -25,6 +25,9 @@ const RIG_INCLUDE = {
         },
       },
     },
+  },
+  secondaryOperators: {
+    include: { operator: { select: { id: true, name: true, email: true } } },
   },
 } as const
 
@@ -55,8 +58,11 @@ export async function GET(req: NextRequest) {
   const rigs = await prisma.rig.findMany({
     where: {
       ...(active ? { endedAt: null } : { endedAt: { not: null } }),
-      ...(operatorId && { operatorId }),
       ...(projectId && { projectId }),
+      // Operators see deployments where they are primary OR secondary
+      ...(session.role === 'OPERATOR'
+        ? { OR: [{ operatorId: session.userId }, { secondaryOperators: { some: { operatorId: session.userId } } }] }
+        : operatorId ? { operatorId } : {}),
     },
     include: RIG_INCLUDE,
     orderBy: { startedAt: 'desc' },

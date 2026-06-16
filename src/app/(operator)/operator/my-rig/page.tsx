@@ -6,7 +6,7 @@ import {
   Chip, CircularProgress, Checkbox, TextField, MenuItem,
   Dialog, DialogTitle, DialogContent, DialogActions, List,
   ListItem, ListItemText, ListItemIcon, Stepper, Step, StepLabel,
-  Alert,
+  Alert, Switch, FormControlLabel, Divider,
 } from '@mui/material'
 import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import TerrainIcon from '@mui/icons-material/Terrain'
@@ -17,6 +17,7 @@ import StopCircleIcon from '@mui/icons-material/StopCircle'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
 import { DispositionDialog, KitItemSummary } from '@/components/shared/DispositionDialog'
+import { RentalVehicleForm, RentalVehicleFields } from '@/components/shared/RentalVehicleForm'
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -32,7 +33,7 @@ const VEHICLE_ICON: Record<string, React.ElementType> = {
 
 interface RigVehicleRow {
   id: string
-  vehicle: { id: string; name: string; type: string }
+  vehicle: { id: string; name: string; type: string; isRental: boolean }
 }
 
 interface KitItemRow {
@@ -437,6 +438,10 @@ export default function MyRigPage() {
   // Add pickers
   const [addVehicleOpen, setAddVehicleOpen] = React.useState(false)
   const [pendingVehicles, setPendingVehicles] = React.useState<Set<string>>(new Set())
+  const [isRentalToggle, setIsRentalToggle] = React.useState(false)
+  const [rentalFields, setRentalFields] = React.useState<Partial<RentalVehicleFields>>({})
+  const [rentalSubmitLoading, setRentalSubmitLoading] = React.useState(false)
+  const [rentalError, setRentalError] = React.useState('')
   const [addItemOpen, setAddItemOpen] = React.useState(false)
   const [pendingItems, setPendingItems] = React.useState<Map<string, number>>(new Map())
 
@@ -660,6 +665,9 @@ export default function MyRigPage() {
                       )}
                       <Icon fontSize="small" color="action" />
                       <Typography variant="body2">{rv.vehicle.name}</Typography>
+                      {rv.vehicle.isRental && (
+                        <Chip label="Rental" size="small" color="warning" variant="outlined" sx={{ ml: 0.5, height: 18, fontSize: 10 }} />
+                      )}
                     </Stack>
                   )
                 })}
@@ -783,39 +791,106 @@ export default function MyRigPage() {
       </Stack>
 
       {/* Add Vehicles picker */}
-      <Dialog open={addVehicleOpen} onClose={() => { setAddVehicleOpen(false); setPendingVehicles(new Set()) }} maxWidth="xs" fullWidth>
+      <Dialog open={addVehicleOpen} onClose={() => {
+        setAddVehicleOpen(false); setPendingVehicles(new Set())
+        setIsRentalToggle(false); setRentalFields({}); setRentalError('')
+      }} maxWidth="sm" fullWidth>
         <DialogTitle>Add Vehicles</DialogTitle>
         <DialogContent>
-          {unassignedVehicles.length === 0 ? (
-            <Typography variant="body2" color="text.secondary">No available vehicles.</Typography>
+          <FormControlLabel
+            control={<Switch checked={isRentalToggle} onChange={(e) => { setIsRentalToggle(e.target.checked); setRentalFields({}) }} />}
+            label="This is a rental vehicle"
+            sx={{ mb: 1 }}
+          />
+          {isRentalToggle ? (
+            <>
+              {rentalError && <Alert severity="error" sx={{ mb: 1 }}>{rentalError}</Alert>}
+              <RentalVehicleForm value={rentalFields} onChange={setRentalFields} disabled={rentalSubmitLoading} />
+            </>
           ) : (
-            <List dense>
-              {unassignedVehicles.map((v) => {
-                const Icon = VEHICLE_ICON[v.type] ?? LocalShippingIcon
-                return (
-                  <ListItem key={v.id} disablePadding>
-                    <ListItemIcon sx={{ minWidth: 36 }}>
-                      <Checkbox size="small" checked={pendingVehicles.has(v.id)}
-                        onChange={(e) => {
-                          const s = new Set(pendingVehicles)
-                          e.target.checked ? s.add(v.id) : s.delete(v.id)
-                          setPendingVehicles(s)
-                        }} />
-                    </ListItemIcon>
-                    <ListItemIcon sx={{ minWidth: 32 }}><Icon fontSize="small" /></ListItemIcon>
-                    <ListItemText primary={v.name} secondary={v.type} />
-                  </ListItem>
-                )
-              })}
-            </List>
+            <>
+              <Divider sx={{ mb: 1 }} />
+              {unassignedVehicles.length === 0 ? (
+                <Typography variant="body2" color="text.secondary">No available vehicles.</Typography>
+              ) : (
+                <List dense>
+                  {unassignedVehicles.map((v) => {
+                    const Icon = VEHICLE_ICON[v.type] ?? LocalShippingIcon
+                    return (
+                      <ListItem key={v.id} disablePadding>
+                        <ListItemIcon sx={{ minWidth: 36 }}>
+                          <Checkbox size="small" checked={pendingVehicles.has(v.id)}
+                            onChange={(e) => {
+                              const s = new Set(pendingVehicles)
+                              e.target.checked ? s.add(v.id) : s.delete(v.id)
+                              setPendingVehicles(s)
+                            }} />
+                        </ListItemIcon>
+                        <ListItemIcon sx={{ minWidth: 32 }}><Icon fontSize="small" /></ListItemIcon>
+                        <ListItemText primary={v.name} secondary={v.type} />
+                      </ListItem>
+                    )
+                  })}
+                </List>
+              )}
+            </>
           )}
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => { setAddVehicleOpen(false); setPendingVehicles(new Set()) }}>Cancel</Button>
-          <Button variant="contained" disabled={pendingVehicles.size === 0}
-            onClick={() => { setAddVehicleOpen(false); setNoteDialog('addVehicles') }}>
-            Continue
-          </Button>
+          <Button onClick={() => {
+            setAddVehicleOpen(false); setPendingVehicles(new Set())
+            setIsRentalToggle(false); setRentalFields({}); setRentalError('')
+          }}>Cancel</Button>
+          {isRentalToggle ? (
+            <Button variant="contained"
+              disabled={rentalSubmitLoading || !rentalFields.name || !rentalFields.type}
+              startIcon={rentalSubmitLoading ? <CircularProgress size={16} color="inherit" /> : null}
+              onClick={async () => {
+                if (!rig) return
+                setRentalError('')
+                setRentalSubmitLoading(true)
+                try {
+                  const payload = {
+                    isRental: true,
+                    name: rentalFields.name,
+                    type: rentalFields.type,
+                    rentalMake: rentalFields.rentalMake || undefined,
+                    rentalModel: rentalFields.rentalModel || undefined,
+                    rentalYear: rentalFields.rentalYear ? parseInt(rentalFields.rentalYear) : undefined,
+                    rentalLength: rentalFields.rentalLength || undefined,
+                    rentalAgreementUrl: rentalFields.rentalAgreementUrl || undefined,
+                    rentalPickupLocation: rentalFields.rentalPickupLocation || undefined,
+                    rentalDropoffLocation: rentalFields.rentalDropoffLocation || undefined,
+                  }
+                  const vRes = await fetch('/api/vehicles', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                  })
+                  const vJson = await vRes.json()
+                  if (!vRes.ok) { setRentalError(vJson.error?.formErrors?.[0] ?? vJson.error ?? 'Failed to create vehicle'); return }
+                  const vehicleId: string = vJson.data.id
+                  await fetch(`/api/deployments/${rig.id}/vehicles`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ vehicleIds: [vehicleId], note: 'Added rental vehicle', photoUrls: [] }),
+                  })
+                  setAddVehicleOpen(false)
+                  setIsRentalToggle(false)
+                  setRentalFields({})
+                  await load()
+                } finally {
+                  setRentalSubmitLoading(false)
+                }
+              }}>
+              {rentalSubmitLoading ? 'Adding…' : 'Add Rental Vehicle'}
+            </Button>
+          ) : (
+            <Button variant="contained" disabled={pendingVehicles.size === 0}
+              onClick={() => { setAddVehicleOpen(false); setNoteDialog('addVehicles') }}>
+              Continue
+            </Button>
+          )}
         </DialogActions>
       </Dialog>
 
