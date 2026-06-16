@@ -18,7 +18,8 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
     orderBy: { createdAt: 'asc' },
     select: { id: true, qrCodeId: true, serialNumber: true, status: true, notes: true, createdAt: true },
   })
-  return NextResponse.json({ data: units })
+  const withPosition = units.map((u, i) => ({ ...u, position: i + 1 }))
+  return NextResponse.json({ data: withPosition })
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

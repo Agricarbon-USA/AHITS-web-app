@@ -87,7 +87,7 @@ interface InventoryOption {
     inoperable: number
     totalUnits: number
   }
-  availableUnits: Array<{ id: string; serialNumber: string | null; qrCodeId: string }>
+  availableUnits: Array<{ id: string; serialNumber: string | null; qrCodeId: string; position: number }>
 }
 
 interface PendingItemEntry {
@@ -957,7 +957,7 @@ export default function MyRigPage() {
                         const json = await res.json()
                         if (json.unit?.inventoryItemId === item.id && json.unit?.status === 'AVAILABLE') {
                           const m = new Map(pendingItems)
-                          m.set(item.id, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: json.unit.id, unitLabel: json.unit.serialNumber ?? result.data.slice(0, 8) })
+                          m.set(item.id, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: json.unit.id, unitLabel: json.unit.serialNumber ?? `Unit ${json.unit.position}` })
                           setPendingItems(m)
                         }
                       }
@@ -978,7 +978,7 @@ export default function MyRigPage() {
                       const json = await res.json()
                       if (json.unit?.inventoryItemId === item.id && json.unit?.status === 'AVAILABLE') {
                         const m = new Map(pendingItems)
-                        m.set(item.id, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: json.unit.id, unitLabel: json.unit.serialNumber ?? qr.slice(0, 8) })
+                        m.set(item.id, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: json.unit.id, unitLabel: json.unit.serialNumber ?? `Unit ${json.unit.position}` })
                         setPendingItems(m)
                       }
                     }
@@ -1055,13 +1055,13 @@ export default function MyRigPage() {
                                 const unit = item.availableUnits?.find((u) => u.id === e.target.value)
                                 if (!unit) return
                                 const m = new Map(pendingItems)
-                                m.set(item.id, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: unit.id, unitLabel: unit.serialNumber ?? unit.qrCodeId.slice(0, 8) })
+                                m.set(item.id, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: unit.id, unitLabel: unit.serialNumber ?? `Unit ${unit.position}` })
                                 setPendingItems(m)
                               }}>
                               <MenuItem value="" disabled>Select a unit…</MenuItem>
                               {(item.availableUnits ?? []).map((u) => (
                                 <MenuItem key={u.id} value={u.id}>
-                                  {u.serialNumber ?? `Unit ${u.qrCodeId.slice(0, 8)}`}
+                                  {u.serialNumber ?? `Unit ${u.position}`}
                                 </MenuItem>
                               ))}
                             </TextField>

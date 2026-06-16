@@ -80,10 +80,15 @@ interface VehicleOption {
 interface InventoryOption {
   id: string
   name: string
+  itemType: 'CONSUMABLE' | 'SERIALIZED'
   unitCounts: { available: number; checkedOut: number; inMaintenance: number; inoperable: number; retired: number }
+  availableUnits: { id: string; serialNumber: string | null; position: number }[]
   category: { name: string }
-  itemType: string
 }
+
+type AdminKitEntry =
+  | { itemType: 'CONSUMABLE'; quantity: number }
+  | { itemType: 'SERIALIZED'; inventoryUnitId: string; unitLabel: string }
 
 interface TransferRow {
   id: string
@@ -232,13 +237,16 @@ function NewDeploymentDialog({
   const [projectId] = React.useState('')
   const [label, setLabel] = React.useState('')
   const [selVehicles, setSelVehicles] = React.useState<Set<string>>(new Set())
-  const [kitItems, setKitItems] = React.useState<Map<string, number>>(new Map())
+  const [kitItems, setKitItems] = React.useState<Map<string, AdminKitEntry>>(new Map())
   const [note, setNote] = React.useState('')
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState('')
 
   const unassignedVehicles = vehicles.filter((v) => !v.assignedOperatorId && v.status !== 'RETIRED')
   const availableItems = inventoryItems.filter((i) => i.unitCounts.available > 0)
+  const hasUnresolved = Array.from(kitItems.values()).some(
+    (e) => e.itemType === 'SERIALIZED' && !e.inventoryUnitId
+  )
 
   const launch = async () => {
     if (!note.trim()) { setError('Note is required'); return }
@@ -249,7 +257,11 @@ function NewDeploymentDialog({
       body: JSON.stringify({
         operatorId, projectId: projectId || undefined, label: label || undefined, note,
         vehicleIds: Array.from(selVehicles),
-        kitItems: Array.from(kitItems.entries()).map(([inventoryItemId, quantity]) => ({ inventoryItemId, quantity })),
+        kitItems: Array.from(kitItems.entries()).map(([inventoryItemId, entry]) =>
+          entry.itemType === 'SERIALIZED'
+            ? { inventoryItemId, inventoryUnitId: entry.inventoryUnitId, itemType: 'SERIALIZED' }
+            : { inventoryItemId, quantity: entry.quantity }
+        ),
       }),
     })
     setLoading(false)
@@ -309,20 +321,61 @@ function NewDeploymentDialog({
             ) : (
               <Stack spacing={1}>
                 {availableItems.map((item) => {
-                  const qty = kitItems.get(item.id) ?? 0
+                  const entry = kitItems.get(item.id)
+                  const checked = !!entry
+                  const isSerialized = item.itemType === 'SERIALIZED'
                   return (
-                    <Stack key={item.id} direction="row" alignItems="center" spacing={1}>
-                      <Checkbox size="small" checked={qty > 0}
-                        onChange={(e) => { const m = new Map(kitItems); e.target.checked ? m.set(item.id, 1) : m.delete(item.id); setKitItems(m) }} />
-                      <Box flexGrow={1}>
-                        <Typography variant="body2">{item.name}</Typography>
-                        <Chip size="small" label={item.category.name} sx={{ height: 16, fontSize: 10, mt: 0.25 }} />
-                      </Box>
-                      {qty > 0 && (
-                        <TextField type="number" size="small" value={qty}
-                          onChange={(e) => { const m = new Map(kitItems); m.set(item.id, parseInt(e.target.value) || 1); setKitItems(m) }}
-                          inputProps={{ min: 1, style: { MozAppearance: 'textfield', width: 60 } }}
-                          sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }} />
+                    <Stack key={item.id} spacing={0.5}>
+                      <Stack direction="row" alignItems="center" spacing={1}>
+                        <Checkbox size="small" checked={checked}
+                          onChange={(e) => {
+                            const m = new Map(kitItems)
+                            if (e.target.checked) {
+                              m.set(item.id, isSerialized
+                                ? { itemType: 'SERIALIZED', inventoryUnitId: '', unitLabel: '' }
+                                : { itemType: 'CONSUMABLE', quantity: 1 })
+                            } else {
+                              m.delete(item.id)
+                            }
+                            setKitItems(m)
+                          }} />
+                        <Box flexGrow={1}>
+                          <Typography variant="body2">{item.name}</Typography>
+                          <Stack direction="row" spacing={0.5} mt={0.25}>
+                            <Chip size="small" label={item.category.name} sx={{ height: 16, fontSize: 10 }} />
+                            {isSerialized && (
+                              <Chip size="small" label="Serialized" variant="outlined" color="primary" sx={{ height: 16, fontSize: 10 }} />
+                            )}
+                          </Stack>
+                        </Box>
+                        {checked && !isSerialized && (
+                          <TextField type="number" size="small" value={(entry as { itemType: 'CONSUMABLE'; quantity: number }).quantity}
+                            onChange={(e) => { const m = new Map(kitItems); m.set(item.id, { itemType: 'CONSUMABLE', quantity: parseInt(e.target.value) || 1 }); setKitItems(m) }}
+                            inputProps={{ min: 1, style: { MozAppearance: 'textfield', width: 60 } }}
+                            sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }} />
+                        )}
+                      </Stack>
+                      {checked && isSerialized && (
+                        <Box pl={5}>
+                          <TextField select size="small" label="Select unit"
+                            value={(entry as { itemType: 'SERIALIZED'; inventoryUnitId: string }).inventoryUnitId}
+                            onChange={(e) => {
+                              const unit = item.availableUnits.find((u) => u.id === e.target.value)
+                              if (!unit) return
+                              const m = new Map(kitItems)
+                              m.set(item.id, { itemType: 'SERIALIZED', inventoryUnitId: unit.id, unitLabel: unit.serialNumber ?? `Unit ${unit.position}` })
+                              setKitItems(m)
+                            }}
+                            sx={{ minWidth: 200 }}>
+                            <MenuItem value="" disabled>Select a unit…</MenuItem>
+                            {item.availableUnits.map((u) => (
+                              <MenuItem key={u.id} value={u.id}>{u.serialNumber ?? `Unit ${u.position}`}</MenuItem>
+                            ))}
+                          </TextField>
+                          {item.availableUnits.length === 0 && (
+                            <Typography variant="caption" color="text.secondary">No available units.</Typography>
+                          )}
+                        </Box>
                       )}
                     </Stack>
                   )
@@ -345,7 +398,7 @@ function NewDeploymentDialog({
         {step < 3 ? (
           <Button variant="contained" onClick={() => setStep((s) => s + 1)} disabled={step === 0 && !operatorId}>Next</Button>
         ) : (
-          <Button variant="contained" onClick={launch} disabled={!note.trim() || loading}
+          <Button variant="contained" onClick={launch} disabled={!note.trim() || loading || hasUnresolved}
             startIcon={loading ? <CircularProgress size={16} color="inherit" /> : null}>
             {loading ? 'Launching…' : 'Launch Deployment'}
           </Button>
@@ -377,7 +430,7 @@ function DeploymentDrawer({
   const [addVehicleOpen, setAddVehicleOpen] = React.useState(false)
   const [pendingVehicles, setPendingVehicles] = React.useState<Set<string>>(new Set())
   const [addItemOpen, setAddItemOpen] = React.useState(false)
-  const [pendingItems, setPendingItems] = React.useState<Map<string, number>>(new Map())
+  const [pendingItems, setPendingItems] = React.useState<Map<string, AdminKitEntry>>(new Map())
   const [noteDialog, setNoteDialog] = React.useState<null | 'addVehicles' | 'removeVehicles' | 'addItems' | 'removeItems' | 'end'>(null)
   const [actionLoading, setActionLoading] = React.useState(false)
   const [transferOpen, setTransferOpen] = React.useState(false)
@@ -475,8 +528,13 @@ function DeploymentDrawer({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        items: Array.from(pendingItems.entries()).map(([inventoryItemId, quantity]) => ({ inventoryItemId, quantity })),
-        note, photoUrls,
+        items: Array.from(pendingItems.entries()).map(([inventoryItemId, entry]) =>
+          entry.itemType === 'SERIALIZED'
+            ? { inventoryItemId, inventoryUnitId: entry.inventoryUnitId, itemType: 'SERIALIZED' }
+            : { inventoryItemId, quantity: entry.quantity }
+        ),
+        note,
+        photoUrls,
       }),
     })
     setActionLoading(false)
@@ -724,20 +782,61 @@ function DeploymentDrawer({
           ) : (
             <Stack spacing={1} mt={1}>
               {availableItems.map((item) => {
-                const qty = pendingItems.get(item.id) ?? 0
+                const entry = pendingItems.get(item.id)
+                const checked = !!entry
+                const isSerialized = item.itemType === 'SERIALIZED'
                 return (
-                  <Stack key={item.id} direction="row" alignItems="center" spacing={1}>
-                    <Checkbox size="small" checked={qty > 0}
-                      onChange={(e) => { const m = new Map(pendingItems); e.target.checked ? m.set(item.id, 1) : m.delete(item.id); setPendingItems(m) }} />
-                    <Box flexGrow={1}>
-                      <Typography variant="body2">{item.name}</Typography>
-                      <Chip size="small" label={item.category.name} sx={{ height: 16, fontSize: 10 }} />
-                    </Box>
-                    {qty > 0 && (
-                      <TextField type="number" size="small" value={qty}
-                        onChange={(e) => { const m = new Map(pendingItems); m.set(item.id, parseInt(e.target.value) || 1); setPendingItems(m) }}
-                        inputProps={{ min: 1, style: { MozAppearance: 'textfield', width: 60 } }}
-                        sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }} />
+                  <Stack key={item.id} spacing={0.5}>
+                    <Stack direction="row" alignItems="center" spacing={1}>
+                      <Checkbox size="small" checked={checked}
+                        onChange={(e) => {
+                          const m = new Map(pendingItems)
+                          if (e.target.checked) {
+                            m.set(item.id, isSerialized
+                              ? { itemType: 'SERIALIZED', inventoryUnitId: '', unitLabel: '' }
+                              : { itemType: 'CONSUMABLE', quantity: 1 })
+                          } else {
+                            m.delete(item.id)
+                          }
+                          setPendingItems(m)
+                        }} />
+                      <Box flexGrow={1}>
+                        <Typography variant="body2">{item.name}</Typography>
+                        <Stack direction="row" spacing={0.5}>
+                          <Chip size="small" label={item.category.name} sx={{ height: 16, fontSize: 10 }} />
+                          {isSerialized && (
+                            <Chip size="small" label="Serialized" variant="outlined" color="primary" sx={{ height: 16, fontSize: 10 }} />
+                          )}
+                        </Stack>
+                      </Box>
+                      {checked && !isSerialized && (
+                        <TextField type="number" size="small" value={(entry as { itemType: 'CONSUMABLE'; quantity: number }).quantity}
+                          onChange={(e) => { const m = new Map(pendingItems); m.set(item.id, { itemType: 'CONSUMABLE', quantity: parseInt(e.target.value) || 1 }); setPendingItems(m) }}
+                          inputProps={{ min: 1, style: { MozAppearance: 'textfield', width: 60 } }}
+                          sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }} />
+                      )}
+                    </Stack>
+                    {checked && isSerialized && (
+                      <Box pl={5}>
+                        <TextField select size="small" label="Select unit"
+                          value={(entry as { itemType: 'SERIALIZED'; inventoryUnitId: string }).inventoryUnitId}
+                          onChange={(e) => {
+                            const unit = item.availableUnits.find((u) => u.id === e.target.value)
+                            if (!unit) return
+                            const m = new Map(pendingItems)
+                            m.set(item.id, { itemType: 'SERIALIZED', inventoryUnitId: unit.id, unitLabel: unit.serialNumber ?? `Unit ${unit.position}` })
+                            setPendingItems(m)
+                          }}
+                          sx={{ minWidth: 200 }}>
+                          <MenuItem value="" disabled>Select a unit…</MenuItem>
+                          {item.availableUnits.map((u) => (
+                            <MenuItem key={u.id} value={u.id}>{u.serialNumber ?? `Unit ${u.position}`}</MenuItem>
+                          ))}
+                        </TextField>
+                        {item.availableUnits.length === 0 && (
+                          <Typography variant="caption" color="text.secondary">No available units.</Typography>
+                        )}
+                      </Box>
                     )}
                   </Stack>
                 )
@@ -747,7 +846,8 @@ function DeploymentDrawer({
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => { setAddItemOpen(false); setPendingItems(new Map()) }}>Cancel</Button>
-          <Button variant="contained" disabled={pendingItems.size === 0}
+          <Button variant="contained"
+            disabled={pendingItems.size === 0 || Array.from(pendingItems.values()).some((e) => e.itemType === 'SERIALIZED' && !e.inventoryUnitId)}
             onClick={() => { setAddItemOpen(false); setNoteDialog('addItems') }}>Continue</Button>
         </DialogActions>
       </Dialog>

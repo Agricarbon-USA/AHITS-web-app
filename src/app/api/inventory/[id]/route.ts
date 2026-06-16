@@ -23,7 +23,7 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
     include: {
       category: true,
       hub: true,
-      checkLogs: { include: { operator: true }, orderBy: { submittedAt: 'desc' }, take: 20 },
+      checkLogs: { include: { operator: true }, orderBy: { submittedAt: 'desc' }, take: 100 },
       photos: true,
       units: {
         select: {

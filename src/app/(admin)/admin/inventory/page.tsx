@@ -16,13 +16,15 @@ import ArchiveIcon from '@mui/icons-material/Archive'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import DownloadIcon from '@mui/icons-material/Download'
+import HistoryIcon from '@mui/icons-material/History'
+import ExpandLessIcon from '@mui/icons-material/ExpandLess'
 import QRCode from 'qrcode'
 
 // ── Helper maps ───────────────────────────────────────────────────
 
-const STATUS_CHIP_COLOR: Record<string, 'success' | 'primary' | 'warning' | 'default' | 'error'> = {
+const STATUS_CHIP_COLOR: Record<string, 'success' | 'info' | 'primary' | 'warning' | 'default' | 'error'> = {
   AVAILABLE: 'success',
-  CHECKED_OUT: 'primary',
+  CHECKED_OUT: 'info',
   IN_MAINTENANCE: 'warning',
   INOPERABLE: 'error',
   RETIRED: 'default',
@@ -89,6 +91,7 @@ interface CheckLogEntry {
   action: string
   condition: string | null
   submittedAt: string
+  inventoryUnitId: string | null
   operator: { id: string; name: string } | null
 }
 
@@ -377,6 +380,7 @@ function DetailDrawer({
   const [addingUnit, setAddingUnit] = React.useState(false)
   const [repairUnitId, setRepairUnitId] = React.useState<string | null>(null)
   const [retireUnitId, setRetireUnitId] = React.useState<string | null>(null)
+  const [expandedUnitId, setExpandedUnitId] = React.useState<string | null>(null)
 
   const loadDetail = React.useCallback(async (id: string) => {
     setLoading(true)
@@ -388,6 +392,7 @@ function DetailDrawer({
   }, [])
 
   React.useEffect(() => {
+    setExpandedUnitId(null)
     if (!row) { setDetail(null); setActiveTab(0); return }
     loadDetail(row.id)
   }, [row, loadDetail])
@@ -463,7 +468,7 @@ function DetailDrawer({
                 <Chip size="small" color="success" label={`${detail.unitCounts.available} Available`} />
               )}
               {detail.unitCounts.checkedOut > 0 && (
-                <Chip size="small" color="primary" label={`${detail.unitCounts.checkedOut} Checked Out`} />
+                <Chip size="small" color="info" label={`${detail.unitCounts.checkedOut} Checked Out`} />
               )}
               {detail.unitCounts.inMaintenance > 0 && (
                 <Chip size="small" color="warning" label={`${detail.unitCounts.inMaintenance} In Maintenance`} />
@@ -577,63 +582,107 @@ function DetailDrawer({
                         <TableCell>Serial Number</TableCell>
                         <TableCell>Status</TableCell>
                         <TableCell align="right">Actions</TableCell>
+                        <TableCell />
                       </TableRow>
                     </TableHead>
                     <TableBody>
                       {detail.units.map((unit, idx) => (
-                        <TableRow key={unit.id} sx={{ '&:last-child td': { border: 0 } }}>
-                          <TableCell sx={{ color: 'text.secondary', fontSize: 12 }}>{idx + 1}</TableCell>
-                          <TableCell>
-                            <TextField
-                              size="small"
-                              variant="standard"
-                              placeholder="—"
-                              value={serialEdits[unit.id] ?? (unit.serialNumber ?? '')}
-                              onChange={(e) => setSerialEdits((p) => ({ ...p, [unit.id]: e.target.value }))}
-                              onBlur={() => handleSerialBlur(unit.id)}
-                              sx={{ width: 120 }}
-                              inputProps={{ style: { fontSize: 13 } }}
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <TextField
-                              select
-                              size="small"
-                              variant="standard"
-                              value={unit.status}
-                              onChange={(e) => handleUnitStatusChange(unit.id, e.target.value)}
-                              sx={{ minWidth: 130 }}
-                              SelectProps={{ style: { fontSize: 13 } }}
-                            >
-                              {Object.entries(STATUS_LABELS).map(([v, l]) => (
-                                <MenuItem key={v} value={v}>{l}</MenuItem>
-                              ))}
-                            </TextField>
-                          </TableCell>
-                          <TableCell align="right">
-                            <Stack direction="row" spacing={0.5} justifyContent="flex-end">
-                              <Tooltip title="Download QR">
-                                <IconButton size="small" onClick={() => downloadUnitQR(unit, detail.name)}>
-                                  <DownloadIcon fontSize="small" />
-                                </IconButton>
-                              </Tooltip>
-                              {unit.status === 'INOPERABLE' && (
-                                <>
-                                  <Tooltip title="Retire this unit">
-                                    <IconButton size="small" color="error" onClick={() => setRetireUnitId(unit.id)}>
-                                      <ArchiveIcon fontSize="small" />
-                                    </IconButton>
-                                  </Tooltip>
-                                  <Tooltip title="Send for repair">
-                                    <IconButton size="small" onClick={() => setRepairUnitId(unit.id)}>
-                                      <EditIcon fontSize="small" />
-                                    </IconButton>
-                                  </Tooltip>
-                                </>
-                              )}
-                            </Stack>
-                          </TableCell>
-                        </TableRow>
+                        <React.Fragment key={unit.id}>
+                          <TableRow sx={{ '&:last-child td': { border: 0 } }}>
+                            <TableCell sx={{ color: 'text.secondary', fontSize: 12 }}>{idx + 1}</TableCell>
+                            <TableCell>
+                              <TextField
+                                size="small"
+                                variant="standard"
+                                placeholder="—"
+                                value={serialEdits[unit.id] ?? (unit.serialNumber ?? '')}
+                                onChange={(e) => setSerialEdits((p) => ({ ...p, [unit.id]: e.target.value }))}
+                                onBlur={() => handleSerialBlur(unit.id)}
+                                sx={{ width: 120 }}
+                                inputProps={{ style: { fontSize: 13 } }}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <TextField
+                                select
+                                size="small"
+                                variant="standard"
+                                value={unit.status}
+                                onChange={(e) => handleUnitStatusChange(unit.id, e.target.value)}
+                                sx={{ minWidth: 130 }}
+                                SelectProps={{ style: { fontSize: 13 } }}
+                              >
+                                {Object.entries(STATUS_LABELS).map(([v, l]) => (
+                                  <MenuItem key={v} value={v}>{l}</MenuItem>
+                                ))}
+                              </TextField>
+                            </TableCell>
+                            <TableCell align="right">
+                              <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                                <Tooltip title="Download QR">
+                                  <IconButton size="small" onClick={() => downloadUnitQR(unit, detail.name)}>
+                                    <DownloadIcon fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                                {unit.status === 'INOPERABLE' && (
+                                  <>
+                                    <Tooltip title="Retire this unit">
+                                      <IconButton size="small" color="error" onClick={() => setRetireUnitId(unit.id)}>
+                                        <ArchiveIcon fontSize="small" />
+                                      </IconButton>
+                                    </Tooltip>
+                                    <Tooltip title="Send for repair">
+                                      <IconButton size="small" onClick={() => setRepairUnitId(unit.id)}>
+                                        <EditIcon fontSize="small" />
+                                      </IconButton>
+                                    </Tooltip>
+                                  </>
+                                )}
+                              </Stack>
+                            </TableCell>
+                            <TableCell>
+                              <IconButton
+                                size="small"
+                                onClick={() => setExpandedUnitId((prev) => prev === unit.id ? null : unit.id)}
+                                title={expandedUnitId === unit.id ? 'Hide history' : 'View history'}
+                              >
+                                {expandedUnitId === unit.id ? <ExpandLessIcon fontSize="small" /> : <HistoryIcon fontSize="small" />}
+                              </IconButton>
+                            </TableCell>
+                          </TableRow>
+                          {expandedUnitId === unit.id && (() => {
+                            const unitLogs = detail.checkLogs.filter((l) => l.inventoryUnitId === unit.id)
+                            return (
+                              <TableRow>
+                                <TableCell colSpan={5} sx={{ pt: 0, pb: 1.5, px: 3, bgcolor: 'action.hover' }}>
+                                  <Typography variant="caption" fontWeight={600} color="text.secondary" display="block" mb={0.5}>
+                                    {unit.serialNumber ?? `Unit ${idx + 1}`} — history ({unitLogs.length} event{unitLogs.length !== 1 ? 's' : ''})
+                                  </Typography>
+                                  {unitLogs.length === 0 ? (
+                                    <Typography variant="caption" color="text.secondary">No check logs for this unit.</Typography>
+                                  ) : (
+                                    <Stack spacing={0.5}>
+                                      {unitLogs.map((log) => (
+                                        <Stack key={log.id} direction="row" spacing={1} alignItems="center">
+                                          <Chip
+                                            size="small"
+                                            label={log.action === 'CHECK_OUT' ? 'Out' : 'In'}
+                                            color={log.action === 'CHECK_OUT' ? 'info' : 'success'}
+                                            sx={{ minWidth: 40 }}
+                                          />
+                                          <Typography variant="caption">{log.operator?.name ?? 'Unknown'}</Typography>
+                                          <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto !important' }}>
+                                            {new Date(log.submittedAt).toLocaleDateString()}
+                                          </Typography>
+                                        </Stack>
+                                      ))}
+                                    </Stack>
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            )
+                          })()}
+                        </React.Fragment>
                       ))}
                     </TableBody>
                   </Table>
@@ -660,7 +709,7 @@ function DetailDrawer({
                     {detail.checkLogs.map((log) => (
                       <Stack key={log.id} direction="row" spacing={1} alignItems="center">
                         <Chip size="small" label={log.action === 'CHECK_OUT' ? 'Out' : 'In'}
-                          color={log.action === 'CHECK_OUT' ? 'primary' : 'success'} sx={{ minWidth: 40 }} />
+                          color={log.action === 'CHECK_OUT' ? 'info' : 'success'} sx={{ minWidth: 40 }} />
                         <Typography variant="body2">{log.operator?.name ?? 'Unknown'}</Typography>
                         {log.condition && <Chip size="small" label={log.condition.replace(/_/g, ' ')} variant="outlined" />}
                         <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto !important' }}>
@@ -908,7 +957,7 @@ export default function AdminInventoryPage() {
                             <Chip size="small" color="success" label={`${counts.available} Available`} />
                           )}
                           {counts.checkedOut > 0 && (
-                            <Chip size="small" color="primary" label={`${counts.checkedOut} Out`} />
+                            <Chip size="small" color="info" label={`${counts.checkedOut} Out`} />
                           )}
                           {counts.inMaintenance > 0 && (
                             <Chip size="small" color="warning" label={`${counts.inMaintenance} Maint.`} />

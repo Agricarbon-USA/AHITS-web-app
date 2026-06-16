@@ -41,10 +41,18 @@ const createSchema = z.object({
   label: z.string().optional(),
   note: z.string().min(1, 'Note is required'),
   vehicleIds: z.array(z.string()).default([]),
-  kitItems: z.array(z.object({
-    inventoryItemId: z.string(),
-    quantity: z.number().int().min(1),
-  })).default([]),
+  kitItems: z.array(z.union([
+    z.object({
+      inventoryItemId: z.string(),
+      quantity: z.number().int().min(1),
+      inventoryUnitId: z.undefined().optional(),
+    }),
+    z.object({
+      inventoryItemId: z.string(),
+      itemType: z.literal('SERIALIZED'),
+      inventoryUnitId: z.string(),
+    }),
+  ])).default([]),
 })
 
 export async function GET(req: NextRequest) {
@@ -108,23 +116,39 @@ export async function POST(req: NextRequest) {
     const kit = await tx.kit.create({ data: { rigId: newRig.id } })
 
     if (kitItems.length > 0) {
-      for (const { inventoryItemId, quantity } of kitItems) {
-        const available = await tx.inventoryUnit.findMany({
-          where: { inventoryItemId, status: 'AVAILABLE' },
-          take: quantity,
-        })
-        if (available.length > 0) {
-          await tx.inventoryUnit.updateMany({
-            where: { id: { in: available.map((u) => u.id) } },
+      for (const ki of kitItems) {
+        if ('inventoryUnitId' in ki && ki.inventoryUnitId) {
+          const unit = await tx.inventoryUnit.findUnique({ where: { id: ki.inventoryUnitId } })
+          if (!unit || unit.status !== 'AVAILABLE') throw new Error(`Unit ${ki.inventoryUnitId} is not available`)
+          await tx.inventoryUnit.update({
+            where: { id: ki.inventoryUnitId },
             data: { status: 'CHECKED_OUT' },
           })
+          await tx.kitItem.create({
+            data: { kitId: kit.id, inventoryItemId: ki.inventoryItemId, quantity: 1, inventoryUnitId: ki.inventoryUnitId },
+          })
+          await tx.checkLog.create({
+            data: { action: 'CHECK_OUT', itemId: ki.inventoryItemId, inventoryUnitId: ki.inventoryUnitId, operatorId, projectId, notes: note },
+          })
+        } else {
+          const quantity = (ki as { quantity: number }).quantity
+          const available = await tx.inventoryUnit.findMany({
+            where: { inventoryItemId: ki.inventoryItemId, status: 'AVAILABLE' },
+            take: quantity,
+          })
+          if (available.length > 0) {
+            await tx.inventoryUnit.updateMany({
+              where: { id: { in: available.map((u) => u.id) } },
+              data: { status: 'CHECKED_OUT' },
+            })
+          }
+          await tx.kitItem.create({
+            data: { kitId: kit.id, inventoryItemId: ki.inventoryItemId, quantity, inventoryUnitId: null },
+          })
+          await tx.checkLog.create({
+            data: { action: 'CHECK_OUT', itemId: ki.inventoryItemId, operatorId, projectId, notes: note },
+          })
         }
-        await tx.kitItem.create({
-          data: { kitId: kit.id, inventoryItemId, quantity, inventoryUnitId: null },
-        })
-        await tx.checkLog.create({
-          data: { action: 'CHECK_OUT', itemId: inventoryItemId, operatorId, projectId, notes: note },
-        })
       }
     }
 

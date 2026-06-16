@@ -17,5 +17,12 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ qrCode
   })
   if (!unit) return NextResponse.json({ error: 'QR code not recognised' }, { status: 404 })
 
-  return NextResponse.json({ unit, item: unit.inventoryItem })
+  const siblings = await prisma.inventoryUnit.findMany({
+    where: { inventoryItemId: unit.inventoryItemId },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true },
+  })
+  const position = siblings.findIndex((s) => s.id === unit.id) + 1
+
+  return NextResponse.json({ unit: { ...unit, position }, item: unit.inventoryItem })
 }

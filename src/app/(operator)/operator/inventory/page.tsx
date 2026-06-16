@@ -12,9 +12,9 @@ import QRCode from 'qrcode'
 
 // ── Helper maps ───────────────────────────────────────────────────
 
-const STATUS_CHIP_COLOR: Record<string, 'success' | 'primary' | 'warning' | 'default' | 'error'> = {
+const STATUS_CHIP_COLOR: Record<string, 'success' | 'info' | 'primary' | 'warning' | 'default' | 'error'> = {
   AVAILABLE: 'success',
-  CHECKED_OUT: 'primary',
+  CHECKED_OUT: 'info',
   IN_MAINTENANCE: 'warning',
   INOPERABLE: 'error',
   RETIRED: 'default',

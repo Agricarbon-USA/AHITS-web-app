@@ -67,6 +67,7 @@ export async function GET(req: NextRequest) {
         hub: true,
         units: {
           select: { id: true, status: true, qrCodeId: true, serialNumber: true },
+          orderBy: { createdAt: 'asc' },
         },
       },
     }),
@@ -93,13 +94,15 @@ export async function GET(req: NextRequest) {
   }
 
   const data = items.map((item) => {
-    const counts = computeUnitCounts(item.units)
+    const allUnits = item.units  // sorted createdAt ASC
+    const unitsWithPosition = allUnits.map((u, i) => ({ ...u, position: i + 1 }))
+    const counts = computeUnitCounts(allUnits)
     return {
       ...item,
       unitCounts: counts,
-      availableUnits: item.units
+      availableUnits: unitsWithPosition
         .filter((u) => u.status === 'AVAILABLE')
-        .map((u) => ({ id: u.id, serialNumber: u.serialNumber, qrCodeId: u.qrCodeId })),
+        .map((u) => ({ id: u.id, serialNumber: u.serialNumber, qrCodeId: u.qrCodeId, position: u.position })),
       currentOperator: activeByItem[item.id]?.operator ?? null,
       currentProject: activeByItem[item.id]?.project ?? null,
     }
