@@ -80,7 +80,7 @@ interface VehicleOption {
 interface InventoryOption {
   id: string
   name: string
-  status: string
+  unitCounts: { available: number; checkedOut: number; inMaintenance: number; inoperable: number; retired: number }
   category: { name: string }
   itemType: string
 }
@@ -238,7 +238,7 @@ function NewDeploymentDialog({
   const [error, setError] = React.useState('')
 
   const unassignedVehicles = vehicles.filter((v) => !v.assignedOperatorId && v.status !== 'RETIRED')
-  const availableItems = inventoryItems.filter((i) => i.status === 'AVAILABLE')
+  const availableItems = inventoryItems.filter((i) => i.unitCounts.available > 0)
 
   const launch = async () => {
     if (!note.trim()) { setError('Note is required'); return }
@@ -402,7 +402,7 @@ function DeploymentDrawer({
   const outgoingTransfers = pendingTransfers.filter((t) => t.fromRig.id === rig.id)
   const kitItems = rig.kits.flatMap((k) => k.items)
   const unassignedVehicles = vehicles.filter((v) => !v.assignedOperatorId || v.assignedOperatorId === rig.operator.id)
-  const availableItems = inventoryItems.filter((i) => i.status === 'AVAILABLE')
+  const availableItems = inventoryItems.filter((i) => i.unitCounts.available > 0)
   const isActive = !rig.endedAt
 
   const refresh = async () => {
