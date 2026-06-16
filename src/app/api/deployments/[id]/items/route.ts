@@ -23,6 +23,9 @@ const RIG_INCLUDE = {
               category: { select: { name: true } },
             },
           },
+          inventoryUnit: {
+            select: { id: true, qrCodeId: true, serialNumber: true, status: true },
+          },
         },
       },
     },
@@ -30,10 +33,18 @@ const RIG_INCLUDE = {
 } as const
 
 const addSchema = z.object({
-  items: z.array(z.object({
-    inventoryItemId: z.string(),
-    quantity: z.number().int().min(1),
-  })).min(1),
+  items: z.array(z.union([
+    z.object({
+      itemType: z.literal('CONSUMABLE'),
+      inventoryItemId: z.string(),
+      quantity: z.number().int().min(1),
+    }),
+    z.object({
+      itemType: z.literal('SERIALIZED'),
+      inventoryItemId: z.string(),
+      inventoryUnitId: z.string(),
+    }),
+  ])).min(1),
   note: z.string().min(1, 'Note is required'),
   photoUrls: z.array(z.string()).default([]),
 })
@@ -63,8 +74,13 @@ const removeSchema = z.object({
 async function getAuthorizedActiveRig(id: string, session: { userId: string; role: string }) {
   const rig = await prisma.rig.findUnique({ where: { id } })
   if (!rig || rig.endedAt) return null
-  if (session.role !== 'ADMIN' && rig.operatorId !== session.userId) return null
-  return rig
+  if (session.role === 'ADMIN') return rig
+  if (rig.operatorId === session.userId) return rig
+  const secondary = await prisma.rigOperator.findUnique({
+    where: { rigId_operatorId: { rigId: id, operatorId: session.userId } },
+  })
+  if (secondary) return rig
+  return null
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -82,33 +98,82 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const kit = await prisma.kit.findFirst({ where: { rigId: id } })
   if (!kit) return NextResponse.json({ error: 'Kit not found' }, { status: 404 })
 
-  await prisma.$transaction(async (tx) => {
-    await tx.kitItem.createMany({
-      data: items.map(({ inventoryItemId, quantity }) => ({ kitId: kit.id, inventoryItemId, quantity })),
+  try {
+    await prisma.$transaction(async (tx) => {
+      for (const entry of items) {
+        if (entry.itemType === 'SERIALIZED') {
+          const unit = await tx.inventoryUnit.findUnique({ where: { id: entry.inventoryUnitId } })
+          if (!unit || unit.inventoryItemId !== entry.inventoryItemId || unit.status !== 'AVAILABLE') {
+            throw new Error(`Unit ${entry.inventoryUnitId} is not available`)
+          }
+          await tx.inventoryUnit.update({
+            where: { id: entry.inventoryUnitId },
+            data: { status: 'CHECKED_OUT' },
+          })
+          await tx.kitItem.create({
+            data: {
+              kitId: kit.id,
+              inventoryItemId: entry.inventoryItemId,
+              quantity: 1,
+              inventoryUnitId: entry.inventoryUnitId,
+            },
+          })
+          await tx.checkLog.create({
+            data: {
+              action: 'CHECK_OUT',
+              itemId: entry.inventoryItemId,
+              inventoryUnitId: entry.inventoryUnitId,
+              operatorId: rig.operatorId,
+              projectId: rig.projectId ?? undefined,
+              notes: note,
+            },
+          })
+        } else {
+          const availableUnits = await tx.inventoryUnit.findMany({
+            where: { inventoryItemId: entry.inventoryItemId, status: 'AVAILABLE' },
+            take: entry.quantity,
+          })
+          if (availableUnits.length < entry.quantity) {
+            throw new Error(`Only ${availableUnits.length} units available for this item`)
+          }
+          await tx.inventoryUnit.updateMany({
+            where: { id: { in: availableUnits.map((u) => u.id) } },
+            data: { status: 'CHECKED_OUT' },
+          })
+          await tx.kitItem.create({
+            data: {
+              kitId: kit.id,
+              inventoryItemId: entry.inventoryItemId,
+              quantity: entry.quantity,
+              inventoryUnitId: null,
+            },
+          })
+          await tx.checkLog.create({
+            data: {
+              action: 'CHECK_OUT',
+              itemId: entry.inventoryItemId,
+              operatorId: rig.operatorId,
+              projectId: rig.projectId ?? undefined,
+              notes: note,
+            },
+          })
+        }
+      }
+
+      if (photoUrls.length > 0) {
+        await tx.photo.createMany({
+          data: photoUrls.map((url) => ({
+            url,
+            context: 'MAINTENANCE' as const,
+            uploadedById: session.userId,
+          })),
+        })
+      }
     })
-    await tx.checkLog.createMany({
-      data: items.map(({ inventoryItemId }) => ({
-        action: 'CHECK_OUT' as const,
-        itemId: inventoryItemId,
-        operatorId: rig.operatorId,
-        projectId: rig.projectId ?? undefined,
-        notes: note,
-      })),
-    })
-    await tx.inventoryItem.updateMany({
-      where: { id: { in: items.map((i) => i.inventoryItemId) } },
-      data: { status: 'CHECKED_OUT' },
-    })
-    if (photoUrls.length > 0) {
-      await tx.photo.createMany({
-        data: photoUrls.map((url) => ({
-          url,
-          context: 'MAINTENANCE' as const,
-          uploadedById: session.userId,
-        })),
-      })
-    }
-  })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Checkout failed'
+    return NextResponse.json({ error: msg }, { status: 409 })
+  }
 
   const updated = await prisma.rig.findUniqueOrThrow({ where: { id }, include: RIG_INCLUDE })
   return NextResponse.json(updated)
@@ -131,7 +196,10 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const kitItemIds = itemDispositions.map((d) => d.kitItemId)
   const kitItems = await prisma.kitItem.findMany({
     where: { id: { in: kitItemIds }, removedAt: null },
-    include: { item: { select: { id: true, name: true } } },
+    include: {
+      item: { select: { id: true, name: true, itemType: true } },
+      inventoryUnit: true,
+    },
   })
 
   await prisma.$transaction(async (tx) => {
@@ -144,26 +212,61 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
 
       if (disp.type === 'HUB') {
         await tx.checkLog.create({
-          data: { action: 'CHECK_IN', itemId: inventoryItemId, operatorId: rig.operatorId, notes: note },
+          data: {
+            action: 'CHECK_IN',
+            itemId: inventoryItemId,
+            inventoryUnitId: kitItem.inventoryUnitId ?? undefined,
+            operatorId: rig.operatorId,
+            notes: note,
+          },
         })
-        await tx.inventoryItem.update({
-          where: { id: inventoryItemId },
-          data: { status: 'AVAILABLE', hubId: disp.hubId ?? null },
-        })
+
+        if (kitItem.inventoryUnit) {
+          await tx.inventoryUnit.update({
+            where: { id: kitItem.inventoryUnit.id },
+            data: { status: 'AVAILABLE' },
+          })
+        } else {
+          const units = await tx.inventoryUnit.findMany({
+            where: { inventoryItemId, status: 'CHECKED_OUT' },
+            take: kitItem.quantity,
+          })
+          if (units.length > 0) {
+            await tx.inventoryUnit.updateMany({
+              where: { id: { in: units.map((u) => u.id) } },
+              data: { status: 'AVAILABLE' },
+            })
+          }
+        }
+        if (disp.hubId) {
+          await tx.inventoryItem.update({ where: { id: inventoryItemId }, data: { hubId: disp.hubId } })
+        }
       } else if (disp.type === 'INOPERABLE') {
         await tx.checkLog.create({
-          data: { action: 'CHECK_IN', itemId: inventoryItemId, operatorId: rig.operatorId, notes: note },
+          data: {
+            action: 'CHECK_IN',
+            itemId: inventoryItemId,
+            inventoryUnitId: kitItem.inventoryUnitId ?? undefined,
+            operatorId: rig.operatorId,
+            notes: note,
+          },
         })
         if (disp.canBeFixed) {
-          await tx.inventoryItem.update({
-            where: { id: inventoryItemId },
-            data: {
-              status: 'IN_MAINTENANCE',
-              inoperableNotes: disp.inoperableNotes ?? null,
-              inoperableReportedAt: now,
-              inoperableReportedById: session.userId,
-            },
-          })
+          const targetUnit = kitItem.inventoryUnit
+            ? kitItem.inventoryUnit
+            : (await tx.inventoryUnit.findFirst({ where: { inventoryItemId, status: 'CHECKED_OUT' } }))
+
+          if (targetUnit) {
+            await tx.inventoryUnit.update({
+              where: { id: targetUnit.id },
+              data: {
+                status: 'IN_MAINTENANCE',
+                inoperableNotes: disp.inoperableNotes ?? null,
+                inoperableReportedAt: now,
+                inoperableReportedById: session.userId,
+              },
+            })
+          }
           const task = await tx.maintenanceTask.create({
             data: {
               itemId: inventoryItemId,
@@ -191,15 +294,21 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
             })
           }
         } else {
-          await tx.inventoryItem.update({
-            where: { id: inventoryItemId },
-            data: {
-              status: 'INOPERABLE',
-              inoperableNotes: disp.inoperableNotes ?? null,
-              inoperableReportedAt: now,
-              inoperableReportedById: session.userId,
-            },
-          })
+          const targetUnit = kitItem.inventoryUnit
+            ? kitItem.inventoryUnit
+            : (await tx.inventoryUnit.findFirst({ where: { inventoryItemId, status: 'CHECKED_OUT' } }))
+
+          if (targetUnit) {
+            await tx.inventoryUnit.update({
+              where: { id: targetUnit.id },
+              data: {
+                status: 'INOPERABLE',
+                inoperableNotes: disp.inoperableNotes ?? null,
+                inoperableReportedAt: now,
+                inoperableReportedById: session.userId,
+              },
+            })
+          }
           if (disp.photoUrls.length > 0) {
             await tx.photo.createMany({
               data: disp.photoUrls.map((url) => ({

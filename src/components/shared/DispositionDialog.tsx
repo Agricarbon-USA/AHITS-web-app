@@ -21,6 +21,7 @@ export interface KitItemSummary {
   name: string
   quantity: number
   itemType?: string
+  inventoryUnit?: { id: string; serialNumber: string | null; qrCodeId: string } | null
 }
 
 export interface HubOption { id: string; name: string; city: string; state: string }
@@ -580,9 +581,16 @@ export function DispositionDialog({
                 <Typography variant="subtitle2" fontWeight={600} mb={0.75}>Summary</Typography>
                 <Stack spacing={0.5}>
                   {items.map((item) => (
-                    <Typography key={item.kitItemId} variant="body2">
-                      • {item.name}{item.quantity > 1 ? ` (×${item.quantity})` : ''} → {getDispLabel(dispositions[item.kitItemId])}
-                    </Typography>
+                    <Box key={item.kitItemId}>
+                      <Typography variant="body2">
+                        • {item.name}{item.quantity > 1 ? ` (×${item.quantity})` : ''} → {getDispLabel(dispositions[item.kitItemId])}
+                      </Typography>
+                      {item.inventoryUnit && (
+                        <Typography variant="caption" color="text.secondary" sx={{ ml: 1.5 }}>
+                          Unit: {item.inventoryUnit.serialNumber ?? item.inventoryUnit.qrCodeId.slice(0, 8)}
+                        </Typography>
+                      )}
+                    </Box>
                   ))}
                 </Stack>
               </Box>

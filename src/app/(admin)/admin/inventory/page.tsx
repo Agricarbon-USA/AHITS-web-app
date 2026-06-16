@@ -8,7 +8,7 @@ import {
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Paper, Skeleton, Switch, FormControlLabel, Accordion, AccordionSummary,
   AccordionDetails, Drawer, Divider, TablePagination,
-  FormControl, FormLabel, RadioGroup, Radio, Link,
+  FormControl, FormLabel, RadioGroup, Radio, Link, Tabs, Tab,
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
@@ -24,7 +24,7 @@ const STATUS_CHIP_COLOR: Record<string, 'success' | 'primary' | 'warning' | 'def
   AVAILABLE: 'success',
   CHECKED_OUT: 'primary',
   IN_MAINTENANCE: 'warning',
-  INOPERABLE: 'warning',
+  INOPERABLE: 'error',
   RETIRED: 'default',
 }
 
@@ -41,6 +41,24 @@ const STATUS_LABELS: Record<string, string> = {
 interface CategoryOption { id: string; name: string }
 interface HubOption { id: string; name: string; city: string; state: string }
 
+interface UnitRow {
+  id: string
+  qrCodeId: string
+  serialNumber: string | null
+  status: string
+  notes: string | null
+  createdAt: string
+}
+
+interface UnitCounts {
+  totalUnits: number
+  available: number
+  checkedOut: number
+  inMaintenance: number
+  inoperable: number
+  retired: number
+}
+
 interface InventoryItemRow {
   id: string
   name: string
@@ -51,7 +69,6 @@ interface InventoryItemRow {
   unitCost: string | null
   reorderUrl: string | null
   supplier: string | null
-  status: string
   location: string | null
   qrCodeId: string
   notes: string | null
@@ -59,13 +76,12 @@ interface InventoryItemRow {
   itemType: string
   unitId: string | null
   expectedQuantity: number | null
-  inoperableNotes: string | null
-  inoperableReportedAt: string | null
-  inoperableReportedById: string | null
   createdAt: string
   updatedAt: string
   currentOperator: { id: string; name: string } | null
   currentProject: { id: string; name: string; location: string | null } | null
+  unitCounts: UnitCounts
+  units: UnitRow[]
 }
 
 interface CheckLogEntry {
@@ -85,7 +101,7 @@ interface PhotoEntry {
 interface ItemDetail extends InventoryItemRow {
   checkLogs: CheckLogEntry[]
   photos: PhotoEntry[]
-  inoperableReportedBy: { id: string; name: string } | null
+  inoperableNotes?: string | null
 }
 
 interface UserOption { id: string; name: string; role: string }
@@ -116,12 +132,12 @@ function ConfirmDialog({
   )
 }
 
-// ── Repair Dialog (admin review) ──────────────────────────────────
+// ── Repair Dialog (admin review — per unit) ───────────────────────
 
 function RepairReviewDialog({
-  open, itemId, hubs, onClose, onSuccess,
+  open, itemId, unitId, hubs, onClose, onSuccess,
 }: {
-  open: boolean; itemId: string; hubs: HubOption[]
+  open: boolean; itemId: string; unitId: string; hubs: HubOption[]
   onClose: () => void; onSuccess: () => void
 }) {
   const [repairType, setRepairType] = React.useState('')
@@ -150,6 +166,7 @@ function RepairReviewDialog({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        unitId,
         decision: 'REPAIR', repairType, note,
         shopName: shopName || undefined,
         shopAddress: shopAddress || undefined,
@@ -223,7 +240,6 @@ function ItemFormDialog({
   const [itemType, setItemType] = React.useState('CONSUMABLE')
   const [unitId, setUnitId] = React.useState('')
   const [categoryId, setCategoryId] = React.useState('')
-  const [status, setStatus] = React.useState('AVAILABLE')
   const [hubId, setHubId] = React.useState('')
   const [quantity, setQuantity] = React.useState(1)
   const [expectedQuantity, setExpectedQuantity] = React.useState('')
@@ -238,7 +254,7 @@ function ItemFormDialog({
   React.useEffect(() => {
     if (item) {
       setName(item.name); setItemType(item.itemType); setUnitId(item.unitId ?? '')
-      setCategoryId(item.category.id); setStatus(item.status); setHubId(item.hub?.id ?? '')
+      setCategoryId(item.category.id); setHubId(item.hub?.id ?? '')
       setQuantity(item.quantity)
       setExpectedQuantity(item.expectedQuantity != null ? String(item.expectedQuantity) : '')
       setLowStockThreshold(item.lowStockThreshold != null ? String(item.lowStockThreshold) : '')
@@ -246,7 +262,7 @@ function ItemFormDialog({
       setSupplier(item.supplier ?? ''); setReorderUrl(item.reorderUrl ?? ''); setNotes(item.notes ?? '')
     } else {
       setName(''); setItemType('CONSUMABLE'); setUnitId(''); setCategoryId('')
-      setStatus('AVAILABLE'); setHubId(''); setQuantity(1)
+      setHubId(''); setQuantity(1)
       setExpectedQuantity(''); setLowStockThreshold('')
       setUnitCost(''); setSupplier(''); setReorderUrl(''); setNotes('')
     }
@@ -258,7 +274,6 @@ function ItemFormDialog({
     try {
       const body: Record<string, unknown> = { name, categoryId, itemType, quantity }
       if (itemType === 'SERIALIZED' && unitId) body.unitId = unitId
-      if (isEdit) body.status = status
       if (hubId) body.hubId = hubId
       if (expectedQuantity !== '') body.expectedQuantity = parseInt(expectedQuantity)
       if (lowStockThreshold !== '') body.lowStockThreshold = parseInt(lowStockThreshold)
@@ -298,13 +313,6 @@ function ItemFormDialog({
             <TextField select label="Category" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} required fullWidth>
               {categories.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
             </TextField>
-            {isEdit && (
-              <TextField select label="Status" value={status} onChange={(e) => setStatus(e.target.value)} fullWidth>
-                <MenuItem value="AVAILABLE">Available</MenuItem>
-                <MenuItem value="IN_MAINTENANCE">In Maintenance</MenuItem>
-                <MenuItem value="RETIRED">Retired</MenuItem>
-              </TextField>
-            )}
             <TextField select label="Hub Location" value={hubId} onChange={(e) => setHubId(e.target.value)} fullWidth>
               <MenuItem value="">Unknown</MenuItem>
               {hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.city}, {h.state}</MenuItem>)}
@@ -313,7 +321,7 @@ function ItemFormDialog({
             <TextField label="Expected / Total Quantity" type="number" value={expectedQuantity} onChange={(e) => setExpectedQuantity(e.target.value)} fullWidth inputProps={{ min: 0 }}
               helperText="How many of this item should exist in total? Used to spot shrinkage." />
             <TextField label="Low Stock Alert Threshold" type="number" value={lowStockThreshold} onChange={(e) => setLowStockThreshold(e.target.value)} fullWidth inputProps={{ min: 0 }}
-              helperText="Show a warning on the dashboard when current quantity falls to or below this number." />
+              helperText="Show a warning when available unit count falls to or below this number." />
             <Accordion>
               <AccordionSummary expandIcon={<ExpandMoreIcon />}>
                 <Typography variant="body2">Purchasing Info</Typography>
@@ -343,6 +351,15 @@ function ItemFormDialog({
 
 // ── Detail Drawer ─────────────────────────────────────────────────
 
+async function downloadUnitQR(unit: { qrCodeId: string; serialNumber: string | null }, itemName: string) {
+  const canvas = document.createElement('canvas')
+  await QRCode.toCanvas(canvas, unit.qrCodeId, { width: 300 })
+  const link = document.createElement('a')
+  link.download = `qr-${itemName.replace(/\s+/g, '-')}-${unit.qrCodeId.slice(0, 8)}.png`
+  link.href = canvas.toDataURL()
+  link.click()
+}
+
 function DetailDrawer({
   row, hubs, onClose, onEdit, onRetire, onUpdated,
 }: {
@@ -355,242 +372,345 @@ function DetailDrawer({
 }) {
   const [detail, setDetail] = React.useState<ItemDetail | null>(null)
   const [loading, setLoading] = React.useState(false)
-  const [qrDataUrl, setQrDataUrl] = React.useState<string | null>(null)
-  const [retireConfirmOpen, setRetireConfirmOpen] = React.useState(false)
-  const [repairOpen, setRepairOpen] = React.useState(false)
-  const [reviewLoading, setReviewLoading] = React.useState(false)
+  const [activeTab, setActiveTab] = React.useState(0)
+  const [serialEdits, setSerialEdits] = React.useState<Record<string, string>>({})
+  const [addingUnit, setAddingUnit] = React.useState(false)
+  const [repairUnitId, setRepairUnitId] = React.useState<string | null>(null)
+  const [retireUnitId, setRetireUnitId] = React.useState<string | null>(null)
 
-  React.useEffect(() => {
-    if (!row) { setDetail(null); setQrDataUrl(null); return }
+  const loadDetail = React.useCallback(async (id: string) => {
     setLoading(true)
-    fetch(`/api/inventory/${row.id}`)
+    fetch(`/api/inventory/${id}`)
       .then((r) => r.json())
-      .then(async (d) => {
-        const item: ItemDetail = d.data
-        setDetail(item)
-        const dataUrl = await QRCode.toDataURL(item.qrCodeId, { width: 160, margin: 1 })
-        setQrDataUrl(dataUrl)
-      })
+      .then((d) => { setDetail(d.data) })
       .catch(() => setDetail(null))
       .finally(() => setLoading(false))
-  }, [row])
+  }, [])
 
-  const downloadQr = () => {
-    if (!qrDataUrl || !detail) return
-    const a = document.createElement('a')
-    a.href = qrDataUrl
-    a.download = `qr-${detail.name.replace(/\s+/g, '-').toLowerCase()}.png`
-    a.click()
+  React.useEffect(() => {
+    if (!row) { setDetail(null); setActiveTab(0); return }
+    loadDetail(row.id)
+  }, [row, loadDetail])
+
+  const handleUnitStatusChange = async (unitId: string, status: string) => {
+    await fetch(`/api/inventory/units/${unitId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    })
+    if (row) loadDetail(row.id)
+  }
+
+  const handleSerialBlur = async (unitId: string) => {
+    const sn = serialEdits[unitId]
+    if (sn === undefined) return
+    await fetch(`/api/inventory/units/${unitId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ serialNumber: sn || null }),
+    })
+    setSerialEdits((prev) => { const n = { ...prev }; delete n[unitId]; return n })
+    if (row) loadDetail(row.id)
+  }
+
+  const handleAddUnit = async () => {
+    if (!detail) return
+    setAddingUnit(true)
+    await fetch(`/api/inventory/${detail.id}/units`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ count: 1 }),
+    })
+    setAddingUnit(false)
+    loadDetail(detail.id)
+    onUpdated()
   }
 
   const handleApproveRetirement = async () => {
-    if (!detail) return
-    setReviewLoading(true)
+    if (!detail || !retireUnitId) return
     await fetch(`/api/inventory/${detail.id}/review-inoperable`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ decision: 'RETIRE', note: 'Approved for retirement by admin' }),
+      body: JSON.stringify({ unitId: retireUnitId, decision: 'RETIRE', note: 'Approved for retirement by admin' }),
     })
-    setReviewLoading(false)
-    setRetireConfirmOpen(false)
+    setRetireUnitId(null)
+    loadDetail(detail.id)
     onUpdated()
   }
 
   const damagePhotos = detail?.photos.filter((p) => p.context === 'DAMAGE') ?? []
 
   return (
-    <Drawer anchor="right" open={!!row} onClose={onClose} PaperProps={{ sx: { width: 500 } }}>
+    <Drawer anchor="right" open={!!row} onClose={onClose} PaperProps={{ sx: { width: 540 } }}>
       {loading && (
         <Box p={3}><Stack spacing={1.5}>{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} height={32} />)}</Stack></Box>
       )}
 
       {!loading && detail && (
         <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-          <Box px={3} pt={3} pb={2}>
-            <Typography variant="h6" fontWeight={700}>{detail.name}</Typography>
-            <Stack direction="row" spacing={1} mt={1}>
-              <Chip size="small" label={detail.itemType === 'SERIALIZED' ? 'Serialized' : 'Consumable'}
-                variant="outlined" color={detail.itemType === 'SERIALIZED' ? 'primary' : 'default'} />
-              <Chip size="small" label={STATUS_LABELS[detail.status] ?? detail.status}
-                color={STATUS_CHIP_COLOR[detail.status] ?? 'default'} />
+          {/* Header */}
+          <Box px={3} pt={3} pb={1}>
+            <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
+              <Box>
+                <Typography variant="h6" fontWeight={700}>{detail.name}</Typography>
+                <Chip size="small" label={detail.itemType === 'SERIALIZED' ? 'Serialized' : 'Consumable'}
+                  variant="outlined" color={detail.itemType === 'SERIALIZED' ? 'primary' : 'default'} sx={{ mt: 0.5 }} />
+              </Box>
+            </Stack>
+            {/* Unit count breakdown */}
+            <Stack direction="row" spacing={0.5} flexWrap="wrap" mt={1}>
+              {detail.unitCounts.available > 0 && (
+                <Chip size="small" color="success" label={`${detail.unitCounts.available} Available`} />
+              )}
+              {detail.unitCounts.checkedOut > 0 && (
+                <Chip size="small" color="primary" label={`${detail.unitCounts.checkedOut} Checked Out`} />
+              )}
+              {detail.unitCounts.inMaintenance > 0 && (
+                <Chip size="small" color="warning" label={`${detail.unitCounts.inMaintenance} In Maintenance`} />
+              )}
+              {detail.unitCounts.inoperable > 0 && (
+                <Chip size="small" color="error" label={`${detail.unitCounts.inoperable} Inoperable`} />
+              )}
+              {detail.unitCounts.retired > 0 && (
+                <Chip size="small" color="default" label={`${detail.unitCounts.retired} Retired`} />
+              )}
+              {detail.unitCounts.totalUnits === 0 && (
+                <Chip size="small" color="default" label="No units" />
+              )}
             </Stack>
           </Box>
-          <Divider />
+
+          <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)} sx={{ px: 2, borderBottom: 1, borderColor: 'divider' }}>
+            <Tab label="Info" />
+            <Tab label={`Units (${detail.unitCounts.totalUnits})`} />
+            <Tab label="History" />
+          </Tabs>
 
           <Box sx={{ flex: 1, overflow: 'auto', px: 3, py: 2 }}>
 
-            {/* INOPERABLE review section */}
-            {detail.status === 'INOPERABLE' && (
-              <Box mb={3}>
-                <Alert severity="warning" icon={<WarningAmberIcon />}>
-                  <Typography variant="subtitle2" fontWeight={700}>Inoperable — Pending Admin Review</Typography>
-                  {detail.inoperableReportedBy && (
-                    <Typography variant="body2">
-                      Reported by {detail.inoperableReportedBy.name}
-                      {detail.inoperableReportedAt && ` on ${new Date(detail.inoperableReportedAt).toLocaleDateString()}`}
+            {/* ── Info Tab ── */}
+            {activeTab === 0 && (
+              <>
+                {detail.unitCounts.inoperable > 0 && (
+                  <Alert severity="warning" icon={<WarningAmberIcon />} sx={{ mb: 2 }}>
+                    <Typography variant="subtitle2" fontWeight={700}>
+                      {detail.unitCounts.inoperable} unit{detail.unitCounts.inoperable !== 1 ? 's' : ''} inoperable — see Units tab to review
                     </Typography>
-                  )}
-                  {detail.inoperableNotes && (
-                    <Typography variant="body2" sx={{ mt: 0.5, fontStyle: 'italic' }}>
-                      &ldquo;{detail.inoperableNotes}&rdquo;
-                    </Typography>
-                  )}
-                </Alert>
+                  </Alert>
+                )}
                 {damagePhotos.length > 0 && (
-                  <Stack direction="row" spacing={1} flexWrap="wrap" mt={1.5} mb={1.5}>
+                  <Stack direction="row" spacing={1} flexWrap="wrap" mb={2}>
                     {damagePhotos.map((p) => (
                       <Box key={p.id} component="img" src={p.url} alt="damage"
                         sx={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 1, border: '1px solid', borderColor: 'divider' }} />
                     ))}
                   </Stack>
                 )}
-                <Stack direction="row" spacing={1} mt={1.5}>
-                  <Button variant="outlined" color="error" size="small"
-                    disabled={reviewLoading} onClick={() => setRetireConfirmOpen(true)}>
-                    Approve Retirement
-                  </Button>
-                  <Button variant="outlined" size="small"
-                    disabled={reviewLoading} onClick={() => setRepairOpen(true)}>
-                    Send for Repair
-                  </Button>
-                </Stack>
-              </Box>
-            )}
 
-            <Box display="grid" gridTemplateColumns="1fr 1fr" gap={1.5} mb={3}>
-              <Box>
-                <Typography variant="caption" color="text.secondary" fontWeight={600}>Category</Typography>
-                <Typography variant="body2">{detail.category?.name ?? '—'}</Typography>
-              </Box>
-              <Box>
-                <Typography variant="caption" color="text.secondary" fontWeight={600}>Hub Location</Typography>
-                <Typography variant="body2">{detail.hub ? `${detail.hub.city}, ${detail.hub.state}` : '—'}</Typography>
-              </Box>
-              {detail.itemType === 'SERIALIZED' && (
-                <Box>
-                  <Typography variant="caption" color="text.secondary" fontWeight={600}>Unit ID</Typography>
-                  <Typography variant="body2">{detail.unitId ?? '—'}</Typography>
-                </Box>
-              )}
-              <Box>
-                <Typography variant="caption" color="text.secondary" fontWeight={600}>Quantity</Typography>
-                <Typography variant="body2">
-                  {detail.expectedQuantity != null ? `${detail.quantity} / ${detail.expectedQuantity}` : String(detail.quantity)}
-                </Typography>
-              </Box>
-              <Box>
-                <Typography variant="caption" color="text.secondary" fontWeight={600}>Low Stock Threshold</Typography>
-                <Typography variant="body2">{detail.lowStockThreshold != null ? String(detail.lowStockThreshold) : '—'}</Typography>
-              </Box>
-              <Box>
-                <Typography variant="caption" color="text.secondary" fontWeight={600}>Unit Cost</Typography>
-                <Typography variant="body2">{detail.unitCost != null ? `$${detail.unitCost}` : '—'}</Typography>
-              </Box>
-              <Box>
-                <Typography variant="caption" color="text.secondary" fontWeight={600}>Supplier</Typography>
-                <Typography variant="body2">{detail.supplier ?? '—'}</Typography>
-              </Box>
-              {detail.reorderUrl && (
-                <Box gridColumn="1 / -1">
-                  <Typography variant="caption" color="text.secondary" fontWeight={600}>Reorder URL</Typography>
-                  <Typography variant="body2">
-                    <Link href={detail.reorderUrl} target="_blank" rel="noopener noreferrer">{detail.reorderUrl}</Link>
-                  </Typography>
-                </Box>
-              )}
-              {detail.notes && (
-                <Box gridColumn="1 / -1">
-                  <Typography variant="caption" color="text.secondary" fontWeight={600}>Notes</Typography>
-                  <Typography variant="body2">{detail.notes}</Typography>
-                </Box>
-              )}
-            </Box>
-
-            <Box mb={3}>
-              <Typography variant="subtitle2" fontWeight={600} mb={1}>QR Code</Typography>
-              {qrDataUrl && (
-                <Stack spacing={1} alignItems="flex-start">
-                  <Box component="img" src={qrDataUrl} alt="QR code" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 0.5 }} />
-                  <Button size="small" startIcon={<DownloadIcon />} onClick={downloadQr} variant="outlined">Download QR</Button>
-                  <Typography variant="caption" color="text.secondary">QR sticker printing coming soon.</Typography>
-                </Stack>
-              )}
-            </Box>
-
-            {row?.status === 'CHECKED_OUT' && (
-              <Box mb={3}>
-                <Typography variant="subtitle2" fontWeight={600} mb={1}>Current Status</Typography>
-                {row.currentOperator && <Typography variant="body2">Currently with <strong>{row.currentOperator.name}</strong></Typography>}
-                {row.currentProject && <Typography variant="body2">Checked out to <strong>{row.currentProject.name}</strong></Typography>}
-              </Box>
-            )}
-
-            <Box>
-              <Typography variant="subtitle2" fontWeight={600} mb={1}>Recent Activity</Typography>
-              {detail.checkLogs.length === 0 ? (
-                <Typography variant="body2" color="text.secondary">No check logs yet.</Typography>
-              ) : (
-                <Stack spacing={1}>
-                  {detail.checkLogs.map((log) => (
-                    <Stack key={log.id} direction="row" spacing={1} alignItems="center">
-                      <Chip size="small" label={log.action === 'CHECK_OUT' ? 'Out' : 'In'}
-                        color={log.action === 'CHECK_OUT' ? 'primary' : 'success'} sx={{ minWidth: 40 }} />
-                      <Typography variant="body2">{log.operator?.name ?? 'Unknown'}</Typography>
-                      {log.condition && <Chip size="small" label={log.condition.replace(/_/g, ' ')} variant="outlined" />}
-                      <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto !important' }}>
-                        {new Date(log.submittedAt).toLocaleDateString()}
+                <Box display="grid" gridTemplateColumns="1fr 1fr" gap={1.5} mb={3}>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary" fontWeight={600}>Category</Typography>
+                    <Typography variant="body2">{detail.category?.name ?? '—'}</Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary" fontWeight={600}>Hub Location</Typography>
+                    <Typography variant="body2">{detail.hub ? `${detail.hub.city}, ${detail.hub.state}` : '—'}</Typography>
+                  </Box>
+                  {detail.itemType === 'SERIALIZED' && detail.unitId && (
+                    <Box>
+                      <Typography variant="caption" color="text.secondary" fontWeight={600}>Legacy Unit ID</Typography>
+                      <Typography variant="body2">{detail.unitId}</Typography>
+                    </Box>
+                  )}
+                  <Box>
+                    <Typography variant="caption" color="text.secondary" fontWeight={600}>Total Units</Typography>
+                    <Typography variant="body2">
+                      {detail.expectedQuantity != null ? `${detail.unitCounts.totalUnits} / ${detail.expectedQuantity}` : String(detail.unitCounts.totalUnits)}
+                    </Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary" fontWeight={600}>Low Stock Threshold</Typography>
+                    <Typography variant="body2">{detail.lowStockThreshold != null ? String(detail.lowStockThreshold) : '—'}</Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary" fontWeight={600}>Unit Cost</Typography>
+                    <Typography variant="body2">{detail.unitCost != null ? `$${detail.unitCost}` : '—'}</Typography>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary" fontWeight={600}>Supplier</Typography>
+                    <Typography variant="body2">{detail.supplier ?? '—'}</Typography>
+                  </Box>
+                  {detail.reorderUrl && (
+                    <Box gridColumn="1 / -1">
+                      <Typography variant="caption" color="text.secondary" fontWeight={600}>Reorder URL</Typography>
+                      <Typography variant="body2">
+                        <Link href={detail.reorderUrl} target="_blank" rel="noopener noreferrer">{detail.reorderUrl}</Link>
                       </Typography>
-                    </Stack>
-                  ))}
-                </Stack>
-              )}
-            </Box>
+                    </Box>
+                  )}
+                  {detail.notes && (
+                    <Box gridColumn="1 / -1">
+                      <Typography variant="caption" color="text.secondary" fontWeight={600}>Notes</Typography>
+                      <Typography variant="body2">{detail.notes}</Typography>
+                    </Box>
+                  )}
+                </Box>
+
+                {detail.unitCounts.checkedOut > 0 && (
+                  <Box mb={2}>
+                    <Typography variant="subtitle2" fontWeight={600} mb={0.5}>Current Status</Typography>
+                    {row?.currentOperator && <Typography variant="body2">Currently with <strong>{row.currentOperator.name}</strong></Typography>}
+                    {row?.currentProject && <Typography variant="body2">Checked out to <strong>{row.currentProject.name}</strong></Typography>}
+                  </Box>
+                )}
+              </>
+            )}
+
+            {/* ── Units Tab ── */}
+            {activeTab === 1 && (
+              <>
+                <TableContainer component={Paper} variant="outlined" sx={{ mb: 2 }}>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow sx={{ '& th': { fontWeight: 600, fontSize: 11, color: 'text.secondary' } }}>
+                        <TableCell>#</TableCell>
+                        <TableCell>Serial Number</TableCell>
+                        <TableCell>Status</TableCell>
+                        <TableCell align="right">Actions</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {detail.units.map((unit, idx) => (
+                        <TableRow key={unit.id} sx={{ '&:last-child td': { border: 0 } }}>
+                          <TableCell sx={{ color: 'text.secondary', fontSize: 12 }}>{idx + 1}</TableCell>
+                          <TableCell>
+                            <TextField
+                              size="small"
+                              variant="standard"
+                              placeholder="—"
+                              value={serialEdits[unit.id] ?? (unit.serialNumber ?? '')}
+                              onChange={(e) => setSerialEdits((p) => ({ ...p, [unit.id]: e.target.value }))}
+                              onBlur={() => handleSerialBlur(unit.id)}
+                              sx={{ width: 120 }}
+                              inputProps={{ style: { fontSize: 13 } }}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <TextField
+                              select
+                              size="small"
+                              variant="standard"
+                              value={unit.status}
+                              onChange={(e) => handleUnitStatusChange(unit.id, e.target.value)}
+                              sx={{ minWidth: 130 }}
+                              SelectProps={{ style: { fontSize: 13 } }}
+                            >
+                              {Object.entries(STATUS_LABELS).map(([v, l]) => (
+                                <MenuItem key={v} value={v}>{l}</MenuItem>
+                              ))}
+                            </TextField>
+                          </TableCell>
+                          <TableCell align="right">
+                            <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                              <Tooltip title="Download QR">
+                                <IconButton size="small" onClick={() => downloadUnitQR(unit, detail.name)}>
+                                  <DownloadIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                              {unit.status === 'INOPERABLE' && (
+                                <>
+                                  <Tooltip title="Retire this unit">
+                                    <IconButton size="small" color="error" onClick={() => setRetireUnitId(unit.id)}>
+                                      <ArchiveIcon fontSize="small" />
+                                    </IconButton>
+                                  </Tooltip>
+                                  <Tooltip title="Send for repair">
+                                    <IconButton size="small" onClick={() => setRepairUnitId(unit.id)}>
+                                      <EditIcon fontSize="small" />
+                                    </IconButton>
+                                  </Tooltip>
+                                </>
+                              )}
+                            </Stack>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+                <Button
+                  size="small"
+                  startIcon={addingUnit ? <CircularProgress size={14} /> : <AddIcon />}
+                  onClick={handleAddUnit}
+                  disabled={addingUnit}
+                  variant="outlined"
+                >
+                  {addingUnit ? 'Adding…' : '+ Add Unit'}
+                </Button>
+              </>
+            )}
+
+            {/* ── History Tab ── */}
+            {activeTab === 2 && (
+              <>
+                {detail.checkLogs.length === 0 ? (
+                  <Typography variant="body2" color="text.secondary">No check logs yet.</Typography>
+                ) : (
+                  <Stack spacing={1}>
+                    {detail.checkLogs.map((log) => (
+                      <Stack key={log.id} direction="row" spacing={1} alignItems="center">
+                        <Chip size="small" label={log.action === 'CHECK_OUT' ? 'Out' : 'In'}
+                          color={log.action === 'CHECK_OUT' ? 'primary' : 'success'} sx={{ minWidth: 40 }} />
+                        <Typography variant="body2">{log.operator?.name ?? 'Unknown'}</Typography>
+                        {log.condition && <Chip size="small" label={log.condition.replace(/_/g, ' ')} variant="outlined" />}
+                        <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto !important' }}>
+                          {new Date(log.submittedAt).toLocaleDateString()}
+                        </Typography>
+                      </Stack>
+                    ))}
+                  </Stack>
+                )}
+              </>
+            )}
           </Box>
 
           <Divider />
           <Stack direction="row" spacing={1} px={3} py={2} justifyContent="flex-end">
             <Button onClick={onClose}>Close</Button>
-            {detail.status !== 'RETIRED' && detail.status !== 'INOPERABLE' && (
-              <>
-                <Button variant="outlined" color="error" startIcon={<ArchiveIcon />}
-                  onClick={() => { onClose(); onRetire(detail) }}>
-                  Retire
-                </Button>
-                <Button variant="contained" startIcon={<EditIcon />}
-                  onClick={() => { onClose(); onEdit(detail) }}>
-                  Edit
-                </Button>
-              </>
-            )}
-            {detail.status === 'INOPERABLE' && (
-              <Button variant="contained" startIcon={<EditIcon />}
-                onClick={() => { onClose(); onEdit(detail) }}>
-                Edit
+            {detail.unitCounts.available > 0 && (
+              <Button variant="outlined" color="error" startIcon={<ArchiveIcon />}
+                onClick={() => { onClose(); onRetire(detail) }}>
+                Retire
               </Button>
             )}
+            <Button variant="contained" startIcon={<EditIcon />}
+              onClick={() => { onClose(); onEdit(detail) }}>
+              Edit
+            </Button>
           </Stack>
         </Box>
       )}
 
-      {/* Retire confirmation for INOPERABLE items */}
+      {/* Per-unit retire confirmation */}
       <ConfirmDialog
-        open={retireConfirmOpen}
-        title="Approve Retirement?"
-        message="This will permanently retire this item. The inoperable flag and history are preserved."
-        confirmLabel="Retire Item"
+        open={!!retireUnitId}
+        title="Retire this unit?"
+        message="This will permanently retire this unit. History is preserved."
+        confirmLabel="Retire Unit"
         confirmColor="error"
-        onClose={() => setRetireConfirmOpen(false)}
+        onClose={() => setRetireUnitId(null)}
         onConfirm={handleApproveRetirement}
       />
 
-      {/* Repair dialog for INOPERABLE items */}
-      {detail && (
+      {/* Per-unit repair dialog */}
+      {detail && repairUnitId && (
         <RepairReviewDialog
-          open={repairOpen}
+          open={!!repairUnitId}
           itemId={detail.id}
+          unitId={repairUnitId}
           hubs={hubs}
-          onClose={() => setRepairOpen(false)}
-          onSuccess={() => { setRepairOpen(false); onUpdated() }}
+          onClose={() => setRepairUnitId(null)}
+          onSuccess={() => { setRepairUnitId(null); loadDetail(detail.id); onUpdated() }}
         />
       )}
     </Drawer>
@@ -614,7 +734,6 @@ export default function AdminInventoryPage() {
   const [debouncedQ, setDebouncedQ] = React.useState('')
   const [filterType, setFilterType] = React.useState('')
   const [filterCategory, setFilterCategory] = React.useState('')
-  const [filterStatus, setFilterStatus] = React.useState('')
   const [filterHub, setFilterHub] = React.useState('')
   const [filterOperator, setFilterOperator] = React.useState('')
   const [filterProject, setFilterProject] = React.useState('')
@@ -642,7 +761,6 @@ export default function AdminInventoryPage() {
       if (debouncedQ) params.set('q', debouncedQ)
       if (filterType) params.set('itemType', filterType)
       if (filterCategory) params.set('categoryId', filterCategory)
-      if (filterStatus) params.set('status', filterStatus)
       if (filterHub) params.set('hubId', filterHub)
       if (filterOperator) params.set('operatorId', filterOperator)
       if (filterProject) params.set('projectId', filterProject)
@@ -652,7 +770,7 @@ export default function AdminInventoryPage() {
       setItems(data.data ?? [])
       setTotal(data.total ?? 0)
     } finally { setLoading(false) }
-  }, [page, pageSize, debouncedQ, filterType, filterCategory, filterStatus, filterHub, filterOperator, filterProject, showRetired])
+  }, [page, pageSize, debouncedQ, filterType, filterCategory, filterHub, filterOperator, filterProject, showRetired])
 
   React.useEffect(() => { load() }, [load])
 
@@ -673,17 +791,20 @@ export default function AdminInventoryPage() {
 
   const handleRetire = async () => {
     if (!retireItem) return
-    await fetch(`/api/inventory/${retireItem.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'RETIRED' }),
-    })
-    showToast(`${retireItem.name} retired`)
+    const retirableUnits = retireItem.units.filter((u) => u.status === 'AVAILABLE')
+    await Promise.all(retirableUnits.map((u) =>
+      fetch(`/api/inventory/units/${u.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'RETIRED' }),
+      })
+    ))
+    showToast(`${retireItem.name} units retired`)
     setRetireItem(null)
     await load()
   }
 
-  const checkedOutCount = items.filter((i) => i.status === 'CHECKED_OUT').length
+  const checkedOutCount = items.reduce((sum, i) => sum + (i.unitCounts?.checkedOut ?? 0), 0)
 
   return (
     <Box>
@@ -691,7 +812,7 @@ export default function AdminInventoryPage() {
         <Box>
           <Typography variant="h5">Inventory</Typography>
           <Typography variant="body2" color="text.secondary">
-            {total} item{total !== 1 ? 's' : ''} · {checkedOutCount} checked out
+            {total} item{total !== 1 ? 's' : ''} · {checkedOutCount} units checked out
           </Typography>
         </Box>
         <Button variant="contained" startIcon={<AddIcon />} onClick={() => setAddOpen(true)}>
@@ -711,14 +832,6 @@ export default function AdminInventoryPage() {
         <TextField select size="small" label="All Categories" value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} sx={{ minWidth: 180 }}>
           <MenuItem value="">All Categories</MenuItem>
           {categories.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
-        </TextField>
-        <TextField select size="small" label="All Statuses" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} sx={{ minWidth: 160 }}>
-          <MenuItem value="">All Statuses</MenuItem>
-          <MenuItem value="AVAILABLE">Available</MenuItem>
-          <MenuItem value="CHECKED_OUT">Checked Out</MenuItem>
-          <MenuItem value="IN_MAINTENANCE">In Maintenance</MenuItem>
-          <MenuItem value="INOPERABLE">Inoperable</MenuItem>
-          {showRetired && <MenuItem value="RETIRED">Retired</MenuItem>}
         </TextField>
         <TextField select size="small" label="All Hubs" value={filterHub} onChange={(e) => setFilterHub(e.target.value)} sx={{ minWidth: 140 }}>
           <MenuItem value="">All Hubs</MenuItem>
@@ -748,7 +861,7 @@ export default function AdminInventoryPage() {
             <TableRow sx={{ '& th': { fontWeight: 600, color: 'text.secondary', fontSize: 12 } }}>
               <TableCell>ITEM</TableCell>
               <TableCell>TYPE</TableCell>
-              <TableCell>QTY</TableCell>
+              <TableCell>UNITS</TableCell>
               <TableCell>STATUS</TableCell>
               <TableCell>LOCATION</TableCell>
               <TableCell>PROJECT</TableCell>
@@ -761,11 +874,12 @@ export default function AdminInventoryPage() {
                   <TableRow key={i}>{Array.from({ length: 7 }).map((_, j) => <TableCell key={j}><Skeleton width={j === 6 ? 64 : 100} /></TableCell>)}</TableRow>
                 ))
               : items.map((item) => {
-                  const isLow = item.lowStockThreshold != null && item.quantity <= item.lowStockThreshold
-                  const isRetired = item.status === 'RETIRED'
+                  const counts = item.unitCounts ?? { available: 0, checkedOut: 0, inMaintenance: 0, inoperable: 0, retired: 0, totalUnits: 0 }
+                  const isLow = item.lowStockThreshold != null && counts.available < item.lowStockThreshold
+                  const isAllRetired = counts.totalUnits > 0 && counts.retired === counts.totalUnits
                   return (
                     <TableRow key={item.id} hover
-                      sx={{ opacity: isRetired ? 0.5 : 1, cursor: 'pointer', '&:last-child td': { border: 0 } }}
+                      sx={{ opacity: isAllRetired ? 0.5 : 1, cursor: 'pointer', '&:last-child td': { border: 0 } }}
                       onClick={() => setDrawerRow(item)}>
                       <TableCell>
                         <Typography variant="body2" fontWeight={600}>{item.name}</Typography>
@@ -784,16 +898,34 @@ export default function AdminInventoryPage() {
                         <Stack direction="row" alignItems="center" spacing={0.5}>
                           {isLow && <WarningAmberIcon fontSize="small" color="error" />}
                           <Typography variant="body2" color={isLow ? 'error' : 'inherit'}>
-                            {item.expectedQuantity != null ? `${item.quantity} / ${item.expectedQuantity}` : item.quantity}
+                            {counts.totalUnits}
                           </Typography>
                         </Stack>
                       </TableCell>
                       <TableCell>
-                        <Chip size="small" label={STATUS_LABELS[item.status] ?? item.status}
-                          color={STATUS_CHIP_COLOR[item.status] ?? 'default'} />
+                        <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                          {counts.available > 0 && (
+                            <Chip size="small" color="success" label={`${counts.available} Available`} />
+                          )}
+                          {counts.checkedOut > 0 && (
+                            <Chip size="small" color="primary" label={`${counts.checkedOut} Out`} />
+                          )}
+                          {counts.inMaintenance > 0 && (
+                            <Chip size="small" color="warning" label={`${counts.inMaintenance} Maint.`} />
+                          )}
+                          {counts.inoperable > 0 && (
+                            <Chip size="small" color="error" label={`${counts.inoperable} Inop.`} />
+                          )}
+                          {counts.retired > 0 && (
+                            <Chip size="small" color="default" label={`${counts.retired} Retired`} />
+                          )}
+                          {counts.totalUnits === 0 && (
+                            <Chip size="small" color="default" label="No units" />
+                          )}
+                        </Stack>
                       </TableCell>
                       <TableCell>
-                        {item.status === 'CHECKED_OUT' && item.currentOperator
+                        {counts.checkedOut > 0 && item.currentOperator
                           ? <Typography variant="body2" fontStyle="italic">With {item.currentOperator.name}</Typography>
                           : <Typography variant="body2">{item.hub ? `${item.hub.city}, ${item.hub.state}` : '—'}</Typography>
                         }
@@ -806,8 +938,8 @@ export default function AdminInventoryPage() {
                           <Tooltip title="Edit">
                             <IconButton size="small" onClick={() => setEditItem(item)}><EditIcon fontSize="small" /></IconButton>
                           </Tooltip>
-                          {!isRetired && item.status !== 'INOPERABLE' && (
-                            <Tooltip title="Retire">
+                          {counts.available > 0 && (
+                            <Tooltip title="Retire available units">
                               <IconButton size="small" color="error" onClick={() => setRetireItem(item)}>
                                 <ArchiveIcon fontSize="small" />
                               </IconButton>
@@ -850,13 +982,13 @@ export default function AdminInventoryPage() {
         onClose={() => setDrawerRow(null)}
         onEdit={(item) => setEditItem(item)}
         onRetire={(item) => setRetireItem(item)}
-        onUpdated={() => { setDrawerRow(null); showToast('Item updated'); void load() }}
+        onUpdated={() => { showToast('Item updated'); void load() }}
       />
 
       <ConfirmDialog
         open={!!retireItem}
-        title={`Retire ${retireItem?.name ?? ''}?`}
-        message="This will mark the item as retired and hide it from active inventory. All check-out history is preserved."
+        title={`Retire available units of ${retireItem?.name ?? ''}?`}
+        message={`This will retire all ${retireItem?.unitCounts?.available ?? 0} available unit(s). Check-out history is preserved.`}
         confirmLabel="Retire"
         confirmColor="error"
         onClose={() => setRetireItem(null)}

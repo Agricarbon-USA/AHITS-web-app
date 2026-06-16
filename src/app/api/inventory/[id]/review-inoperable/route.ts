@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { getSession } from '@/lib/auth/session'
 
 const schema = z.object({
+  unitId: z.string(),
   decision: z.enum(['RETIRE', 'REPAIR']),
   note: z.string().min(1, 'Note is required'),
   repairType: z.enum(['IN_FIELD', 'AT_SHOP', 'SHIP_TO_HUB', 'SHIP_FOR_REPAIR']).optional(),
@@ -24,25 +25,30 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const item = await prisma.inventoryItem.findUnique({ where: { id } })
   if (!item) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (item.status !== 'INOPERABLE') {
-    return NextResponse.json({ error: 'Item is not in INOPERABLE status' }, { status: 409 })
-  }
 
   const body = await req.json()
   const parsed = schema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const { decision, note, repairType, shopName, shopAddress, dateDelivered, purchaseOrder, invoiceNumber, repairHubId } = parsed.data
+  const { unitId, decision, note, repairType, shopName, shopAddress, dateDelivered, purchaseOrder, invoiceNumber, repairHubId } = parsed.data
+
+  const unit = await prisma.inventoryUnit.findUnique({ where: { id: unitId } })
+  if (!unit || unit.inventoryItemId !== id) {
+    return NextResponse.json({ error: 'Unit not found for this item' }, { status: 404 })
+  }
+  if (unit.status !== 'INOPERABLE') {
+    return NextResponse.json({ error: 'Unit is not in INOPERABLE status' }, { status: 409 })
+  }
 
   if (decision === 'RETIRE') {
-    await prisma.inventoryItem.update({ where: { id }, data: { status: 'RETIRED' } })
+    await prisma.inventoryUnit.update({ where: { id: unitId }, data: { status: 'RETIRED' } })
   } else {
     await prisma.$transaction(async (tx) => {
-      await tx.inventoryItem.update({ where: { id }, data: { status: 'IN_MAINTENANCE' } })
+      await tx.inventoryUnit.update({ where: { id: unitId }, data: { status: 'IN_MAINTENANCE' } })
       await tx.maintenanceTask.create({
         data: {
           itemId: id,
-          taskName: `Admin repair decision: ${item.name}`,
+          taskName: `Admin repair: ${item.name}${unit.serialNumber ? ` #${unit.serialNumber}` : ''}`,
           isDamageReport: true,
           repairType: repairType ?? null,
           shopName: shopName ?? null,

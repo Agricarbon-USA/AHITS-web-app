@@ -13,7 +13,7 @@ export async function GET() {
     await Promise.all([
       prisma.vehicle.count({ where: { status: 'ACTIVE' } }),
       prisma.vehicle.count({ where: { status: 'IN_MAINTENANCE' } }),
-      prisma.inventoryItem.count({ where: { status: 'CHECKED_OUT' } }),
+      prisma.inventoryUnit.count({ where: { status: 'CHECKED_OUT' } }),
       prisma.maintenanceTask.count({ where: { status: 'OVERDUE' } }),
       prisma.alert.count({ where: { resolved: false } }),
       prisma.dailyCheck.count({ where: { submittedAt: { gte: today } } }),

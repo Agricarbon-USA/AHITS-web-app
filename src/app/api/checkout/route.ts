@@ -24,8 +24,17 @@ export async function POST(req: NextRequest) {
   const { action, itemId, ...rest } = parsed.data
 
   const log = await prisma.$transaction(async (tx) => {
-    const newStatus = action === 'CHECK_OUT' ? 'CHECKED_OUT' : 'AVAILABLE'
-    await tx.inventoryItem.update({ where: { id: itemId }, data: { status: newStatus } })
+    if (action === 'CHECK_OUT') {
+      const unit = await tx.inventoryUnit.findFirst({ where: { inventoryItemId: itemId, status: 'AVAILABLE' } })
+      if (unit) {
+        await tx.inventoryUnit.update({ where: { id: unit.id }, data: { status: 'CHECKED_OUT' } })
+      }
+    } else {
+      const unit = await tx.inventoryUnit.findFirst({ where: { inventoryItemId: itemId, status: 'CHECKED_OUT' } })
+      if (unit) {
+        await tx.inventoryUnit.update({ where: { id: unit.id }, data: { status: 'AVAILABLE' } })
+      }
+    }
 
     return tx.checkLog.create({
       data: {

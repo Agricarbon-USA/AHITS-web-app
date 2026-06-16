@@ -23,7 +23,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         },
       },
       vehicles: true,
-      items: { include: { kitItem: true } },
+      items: { include: { kitItem: { select: { inventoryItemId: true, quantity: true, inventoryUnitId: true } } } },
     },
   })
   if (!transfer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -122,6 +122,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           kitId: destKit.id,
           inventoryItemId: ti.kitItem.inventoryItemId,
           quantity: ti.kitItem.quantity,
+          inventoryUnitId: ti.kitItem.inventoryUnitId ?? null,
         },
       })
       await tx.checkLog.create({

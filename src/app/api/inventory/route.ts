@@ -2,7 +2,18 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { getSession } from '@/lib/auth/session'
-import type { EquipmentStatus, ItemType, Prisma } from '@prisma/client'
+import type { ItemType, Prisma } from '@prisma/client'
+
+function computeUnitCounts(units: { status: string }[]) {
+  return {
+    totalUnits: units.length,
+    available:     units.filter((u) => u.status === 'AVAILABLE').length,
+    checkedOut:    units.filter((u) => u.status === 'CHECKED_OUT').length,
+    inMaintenance: units.filter((u) => u.status === 'IN_MAINTENANCE').length,
+    inoperable:    units.filter((u) => u.status === 'INOPERABLE').length,
+    retired:       units.filter((u) => u.status === 'RETIRED').length,
+  }
+}
 
 export async function GET(req: NextRequest) {
   const session = await getSession()
@@ -11,17 +22,14 @@ export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const page = parseInt(searchParams.get('page') ?? '1')
   const pageSize = parseInt(searchParams.get('pageSize') ?? '25')
-  const status = searchParams.get('status') as EquipmentStatus | null
   const categoryId = searchParams.get('categoryId')
   const itemType = searchParams.get('itemType') as ItemType | null
   const hubId = searchParams.get('hubId')
   const operatorId = searchParams.get('operatorId')
   const projectId = searchParams.get('projectId')
-  const includeRetired = searchParams.get('includeRetired') === 'true'
   const q = searchParams.get('q')
 
   const where: Prisma.InventoryItemWhereInput = {
-    ...(status ? { status } : (!includeRetired ? { status: { not: 'RETIRED' } } : {})),
     ...(categoryId && { categoryId }),
     ...(itemType && { itemType }),
     ...(hubId && { hubId }),
@@ -54,7 +62,13 @@ export async function GET(req: NextRequest) {
       skip: (page - 1) * pageSize,
       take: pageSize,
       orderBy: { name: 'asc' },
-      include: { category: true, hub: true },
+      include: {
+        category: true,
+        hub: true,
+        units: {
+          select: { id: true, status: true, qrCodeId: true, serialNumber: true },
+        },
+      },
     }),
     prisma.inventoryItem.count({ where }),
   ])
@@ -78,11 +92,18 @@ export async function GET(req: NextRequest) {
     if (!hasReturn) activeByItem[log.itemId] = log
   }
 
-  const data = items.map((item) => ({
-    ...item,
-    currentOperator: activeByItem[item.id]?.operator ?? null,
-    currentProject: activeByItem[item.id]?.project ?? null,
-  }))
+  const data = items.map((item) => {
+    const counts = computeUnitCounts(item.units)
+    return {
+      ...item,
+      unitCounts: counts,
+      availableUnits: item.units
+        .filter((u) => u.status === 'AVAILABLE')
+        .map((u) => ({ id: u.id, serialNumber: u.serialNumber, qrCodeId: u.qrCodeId })),
+      currentOperator: activeByItem[item.id]?.operator ?? null,
+      currentProject: activeByItem[item.id]?.project ?? null,
+    }
+  })
 
   return NextResponse.json({ data, total, page, pageSize })
 }
@@ -114,5 +135,26 @@ export async function POST(req: NextRequest) {
     data: parsed.data as never,
     include: { category: true, hub: true },
   })
-  return NextResponse.json({ data: item }, { status: 201 })
+
+  if (parsed.data.quantity > 0) {
+    await prisma.inventoryUnit.createMany({
+      data: Array.from({ length: parsed.data.quantity }, (_, i) => ({
+        inventoryItemId: item.id,
+        serialNumber: i === 0 ? (parsed.data.unitId ?? null) : null,
+      })),
+    })
+  }
+
+  const units = await prisma.inventoryUnit.findMany({
+    where: { inventoryItemId: item.id },
+    select: { id: true, status: true, qrCodeId: true, serialNumber: true },
+  })
+
+  return NextResponse.json({
+    data: {
+      ...item,
+      units,
+      unitCounts: computeUnitCounts(units),
+    },
+  }, { status: 201 })
 }

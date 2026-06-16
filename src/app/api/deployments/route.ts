@@ -19,8 +19,12 @@ const RIG_INCLUDE = {
             select: {
               id: true,
               name: true,
+              itemType: true,
               category: { select: { name: true } },
             },
+          },
+          inventoryUnit: {
+            select: { id: true, qrCodeId: true, serialNumber: true, status: true },
           },
         },
       },
@@ -104,25 +108,24 @@ export async function POST(req: NextRequest) {
     const kit = await tx.kit.create({ data: { rigId: newRig.id } })
 
     if (kitItems.length > 0) {
-      await tx.kitItem.createMany({
-        data: kitItems.map(({ inventoryItemId, quantity }) => ({
-          kitId: kit.id,
-          inventoryItemId,
-          quantity,
-        })),
-      })
-      const checkLogData = kitItems.map(({ inventoryItemId }) => ({
-        action: 'CHECK_OUT' as const,
-        itemId: inventoryItemId,
-        operatorId,
-        projectId,
-        notes: note,
-      }))
-      await tx.checkLog.createMany({ data: checkLogData })
-      await tx.inventoryItem.updateMany({
-        where: { id: { in: kitItems.map((ki) => ki.inventoryItemId) } },
-        data: { status: 'CHECKED_OUT' },
-      })
+      for (const { inventoryItemId, quantity } of kitItems) {
+        const available = await tx.inventoryUnit.findMany({
+          where: { inventoryItemId, status: 'AVAILABLE' },
+          take: quantity,
+        })
+        if (available.length > 0) {
+          await tx.inventoryUnit.updateMany({
+            where: { id: { in: available.map((u) => u.id) } },
+            data: { status: 'CHECKED_OUT' },
+          })
+        }
+        await tx.kitItem.create({
+          data: { kitId: kit.id, inventoryItemId, quantity, inventoryUnitId: null },
+        })
+        await tx.checkLog.create({
+          data: { action: 'CHECK_OUT', itemId: inventoryItemId, operatorId, projectId, notes: note },
+        })
+      }
     }
 
     return tx.rig.findUniqueOrThrow({ where: { id: newRig.id }, include: RIG_INCLUDE })

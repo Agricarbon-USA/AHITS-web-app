@@ -15,6 +15,7 @@ import AddIcon from '@mui/icons-material/Add'
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz'
 import StopCircleIcon from '@mui/icons-material/StopCircle'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
+import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner'
 import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
 import { DispositionDialog, KitItemSummary } from '@/components/shared/DispositionDialog'
 import { RentalVehicleForm, RentalVehicleFields } from '@/components/shared/RentalVehicleForm'
@@ -42,9 +43,11 @@ interface KitItemRow {
   item: {
     id: string
     name: string
+    itemType: string
     lowStockThreshold?: number | null
     category: { name: string }
   }
+  inventoryUnit: { id: string; qrCodeId: string; serialNumber: string | null; status: string } | null
 }
 
 interface KitRow {
@@ -73,11 +76,25 @@ interface VehicleOption {
 interface InventoryOption {
   id: string
   name: string
-  status: string
   itemType: string
   quantity: number
   lowStockThreshold: number | null
   category: { name: string }
+  unitCounts: {
+    available: number
+    checkedOut: number
+    inMaintenance: number
+    inoperable: number
+    totalUnits: number
+  }
+  availableUnits: Array<{ id: string; serialNumber: string | null; qrCodeId: string }>
+}
+
+interface PendingItemEntry {
+  itemType: 'CONSUMABLE' | 'SERIALIZED'
+  quantity: number
+  inventoryUnitId: string | null
+  unitLabel: string | null
 }
 
 interface UserOption {
@@ -262,7 +279,7 @@ function NewDeploymentDialog({
   const [error, setError] = React.useState('')
 
   const unassignedVehicles = vehicles.filter((v) => !v.assignedOperatorId && v.status === 'ACTIVE')
-  const availableItems = inventoryItems.filter((i) => i.status === 'AVAILABLE')
+  const availableItems = inventoryItems.filter((i) => (i.unitCounts?.available ?? 0) > 0)
 
   const launch = async () => {
     if (!note.trim()) { setError('Note is required'); return }
@@ -443,7 +460,9 @@ export default function MyRigPage() {
   const [rentalSubmitLoading, setRentalSubmitLoading] = React.useState(false)
   const [rentalError, setRentalError] = React.useState('')
   const [addItemOpen, setAddItemOpen] = React.useState(false)
-  const [pendingItems, setPendingItems] = React.useState<Map<string, number>>(new Map())
+  const [pendingItems, setPendingItems] = React.useState<Map<string, PendingItemEntry>>(new Map())
+  const [unitManualQR, setUnitManualQR] = React.useState<Record<string, string>>({})
+  const [unitQrLoading, setUnitQrLoading] = React.useState<Record<string, boolean>>({})
 
   type NoteAction = 'addVehicles' | 'removeVehicles' | 'addItems' | 'removeItems' | 'end'
   const [noteDialog, setNoteDialog] = React.useState<NoteAction | null>(null)
@@ -533,12 +552,17 @@ export default function MyRigPage() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            items: Array.from(pendingItems.entries()).map(([inventoryItemId, quantity]) => ({ inventoryItemId, quantity })),
+            items: Array.from(pendingItems.entries()).map(([inventoryItemId, entry]) =>
+              entry.itemType === 'SERIALIZED'
+                ? { itemType: 'SERIALIZED', inventoryItemId, inventoryUnitId: entry.inventoryUnitId! }
+                : { itemType: 'CONSUMABLE', inventoryItemId, quantity: entry.quantity }
+            ),
             note,
             photoUrls,
           }),
         })
         setPendingItems(new Map())
+        setUnitManualQR({})
         setAddItemOpen(false)
         break
       case 'removeItems':
@@ -719,7 +743,14 @@ export default function MyRigPage() {
                             setSelItems(s)
                           }} />
                       )}
-                      <Typography variant="body2" flexGrow={1}>{ki.item.name}</Typography>
+                      <Box flexGrow={1}>
+                        <Typography variant="body2">{ki.item.name}</Typography>
+                        {ki.inventoryUnit && (
+                          <Typography variant="caption" color="text.secondary">
+                            Unit: {ki.inventoryUnit.serialNumber ?? ki.inventoryUnit.qrCodeId.slice(0, 8)}
+                          </Typography>
+                        )}
+                      </Box>
                       <Chip size="small" label={ki.item.category.name} sx={{ height: 18, fontSize: 10 }} />
                       <Stack direction="row" alignItems="center" spacing={0.5}>
                         {isLow && <WarningAmberIcon fontSize="small" color="warning" />}
@@ -895,50 +926,159 @@ export default function MyRigPage() {
       </Dialog>
 
       {/* Add Items picker */}
-      <Dialog open={addItemOpen} onClose={() => { setAddItemOpen(false); setPendingItems(new Map()) }} maxWidth="sm" fullWidth>
+      <Dialog open={addItemOpen} onClose={() => { setAddItemOpen(false); setPendingItems(new Map()); setUnitManualQR({}) }} maxWidth="sm" fullWidth>
         <DialogTitle>Add Items</DialogTitle>
         <DialogContent>
-          {inventoryItems.filter((i) => i.status === 'AVAILABLE').length === 0 ? (
+          {inventoryItems.filter((i) => (i.unitCounts?.available ?? 0) > 0).length === 0 ? (
             <Typography variant="body2" color="text.secondary">No available items.</Typography>
           ) : (
-            <Stack spacing={1} mt={1}>
-              {inventoryItems.filter((i) => i.status === 'AVAILABLE').map((item) => {
-                const qty = pendingItems.get(item.id) ?? 0
-                return (
-                  <Stack key={item.id} direction="row" alignItems="center" spacing={1}>
-                    <Checkbox size="small" checked={qty > 0}
-                      onChange={(e) => {
+            <Stack spacing={1.5} mt={1}>
+              {inventoryItems.filter((i) => (i.unitCounts?.available ?? 0) > 0).map((item) => {
+                const entry = pendingItems.get(item.id)
+                const checked = !!entry
+                const isSerialized = item.itemType === 'SERIALIZED'
+
+                const handleQRScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
+                  const file = e.target.files?.[0]
+                  if (!file) return
+                  setUnitQrLoading((p) => ({ ...p, [item.id]: true }))
+                  try {
+                    const bitmap = await createImageBitmap(file)
+                    const canvas = document.createElement('canvas')
+                    canvas.width = bitmap.width; canvas.height = bitmap.height
+                    const ctx = canvas.getContext('2d')!
+                    ctx.drawImage(bitmap, 0, 0)
+                    const imgData = ctx.getImageData(0, 0, bitmap.width, bitmap.height)
+                    const jsQR = (await import('jsqr')).default
+                    const result = jsQR(imgData.data, bitmap.width, bitmap.height)
+                    if (result?.data) {
+                      const res = await fetch(`/api/inventory/units/by-qr/${encodeURIComponent(result.data)}`)
+                      if (res.ok) {
+                        const json = await res.json()
+                        if (json.unit?.inventoryItemId === item.id && json.unit?.status === 'AVAILABLE') {
+                          const m = new Map(pendingItems)
+                          m.set(item.id, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: json.unit.id, unitLabel: json.unit.serialNumber ?? result.data.slice(0, 8) })
+                          setPendingItems(m)
+                        }
+                      }
+                    }
+                  } finally {
+                    setUnitQrLoading((p) => ({ ...p, [item.id]: false }))
+                    e.target.value = ''
+                  }
+                }
+
+                const lookupManualQR = async () => {
+                  const qr = unitManualQR[item.id]?.trim()
+                  if (!qr) return
+                  setUnitQrLoading((p) => ({ ...p, [item.id]: true }))
+                  try {
+                    const res = await fetch(`/api/inventory/units/by-qr/${encodeURIComponent(qr)}`)
+                    if (res.ok) {
+                      const json = await res.json()
+                      if (json.unit?.inventoryItemId === item.id && json.unit?.status === 'AVAILABLE') {
                         const m = new Map(pendingItems)
-                        e.target.checked ? m.set(item.id, 1) : m.delete(item.id)
+                        m.set(item.id, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: json.unit.id, unitLabel: json.unit.serialNumber ?? qr.slice(0, 8) })
                         setPendingItems(m)
-                      }} />
-                    <Box flexGrow={1}>
-                      <Typography variant="body2">{item.name}</Typography>
-                      <Chip size="small" label={item.category.name} sx={{ height: 16, fontSize: 10 }} />
-                    </Box>
-                    {qty > 0 && (
-                      <TextField
-                        type="number"
-                        size="small"
-                        value={qty}
+                      }
+                    }
+                  } finally {
+                    setUnitQrLoading((p) => ({ ...p, [item.id]: false }))
+                  }
+                }
+
+                return (
+                  <Box key={item.id}>
+                    <Stack direction="row" alignItems="center" spacing={1}>
+                      <Checkbox size="small" checked={checked}
                         onChange={(e) => {
                           const m = new Map(pendingItems)
-                          m.set(item.id, parseInt(e.target.value) || 1)
+                          if (e.target.checked) {
+                            m.set(item.id, { itemType: isSerialized ? 'SERIALIZED' : 'CONSUMABLE', quantity: 1, inventoryUnitId: null, unitLabel: null })
+                          } else {
+                            m.delete(item.id)
+                          }
                           setPendingItems(m)
-                        }}
-                        inputProps={{ min: 1, style: { MozAppearance: 'textfield', width: 60 } }}
-                        sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }}
-                      />
+                        }} />
+                      <Box flexGrow={1}>
+                        <Typography variant="body2">{item.name}</Typography>
+                        <Chip size="small" label={item.category.name} sx={{ height: 16, fontSize: 10 }} />
+                      </Box>
+                      {checked && !isSerialized && (
+                        <TextField
+                          type="number"
+                          size="small"
+                          value={entry?.quantity ?? 1}
+                          onChange={(e) => {
+                            const m = new Map(pendingItems)
+                            const v = Math.min(parseInt(e.target.value) || 1, item.unitCounts?.available ?? 1)
+                            m.set(item.id, { itemType: 'CONSUMABLE', quantity: v, inventoryUnitId: null, unitLabel: null })
+                            setPendingItems(m)
+                          }}
+                          inputProps={{ min: 1, max: item.unitCounts?.available ?? 1, style: { MozAppearance: 'textfield', width: 60 } }}
+                          helperText={`${item.unitCounts?.available ?? 0} avail.`}
+                          sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }}
+                        />
+                      )}
+                    </Stack>
+
+                    {/* SERIALIZED: unit selector */}
+                    {checked && isSerialized && (
+                      <Box pl={5} mt={0.5}>
+                        {entry?.inventoryUnitId ? (
+                          <Alert severity="success" sx={{ py: 0.25 }} onClose={() => {
+                            const m = new Map(pendingItems)
+                            m.set(item.id, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: null, unitLabel: null })
+                            setPendingItems(m)
+                          }}>
+                            Unit: {entry.unitLabel ?? entry.inventoryUnitId.slice(0, 8)}
+                          </Alert>
+                        ) : (
+                          <Stack spacing={1}>
+                            <Stack direction="row" spacing={1} alignItems="center">
+                              <Button component="label" size="small" variant="outlined" startIcon={<QrCodeScannerIcon />}
+                                disabled={!!unitQrLoading[item.id]}>
+                                Scan QR
+                                <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
+                                  onChange={handleQRScan} />
+                              </Button>
+                              <TextField size="small" placeholder="Enter QR code" value={unitManualQR[item.id] ?? ''}
+                                onChange={(e) => setUnitManualQR((p) => ({ ...p, [item.id]: e.target.value }))}
+                                sx={{ width: 160 }} />
+                              <Button size="small" onClick={lookupManualQR} disabled={!unitManualQR[item.id]?.trim() || !!unitQrLoading[item.id]}>
+                                Look Up
+                              </Button>
+                            </Stack>
+                            <TextField select size="small" label="Pick from list"
+                              value=""
+                              onChange={(e) => {
+                                const unit = item.availableUnits?.find((u) => u.id === e.target.value)
+                                if (!unit) return
+                                const m = new Map(pendingItems)
+                                m.set(item.id, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: unit.id, unitLabel: unit.serialNumber ?? unit.qrCodeId.slice(0, 8) })
+                                setPendingItems(m)
+                              }}>
+                              <MenuItem value="" disabled>Select a unit…</MenuItem>
+                              {(item.availableUnits ?? []).map((u) => (
+                                <MenuItem key={u.id} value={u.id}>
+                                  {u.serialNumber ?? `Unit ${u.qrCodeId.slice(0, 8)}`}
+                                </MenuItem>
+                              ))}
+                            </TextField>
+                          </Stack>
+                        )}
+                      </Box>
                     )}
-                  </Stack>
+                  </Box>
                 )
               })}
             </Stack>
           )}
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => { setAddItemOpen(false); setPendingItems(new Map()) }}>Cancel</Button>
-          <Button variant="contained" disabled={pendingItems.size === 0}
+          <Button onClick={() => { setAddItemOpen(false); setPendingItems(new Map()); setUnitManualQR({}) }}>Cancel</Button>
+          <Button variant="contained"
+            disabled={pendingItems.size === 0 || Array.from(pendingItems.values()).some(e => e.itemType === 'SERIALIZED' && !e.inventoryUnitId)}
             onClick={() => { setAddItemOpen(false); setNoteDialog('addItems') }}>
             Continue
           </Button>
@@ -986,6 +1126,8 @@ export default function MyRigPage() {
               itemId: ki.item.id,
               name: ki.item.name,
               quantity: ki.quantity,
+              itemType: ki.item.itemType,
+              inventoryUnit: ki.inventoryUnit ?? null,
             }))}
           onComplete={() => {
             setNoteDialog(null)
@@ -1009,6 +1151,8 @@ export default function MyRigPage() {
             itemId: ki.item.id,
             name: ki.item.name,
             quantity: ki.quantity,
+            itemType: ki.item.itemType,
+            inventoryUnit: ki.inventoryUnit ?? null,
           }))}
           onComplete={() => {
             setNoteDialog(null)

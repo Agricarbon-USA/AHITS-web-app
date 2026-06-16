@@ -37,7 +37,12 @@ const schema = z.object({
 async function getAuthorizedActiveRig(id: string, session: { userId: string; role: string }) {
   const rig = await prisma.rig.findUnique({ where: { id } })
   if (!rig || rig.endedAt) return null
-  if (session.role !== 'ADMIN' && rig.operatorId !== session.userId) return null
+  if (session.role !== 'ADMIN' && rig.operatorId !== session.userId) {
+    const isSecondary = await prisma.rigOperator.findUnique({
+      where: { rigId_operatorId: { rigId: id, operatorId: session.userId } },
+    })
+    if (!isSecondary) return null
+  }
   return rig
 }
 

@@ -37,7 +37,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         include: {
           items: {
             where: { removedAt: null },
-            include: { item: { select: { id: true, name: true } } },
+            include: {
+              item: { select: { id: true, name: true } },
+              inventoryUnit: true,
+            },
           },
         },
       },
@@ -46,7 +49,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   })
   if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (session.role !== 'ADMIN' && rig.operatorId !== session.userId) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    const isSecondary = await prisma.rigOperator.findUnique({
+      where: { rigId_operatorId: { rigId: id, operatorId: session.userId } },
+    })
+    if (!isSecondary) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
   if (rig.endedAt) return NextResponse.json({ error: 'Deployment already ended' }, { status: 409 })
 
@@ -70,26 +76,58 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
       if (disp.type === 'HUB') {
         await tx.checkLog.create({
-          data: { action: 'CHECK_IN', itemId: inventoryItemId, operatorId: rig.operatorId, notes: note },
+          data: {
+            action: 'CHECK_IN',
+            itemId: inventoryItemId,
+            inventoryUnitId: kitItem.inventoryUnit?.id ?? undefined,
+            operatorId: rig.operatorId,
+            notes: note,
+          },
         })
-        await tx.inventoryItem.update({
-          where: { id: inventoryItemId },
-          data: { status: 'AVAILABLE', hubId: disp.hubId ?? null },
-        })
+        if (kitItem.inventoryUnit) {
+          await tx.inventoryUnit.update({
+            where: { id: kitItem.inventoryUnit.id },
+            data: { status: 'AVAILABLE' },
+          })
+        } else {
+          const units = await tx.inventoryUnit.findMany({
+            where: { inventoryItemId, status: 'CHECKED_OUT' },
+            take: kitItem.quantity,
+          })
+          if (units.length > 0) {
+            await tx.inventoryUnit.updateMany({
+              where: { id: { in: units.map((u) => u.id) } },
+              data: { status: 'AVAILABLE' },
+            })
+          }
+        }
+        if (disp.hubId) {
+          await tx.inventoryItem.update({ where: { id: inventoryItemId }, data: { hubId: disp.hubId } })
+        }
       } else if (disp.type === 'INOPERABLE') {
         await tx.checkLog.create({
-          data: { action: 'CHECK_IN', itemId: inventoryItemId, operatorId: rig.operatorId, notes: note },
+          data: {
+            action: 'CHECK_IN',
+            itemId: inventoryItemId,
+            inventoryUnitId: kitItem.inventoryUnit?.id ?? undefined,
+            operatorId: rig.operatorId,
+            notes: note,
+          },
         })
         if (disp.canBeFixed) {
-          await tx.inventoryItem.update({
-            where: { id: inventoryItemId },
-            data: {
-              status: 'IN_MAINTENANCE',
-              inoperableNotes: disp.inoperableNotes ?? null,
-              inoperableReportedAt: now,
-              inoperableReportedById: session.userId,
-            },
-          })
+          const targetUnit = kitItem.inventoryUnit
+            ?? (await tx.inventoryUnit.findFirst({ where: { inventoryItemId, status: 'CHECKED_OUT' } }))
+          if (targetUnit) {
+            await tx.inventoryUnit.update({
+              where: { id: targetUnit.id },
+              data: {
+                status: 'IN_MAINTENANCE',
+                inoperableNotes: disp.inoperableNotes ?? null,
+                inoperableReportedAt: now,
+                inoperableReportedById: session.userId,
+              },
+            })
+          }
           const task = await tx.maintenanceTask.create({
             data: {
               itemId: inventoryItemId,
@@ -117,15 +155,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             })
           }
         } else {
-          await tx.inventoryItem.update({
-            where: { id: inventoryItemId },
-            data: {
-              status: 'INOPERABLE',
-              inoperableNotes: disp.inoperableNotes ?? null,
-              inoperableReportedAt: now,
-              inoperableReportedById: session.userId,
-            },
-          })
+          const targetUnit = kitItem.inventoryUnit
+            ?? (await tx.inventoryUnit.findFirst({ where: { inventoryItemId, status: 'CHECKED_OUT' } }))
+          if (targetUnit) {
+            await tx.inventoryUnit.update({
+              where: { id: targetUnit.id },
+              data: {
+                status: 'INOPERABLE',
+                inoperableNotes: disp.inoperableNotes ?? null,
+                inoperableReportedAt: now,
+                inoperableReportedById: session.userId,
+              },
+            })
+          }
           if (disp.photoUrls.length > 0) {
             await tx.photo.createMany({
               data: disp.photoUrls.map((url) => ({

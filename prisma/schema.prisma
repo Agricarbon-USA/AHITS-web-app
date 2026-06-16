@@ -141,16 +141,16 @@ model User {
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 
-  checkLogs         CheckLog[]
-  dailyChecks       DailyCheck[]
-  projectsLed       Project[]    @relation("ProjectLead")
-  photos            Photo[]
-  alerts            Alert[]
-  rigs               Rig[]             @relation("OperatorRigs")
-  transfersReceived  TransferRequest[] @relation("TransferTo")
-  transfersInitiated TransferRequest[] @relation("TransferBy")
-  inoperableReports  InventoryItem[]   @relation("InoperableReports")
-  rigAssignments     RigOperator[]     @relation("RigSecondaryOperators")
+  checkLogs                CheckLog[]
+  dailyChecks              DailyCheck[]
+  projectsLed              Project[]         @relation("ProjectLead")
+  photos                   Photo[]
+  alerts                   Alert[]
+  rigs                     Rig[]             @relation("OperatorRigs")
+  transfersReceived        TransferRequest[] @relation("TransferTo")
+  transfersInitiated       TransferRequest[] @relation("TransferBy")
+  unitInoperableReports    InventoryUnit[]   @relation("UnitInoperableReports")
+  rigAssignments           RigOperator[]     @relation("RigSecondaryOperators")
 
   @@map("users")
 }
@@ -241,14 +241,16 @@ model Kit {
 }
 
 model KitItem {
-  id              String        @id @default(cuid())
-  kitId           String
-  inventoryItemId String
-  quantity        Int           @default(1)
-  kit             Kit           @relation(fields: [kitId], references: [id])
-  item            InventoryItem @relation(fields: [inventoryItemId], references: [id])
-  addedAt         DateTime      @default(now())
-  removedAt       DateTime?
+  id               String         @id @default(cuid())
+  kitId            String
+  inventoryItemId  String
+  quantity         Int            @default(1)
+  inventoryUnitId  String?
+  kit              Kit            @relation(fields: [kitId], references: [id])
+  item             InventoryItem  @relation(fields: [inventoryItemId], references: [id])
+  inventoryUnit    InventoryUnit? @relation(fields: [inventoryUnitId], references: [id])
+  addedAt          DateTime       @default(now())
+  removedAt        DateTime?
 
   transferItems TransferItem[]
 
@@ -298,32 +300,28 @@ model TransferItem {
 }
 
 model InventoryItem {
-  id                String          @id @default(cuid())
-  name              String
-  categoryId        String
-  category          Category        @relation(fields: [categoryId], references: [id])
-  hubId             String?
-  hub               Hub?            @relation(fields: [hubId], references: [id])
-  sku               String?
-  quantity          Int             @default(1)
-  unitCost          Decimal?        @db.Decimal(10, 2)
-  reorderUrl        String?
-  supplier          String?
-  status            EquipmentStatus @default(AVAILABLE)
-  location          String?
-  qrCodeId          String          @unique @default(cuid())
-  notes                  String?
-  lowStockThreshold      Int?
-  itemType               ItemType        @default(CONSUMABLE)
-  unitId                 String?
-  expectedQuantity       Int?
-  inoperableNotes        String?
-  inoperableReportedAt   DateTime?
-  inoperableReportedById String?
-  inoperableReportedBy   User?           @relation("InoperableReports", fields: [inoperableReportedById], references: [id])
-  createdAt              DateTime        @default(now())
-  updatedAt              DateTime        @updatedAt
+  id               String   @id @default(cuid())
+  name             String
+  categoryId       String
+  category         Category @relation(fields: [categoryId], references: [id])
+  hubId            String?
+  hub              Hub?     @relation(fields: [hubId], references: [id])
+  sku              String?
+  quantity         Int      @default(1)
+  unitCost         Decimal? @db.Decimal(10, 2)
+  reorderUrl       String?
+  supplier         String?
+  location         String?
+  qrCodeId         String   @unique @default(cuid())
+  notes            String?
+  lowStockThreshold Int?
+  itemType         ItemType @default(CONSUMABLE)
+  unitId           String?
+  expectedQuantity Int?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
+  units            InventoryUnit[]
   checkLogs        CheckLog[]
   photos           Photo[]
   maintenanceTasks MaintenanceTask[]
@@ -331,6 +329,27 @@ model InventoryItem {
   kitItems         KitItem[]
 
   @@map("inventory_items")
+}
+
+model InventoryUnit {
+  id              String          @id @default(cuid())
+  inventoryItemId String
+  inventoryItem   InventoryItem   @relation(fields: [inventoryItemId], references: [id])
+  serialNumber    String?
+  qrCodeId        String          @unique @default(cuid())
+  status          EquipmentStatus @default(AVAILABLE)
+  notes           String?
+  inoperableNotes         String?
+  inoperableReportedAt    DateTime?
+  inoperableReportedById  String?
+  inoperableReportedBy    User?     @relation("UnitInoperableReports", fields: [inoperableReportedById], references: [id])
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  kitItems  KitItem[]
+  checkLogs CheckLog[]
+
+  @@map("inventory_units")
 }
 
 model Vehicle {
@@ -391,24 +410,26 @@ model DailyCheck {
 }
 
 model CheckLog {
-  id             String      @id @default(cuid())
-  action         CheckAction
-  itemId         String
-  operatorId     String?
-  projectId      String?
-  fromLocation   String?
-  toLocation     String?
-  condition      Condition?
-  expectedReturn DateTime?
-  actualReturn   DateTime?
-  notes          String?
-  submittedAt    DateTime    @default(now())
-  syncedAt       DateTime?
+  id              String      @id @default(cuid())
+  action          CheckAction
+  itemId          String
+  inventoryUnitId String?
+  operatorId      String?
+  projectId       String?
+  fromLocation    String?
+  toLocation      String?
+  condition       Condition?
+  expectedReturn  DateTime?
+  actualReturn    DateTime?
+  notes           String?
+  submittedAt     DateTime    @default(now())
+  syncedAt        DateTime?
 
-  item     InventoryItem @relation(fields: [itemId], references: [id])
-  operator User?         @relation(fields: [operatorId], references: [id])
-  project  Project?      @relation(fields: [projectId], references: [id])
-  photos   Photo[]
+  item          InventoryItem  @relation(fields: [itemId], references: [id])
+  inventoryUnit InventoryUnit? @relation(fields: [inventoryUnitId], references: [id])
+  operator      User?          @relation(fields: [operatorId], references: [id])
+  project       Project?       @relation(fields: [projectId], references: [id])
+  photos        Photo[]
 
   @@map("check_logs")
 }
