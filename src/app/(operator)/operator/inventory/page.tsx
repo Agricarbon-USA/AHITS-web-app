@@ -16,6 +16,7 @@ const STATUS_CHIP_COLOR: Record<string, 'success' | 'primary' | 'warning' | 'def
   AVAILABLE: 'success',
   CHECKED_OUT: 'primary',
   IN_MAINTENANCE: 'warning',
+  INOPERABLE: 'error',
   RETIRED: 'default',
 }
 
@@ -23,7 +24,16 @@ const STATUS_LABELS: Record<string, string> = {
   AVAILABLE: 'Available',
   CHECKED_OUT: 'Checked Out',
   IN_MAINTENANCE: 'In Maintenance',
+  INOPERABLE: 'Inoperable',
   RETIRED: 'Retired',
+}
+
+function derivedStatus(unitCounts: { available: number; checkedOut: number; inMaintenance: number; inoperable: number; retired: number }): string {
+  if (unitCounts.checkedOut > 0) return 'CHECKED_OUT'
+  if (unitCounts.inoperable > 0) return 'INOPERABLE'
+  if (unitCounts.inMaintenance > 0) return 'IN_MAINTENANCE'
+  if (unitCounts.available > 0) return 'AVAILABLE'
+  return 'RETIRED'
 }
 
 // ── Types ─────────────────────────────────────────────────────────
@@ -46,7 +56,7 @@ interface InventoryItemRow {
   category: { id: string; name: string }
   hub: { id: string; name: string; city: string; state: string } | null
   quantity: number
-  status: string
+  unitCounts: { available: number; checkedOut: number; inMaintenance: number; inoperable: number; retired: number }
   qrCodeId: string
   notes: string | null
   lowStockThreshold: number | null
@@ -131,8 +141,10 @@ function DetailDrawer({
             <Stack direction="row" spacing={1} mt={1}>
               <Chip size="small" label={detail.itemType === 'SERIALIZED' ? 'Serialized' : 'Consumable'}
                 variant="outlined" color={detail.itemType === 'SERIALIZED' ? 'primary' : 'default'} />
-              <Chip size="small" label={STATUS_LABELS[detail.status] ?? detail.status}
-                color={STATUS_CHIP_COLOR[detail.status] ?? 'default'} />
+              {(() => {
+                const s = derivedStatus(detail.unitCounts)
+                return <Chip size="small" label={STATUS_LABELS[s] ?? s} color={STATUS_CHIP_COLOR[s] ?? 'default'} />
+              })()}
             </Stack>
           </Box>
           <Divider />
@@ -194,7 +206,7 @@ function DetailDrawer({
               )}
             </Box>
 
-            {row?.status === 'CHECKED_OUT' && (
+            {row != null && row.unitCounts.checkedOut > 0 && (
               <Box mb={3}>
                 <Typography variant="subtitle2" fontWeight={600} mb={1}>Current Status</Typography>
                 {row.currentOperator && (
@@ -255,7 +267,6 @@ export default function OperatorInventoryPage() {
   const [debouncedQ, setDebouncedQ] = React.useState('')
   const [filterHub, setFilterHub] = React.useState('')
   const [filterCategory, setFilterCategory] = React.useState('')
-  const [filterStatus, setFilterStatus] = React.useState('')
   const [filterOperator, setFilterOperator] = React.useState('')
 
   const [operators, setOperators] = React.useState<UserOption[]>([])
@@ -274,7 +285,6 @@ export default function OperatorInventoryPage() {
       if (debouncedQ) params.set('q', debouncedQ)
       if (filterHub) params.set('hubId', filterHub)
       if (filterCategory) params.set('categoryId', filterCategory)
-      if (filterStatus) params.set('status', filterStatus)
       if (filterOperator) params.set('operatorId', filterOperator)
       const res = await fetch(`/api/inventory?${params.toString()}`)
       const data = await res.json()
@@ -282,7 +292,7 @@ export default function OperatorInventoryPage() {
     } finally {
       setLoading(false)
     }
-  }, [debouncedQ, filterHub, filterCategory, filterStatus, filterOperator])
+  }, [debouncedQ, filterHub, filterCategory, filterOperator])
 
   React.useEffect(() => { load() }, [load])
 
@@ -298,7 +308,7 @@ export default function OperatorInventoryPage() {
     // TODO: Project filter — skip for now, /api/projects route not yet implemented
   }, [])
 
-  const availableCount = items.filter((i) => i.status === 'AVAILABLE').length
+  const availableCount = items.filter((i) => i.unitCounts.available > 0).length
 
   return (
     <Box>
@@ -328,12 +338,6 @@ export default function OperatorInventoryPage() {
           {categories.map((c) => (
             <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
           ))}
-        </TextField>
-        <TextField select size="small" label="All Statuses" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} sx={{ minWidth: 160 }}>
-          <MenuItem value="">All Statuses</MenuItem>
-          <MenuItem value="AVAILABLE">Available</MenuItem>
-          <MenuItem value="CHECKED_OUT">Checked Out</MenuItem>
-          <MenuItem value="IN_MAINTENANCE">In Maintenance</MenuItem>
         </TextField>
         <TextField select size="small" label="All Operators" value={filterOperator} onChange={(e) => setFilterOperator(e.target.value)} sx={{ minWidth: 160 }}>
           <MenuItem value="">All Operators</MenuItem>
@@ -376,11 +380,10 @@ export default function OperatorInventoryPage() {
                         <Chip size="small" label={item.category?.name} sx={{ mt: 0.25, height: 18, fontSize: 11 }} />
                       </TableCell>
                       <TableCell>
-                        <Chip
-                          size="small"
-                          label={STATUS_LABELS[item.status] ?? item.status}
-                          color={STATUS_CHIP_COLOR[item.status] ?? 'default'}
-                        />
+                        {(() => {
+                          const s = derivedStatus(item.unitCounts)
+                          return <Chip size="small" label={STATUS_LABELS[s] ?? s} color={STATUS_CHIP_COLOR[s] ?? 'default'} />
+                        })()}
                       </TableCell>
                       <TableCell>
                         <Stack direction="row" alignItems="center" spacing={0.5}>
@@ -389,7 +392,7 @@ export default function OperatorInventoryPage() {
                         </Stack>
                       </TableCell>
                       <TableCell>
-                        {item.status === 'CHECKED_OUT' && item.currentOperator
+                        {item.unitCounts.checkedOut > 0 && item.currentOperator
                           ? <Typography variant="body2" fontStyle="italic">With {item.currentOperator.name}</Typography>
                           : <Typography variant="body2">{item.hub ? `${item.hub.city}, ${item.hub.state}` : '—'}</Typography>
                         }
