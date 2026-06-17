@@ -4,6 +4,17 @@ import { prisma } from '@/lib/prisma'
 import { getSession } from '@/lib/auth/session'
 import type { EquipmentCategory, EquipmentStatus } from '@prisma/client'
 
+// Enum label fallback when an item has no categoryRef
+const ENUM_LABELS: Record<string, string> = {
+  SAMPLING_EQUIPMENT: 'Sampling Equipment',
+  POWER_TOOLS: 'Power Tools',
+  HAND_TOOLS: 'Hand Tools',
+  SAFETY_GEAR: 'Safety Gear',
+  ELECTRONICS_GPS: 'Electronics / GPS',
+  STORAGE: 'Storage',
+  OTHER: 'Other',
+}
+
 export async function GET(req: NextRequest) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -16,21 +27,83 @@ export async function GET(req: NextRequest) {
   const q = searchParams.get('q')
 
   const where = {
+    deletedAt: null,
     ...(status && { status }),
     ...(category && { category }),
     ...(q && { name: { contains: q, mode: 'insensitive' as const } }),
   }
 
-  const [data, total] = await Promise.all([
+  const [items, total] = await Promise.all([
     prisma.inventoryItem.findMany({
       where,
       skip: (page - 1) * pageSize,
       take: pageSize,
       orderBy: { name: 'asc' },
-      include: { _count: { select: { checkLogs: true } } },
+      include: {
+        categoryRef: { select: { id: true, name: true } },
+        hub: { select: { id: true, name: true, city: true, state: true } },
+        units: {
+          where: { deletedAt: null },
+          select: {
+            id: true,
+            qrCodeId: true,
+            serialNumber: true,
+            status: true,
+            notes: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: 'asc' },
+        },
+        kitItems: {
+          where: { removedAt: null },
+          select: {
+            kit: {
+              select: {
+                rig: {
+                  where: { endedAt: null },
+                  select: {
+                    operator: { select: { id: true, name: true } },
+                    project: { select: { id: true, name: true, location: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
     }),
     prisma.inventoryItem.count({ where }),
   ])
+
+  const data = items.map((item) => {
+    const unitsByStatus = item.units.reduce<Record<string, number>>((acc, u) => {
+      acc[u.status] = (acc[u.status] ?? 0) + 1
+      return acc
+    }, {})
+
+    const unitCounts = {
+      totalUnits: item.units.length,
+      available: unitsByStatus['AVAILABLE'] ?? 0,
+      checkedOut: unitsByStatus['CHECKED_OUT'] ?? 0,
+      inMaintenance: unitsByStatus['IN_MAINTENANCE'] ?? 0,
+      inoperable: unitsByStatus['INOPERABLE'] ?? 0,
+      retired: unitsByStatus['RETIRED'] ?? 0,
+    }
+
+    // Find active rig assignment via kit items
+    const activeKit = item.kitItems.find((ki) => ki.kit.rig !== null)
+    const activeRig = activeKit?.kit.rig ?? null
+
+    const { kitItems, categoryRef, ...rest } = item
+
+    return {
+      ...rest,
+      category: categoryRef ?? { id: item.category, name: ENUM_LABELS[item.category] ?? item.category },
+      unitCounts,
+      currentOperator: activeRig?.operator ?? null,
+      currentProject: activeRig?.project ?? null,
+    }
+  })
 
   return NextResponse.json({ data, total, page, pageSize })
 }
