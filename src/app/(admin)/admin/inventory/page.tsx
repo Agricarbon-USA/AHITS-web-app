@@ -19,6 +19,7 @@ import DownloadIcon from '@mui/icons-material/Download'
 import HistoryIcon from '@mui/icons-material/History'
 import ExpandLessIcon from '@mui/icons-material/ExpandLess'
 import QRCode from 'qrcode'
+import { useToast } from '@/components/shared/useToast'
 
 // ── Helper maps ───────────────────────────────────────────────────
 
@@ -776,12 +777,197 @@ function DetailDrawer({
 // ── Main Page ─────────────────────────────────────────────────────
 
 export default function AdminInventoryPage() {
+  const showToast = useToast()
+  const [items, setItems] = React.useState<InventoryItemRow[]>([])
+  const [total, setTotal] = React.useState(0)
+  const [page, setPage] = React.useState(0)
+  const [pageSize] = React.useState(25)
+  const [search, setSearch] = React.useState('')
+  const [loading, setLoading] = React.useState(true)
+  const [categories, setCategories] = React.useState<CategoryOption[]>([])
+  const [hubs, setHubs] = React.useState<HubOption[]>([])
+  const [formItem, setFormItem] = React.useState<InventoryItemRow | null>(null)
+  const [formOpen, setFormOpen] = React.useState(false)
+  const [detailRow, setDetailRow] = React.useState<InventoryItemRow | null>(null)
+  const [retireItem, setRetireItem] = React.useState<InventoryItemRow | null>(null)
+
+  const load = React.useCallback(async () => {
+    setLoading(true)
+    const params = new URLSearchParams({ page: String(page + 1), pageSize: String(pageSize) })
+    if (search) params.set('search', search)
+    const res = await fetch(`/api/inventory?${params}`).then((r) => r.json()).catch(() => ({ data: [], total: 0 }))
+    setItems(res.data ?? [])
+    setTotal(res.total ?? 0)
+    setLoading(false)
+  }, [page, pageSize, search])
+
+  React.useEffect(() => { load() }, [load])
+
+  React.useEffect(() => {
+    fetch('/api/inventory/categories').then((r) => r.json()).then((d) => setCategories(d.data ?? [])).catch(() => {})
+    fetch('/api/inventory/hubs').then((r) => r.json()).then((d) => setHubs(d.data ?? [])).catch(() => {})
+  }, [])
+
+  const handleRetire = async () => {
+    if (!retireItem) return
+    const res = await fetch(`/api/inventory/${retireItem.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'RETIRED' }),
+    })
+    setRetireItem(null)
+    if (res.ok) { showToast({ message: `${retireItem.name} retired`, severity: 'success' }); load() }
+    else showToast({ message: 'Failed to retire item', severity: 'error' })
+  }
+
   return (
     <Box>
-      <Typography variant="h5">Inventory</Typography>
-      <Typography color="text.secondary" mt={1}>
-        Inventory management — implementation in progress.
-      </Typography>
+      {/* Header */}
+      <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2}>
+        <Typography variant="h5" fontWeight={700}>Inventory</Typography>
+        <Button variant="contained" startIcon={<AddIcon />} onClick={() => { setFormItem(null); setFormOpen(true) }}>
+          Add Item
+        </Button>
+      </Stack>
+
+      {/* Search */}
+      <TextField
+        size="small"
+        placeholder="Search items…"
+        value={search}
+        onChange={(e) => { setSearch(e.target.value); setPage(0) }}
+        sx={{ mb: 2, width: 320 }}
+      />
+
+      {/* Table */}
+      <TableContainer component={Paper} variant="outlined">
+        <Table size="small">
+          <TableHead>
+            <TableRow sx={{ '& th': { fontWeight: 600, fontSize: 12, color: 'text.secondary' } }}>
+              <TableCell>Name</TableCell>
+              <TableCell>Category</TableCell>
+              <TableCell>Hub</TableCell>
+              <TableCell align="center">Available</TableCell>
+              <TableCell align="center">Out</TableCell>
+              <TableCell align="center">Total</TableCell>
+              <TableCell align="right">Actions</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {loading
+              ? Array.from({ length: 6 }).map((_, i) => (
+                  <TableRow key={i}>
+                    {Array.from({ length: 7 }).map((__, j) => (
+                      <TableCell key={j}><Skeleton height={24} /></TableCell>
+                    ))}
+                  </TableRow>
+                ))
+              : items.map((item) => (
+                  <TableRow
+                    key={item.id}
+                    hover
+                    sx={{ cursor: 'pointer' }}
+                    onClick={() => setDetailRow(item)}
+                  >
+                    <TableCell>
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <Typography variant="body2" fontWeight={500}>{item.name}</Typography>
+                        {item.itemType === 'SERIALIZED' && (
+                          <Chip size="small" label="S" variant="outlined" color="primary" sx={{ fontSize: 10, height: 18 }} />
+                        )}
+                        {item.unitCounts?.inoperable > 0 && (
+                          <Tooltip title={`${item.unitCounts.inoperable} inoperable`}>
+                            <WarningAmberIcon fontSize="small" color="warning" />
+                          </Tooltip>
+                        )}
+                      </Stack>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2" color="text.secondary">
+                        {typeof item.category === 'object' ? item.category?.name : (item.category ?? '—')}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2" color="text.secondary">
+                        {item.hub ? `${item.hub.city}, ${item.hub.state}` : '—'}
+                      </Typography>
+                    </TableCell>
+                    <TableCell align="center">
+                      <Chip size="small" label={item.unitCounts?.available ?? 0} color="success" variant="outlined" />
+                    </TableCell>
+                    <TableCell align="center">
+                      <Chip size="small" label={item.unitCounts?.checkedOut ?? 0} color={item.unitCounts?.checkedOut > 0 ? 'info' : 'default'} variant="outlined" />
+                    </TableCell>
+                    <TableCell align="center">
+                      <Typography variant="body2">{item.unitCounts?.totalUnits ?? item.quantity ?? 0}</Typography>
+                    </TableCell>
+                    <TableCell align="right" onClick={(e) => e.stopPropagation()}>
+                      <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                        <Tooltip title="Edit">
+                          <IconButton size="small" onClick={() => { setFormItem(item); setFormOpen(true) }}>
+                            <EditIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Retire">
+                          <IconButton size="small" color="error" onClick={() => setRetireItem(item)}>
+                            <ArchiveIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </Stack>
+                    </TableCell>
+                  </TableRow>
+                ))}
+            {!loading && items.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={7} align="center" sx={{ py: 4, color: 'text.secondary' }}>
+                  No items found{search ? ` for "${search}"` : ''}.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </TableContainer>
+
+      <TablePagination
+        component="div"
+        count={total}
+        page={page}
+        rowsPerPage={pageSize}
+        rowsPerPageOptions={[25]}
+        onPageChange={(_, p) => setPage(p)}
+      />
+
+      {/* Add / Edit dialog */}
+      {formOpen && (
+        <ItemFormDialog
+          item={formItem}
+          categories={categories}
+          hubs={hubs}
+          onClose={() => setFormOpen(false)}
+          onSuccess={(msg) => { showToast({ message: msg, severity: 'success' }); load() }}
+        />
+      )}
+
+      {/* Detail drawer */}
+      <DetailDrawer
+        row={detailRow}
+        hubs={hubs}
+        onClose={() => setDetailRow(null)}
+        onEdit={(item) => { setFormItem(item); setFormOpen(true) }}
+        onRetire={(item) => setRetireItem(item)}
+        onUpdated={load}
+      />
+
+      {/* Retire confirm */}
+      <ConfirmDialog
+        open={!!retireItem}
+        title="Retire item?"
+        message={`Retire "${retireItem?.name}"? All available units will be marked retired. History is preserved.`}
+        confirmLabel="Retire"
+        confirmColor="error"
+        onClose={() => setRetireItem(null)}
+        onConfirm={handleRetire}
+      />
     </Box>
   )
 }

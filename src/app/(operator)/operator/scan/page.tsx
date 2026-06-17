@@ -175,10 +175,6 @@ export default function OperatorScanPage() {
   return (
     <Box>
       <Typography variant="h5">Scan</Typography>
-      <Typography color="text.secondary" mt={1}>
-        Scan — implementation in progress.
-      </Typography>
-
       <Stack alignItems="center" spacing={2}>
         <Button
           component="label"
