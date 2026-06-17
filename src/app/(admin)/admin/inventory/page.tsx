@@ -316,8 +316,13 @@ function ItemFormDialog({
               <TextField label="Unit / Serial Number" value={unitId} onChange={(e) => setUnitId(e.target.value)} fullWidth
                 helperText="e.g. GPS-003, DRILL-01 — this will link to a QR sticker" />
             )}
-            <TextField select label="Category" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} required fullWidth>
-              {categories.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
+            <TextField select label="Category" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} fullWidth
+              required={!isEdit}
+              helperText={categories.length === 0 ? 'No categories set up yet — categories are created automatically when inventory is imported.' : undefined}>
+              {categories.length === 0
+                ? <MenuItem value="" disabled>No categories available</MenuItem>
+                : categories.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)
+              }
             </TextField>
             <TextField select label="Hub Location" value={hubId} onChange={(e) => setHubId(e.target.value)} fullWidth>
               <MenuItem value="">Unknown</MenuItem>

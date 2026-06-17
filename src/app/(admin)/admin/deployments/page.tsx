@@ -38,7 +38,7 @@ interface RigVehicleRow {
   addNote: string
   photoUrls: string[]
   addedAt: string
-  vehicle: { id: string; name: string; type: string; isRental: boolean }
+  vehicle: { id: string; name: string; type: string }
 }
 
 interface KitItemRow {
@@ -774,9 +774,6 @@ function DeploymentDrawer({
                       )}
                       <Icon fontSize="small" color="action" />
                       <Typography variant="body2">{rv.vehicle.name}</Typography>
-                      {rv.vehicle.isRental && (
-                        <Chip label="Rental" size="small" color="warning" variant="outlined" sx={{ height: 18, fontSize: 10 }} />
-                      )}
                       <Chip size="small" label={rv.vehicle.type} variant="outlined" sx={{ ml: 'auto !important', height: 18, fontSize: 10 }} />
                     </Stack>
                   )

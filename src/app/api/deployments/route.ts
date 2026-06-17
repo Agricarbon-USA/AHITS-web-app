@@ -8,7 +8,7 @@ const RIG_INCLUDE = {
   project: { select: { id: true, name: true } },
   vehicles: {
     where: { removedAt: null },
-    include: { vehicle: { select: { id: true, name: true, type: true, isRental: true } } },
+    include: { vehicle: { select: { id: true, name: true, type: true } } },
   },
   kits: {
     include: {
@@ -164,7 +164,10 @@ export async function POST(req: NextRequest) {
         { status: 409 }
       )
     }
-    throw err
+    // Return the actual error as JSON instead of re-throwing (which produces non-JSON 500)
+    const msg = err instanceof Error ? err.message : 'Failed to create deployment'
+    console.error('[POST /api/deployments]', err)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 
   return NextResponse.json(rig, { status: 201 })
