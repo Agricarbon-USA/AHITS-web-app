@@ -1037,7 +1037,7 @@ export default function AdminInventoryPage() {
       <ConfirmDialog
         open={!!retireItem}
         title={`Retire available units of ${retireItem?.name ?? ''}?`}
-        message={`This will retire all ${retireItem?.unitCounts?.available ?? 0} available unit(s). Check-out history is preserved.`}
+        message={`This will retire all ${retireItem?.unitCounts?.available ?? 0} available unit(s). Check-out history is preserved. Items and units can be recovered by contacting support.`}
         confirmLabel="Retire"
         confirmColor="error"
         onClose={() => setRetireItem(null)}

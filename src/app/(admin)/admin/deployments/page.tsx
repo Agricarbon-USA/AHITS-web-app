@@ -306,7 +306,19 @@ function NewDeploymentDialog({
     })
     setLoading(false)
     if (res.ok) { onSuccess(); onClose() }
-    else { const d = await res.json(); setError(d.error?.formErrors?.[0] ?? d.error ?? 'Failed') }
+    else {
+      const d = await res.json()
+      if (res.status === 409) {
+        const m = new Map(kitItems)
+        m.forEach((entry, itemId) => {
+          if (entry.itemType === 'SERIALIZED') {
+            m.set(itemId, { itemType: 'SERIALIZED', inventoryUnitId: '', unitLabel: '' })
+          }
+        })
+        setKitItems(m)
+      }
+      setError(d.error?.formErrors?.[0] ?? d.error ?? 'Failed')
+    }
   }
 
   return (
@@ -567,7 +579,7 @@ function DeploymentDrawer({
 
   const handleAddItems = async (note: string, photoUrls: string[]) => {
     setActionLoading(true)
-    await fetch(`/api/deployments/${rig.id}/items`, {
+    const res = await fetch(`/api/deployments/${rig.id}/items`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -581,6 +593,21 @@ function DeploymentDrawer({
       }),
     })
     setActionLoading(false)
+    if (res.status === 409) {
+      const err = await res.json()
+      const m = new Map(pendingItems)
+      m.forEach((entry, itemId) => {
+        if (entry.itemType === 'SERIALIZED') {
+          m.set(itemId, { itemType: 'SERIALIZED', inventoryUnitId: '', unitLabel: '' })
+        }
+      })
+      setPendingItems(m)
+      setNoteDialog(null)
+      setAddItemOpen(true)
+      await refresh()
+      showToast(err.error ?? 'A unit was just taken. Please reselect.')
+      return
+    }
     setNoteDialog(null)
     setAddItemOpen(false)
     setPendingItems(new Map())

@@ -600,8 +600,8 @@ export default function MyRigPage() {
         setSelVehicles(new Set())
         setRemovingVehicles(false)
         break
-      case 'addItems':
-        await fetch(`/api/deployments/${rig.id}/items`, {
+      case 'addItems': {
+        const addRes = await fetch(`/api/deployments/${rig.id}/items`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -614,10 +614,27 @@ export default function MyRigPage() {
             photoUrls,
           }),
         })
+        if (addRes.status === 409) {
+          const err = await addRes.json()
+          const m = new Map(pendingItems)
+          m.forEach((entry, itemId) => {
+            if (entry.itemType === 'SERIALIZED') {
+              m.set(itemId, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: null, unitLabel: null })
+            }
+          })
+          setPendingItems(m)
+          await load()
+          setActionLoading(false)
+          setNoteDialog(null)
+          setAddItemOpen(true)
+          showToast(err.error ?? 'A unit was just taken. Please reselect.')
+          return
+        }
         setPendingItems(new Map())
         setUnitManualQR({})
         setAddItemOpen(false)
         break
+      }
       case 'removeItems':
         await fetch(`/api/deployments/${rig.id}/items`, {
           method: 'DELETE',

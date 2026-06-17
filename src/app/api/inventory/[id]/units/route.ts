@@ -14,7 +14,7 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
   const { id } = await params
 
   const units = await prisma.inventoryUnit.findMany({
-    where: { inventoryItemId: id },
+    where: { inventoryItemId: id, deletedAt: null },
     orderBy: { createdAt: 'asc' },
     select: { id: true, qrCodeId: true, serialNumber: true, status: true, notes: true, createdAt: true },
   })
@@ -27,7 +27,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!session || session.role !== 'ADMIN') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const { id } = await params
 
-  const item = await prisma.inventoryItem.findUnique({ where: { id } })
+  const item = await prisma.inventoryItem.findUnique({ where: { id, deletedAt: null } })
   if (!item) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const parsed = addSchema.safeParse(await req.json())

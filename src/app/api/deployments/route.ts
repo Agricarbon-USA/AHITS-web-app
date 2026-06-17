@@ -94,7 +94,9 @@ export async function POST(req: NextRequest) {
   const { note, vehicleIds, kitItems, projectId, label } = parsed.data
   const operatorId = session.role === 'OPERATOR' ? session.userId : (parsed.data.operatorId ?? session.userId)
 
-  const rig = await prisma.$transaction(async (tx) => {
+  let rig
+  try {
+  rig = await prisma.$transaction(async (tx) => {
     const newRig = await tx.rig.create({
       data: { operatorId, projectId, label },
     })
@@ -118,12 +120,13 @@ export async function POST(req: NextRequest) {
     if (kitItems.length > 0) {
       for (const ki of kitItems) {
         if ('inventoryUnitId' in ki && ki.inventoryUnitId) {
-          const unit = await tx.inventoryUnit.findUnique({ where: { id: ki.inventoryUnitId } })
-          if (!unit || unit.status !== 'AVAILABLE') throw new Error(`Unit ${ki.inventoryUnitId} is not available`)
-          await tx.inventoryUnit.update({
-            where: { id: ki.inventoryUnitId },
+          const result = await tx.inventoryUnit.updateMany({
+            where: { id: ki.inventoryUnitId, inventoryItemId: ki.inventoryItemId, status: 'AVAILABLE', deletedAt: null },
             data: { status: 'CHECKED_OUT' },
           })
+          if (result.count === 0) {
+            throw Object.assign(new Error('UNIT_CONFLICT'), { unitId: ki.inventoryUnitId })
+          }
           await tx.kitItem.create({
             data: { kitId: kit.id, inventoryItemId: ki.inventoryItemId, quantity: 1, inventoryUnitId: ki.inventoryUnitId },
           })
@@ -133,7 +136,7 @@ export async function POST(req: NextRequest) {
         } else {
           const quantity = (ki as { quantity: number }).quantity
           const available = await tx.inventoryUnit.findMany({
-            where: { inventoryItemId: ki.inventoryItemId, status: 'AVAILABLE' },
+            where: { inventoryItemId: ki.inventoryItemId, status: 'AVAILABLE', deletedAt: null },
             take: quantity,
           })
           if (available.length > 0) {
@@ -154,6 +157,15 @@ export async function POST(req: NextRequest) {
 
     return tx.rig.findUniqueOrThrow({ where: { id: newRig.id }, include: RIG_INCLUDE })
   })
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message === 'UNIT_CONFLICT') {
+      return NextResponse.json(
+        { error: 'A selected unit was just checked out by someone else. Please select a different unit and try again.' },
+        { status: 409 }
+      )
+    }
+    throw err
+  }
 
   return NextResponse.json(rig, { status: 201 })
 }

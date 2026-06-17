@@ -4,7 +4,7 @@ import * as React from 'react'
 import {
   Box, Typography, Button, Dialog, DialogTitle, DialogContent,
   DialogActions, TextField, MenuItem, Stack, Alert,
-  Chip, IconButton, Tooltip, CircularProgress,
+  Chip, IconButton, Tooltip, CircularProgress, InputAdornment,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Paper, Avatar, Skeleton,
 } from '@mui/material'
@@ -26,6 +26,7 @@ interface UserRow {
   lastLoginAt: string | null
   failedPinAttempts: number
   pinLockedAt: string | null
+  hourlyRate: number | null
 }
 
 // ── Invite Dialog ─────────────────────────────────────────────────
@@ -126,11 +127,12 @@ function EditDialog({
   onSuccess: (msg: string) => void
 }) {
   const [name, setName] = React.useState('')
+  const [hourlyRate, setHourlyRate] = React.useState<number | null>(null)
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState('')
 
   React.useEffect(() => {
-    if (user) { setName(user.name); setError('') }
+    if (user) { setName(user.name); setHourlyRate(user.hourlyRate ?? null); setError('') }
   }, [user])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -139,10 +141,12 @@ function EditDialog({
     setError('')
     setLoading(true)
     try {
+      const body: Record<string, unknown> = { name }
+      if (user.role === 'OPERATOR') body.hourlyRate = hourlyRate
       const res = await fetch(`/api/users/${user.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify(body),
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? 'Failed to update'); return }
@@ -180,6 +184,17 @@ function EditDialog({
               disabled fullWidth
               helperText="Role cannot be changed — deactivate and re-invite to change roles"
             />
+            {user?.role === 'OPERATOR' && (
+              <TextField
+                label="Hourly Rate ($/hr)"
+                type="number"
+                value={hourlyRate ?? ''}
+                onChange={(e) => setHourlyRate(e.target.value ? parseFloat(e.target.value) : null)}
+                InputProps={{ startAdornment: <InputAdornment position="start">$</InputAdornment> }}
+                inputProps={{ min: 0, step: 0.01 }}
+                fullWidth
+              />
+            )}
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>

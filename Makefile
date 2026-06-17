@@ -17,7 +17,7 @@ SERVICE       ?= $(APP_NAME)-staging
 MIN_INSTANCES ?= 0
 
 .PHONY: help dev build start lint typecheck \
-        db-generate db-migrate db-migrate-dev db-studio db-seed db-reset \
+        db-generate db-migrate db-migrate-dev db-studio db-seed db-reset db-seed-units \
         docker-build docker-push docker-run \
         cloud-run-deploy cloud-run-url \
         deploy-staging deploy-prod logs \
@@ -61,6 +61,9 @@ db-seed: ## Seed the database with sample data
 
 db-reset: ## Reset DB and re-seed (DEV ONLY)
 	npx prisma migrate reset
+
+db-seed-units: ## Seed InventoryUnit records for all existing items (idempotent — safe to run multiple times)
+	npx tsx scripts/migrate-inventory-units.ts
 
 # ── Docker ────────────────────────────────────────────────────────
 docker-build: ## Build Docker image for linux/amd64. Override TAG as needed.

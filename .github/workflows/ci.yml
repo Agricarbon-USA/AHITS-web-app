@@ -30,3 +30,53 @@ jobs:
 
       - name: Lint
         run: npm run lint
+
+  test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: lint-typecheck
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: ahits_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/ahits_test
+          DIRECT_URL: postgresql://test:test@localhost:5432/ahits_test
+
+      - name: Run migrations on test DB
+        run: npx prisma migrate deploy
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/ahits_test
+          DIRECT_URL: postgresql://test:test@localhost:5432/ahits_test
+
+      - name: Run tests
+        run: npm test
+        env:
+          DATABASE_URL_TEST: postgresql://test:test@localhost:5432/ahits_test
+          DIRECT_URL_TEST: postgresql://test:test@localhost:5432/ahits_test
+          PIN_SESSION_SECRET: ci-test-secret-at-least-32-chars-long

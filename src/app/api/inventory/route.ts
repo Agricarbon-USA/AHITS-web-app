@@ -30,6 +30,7 @@ export async function GET(req: NextRequest) {
   const q = searchParams.get('q')
 
   const where: Prisma.InventoryItemWhereInput = {
+    deletedAt: null,
     ...(categoryId && { categoryId }),
     ...(itemType && { itemType }),
     ...(hubId && { hubId }),
@@ -46,12 +47,22 @@ export async function GET(req: NextRequest) {
       orderBy: { submittedAt: 'desc' },
       select: { itemId: true, submittedAt: true },
     })
+
+    const checkoutItemIds = [...new Set(activeCheckouts.map((l) => l.itemId))]
+    const checkins = await prisma.checkLog.findMany({
+      where: { itemId: { in: checkoutItemIds }, action: 'CHECK_IN' },
+      select: { itemId: true, submittedAt: true },
+    })
+
+    const seen = new Set<string>()
     const checkedOutItemIds: string[] = []
     for (const log of activeCheckouts) {
-      const hasReturn = await prisma.checkLog.findFirst({
-        where: { itemId: log.itemId, action: 'CHECK_IN', submittedAt: { gt: log.submittedAt } },
-      })
-      if (!hasReturn) checkedOutItemIds.push(log.itemId)
+      if (seen.has(log.itemId)) continue
+      seen.add(log.itemId)
+      const wasReturned = checkins.some(
+        (ci) => ci.itemId === log.itemId && ci.submittedAt > log.submittedAt
+      )
+      if (!wasReturned) checkedOutItemIds.push(log.itemId)
     }
     where.id = { in: checkedOutItemIds }
   }
@@ -66,6 +77,7 @@ export async function GET(req: NextRequest) {
         category: true,
         hub: true,
         units: {
+          where: { deletedAt: null },
           select: { id: true, status: true, qrCodeId: true, serialNumber: true },
           orderBy: { createdAt: 'asc' },
         },
@@ -75,7 +87,8 @@ export async function GET(req: NextRequest) {
   ])
 
   const itemIds = items.map((i) => i.id)
-  const activeCheckoutLogs = await prisma.checkLog.findMany({
+
+  const checkoutLogs = await prisma.checkLog.findMany({
     where: { itemId: { in: itemIds }, action: 'CHECK_OUT' },
     orderBy: { submittedAt: 'desc' },
     include: {
@@ -84,17 +97,22 @@ export async function GET(req: NextRequest) {
     },
   })
 
-  const activeByItem: Record<string, typeof activeCheckoutLogs[0]> = {}
-  for (const log of activeCheckoutLogs) {
+  const checkinLogs = await prisma.checkLog.findMany({
+    where: { itemId: { in: itemIds }, action: 'CHECK_IN' },
+    select: { itemId: true, submittedAt: true },
+  })
+
+  const activeByItem: Record<string, typeof checkoutLogs[0]> = {}
+  for (const log of checkoutLogs) {
     if (activeByItem[log.itemId]) continue
-    const hasReturn = await prisma.checkLog.findFirst({
-      where: { itemId: log.itemId, action: 'CHECK_IN', submittedAt: { gt: log.submittedAt } },
-    })
-    if (!hasReturn) activeByItem[log.itemId] = log
+    const wasReturned = checkinLogs.some(
+      (ci) => ci.itemId === log.itemId && ci.submittedAt > log.submittedAt
+    )
+    if (!wasReturned) activeByItem[log.itemId] = log
   }
 
   const data = items.map((item) => {
-    const allUnits = item.units  // sorted createdAt ASC
+    const allUnits = item.units
     const unitsWithPosition = allUnits.map((u, i) => ({ ...u, position: i + 1 }))
     const counts = computeUnitCounts(allUnits)
     return {
@@ -134,30 +152,35 @@ export async function POST(req: NextRequest) {
   const parsed = createSchema.safeParse(await req.json())
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const item = await prisma.inventoryItem.create({
-    data: parsed.data as never,
-    include: { category: true, hub: true },
-  })
-
-  if (parsed.data.quantity > 0) {
-    await prisma.inventoryUnit.createMany({
-      data: Array.from({ length: parsed.data.quantity }, (_, i) => ({
-        inventoryItemId: item.id,
-        serialNumber: i === 0 ? (parsed.data.unitId ?? null) : null,
-      })),
+  const item = await prisma.$transaction(async (tx) => {
+    const created = await tx.inventoryItem.create({
+      data: parsed.data as never,
     })
-  }
-
-  const units = await prisma.inventoryUnit.findMany({
-    where: { inventoryItemId: item.id },
-    select: { id: true, status: true, qrCodeId: true, serialNumber: true },
+    if (parsed.data.quantity > 0) {
+      await tx.inventoryUnit.createMany({
+        data: Array.from({ length: parsed.data.quantity }, (_, i) => ({
+          inventoryItemId: created.id,
+          serialNumber: i === 0 ? (parsed.data.unitId ?? null) : null,
+        })),
+      })
+    }
+    return tx.inventoryItem.findUniqueOrThrow({
+      where: { id: created.id },
+      include: {
+        category: true,
+        hub: true,
+        units: {
+          where: { deletedAt: null },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    })
   })
 
   return NextResponse.json({
     data: {
       ...item,
-      units,
-      unitCounts: computeUnitCounts(units),
+      unitCounts: computeUnitCounts(item.units),
     },
   }, { status: 201 })
 }

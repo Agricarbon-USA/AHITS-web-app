@@ -138,6 +138,7 @@ model User {
   pinLockedAt       DateTime?
   isActive          Boolean      @default(true)
   lastLoginAt       DateTime?
+  hourlyRate        Decimal?     @db.Decimal(10, 2)
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 
@@ -196,6 +197,8 @@ model Rig {
   outgoingTransfers  TransferRequest[] @relation("FromRig")
   secondaryOperators RigOperator[]
 
+  @@index([operatorId])
+  @@index([endedAt])
   @@map("rigs")
 }
 
@@ -224,6 +227,7 @@ model RigVehicle {
   removeNote String?
   photoUrls  String[]  @default([])
 
+  @@index([rigId, removedAt])
   @@map("rig_vehicles")
 }
 
@@ -254,6 +258,9 @@ model KitItem {
 
   transferItems TransferItem[]
 
+  @@index([kitId])
+  @@index([inventoryUnitId])
+  @@index([removedAt])
   @@map("kit_items")
 }
 
@@ -324,6 +331,8 @@ model InventoryItem {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
+  deletedAt        DateTime?
+
   units            InventoryUnit[]
   checkLogs        CheckLog[]
   photos           Photo[]
@@ -331,6 +340,9 @@ model InventoryItem {
   projectEquipment ProjectEquipment[]
   kitItems         KitItem[]
 
+  @@index([categoryId])
+  @@index([hubId])
+  @@index([deletedAt])
   @@map("inventory_items")
 }
 
@@ -348,11 +360,15 @@ model InventoryUnit {
   inoperableReportedBy    User?     @relation("UnitInoperableReports", fields: [inoperableReportedById], references: [id])
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
+  deletedAt       DateTime?
 
   kitItems      KitItem[]
   checkLogs     CheckLog[]
   transferItems TransferItem[]
 
+  @@index([inventoryItemId])
+  @@index([inventoryItemId, status])
+  @@index([status])
   @@map("inventory_units")
 }
 
@@ -410,6 +426,8 @@ model DailyCheck {
   photos   Photo[]
 
   @@unique([vehicleId, date, operatorId])
+  @@index([operatorId])
+  @@index([vehicleId])
   @@map("daily_checks")
 }
 
@@ -435,6 +453,11 @@ model CheckLog {
   project       Project?       @relation(fields: [projectId], references: [id])
   photos        Photo[]
 
+  @@index([itemId])
+  @@index([itemId, action])
+  @@index([inventoryUnitId])
+  @@index([operatorId])
+  @@index([submittedAt])
   @@map("check_logs")
 }
 

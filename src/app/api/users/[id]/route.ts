@@ -7,6 +7,7 @@ import { hashPin } from '@/lib/auth/pin'
 const patchSchema = z.object({
   name: z.string().optional(),
   isActive: z.boolean().optional(),
+  hourlyRate: z.number().positive().optional().nullable(),
   pin: z.string().length(6).regex(/^\d{6}$/).optional(),
 }).and(z.object({ unlockPin: z.boolean().optional() }))
 

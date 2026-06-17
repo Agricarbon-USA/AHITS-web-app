@@ -102,14 +102,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     await prisma.$transaction(async (tx) => {
       for (const entry of items) {
         if (entry.itemType === 'SERIALIZED') {
-          const unit = await tx.inventoryUnit.findUnique({ where: { id: entry.inventoryUnitId } })
-          if (!unit || unit.inventoryItemId !== entry.inventoryItemId || unit.status !== 'AVAILABLE') {
-            throw new Error(`Unit ${entry.inventoryUnitId} is not available`)
-          }
-          await tx.inventoryUnit.update({
-            where: { id: entry.inventoryUnitId },
+          const result = await tx.inventoryUnit.updateMany({
+            where: { id: entry.inventoryUnitId, inventoryItemId: entry.inventoryItemId, status: 'AVAILABLE', deletedAt: null },
             data: { status: 'CHECKED_OUT' },
           })
+          if (result.count === 0) {
+            throw Object.assign(new Error('UNIT_CONFLICT'), { unitId: entry.inventoryUnitId })
+          }
           await tx.kitItem.create({
             data: {
               kitId: kit.id,
@@ -130,7 +129,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           })
         } else {
           const availableUnits = await tx.inventoryUnit.findMany({
-            where: { inventoryItemId: entry.inventoryItemId, status: 'AVAILABLE' },
+            where: { inventoryItemId: entry.inventoryItemId, status: 'AVAILABLE', deletedAt: null },
             take: entry.quantity,
           })
           if (availableUnits.length < entry.quantity) {
@@ -170,7 +169,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         })
       }
     })
-  } catch (err) {
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message === 'UNIT_CONFLICT') {
+      return NextResponse.json(
+        { error: 'This unit was just checked out by someone else. Please select a different unit and try again.' },
+        { status: 409 }
+      )
+    }
     const msg = err instanceof Error ? err.message : 'Checkout failed'
     return NextResponse.json({ error: msg }, { status: 409 })
   }

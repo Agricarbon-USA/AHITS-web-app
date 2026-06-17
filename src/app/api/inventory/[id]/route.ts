@@ -19,13 +19,14 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
   const { id } = await params
 
   const item = await prisma.inventoryItem.findUnique({
-    where: { id },
+    where: { id, deletedAt: null },
     include: {
       category: true,
       hub: true,
       checkLogs: { include: { operator: true }, orderBy: { submittedAt: 'desc' }, take: 100 },
       photos: true,
       units: {
+        where: { deletedAt: null },
         select: {
           id: true,
           qrCodeId: true,
@@ -56,7 +57,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const body = await req.json()
 
   // Strip fields that no longer exist on InventoryItem (moved to InventoryUnit)
-  const { status: _s, inoperableNotes: _a, inoperableReportedAt: _b, inoperableReportedById: _c, ...safeData } = body
+  const { status: _s, inoperableNotes: _a, inoperableReportedAt: _b, inoperableReportedById: _c, deletedAt: _d, ...safeData } = body
 
   const item = await prisma.inventoryItem.update({ where: { id }, data: safeData })
   return NextResponse.json({ data: item })
@@ -66,6 +67,41 @@ export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id:
   const session = await getSession()
   if (!session || session.role !== 'ADMIN') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const { id } = await params
-  await prisma.inventoryItem.delete({ where: { id } })
+
+  const checkedOut = await prisma.inventoryUnit.count({
+    where: { inventoryItemId: id, status: 'CHECKED_OUT', deletedAt: null },
+  })
+  if (checkedOut > 0) {
+    return NextResponse.json(
+      { error: `Cannot delete item — ${checkedOut} unit(s) are currently checked out.` },
+      { status: 409 }
+    )
+  }
+
+  const pendingTransfers = await prisma.transferItem.count({
+    where: {
+      kitItem: { inventoryItemId: id, removedAt: null },
+      transferRequest: { status: 'PENDING' },
+    },
+  })
+  if (pendingTransfers > 0) {
+    return NextResponse.json(
+      { error: 'Cannot delete item — it has pending transfers. Decline the transfers first.' },
+      { status: 409 }
+    )
+  }
+
+  const now = new Date()
+  await prisma.$transaction([
+    prisma.inventoryUnit.updateMany({
+      where: { inventoryItemId: id, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    prisma.inventoryItem.update({
+      where: { id },
+      data: { deletedAt: now },
+    }),
+  ])
+
   return NextResponse.json({ ok: true })
 }
