@@ -21,6 +21,7 @@ import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
 import { DispositionDialog, KitItemSummary } from '@/components/shared/DispositionDialog'
 import { RentalVehicleForm, RentalVehicleFields } from '@/components/shared/RentalVehicleForm'
 import { useToast } from '@/components/shared/useToast'
+import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -609,6 +610,7 @@ export default function MyRigPage() {
   const [hubs, setHubs] = React.useState<HubOption[]>([])
 
   const showToast = useToast()
+  const { mutate } = useOfflineQueue()
   const [newOpen, setNewOpen] = React.useState(false)
   const [transferOpen, setTransferOpen] = React.useState(false)
 
@@ -732,51 +734,48 @@ export default function MyRigPage() {
 
   const handleRemoveItem = async () => {
     if (!removeDialog.kitItem || !rig) return
-    try {
-      const res = await fetch(`/api/deployments/${rig.id}/items/${removeDialog.kitItem.id}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ quantity: removeQty, returnCondition: removeCondition }),
-      })
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}))
-        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not return the item.', severity: 'error' })
-        return
-      }
+    const result = await mutate({
+      endpoint: `/api/deployments/${rig.id}/items/${removeDialog.kitItem.id}`,
+      method: 'DELETE',
+      body: { quantity: removeQty, returnCondition: removeCondition },
+      label: 'Return item',
+    })
+    if (result.ok && result.queued) {
+      showToast({ message: 'Return queued — will sync when online.', severity: 'info' })
+      setRemoveDialog({ open: false, kitItem: null })
+    } else if (result.ok) {
       showToast({ message: 'Item returned.', severity: 'success' })
       setRemoveDialog({ open: false, kitItem: null })
       await load()
-    } catch {
-      showToast({ message: 'Network error. Please try again.', severity: 'error' })
+    } else {
+      showToast({ message: result.error || 'Could not return the item.', severity: 'error' })
     }
   }
 
   const handleLogUsage = async () => {
     if (!logUsageDialog.kitItem || !rig) return
     setLogUsageLoading(true)
-    try {
-      const res = await fetch(`/api/deployments/${rig.id}/items/${logUsageDialog.kitItem.id}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          quantity: logUsageQty,
-          returnCondition: 'GOOD',
-          notes: `Daily usage log — ${logUsageQty} used`,
-        }),
-      })
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}))
-        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not log usage.', severity: 'error' })
-        return
-      }
+    const result = await mutate({
+      endpoint: `/api/deployments/${rig.id}/items/${logUsageDialog.kitItem.id}`,
+      method: 'DELETE',
+      body: {
+        quantity: logUsageQty,
+        returnCondition: 'GOOD',
+        notes: `Daily usage log — ${logUsageQty} used`,
+      },
+      label: 'Log usage',
+    })
+    if (result.ok && result.queued) {
+      showToast({ message: 'Usage queued — will sync when online.', severity: 'info' })
+      setLogUsageDialog({ open: false, kitItem: null })
+    } else if (result.ok) {
       showToast({ message: 'Usage logged.', severity: 'success' })
       setLogUsageDialog({ open: false, kitItem: null })
       await load()
-    } catch {
-      showToast({ message: 'Network error. Please try again.', severity: 'error' })
-    } finally {
-      setLogUsageLoading(false)
+    } else {
+      showToast({ message: result.error || 'Could not log usage.', severity: 'error' })
     }
+    setLogUsageLoading(false)
   }
 
   const kitItems = rig?.kits.flatMap((k) => k.items) ?? []
@@ -785,30 +784,33 @@ export default function MyRigPage() {
   const doAction = async (action: NoteAction, note: string, photoUrls: string[]) => {
     if (!rig) return
     setActionLoading(true)
+    let result: Awaited<ReturnType<typeof mutate>> | null = null
     switch (action) {
       case 'addVehicles':
-        await fetch(`/api/deployments/${rig.id}/vehicles`, {
+        result = await mutate({
+          endpoint: `/api/deployments/${rig.id}/vehicles`,
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ vehicleIds: Array.from(pendingVehicles), note, photoUrls }),
+          body: { vehicleIds: Array.from(pendingVehicles), note, photoUrls },
+          label: 'Add vehicles',
         })
         setPendingVehicles(new Set())
         setAddVehicleOpen(false)
         break
       case 'removeVehicles':
-        await fetch(`/api/deployments/${rig.id}/vehicles`, {
+        result = await mutate({
+          endpoint: `/api/deployments/${rig.id}/vehicles`,
           method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ vehicleIds: Array.from(selVehicles), note, photoUrls }),
+          body: { vehicleIds: Array.from(selVehicles), note, photoUrls },
+          label: 'Remove vehicles',
         })
         setSelVehicles(new Set())
         setRemovingVehicles(false)
         break
       case 'addItems': {
-        const addRes = await fetch(`/api/deployments/${rig.id}/items`, {
+        result = await mutate({
+          endpoint: `/api/deployments/${rig.id}/items`,
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+          body: {
             items: Array.from(pendingItems.entries()).map(([inventoryItemId, entry]) =>
               entry.itemType === 'SERIALIZED'
                 ? { itemType: 'SERIALIZED', inventoryItemId, inventoryUnitId: entry.inventoryUnitId! }
@@ -816,10 +818,11 @@ export default function MyRigPage() {
             ),
             note,
             photoUrls,
-          }),
+          },
+          label: 'Add items',
         })
-        if (addRes.status === 409) {
-          const err = await addRes.json()
+        // Online conflict: a unit was taken between selection and submit — reselect.
+        if (!result.ok && result.status === 409) {
           const m = new Map(pendingItems)
           m.forEach((entry, itemId) => {
             if (entry.itemType === 'SERIALIZED') {
@@ -831,7 +834,7 @@ export default function MyRigPage() {
           setActionLoading(false)
           setNoteDialog(null)
           setAddItemOpen(true)
-          showToast({ message: err.error ?? 'A unit was just taken. Please reselect.', severity: 'warning' })
+          showToast({ message: result.error ?? 'A unit was just taken. Please reselect.', severity: 'warning' })
           return
         }
         setPendingItems(new Map())
@@ -840,15 +843,21 @@ export default function MyRigPage() {
         break
       }
       case 'end':
-        await fetch(`/api/deployments/${rig.id}/end`, {
+        result = await mutate({
+          endpoint: `/api/deployments/${rig.id}/end`,
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ note }),
+          body: { note },
+          label: 'End deployment',
         })
         break
     }
     setActionLoading(false)
     setNoteDialog(null)
+    if (result && result.ok && result.queued) {
+      showToast({ message: 'Saved offline — will sync when you reconnect.', severity: 'info' })
+    } else if (result && !result.ok) {
+      showToast({ message: result.error || 'Action failed.', severity: 'error' })
+    }
     await load()
   }
 

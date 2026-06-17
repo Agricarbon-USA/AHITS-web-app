@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { getSession } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { createAlert } from '@/lib/alerts'
+import { withIdempotency } from '@/lib/idempotency'
 
 const RIG_INCLUDE = {
   operator: { select: { id: true, name: true } },
@@ -99,7 +100,11 @@ async function getAuthorizedRig(id: string, session: { userId: string; role: str
   return null
 }
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  return withIdempotency(req, 'deployments.items.POST', () => _POST(req, ctx))
+}
+
+async function _POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { id } = await params
@@ -202,7 +207,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   return NextResponse.json(updated)
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  return withIdempotency(req, 'deployments.items.DELETE', () => _DELETE(req, ctx))
+}
+
+async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { id } = await params

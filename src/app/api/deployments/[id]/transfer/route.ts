@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { getSession } from '@/lib/auth/session'
+import { withIdempotency } from '@/lib/idempotency'
 
 const schema = z.object({
   toOperatorId: z.string().min(1, 'Destination operator is required'),
@@ -29,7 +30,11 @@ const TRANSFER_INCLUDE = {
   },
 } as const
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  return withIdempotency(req, 'deployments.transfer.POST', () => _POST(req, ctx))
+}
+
+async function _POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { id } = await params

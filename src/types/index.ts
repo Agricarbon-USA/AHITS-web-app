@@ -74,7 +74,37 @@ export interface OfflineQueueItem {
   body: unknown
   createdAt: number
   retries: number
+  /**
+   * Stable key generated when the action is taken (crypto.randomUUID()).
+   * Sent as the `Idempotency-Key` header so a replay that the server already
+   * processed is recognised and not applied twice. Required for any
+   * non‑idempotent write (check‑out, transfer, end deployment, etc.).
+   */
+  idempotencyKey?: string
+  /**
+   * 'pending' = will be retried; 'failed' = terminal client error (4xx),
+   * surfaced to the operator as "needs attention" rather than retried forever.
+   */
+  status?: 'pending' | 'failed'
+  /** Last server/client error message, for the needs‑attention surface. */
+  lastError?: string
+  /** Human label for the action, shown in the pending/failed list. */
+  label?: string
 }
+
+// Snapshot of the offline queue for honest UI indicators.
+export interface OfflineQueueStatus {
+  online: boolean
+  syncing: boolean
+  pending: number
+  failed: number
+}
+
+// Result of a network-or-queue mutation.
+export type MutateResult<T = unknown> =
+  | { ok: true; queued: false; data: T }
+  | { ok: true; queued: true; data: null }
+  | { ok: false; queued: false; error: string; status: number }
 
 // Dashboard stats
 export interface DashboardStats {

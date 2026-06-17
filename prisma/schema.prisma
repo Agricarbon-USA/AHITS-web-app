@@ -587,3 +587,16 @@ model InviteToken {
 
   @@map("invite_tokens")
 }
+
+// Wave 1: dedup store for offline replay of non-idempotent writes.
+// Written/read via raw SQL in src/lib/idempotency.ts (no client coupling).
+model IdempotencyKey {
+  key          String   @id
+  scope        String
+  statusCode   Int      @map("status_code")
+  responseBody Json?    @map("response_body")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@map("idempotency_key")
+}

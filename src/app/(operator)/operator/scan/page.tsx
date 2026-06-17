@@ -8,6 +8,7 @@ import {
 } from '@mui/material'
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner'
 import { useToast } from '@/components/shared/useToast'
+import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 
 interface UnitInfo {
   id: string
@@ -47,6 +48,7 @@ const STATUS_COLORS: Record<string, 'success' | 'info' | 'warning' | 'error' | '
 
 export default function OperatorScanPage() {
   const showToast = useToast()
+  const { mutate } = useOfflineQueue()
   const [scanning, setScanning] = React.useState(false)
   const [unit, setUnit] = React.useState<UnitInfo | null>(null)
   const [error, setError] = React.useState('')
@@ -110,66 +112,75 @@ export default function OperatorScanPage() {
   const canReturn = !!kitItemForUnit && unit?.status === 'CHECKED_OUT'
   const canAdd = unit?.status === 'AVAILABLE' && !!activeRigId
 
+  const refetchActive = async () => {
+    const updated = await fetch('/api/deployments').then((r) => r.json())
+    const active = updated[0] ?? null
+    if (active) {
+      setActiveRigId(active.id)
+      setActiveKitItems(active.kits?.flatMap((k: { items: KitItemStub[] }) => k.items) ?? [])
+    }
+  }
+
   const handleReturn = async () => {
     if (!activeRigId || !kitItemForUnit || !unit) return
+    const itemName = unit.inventoryItem.name
+    const kitItemId = kitItemForUnit.id
     setActionLoading(true)
-    try {
-      const res = await fetch(`/api/deployments/${activeRigId}/items/${kitItemForUnit.id}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ returnCondition }),
-      })
-      if (res.ok) {
-        showToast({ message: `${unit.inventoryItem.name} returned to hub.`, severity: 'success' })
-        setUnit(null)
-        const updated = await fetch('/api/deployments').then((r) => r.json())
-        const active = updated[0] ?? null
-        if (active) {
-          setActiveRigId(active.id)
-          setActiveKitItems(active.kits?.flatMap((k: { items: KitItemStub[] }) => k.items) ?? [])
-        }
-      } else {
-        const d = await res.json()
-        setError(d.error ?? 'Return failed')
-      }
-    } catch {
-      setError('Network error. Please try again.')
-    } finally {
-      setActionLoading(false)
+    setError('')
+    const result = await mutate({
+      endpoint: `/api/deployments/${activeRigId}/items/${kitItemId}`,
+      method: 'DELETE',
+      body: { returnCondition },
+      label: `Return ${itemName} to hub`,
+    })
+    if (result.ok && result.queued) {
+      // Offline: optimistically drop it from the kit so the UI is consistent.
+      setActiveKitItems((prev) => prev.filter((ki) => ki.id !== kitItemId))
+      setUnit(null)
+      showToast({ message: `${itemName} — return queued, will sync when online.`, severity: 'info' })
+    } else if (result.ok) {
+      setUnit(null)
+      showToast({ message: `${itemName} returned to hub.`, severity: 'success' })
+      await refetchActive()
+    } else {
+      setError(result.error || 'Return failed')
     }
+    setActionLoading(false)
   }
 
   const handleAddToKit = async () => {
     if (!activeRigId || !unit) return
+    const itemName = unit.inventoryItem.name
+    const itemId = unit.inventoryItem.id
+    const unitId = unit.id
     setActionLoading(true)
     setAddDialogOpen(false)
-    try {
-      const res = await fetch(`/api/deployments/${activeRigId}/items`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          items: [{ itemType: 'SERIALIZED', inventoryItemId: unit.inventoryItem.id, inventoryUnitId: unit.id }],
-          note: 'Added via scan',
-        }),
-      })
-      if (res.ok) {
-        showToast({ message: `${unit.inventoryItem.name} added to your kit.`, severity: 'success' })
-        setUnit(null)
-        const updated = await fetch('/api/deployments').then((r) => r.json())
-        const active = updated[0] ?? null
-        if (active) {
-          setActiveRigId(active.id)
-          setActiveKitItems(active.kits?.flatMap((k: { items: KitItemStub[] }) => k.items) ?? [])
-        }
-      } else {
-        const d = await res.json()
-        setError(d.error ?? 'Failed to add to kit')
-      }
-    } catch {
-      setError('Network error. Please try again.')
-    } finally {
-      setActionLoading(false)
+    setError('')
+    const result = await mutate({
+      endpoint: `/api/deployments/${activeRigId}/items`,
+      method: 'POST',
+      body: {
+        items: [{ itemType: 'SERIALIZED', inventoryItemId: itemId, inventoryUnitId: unitId }],
+        note: 'Added via scan',
+      },
+      label: `Add ${itemName} to kit`,
+    })
+    if (result.ok && result.queued) {
+      // Offline: optimistically reflect the unit in the active kit.
+      setActiveKitItems((prev) => [
+        ...prev,
+        { id: `pending-${unitId}`, inventoryUnitId: unitId, inventoryItemId: itemId },
+      ])
+      setUnit(null)
+      showToast({ message: `${itemName} — add queued, will sync when online.`, severity: 'info' })
+    } else if (result.ok) {
+      setUnit(null)
+      showToast({ message: `${itemName} added to your kit.`, severity: 'success' })
+      await refetchActive()
+    } else {
+      setError(result.error || 'Failed to add to kit')
     }
+    setActionLoading(false)
   }
 
   return (

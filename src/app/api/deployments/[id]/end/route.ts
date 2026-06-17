@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { getSession } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { createAlert } from '@/lib/alerts'
+import { withIdempotency } from '@/lib/idempotency'
 
 const dispositionSchema = z.object({
   kitItemId: z.string(),
@@ -28,7 +29,11 @@ const schema = z.object({
   itemDispositions: z.array(dispositionSchema).default([]),
 })
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  return withIdempotency(req, 'deployments.end.POST', () => _POST(req, ctx))
+}
+
+async function _POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { id } = await params

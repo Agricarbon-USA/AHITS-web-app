@@ -21,7 +21,9 @@ export const viewport: Viewport = {
   themeColor: '#2e7d32',
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
+  // Allow pinch-zoom (WCAG 2.1 AA, PRD §9) — do not lock maximumScale.
+  // viewport-fit:cover lets us pad around the iOS notch via safe-area insets.
+  viewportFit: 'cover',
 }
 
 export default function RootLayout({

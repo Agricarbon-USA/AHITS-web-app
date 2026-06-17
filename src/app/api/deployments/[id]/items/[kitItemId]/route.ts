@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { getSession } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
+import { withIdempotency } from '@/lib/idempotency'
 
 const bodySchema = z.object({
   quantity: z.number().int().min(1).optional(),
@@ -11,6 +12,13 @@ const bodySchema = z.object({
 })
 
 export async function DELETE(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string; kitItemId: string }> }
+) {
+  return withIdempotency(req, 'deployments.items.kitItem.DELETE', () => _DELETE(req, ctx))
+}
+
+async function _DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string; kitItemId: string }> }
 ) {
