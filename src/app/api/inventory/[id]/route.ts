@@ -1,16 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getSession } from '@/lib/auth/session'
-
-const ENUM_LABELS: Record<string, string> = {
-  SAMPLING_EQUIPMENT: 'Sampling Equipment',
-  POWER_TOOLS: 'Power Tools',
-  HAND_TOOLS: 'Hand Tools',
-  SAFETY_GEAR: 'Safety Gear',
-  ELECTRONICS_GPS: 'Electronics / GPS',
-  STORAGE: 'Storage',
-  OTHER: 'Other',
-}
+import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions } from '@/lib/inventory'
 
 export async function GET(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getSession()
@@ -54,30 +45,25 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
   })
   if (!item) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  const unitsByStatus = item.units.reduce<Record<string, number>>((acc, u) => {
-    acc[u.status] = (acc[u.status] ?? 0) + 1
-    return acc
-  }, {})
-
-  const unitCounts = {
-    totalUnits: item.units.length,
-    available: unitsByStatus['AVAILABLE'] ?? 0,
-    checkedOut: unitsByStatus['CHECKED_OUT'] ?? 0,
-    inMaintenance: unitsByStatus['IN_MAINTENANCE'] ?? 0,
-    inoperable: unitsByStatus['INOPERABLE'] ?? 0,
-    retired: unitsByStatus['RETIRED'] ?? 0,
-  }
+  const unitCounts = computeUnitCounts(item.units)
+  const derived = deriveQuantities(item, unitCounts)
 
   const activeKit = item.kitItems.find((ki) => ki.kit.rig !== null && ki.kit.rig.endedAt === null)
   const activeRig = activeKit?.kit.rig ?? null
 
   const { kitItems, categoryRef, ...rest } = item
+  void kitItems
+  void categoryRef
 
   return NextResponse.json({
     data: {
       ...rest,
-      category: categoryRef ?? { id: item.category, name: ENUM_LABELS[item.category] ?? item.category },
+      units: withPositions(item.units),
+      category: categoryDisplay(item),
       unitCounts,
+      // Derived single-source-of-truth quantities (units for serialized, stored count for consumables)
+      derivedQuantity: derived.effectiveQuantity,
+      availableQuantity: derived.availableQuantity,
       currentOperator: activeRig?.operator ?? null,
       currentProject: activeRig?.project ?? null,
     },

@@ -4,7 +4,7 @@ import * as React from 'react'
 import { List, ListItemButton, ListItemIcon, ListItemText, Divider, Box, Typography, Button } from '@mui/material'
 import DashboardIcon from '@mui/icons-material/Dashboard'
 import ChecklistIcon from '@mui/icons-material/Checklist'
-import SwapHorizIcon from '@mui/icons-material/SwapHoriz'
+import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner'
 import LogoutIcon from '@mui/icons-material/Logout'
 import { usePathname, useRouter } from 'next/navigation'
@@ -13,7 +13,7 @@ import { useAuth } from '@/hooks/useAuth'
 const NAV_ITEMS = [
   { label: 'My Dashboard', href: '/operator/dashboard', icon: DashboardIcon },
   { label: 'Daily Check', href: '/operator/daily-check', icon: ChecklistIcon },
-  { label: 'Check Out / In', href: '/operator/scan', icon: SwapHorizIcon },
+  { label: 'My Rig', href: '/operator/my-rig', icon: LocalShippingIcon },
   { label: 'Scan QR', href: '/operator/scan', icon: QrCodeScannerIcon },
 ]
 

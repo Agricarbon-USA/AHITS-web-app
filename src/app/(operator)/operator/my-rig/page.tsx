@@ -155,28 +155,38 @@ function TransferDialog({
 
   const doTransfer = async (note: string, photoUrls: string[]) => {
     setLoading(true)
-    await fetch(`/api/deployments/${rig.id}/transfer`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        toOperatorId,
-        note,
-        photoUrls,
-        vehicleIds: Array.from(selVehicles),
-        items: kitItems
-          .filter((ki) => selKitItems.has(ki.id))
-          .map((ki) => ({
-            kitItemId: ki.id,
-            quantity: transferQtys.get(ki.id) ?? ki.quantity,
-            inventoryUnitId: ki.inventoryUnit?.id ?? undefined,
-          })),
-      }),
-    })
-    setLoading(false)
-    const destName = operators.find((o) => o.id === toOperatorId)?.name ?? 'operator'
-    showToast({ message: `Transfer request sent — waiting for ${destName} to accept.`, severity: 'success' })
-    onSuccess()
-    onClose()
+    try {
+      const res = await fetch(`/api/deployments/${rig.id}/transfer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          toOperatorId,
+          note,
+          photoUrls,
+          vehicleIds: Array.from(selVehicles),
+          items: kitItems
+            .filter((ki) => selKitItems.has(ki.id))
+            .map((ki) => ({
+              kitItemId: ki.id,
+              quantity: transferQtys.get(ki.id) ?? ki.quantity,
+              inventoryUnitId: ki.inventoryUnit?.id ?? undefined,
+            })),
+        }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        showToast({ message: typeof d.error === 'string' ? d.error : 'Transfer failed. Please try again.', severity: 'error' })
+        return
+      }
+      const destName = operators.find((o) => o.id === toOperatorId)?.name ?? 'operator'
+      showToast({ message: `Transfer request sent — waiting for ${destName} to accept.`, severity: 'success' })
+      onSuccess()
+      onClose()
+    } catch {
+      showToast({ message: 'Network error. Please try again.', severity: 'error' })
+    } finally {
+      setLoading(false)
+    }
   }
 
   if (step === 2) {
@@ -678,55 +688,94 @@ export default function MyRigPage() {
     if (!respondDialog) return
     setRespondLoading(true)
     const { transfer, action } = respondDialog
-    await fetch(`/api/transfers/${transfer.id}/${action}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ responseNote: responseNote || undefined }),
-    })
-    setRespondLoading(false)
-    setRespondDialog(null)
-    setResponseNote('')
-    await load()
+    try {
+      const res = await fetch(`/api/transfers/${transfer.id}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ responseNote: responseNote || undefined }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        showToast({ message: typeof d.error === 'string' ? d.error : `Could not ${action} the transfer.`, severity: 'error' })
+        return
+      }
+      showToast({ message: action === 'accept' ? 'Transfer accepted.' : 'Transfer declined.', severity: 'success' })
+      setRespondDialog(null)
+      setResponseNote('')
+      await load()
+    } catch {
+      showToast({ message: 'Network error. Please try again.', severity: 'error' })
+    } finally {
+      setRespondLoading(false)
+    }
   }
 
   const handleCancelTransfer = async () => {
     if (!cancelTransferId) return
     setCancelLoading(true)
-    await fetch(`/api/transfers/${cancelTransferId}`, { method: 'DELETE' })
-    setCancelLoading(false)
-    setCancelTransferId(null)
-    await loadTransfers()
+    try {
+      const res = await fetch(`/api/transfers/${cancelTransferId}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not cancel the transfer.', severity: 'error' })
+        return
+      }
+      showToast({ message: 'Transfer cancelled.', severity: 'success' })
+      setCancelTransferId(null)
+      await loadTransfers()
+    } catch {
+      showToast({ message: 'Network error. Please try again.', severity: 'error' })
+    } finally {
+      setCancelLoading(false)
+    }
   }
 
   const handleRemoveItem = async () => {
     if (!removeDialog.kitItem || !rig) return
-    const res = await fetch(`/api/deployments/${rig.id}/items/${removeDialog.kitItem.id}`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ quantity: removeQty, returnCondition: removeCondition }),
-    })
-    if (res.ok) {
+    try {
+      const res = await fetch(`/api/deployments/${rig.id}/items/${removeDialog.kitItem.id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quantity: removeQty, returnCondition: removeCondition }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not return the item.', severity: 'error' })
+        return
+      }
+      showToast({ message: 'Item returned.', severity: 'success' })
       setRemoveDialog({ open: false, kitItem: null })
       await load()
+    } catch {
+      showToast({ message: 'Network error. Please try again.', severity: 'error' })
     }
   }
 
   const handleLogUsage = async () => {
     if (!logUsageDialog.kitItem || !rig) return
     setLogUsageLoading(true)
-    const res = await fetch(`/api/deployments/${rig.id}/items/${logUsageDialog.kitItem.id}`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        quantity: logUsageQty,
-        returnCondition: 'GOOD',
-        notes: `Daily usage log — ${logUsageQty} used`,
-      }),
-    })
-    setLogUsageLoading(false)
-    if (res.ok) {
+    try {
+      const res = await fetch(`/api/deployments/${rig.id}/items/${logUsageDialog.kitItem.id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          quantity: logUsageQty,
+          returnCondition: 'GOOD',
+          notes: `Daily usage log — ${logUsageQty} used`,
+        }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not log usage.', severity: 'error' })
+        return
+      }
+      showToast({ message: 'Usage logged.', severity: 'success' })
       setLogUsageDialog({ open: false, kitItem: null })
       await load()
+    } catch {
+      showToast({ message: 'Network error. Please try again.', severity: 'error' })
+    } finally {
+      setLogUsageLoading(false)
     }
   }
 

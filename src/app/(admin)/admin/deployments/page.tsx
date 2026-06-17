@@ -127,7 +127,7 @@ function TransferDialog({
   operators: UserOption[]
   onClose: () => void
   onSuccess: () => void
-  showToast: (msg: string) => void
+  showToast: (msg: string, severity?: 'success' | 'error') => void
 }) {
   const [step, setStep] = React.useState(0)
   const [toOperatorId, setToOperatorId] = React.useState('')
@@ -141,27 +141,37 @@ function TransferDialog({
 
   const doTransfer = async (note: string, photoUrls: string[]) => {
     setLoading(true)
-    await fetch(`/api/deployments/${rig.id}/transfer`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        toOperatorId,
-        note,
-        photoUrls,
-        vehicleIds: Array.from(selVehicles),
-        items: kitItems
-          .filter((ki) => selKitItems.has(ki.id))
-          .map((ki) => ({
-            kitItemId: ki.id,
-            quantity: transferQtys.get(ki.id) ?? ki.quantity,
-            inventoryUnitId: ki.inventoryUnit?.id ?? undefined,
-          })),
-      }),
-    })
-    setLoading(false)
-    showToast(`Transfer request sent — waiting for ${operators.find((o) => o.id === toOperatorId)?.name ?? 'operator'} to accept.`)
-    onSuccess()
-    onClose()
+    try {
+      const res = await fetch(`/api/deployments/${rig.id}/transfer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          toOperatorId,
+          note,
+          photoUrls,
+          vehicleIds: Array.from(selVehicles),
+          items: kitItems
+            .filter((ki) => selKitItems.has(ki.id))
+            .map((ki) => ({
+              kitItemId: ki.id,
+              quantity: transferQtys.get(ki.id) ?? ki.quantity,
+              inventoryUnitId: ki.inventoryUnit?.id ?? undefined,
+            })),
+        }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        showToast(typeof d.error === 'string' ? d.error : 'Transfer failed. Please try again.', 'error')
+        return
+      }
+      showToast(`Transfer request sent — waiting for ${operators.find((o) => o.id === toOperatorId)?.name ?? 'operator'} to accept.`)
+      onSuccess()
+      onClose()
+    } catch {
+      showToast('Network error. Please try again.', 'error')
+    } finally {
+      setLoading(false)
+    }
   }
 
   if (step === 2) {
@@ -498,7 +508,7 @@ function NewDeploymentDialog({
 // ── Deployment Detail Drawer ──────────────────────────────────────
 
 function DeploymentDrawer({
-  rig: initialRig, operators, vehicles, inventoryItems, hubs, onClose, onUpdated, showToast,
+  rig: initialRig, operators, vehicles, inventoryItems, hubs, onClose, onUpdated, showToast, initialAction = null,
 }: {
   rig: Rig
   operators: UserOption[]
@@ -507,7 +517,8 @@ function DeploymentDrawer({
   hubs: HubOption[]
   onClose: () => void
   onUpdated: () => void
-  showToast: (msg: string) => void
+  showToast: (msg: string, severity?: 'success' | 'error') => void
+  initialAction?: 'transfer' | 'end' | null
 }) {
   const [rig, setRig] = React.useState(initialRig)
   const [removingVehicles, setRemovingVehicles] = React.useState(false)
@@ -538,6 +549,14 @@ function DeploymentDrawer({
   }>>([])
 
   React.useEffect(() => { setRig(initialRig) }, [initialRig])
+
+  // When opened from a row shortcut, jump straight into the transfer or
+  // end-deployment flow (only valid for active deployments).
+  React.useEffect(() => {
+    if (initialRig.endedAt) return
+    if (initialAction === 'transfer') setTransferOpen(true)
+    else if (initialAction === 'end') setNoteDialog('end')
+  }, [initialRig, initialAction])
 
   React.useEffect(() => {
     fetch(`/api/deployments/${initialRig.id}/history`)
@@ -572,32 +591,65 @@ function DeploymentDrawer({
   }
 
   const handleAddOperator = async (rigId: string) => {
-    await fetch(`/api/deployments/${rigId}/operators`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ operatorId: operatorToAdd }),
-    })
-    setOperatorToAdd('')
-    setAddingOperator(false)
-    await refresh()
+    setAddingOperator(true)
+    try {
+      const res = await fetch(`/api/deployments/${rigId}/operators`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ operatorId: operatorToAdd }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        showToast(typeof d.error === 'string' ? d.error : 'Could not add operator.', 'error')
+        return
+      }
+      setOperatorToAdd('')
+      showToast('Operator added.')
+      await refresh()
+    } catch {
+      showToast('Network error. Please try again.', 'error')
+    } finally {
+      setAddingOperator(false)
+    }
   }
 
   const handleRemoveOperator = async (rigId: string, operatorId: string) => {
-    await fetch(`/api/deployments/${rigId}/operators`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ operatorId }),
-    })
-    await refresh()
+    try {
+      const res = await fetch(`/api/deployments/${rigId}/operators`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ operatorId }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        showToast(typeof d.error === 'string' ? d.error : 'Could not remove operator.', 'error')
+        return
+      }
+      showToast('Operator removed.')
+      await refresh()
+    } catch {
+      showToast('Network error. Please try again.', 'error')
+    }
   }
 
   const handleCancelTransfer = async () => {
     if (!cancelTransferId) return
     setCancelLoading(true)
-    await fetch(`/api/transfers/${cancelTransferId}`, { method: 'DELETE' })
-    setCancelLoading(false)
-    setCancelTransferId(null)
-    await loadTransfers()
+    try {
+      const res = await fetch(`/api/transfers/${cancelTransferId}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        showToast(typeof d.error === 'string' ? d.error : 'Could not cancel the transfer.', 'error')
+        return
+      }
+      showToast('Transfer cancelled.')
+      setCancelTransferId(null)
+      await loadTransfers()
+    } catch {
+      showToast('Network error. Please try again.', 'error')
+    } finally {
+      setCancelLoading(false)
+    }
   }
 
   const handleAddVehicles = async (note: string, photoUrls: string[]) => {
@@ -1252,6 +1304,7 @@ export default function AdminDeploymentsPage() {
   const [rigs, setRigs] = React.useState<Rig[]>([])
   const [loading, setLoading] = React.useState(true)
   const [toast, setToast] = React.useState('')
+  const [toastSeverity, setToastSeverity] = React.useState<'success' | 'error'>('success')
   const [showEnded, setShowEnded] = React.useState(false)
   const [filterOperator, setFilterOperator] = React.useState('')
   const [operators, setOperators] = React.useState<UserOption[]>([])
@@ -1259,6 +1312,7 @@ export default function AdminDeploymentsPage() {
   const [inventoryItems, setInventoryItems] = React.useState<InventoryOption[]>([])
   const [hubs, setHubs] = React.useState<HubOption[]>([])
   const [drawerRig, setDrawerRig] = React.useState<Rig | null>(null)
+  const [drawerAction, setDrawerAction] = React.useState<'transfer' | 'end' | null>(null)
   const [newOpen, setNewOpen] = React.useState(false)
 
   // Pending transfers — admin can accept or decline on behalf of the destination operator
@@ -1299,23 +1353,33 @@ export default function AdminDeploymentsPage() {
     fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(d ?? [])).catch(() => {})
   }, [])
 
-  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 4000) }
+  const showToast = (msg: string, severity: 'success' | 'error' = 'success') => { setToast(msg); setToastSeverity(severity); setTimeout(() => setToast(''), 4000) }
   const activeCount = rigs.filter((r) => !r.endedAt).length
 
   const handleRespond = async () => {
     if (!respondDialog) return
     setRespondLoading(true)
     const { transfer, action } = respondDialog
-    await fetch(`/api/transfers/${transfer.id}/${action}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ responseNote: responseNote || undefined }),
-    })
-    setRespondLoading(false)
-    setRespondDialog(null)
-    setResponseNote('')
-    showToast(action === 'accept' ? 'Transfer accepted' : 'Transfer declined')
-    await Promise.all([load(), loadTransfers()])
+    try {
+      const res = await fetch(`/api/transfers/${transfer.id}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ responseNote: responseNote || undefined }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        showToast(typeof d.error === 'string' ? d.error : `Could not ${action} the transfer.`, 'error')
+        return
+      }
+      setRespondDialog(null)
+      setResponseNote('')
+      showToast(action === 'accept' ? 'Transfer accepted' : 'Transfer declined')
+      await Promise.all([load(), loadTransfers()])
+    } catch {
+      showToast('Network error. Please try again.', 'error')
+    } finally {
+      setRespondLoading(false)
+    }
   }
 
   return (
@@ -1330,7 +1394,7 @@ export default function AdminDeploymentsPage() {
         </Button>
       </Stack>
 
-      {toast && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setToast('')}>{toast}</Alert>}
+      {toast && <Alert severity={toastSeverity} sx={{ mb: 2 }} onClose={() => setToast('')}>{toast}</Alert>}
 
       {/* Pending transfers — admin accept / decline */}
       {pendingTransfers.length > 0 && (
@@ -1404,7 +1468,7 @@ export default function AdminDeploymentsPage() {
               : rigs.map((rig) => {
                   const kitItems = rig.kits.flatMap((k) => k.items)
                   return (
-                    <TableRow key={rig.id} hover sx={{ cursor: 'pointer', '&:last-child td': { border: 0 } }} onClick={() => setDrawerRig(rig)}>
+                    <TableRow key={rig.id} hover sx={{ cursor: 'pointer', '&:last-child td': { border: 0 } }} onClick={() => { setDrawerAction(null); setDrawerRig(rig) }}>
                       <TableCell>
                         <Stack direction="row" alignItems="center" spacing={1}>
                           <Avatar sx={{ width: 28, height: 28, fontSize: 12, bgcolor: 'primary.main' }}>{initials(rig.operator.name)}</Avatar>
@@ -1424,11 +1488,24 @@ export default function AdminDeploymentsPage() {
                       <TableCell align="right" onClick={(e) => e.stopPropagation()}>
                         <Stack direction="row" spacing={0.5} justifyContent="flex-end">
                           <Tooltip title="Transfer">
-                            <span><IconButton size="small" disabled={!!rig.endedAt}><SwapHorizIcon fontSize="small" /></IconButton></span>
-                          </Tooltip>
-                          <Tooltip title="End">
                             <span>
-                              <IconButton size="small" color="error" disabled={!!rig.endedAt} onClick={() => setDrawerRig(rig)}>
+                              <IconButton
+                                size="small"
+                                disabled={!!rig.endedAt}
+                                onClick={(e) => { e.stopPropagation(); setDrawerAction('transfer'); setDrawerRig(rig) }}
+                              >
+                                <SwapHorizIcon fontSize="small" />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
+                          <Tooltip title="End deployment">
+                            <span>
+                              <IconButton
+                                size="small"
+                                color="error"
+                                disabled={!!rig.endedAt}
+                                onClick={(e) => { e.stopPropagation(); setDrawerAction('end'); setDrawerRig(rig) }}
+                              >
                                 <StopCircleIcon fontSize="small" />
                               </IconButton>
                             </span>
@@ -1456,7 +1533,8 @@ export default function AdminDeploymentsPage() {
           vehicles={vehicles}
           inventoryItems={inventoryItems}
           hubs={hubs}
-          onClose={() => setDrawerRig(null)}
+          initialAction={drawerAction}
+          onClose={() => { setDrawerRig(null); setDrawerAction(null) }}
           onUpdated={load}
           showToast={showToast}
         />
