@@ -29,6 +29,7 @@
     "bcryptjs": "^2.4.3",
     "dayjs": "^1.11.13",
     "html5-qrcode": "^2.3.8",
+    "jsqr": "^1.4.0",
     "iron-session": "^8.0.4",
     "jose": "^5.9.6",
     "next": "^16.2.9",
