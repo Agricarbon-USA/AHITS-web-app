@@ -310,14 +310,21 @@ function NewDeploymentDialog({
     setLoading(false)
     if (res.ok) { onSuccess(); onClose() }
     else {
-      const d = await res.json()
-      if (res.status === 409) {
-        // Remove all serialized entries so user can reselect
-        const m = new Map(kitItems)
-        for (const [key, entry] of m) { if (entry.itemType === 'SERIALIZED') m.delete(key) }
-        setKitItems(m)
+      let errMsg = 'Failed to launch. Please try again.'
+      try {
+        const d = await res.json()
+        if (res.status === 409) {
+          // Remove all serialized entries so user can reselect
+          const m = new Map(kitItems)
+          for (const [key, entry] of m) { if (entry.itemType === 'SERIALIZED') m.delete(key) }
+          setKitItems(m)
+        }
+        if (typeof d.error === 'string') errMsg = d.error
+        else if (Array.isArray(d.error?.formErrors) && d.error.formErrors.length > 0) errMsg = d.error.formErrors[0]
+      } catch {
+        // Non-JSON error body — show generic message above
       }
-      setError(d.error?.formErrors?.[0] ?? d.error ?? 'Failed to launch')
+      setError(errMsg)
     }
   }
 
@@ -346,21 +353,36 @@ function NewDeploymentDialog({
             {unassignedVehicles.length === 0 ? (
               <Typography variant="body2" color="text.secondary">No available vehicles.</Typography>
             ) : (
-              <List dense>
-                {unassignedVehicles.map((v) => {
-                  const Icon = VEHICLE_ICON[v.type] ?? LocalShippingIcon
-                  return (
-                    <ListItem key={v.id} disablePadding>
-                      <ListItemIcon sx={{ minWidth: 36 }}>
-                        <Checkbox size="small" checked={selVehicles.has(v.id)}
-                          onChange={(e) => { const s = new Set(selVehicles); e.target.checked ? s.add(v.id) : s.delete(v.id); setSelVehicles(s) }} />
-                      </ListItemIcon>
-                      <ListItemIcon sx={{ minWidth: 32 }}><Icon fontSize="small" /></ListItemIcon>
-                      <ListItemText primary={v.name} secondary={v.type} />
-                    </ListItem>
-                  )
-                })}
-              </List>
+              <Stack spacing={2}>
+                {Object.entries(
+                  unassignedVehicles.reduce<Record<string, VehicleOption[]>>((acc, v) => {
+                    ;(acc[v.type] ??= []).push(v)
+                    return acc
+                  }, {})
+                ).map(([type, group]) => (
+                  <Box key={type}>
+                    <Typography variant="caption" fontWeight={700} color="text.secondary"
+                      sx={{ textTransform: 'uppercase', letterSpacing: 0.6, display: 'block', mb: 0.5 }}>
+                      {type.replace(/_/g, ' ')}
+                    </Typography>
+                    <List dense disablePadding>
+                      {group.map((v) => {
+                        const Icon = VEHICLE_ICON[v.type] ?? LocalShippingIcon
+                        return (
+                          <ListItem key={v.id} disablePadding>
+                            <ListItemIcon sx={{ minWidth: 36 }}>
+                              <Checkbox size="small" checked={selVehicles.has(v.id)}
+                                onChange={(e) => { const s = new Set(selVehicles); e.target.checked ? s.add(v.id) : s.delete(v.id); setSelVehicles(s) }} />
+                            </ListItemIcon>
+                            <ListItemIcon sx={{ minWidth: 32 }}><Icon fontSize="small" /></ListItemIcon>
+                            <ListItemText primary={v.name} />
+                          </ListItem>
+                        )
+                      })}
+                    </List>
+                  </Box>
+                ))}
+              </Stack>
             )}
             {selVehicles.size === 0 && <Alert severity="warning" sx={{ mt: 1 }}>At least one vehicle is recommended</Alert>}
           </Box>
@@ -371,72 +393,80 @@ function NewDeploymentDialog({
             {availableItems.length === 0 ? (
               <Typography variant="body2" color="text.secondary">No available items.</Typography>
             ) : (
-              <Stack spacing={1}>
-                {availableItems.map((item) => {
-                  const isSerialized = item.itemType === 'SERIALIZED'
+              <Stack spacing={2.5}>
+                {Object.entries(
+                  availableItems.reduce<Record<string, InventoryOption[]>>((acc, item) => {
+                    const cat = item.category?.name ?? 'Uncategorized'
+                    ;(acc[cat] ??= []).push(item)
+                    return acc
+                  }, {})
+                ).map(([catName, catItems]) => (
+                  <Box key={catName}>
+                    <Typography variant="caption" fontWeight={700} color="text.secondary"
+                      sx={{ textTransform: 'uppercase', letterSpacing: 0.6, display: 'block', mb: 0.75 }}>
+                      {catName}
+                    </Typography>
+                    <Stack spacing={1}>
+                      {catItems.map((item) => {
+                        const isSerialized = item.itemType === 'SERIALIZED'
 
-                  if (isSerialized) {
-                    return (
-                      <Stack key={item.id} spacing={0.25}>
-                        <Stack direction="row" alignItems="center" spacing={1}>
-                          <Box flexGrow={1}>
-                            <Typography variant="body2" fontWeight={500}>{item.name}</Typography>
-                            <Stack direction="row" spacing={0.5} mt={0.25}>
-                              <Chip size="small" label={item.category?.name ?? ''} sx={{ height: 16, fontSize: 10 }} />
-                              <Chip size="small" label="Serialized" variant="outlined" color="primary" sx={{ height: 16, fontSize: 10 }} />
+                        if (isSerialized) {
+                          return (
+                            <Stack key={item.id} spacing={0.25}>
+                              <Stack direction="row" alignItems="center" spacing={1}>
+                                <Box flexGrow={1}>
+                                  <Typography variant="body2" fontWeight={500}>{item.name}</Typography>
+                                  <Chip size="small" label="Serialized" variant="outlined" color="primary" sx={{ height: 16, fontSize: 10, mt: 0.25 }} />
+                                </Box>
+                              </Stack>
+                              <Stack spacing={0} pl={1}>
+                                {item.availableUnits.map((u) => (
+                                  <Stack key={u.id} direction="row" alignItems="center" spacing={1}>
+                                    <Checkbox size="small" checked={kitItems.has(u.id)}
+                                      onChange={(e) => {
+                                        const m = new Map(kitItems)
+                                        if (e.target.checked) {
+                                          m.set(u.id, { inventoryItemId: item.id, itemType: 'SERIALIZED', inventoryUnitId: u.id, unitLabel: u.serialNumber ?? `Unit ${u.position}` })
+                                        } else {
+                                          m.delete(u.id)
+                                        }
+                                        setKitItems(m)
+                                      }} />
+                                    <Typography variant="body2">{u.serialNumber ?? `Unit ${u.position}`}</Typography>
+                                  </Stack>
+                                ))}
+                              </Stack>
                             </Stack>
-                          </Box>
-                        </Stack>
-                        <Stack spacing={0} pl={1}>
-                          {item.availableUnits.map((u) => (
-                            <Stack key={u.id} direction="row" alignItems="center" spacing={1}>
-                              <Checkbox size="small" checked={kitItems.has(u.id)}
-                                onChange={(e) => {
-                                  const m = new Map(kitItems)
-                                  if (e.target.checked) {
-                                    m.set(u.id, { inventoryItemId: item.id, itemType: 'SERIALIZED', inventoryUnitId: u.id, unitLabel: u.serialNumber ?? `Unit ${u.position}` })
-                                  } else {
-                                    m.delete(u.id)
-                                  }
-                                  setKitItems(m)
-                                }} />
-                              <Typography variant="body2">{u.serialNumber ?? `Unit ${u.position}`}</Typography>
-                            </Stack>
-                          ))}
-                        </Stack>
-                      </Stack>
-                    )
-                  }
+                          )
+                        }
 
-                  const entry = kitItems.get(item.id)
-                  const checked = !!entry
-                  return (
-                    <Stack key={item.id} spacing={0.5}>
-                      <Stack direction="row" alignItems="center" spacing={1}>
-                        <Checkbox size="small" checked={checked}
-                          onChange={(e) => {
-                            const m = new Map(kitItems)
-                            if (e.target.checked) {
-                              m.set(item.id, { inventoryItemId: item.id, itemType: 'CONSUMABLE', quantity: 1 })
-                            } else {
-                              m.delete(item.id)
-                            }
-                            setKitItems(m)
-                          }} />
-                        <Box flexGrow={1}>
-                          <Typography variant="body2">{item.name}</Typography>
-                          <Chip size="small" label={item.category?.name ?? ''} sx={{ height: 16, fontSize: 10 }} />
-                        </Box>
-                        {checked && (
-                          <TextField type="number" size="small" value={(entry as { itemType: 'CONSUMABLE'; quantity: number }).quantity}
-                            onChange={(e) => { const m = new Map(kitItems); m.set(item.id, { inventoryItemId: item.id, itemType: 'CONSUMABLE', quantity: parseInt(e.target.value) || 1 }); setKitItems(m) }}
-                            inputProps={{ min: 1, style: { MozAppearance: 'textfield', width: 60 } }}
-                            sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }} />
-                        )}
-                      </Stack>
+                        const entry = kitItems.get(item.id)
+                        const checked = !!entry
+                        return (
+                          <Stack key={item.id} direction="row" alignItems="center" spacing={1}>
+                            <Checkbox size="small" checked={checked}
+                              onChange={(e) => {
+                                const m = new Map(kitItems)
+                                if (e.target.checked) {
+                                  m.set(item.id, { inventoryItemId: item.id, itemType: 'CONSUMABLE', quantity: 1 })
+                                } else {
+                                  m.delete(item.id)
+                                }
+                                setKitItems(m)
+                              }} />
+                            <Typography variant="body2" flexGrow={1}>{item.name}</Typography>
+                            {checked && (
+                              <TextField type="number" size="small" value={(entry as { itemType: 'CONSUMABLE'; quantity: number }).quantity}
+                                onChange={(e) => { const m = new Map(kitItems); m.set(item.id, { inventoryItemId: item.id, itemType: 'CONSUMABLE', quantity: parseInt(e.target.value) || 1 }); setKitItems(m) }}
+                                inputProps={{ min: 1, style: { MozAppearance: 'textfield', width: 60 } }}
+                                sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }} />
+                            )}
+                          </Stack>
+                        )
+                      })}
                     </Stack>
-                  )
-                })}
+                  </Box>
+                ))}
               </Stack>
             )}
             {kitItems.size === 0 && <Alert severity="warning" sx={{ mt: 1 }}>Starting with empty kit</Alert>}

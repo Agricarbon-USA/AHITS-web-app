@@ -88,9 +88,24 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const session = await getSession()
   if (!session || session.role !== 'ADMIN') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const { id } = await params
-  const body = await req.json()
-  const item = await prisma.inventoryItem.update({ where: { id }, data: body })
-  return NextResponse.json({ data: item })
+  try {
+    const body = await req.json()
+    const { categoryId, hubId, ...rest } = body
+    const updateData: Record<string, unknown> = { ...rest }
+    // Skip categoryId/hubId if falsy or if they look like enum values (e.g. 'SAMPLING_EQUIPMENT')
+    // rather than real CUIDs — avoids a Prisma FK error when items have enum-fallback categories
+    if (categoryId && typeof categoryId === 'string' && !/^[A-Z_]+$/.test(categoryId)) {
+      updateData.categoryId = categoryId
+    }
+    if (hubId && typeof hubId === 'string' && !/^[A-Z_]+$/.test(hubId)) {
+      updateData.hubId = hubId
+    }
+    const item = await prisma.inventoryItem.update({ where: { id }, data: updateData as never })
+    return NextResponse.json({ data: item })
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Update failed'
+    return NextResponse.json({ error: msg }, { status: 500 })
+  }
 }
 
 export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {

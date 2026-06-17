@@ -24,12 +24,17 @@ export async function GET(req: NextRequest) {
   const pageSize = parseInt(searchParams.get('pageSize') ?? '25')
   const status = searchParams.get('status') as EquipmentStatus | null
   const category = searchParams.get('category') as EquipmentCategory | null
-  const q = searchParams.get('q')
+  const categoryId = searchParams.get('categoryId')
+  const itemType = searchParams.get('itemType')
+  // Accept both 'q' and 'search' for backward compat
+  const q = searchParams.get('q') ?? searchParams.get('search')
 
   const where = {
     deletedAt: null,
     ...(status && { status }),
     ...(category && { category }),
+    ...(categoryId && { categoryId }),
+    ...(itemType && { itemType }),
     ...(q && { name: { contains: q, mode: 'insensitive' as const } }),
   }
 
@@ -110,14 +115,18 @@ export async function GET(req: NextRequest) {
 
 const createSchema = z.object({
   name: z.string().min(1),
-  category: z.string(),
+  categoryId: z.string().optional(),
+  itemType: z.string().optional(),
+  unitId: z.string().optional(),
   quantity: z.number().int().min(0).default(1),
+  expectedQuantity: z.number().int().optional(),
   unitCost: z.number().optional(),
   supplier: z.string().optional(),
   reorderUrl: z.string().url().optional(),
   location: z.string().optional(),
   notes: z.string().optional(),
   lowStockThreshold: z.number().int().optional(),
+  hubId: z.string().optional(),
 })
 
 export async function POST(req: NextRequest) {
@@ -127,6 +136,14 @@ export async function POST(req: NextRequest) {
   const parsed = createSchema.safeParse(await req.json())
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const item = await prisma.inventoryItem.create({ data: parsed.data as never })
+  const { categoryId, hubId, ...rest } = parsed.data
+  const item = await prisma.inventoryItem.create({
+    data: {
+      ...rest,
+      // Only connect real CUID references, not enum-style fallbacks
+      ...(categoryId && !/^[A-Z_]+$/.test(categoryId) && { categoryId }),
+      ...(hubId && !/^[A-Z_]+$/.test(hubId) && { hubId }),
+    } as never,
+  })
   return NextResponse.json({ data: item }, { status: 201 })
 }

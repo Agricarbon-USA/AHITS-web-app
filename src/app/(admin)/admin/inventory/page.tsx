@@ -258,7 +258,9 @@ function ItemFormDialog({
   React.useEffect(() => {
     if (item) {
       setName(item.name); setItemType(item.itemType); setUnitId(item.unitId ?? '')
-      setCategoryId(item.category.id); setHubId(item.hub?.id ?? '')
+      // Only set categoryId if it's a real CUID, not an enum fallback like 'SAMPLING_EQUIPMENT'
+      setCategoryId(/^[A-Z_]+$/.test(item.category.id) ? '' : item.category.id)
+      setHubId(item.hub?.id ?? '')
       setQuantity(item.quantity)
       setExpectedQuantity(item.expectedQuantity != null ? String(item.expectedQuantity) : '')
       setLowStockThreshold(item.lowStockThreshold != null ? String(item.lowStockThreshold) : '')
@@ -783,6 +785,8 @@ export default function AdminInventoryPage() {
   const [page, setPage] = React.useState(0)
   const [pageSize] = React.useState(25)
   const [search, setSearch] = React.useState('')
+  const [categoryFilter, setCategoryFilter] = React.useState('')
+  const [itemTypeFilter, setItemTypeFilter] = React.useState('')
   const [loading, setLoading] = React.useState(true)
   const [categories, setCategories] = React.useState<CategoryOption[]>([])
   const [hubs, setHubs] = React.useState<HubOption[]>([])
@@ -794,12 +798,14 @@ export default function AdminInventoryPage() {
   const load = React.useCallback(async () => {
     setLoading(true)
     const params = new URLSearchParams({ page: String(page + 1), pageSize: String(pageSize) })
-    if (search) params.set('search', search)
+    if (search) params.set('q', search)
+    if (categoryFilter) params.set('categoryId', categoryFilter)
+    if (itemTypeFilter) params.set('itemType', itemTypeFilter)
     const res = await fetch(`/api/inventory?${params}`).then((r) => r.json()).catch(() => ({ data: [], total: 0 }))
     setItems(res.data ?? [])
     setTotal(res.total ?? 0)
     setLoading(false)
-  }, [page, pageSize, search])
+  }, [page, pageSize, search, categoryFilter, itemTypeFilter])
 
   React.useEffect(() => { load() }, [load])
 
@@ -830,14 +836,42 @@ export default function AdminInventoryPage() {
         </Button>
       </Stack>
 
-      {/* Search */}
-      <TextField
-        size="small"
-        placeholder="Search items…"
-        value={search}
-        onChange={(e) => { setSearch(e.target.value); setPage(0) }}
-        sx={{ mb: 2, width: 320 }}
-      />
+      {/* Filters */}
+      <Stack direction="row" spacing={2} mb={2} alignItems="center" flexWrap="wrap" useFlexGap>
+        <TextField
+          size="small"
+          placeholder="Search items…"
+          value={search}
+          onChange={(e) => { setSearch(e.target.value); setPage(0) }}
+          sx={{ width: 260 }}
+        />
+        <Stack direction="row" spacing={0.75}>
+          {(['', 'CONSUMABLE', 'SERIALIZED'] as const).map((type) => (
+            <Chip
+              key={type || 'all'}
+              label={type === '' ? 'All' : type === 'CONSUMABLE' ? 'Consumables' : 'Serialized'}
+              onClick={() => { setItemTypeFilter(type); setPage(0) }}
+              color={itemTypeFilter === type ? 'primary' : 'default'}
+              variant={itemTypeFilter === type ? 'filled' : 'outlined'}
+              size="small"
+              sx={{ cursor: 'pointer' }}
+            />
+          ))}
+        </Stack>
+        {categories.length > 0 && (
+          <TextField
+            select
+            size="small"
+            label="Category"
+            value={categoryFilter}
+            onChange={(e) => { setCategoryFilter(e.target.value); setPage(0) }}
+            sx={{ width: 200 }}
+          >
+            <MenuItem value="">All categories</MenuItem>
+            {categories.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
+          </TextField>
+        )}
+      </Stack>
 
       {/* Table */}
       <TableContainer component={Paper} variant="outlined">
