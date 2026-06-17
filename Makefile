@@ -61,9 +61,12 @@ db-reset: ## Reset DB and re-seed (DEV ONLY)
 	npx prisma migrate reset
 
 # ── Docker ────────────────────────────────────────────────────────
+DISABLE_SW ?= false
+
 docker-build: ## Build Docker image for linux/amd64. Override TAG as needed.
 	docker build \
 	  --platform linux/amd64 \
+	  --build-arg DISABLE_SW=$(DISABLE_SW) \
 	  -t $(IMAGE):$(TAG) \
 	  .
 
