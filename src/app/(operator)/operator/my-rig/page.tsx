@@ -82,7 +82,9 @@ interface InventoryOption {
   itemType: string
   quantity: number
   lowStockThreshold: number | null
-  category: string
+  // /api/inventory returns category as a {id,name} object (categoryDisplay),
+  // matching the scan page and admin deployments builder — not a bare string.
+  category: { id: string; name: string } | null
   unitCounts: {
     available: number
     checkedOut: number
@@ -494,7 +496,7 @@ function NewDeploymentDialog({
                           }} />
                         <Box flexGrow={1}>
                           <Typography variant="body2">{item.name}</Typography>
-                          <Chip size="small" label={item.category} sx={{ height: 16, fontSize: 10 }} />
+                          <Chip size="small" label={item.category?.name ?? ''} sx={{ height: 16, fontSize: 10 }} />
                         </Box>
                         {checked && !isSerialized && (
                           <TextField
@@ -1295,7 +1297,7 @@ export default function MyRigPage() {
                         }} />
                       <Box flexGrow={1}>
                         <Typography variant="body2">{item.name}</Typography>
-                        <Chip size="small" label={item.category} sx={{ height: 16, fontSize: 10 }} />
+                        <Chip size="small" label={item.category?.name ?? ''} sx={{ height: 16, fontSize: 10 }} />
                       </Box>
                       {checked && !isSerialized && (
                         <TextField
