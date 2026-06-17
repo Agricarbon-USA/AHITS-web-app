@@ -34,6 +34,9 @@ const createSchema = z.object({
   insuranceExpires: z.string().datetime().optional(),
   registrationExpires: z.string().datetime().optional(),
   notes: z.string().optional(),
+  // QR association-on-create (PRD §7.7): register the existing physical label's
+  // code as this vehicle's QR id. Omit to auto-generate one.
+  qrCodeId: z.string().trim().min(1).optional(),
 })
 
 export async function POST(req: NextRequest) {
@@ -43,6 +46,19 @@ export async function POST(req: NextRequest) {
   const parsed = createSchema.safeParse(await req.json())
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const vehicle = await prisma.vehicle.create({ data: parsed.data as never })
-  return NextResponse.json({ data: vehicle }, { status: 201 })
+  try {
+    const vehicle = await prisma.vehicle.create({ data: parsed.data as never })
+    return NextResponse.json({ data: vehicle }, { status: 201 })
+  } catch (err: unknown) {
+    // Unique violation (name / VIN / qrCodeId already in use).
+    if ((err as { code?: string }).code === 'P2002') {
+      const target = (err as { meta?: { target?: string[] } }).meta?.target?.join(', ') ?? 'field'
+      const msg = target.includes('qrCodeId')
+        ? 'That QR label is already assigned to another vehicle.'
+        : `A vehicle with the same ${target} already exists.`
+      return NextResponse.json({ error: msg }, { status: 409 })
+    }
+    const msg = err instanceof Error ? err.message : 'Failed to create vehicle'
+    return NextResponse.json({ error: msg }, { status: 500 })
+  }
 }

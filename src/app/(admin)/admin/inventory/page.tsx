@@ -20,6 +20,7 @@ import HistoryIcon from '@mui/icons-material/History'
 import ExpandLessIcon from '@mui/icons-material/ExpandLess'
 import QRCode from 'qrcode'
 import { useToast } from '@/components/shared/useToast'
+import { QrScanField } from '@/components/shared/QrScanField'
 
 // ── Helper maps ───────────────────────────────────────────────────
 
@@ -393,6 +394,9 @@ function DetailDrawer({
   const [activeTab, setActiveTab] = React.useState(0)
   const [serialEdits, setSerialEdits] = React.useState<Record<string, string>>({})
   const [addingUnit, setAddingUnit] = React.useState(false)
+  const [newUnitQr, setNewUnitQr] = React.useState('')
+  const [newUnitSerial, setNewUnitSerial] = React.useState('')
+  const [addUnitError, setAddUnitError] = React.useState('')
   const [repairUnitId, setRepairUnitId] = React.useState<string | null>(null)
   const [retireUnitId, setRetireUnitId] = React.useState<string | null>(null)
   const [expandedUnitId, setExpandedUnitId] = React.useState<string | null>(null)
@@ -436,12 +440,26 @@ function DetailDrawer({
   const handleAddUnit = async () => {
     if (!detail) return
     setAddingUnit(true)
-    await fetch(`/api/inventory/${detail.id}/units`, {
+    setAddUnitError('')
+    const qr = newUnitQr.trim()
+    const serial = newUnitSerial.trim()
+    const res = await fetch(`/api/inventory/${detail.id}/units`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ count: 1 }),
+      body: JSON.stringify({
+        count: 1,
+        ...(qr ? { qrCodeIds: [qr] } : {}),
+        ...(serial ? { serialNumbers: [serial] } : {}),
+      }),
     })
     setAddingUnit(false)
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}))
+      setAddUnitError(typeof d.error === 'string' ? d.error : 'Could not add unit.')
+      return
+    }
+    setNewUnitQr('')
+    setNewUnitSerial('')
     loadDetail(detail.id)
     onUpdated()
   }
@@ -702,15 +720,38 @@ function DetailDrawer({
                     </TableBody>
                   </Table>
                 </TableContainer>
-                <Button
-                  size="small"
-                  startIcon={addingUnit ? <CircularProgress size={14} /> : <AddIcon />}
-                  onClick={handleAddUnit}
-                  disabled={addingUnit}
-                  variant="outlined"
-                >
-                  {addingUnit ? 'Adding…' : '+ Add Unit'}
-                </Button>
+                <Stack spacing={1.5} sx={{ mt: 1, maxWidth: 420 }}>
+                  <Typography variant="caption" color="text.secondary">
+                    Add a unit and (optionally) register its existing QR label by scanning
+                    or typing the code.
+                  </Typography>
+                  <QrScanField
+                    value={newUnitQr}
+                    onChange={(c) => { setNewUnitQr(c); setAddUnitError('') }}
+                    label="QR label code (optional)"
+                    helperText="Leave blank to auto-generate an internal id"
+                  />
+                  <TextField
+                    size="small"
+                    label="Serial number (optional)"
+                    value={newUnitSerial}
+                    onChange={(e) => setNewUnitSerial(e.target.value)}
+                    fullWidth
+                  />
+                  {addUnitError && (
+                    <Alert severity="error" onClose={() => setAddUnitError('')}>{addUnitError}</Alert>
+                  )}
+                  <Button
+                    size="small"
+                    startIcon={addingUnit ? <CircularProgress size={14} /> : <AddIcon />}
+                    onClick={handleAddUnit}
+                    disabled={addingUnit}
+                    variant="outlined"
+                    sx={{ alignSelf: 'flex-start' }}
+                  >
+                    {addingUnit ? 'Adding…' : '+ Add Unit'}
+                  </Button>
+                </Stack>
               </>
             )}
 

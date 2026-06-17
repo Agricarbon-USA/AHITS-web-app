@@ -7,6 +7,8 @@ import {
   DialogContent, DialogActions,
 } from '@mui/material'
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner'
+import DirectionsCarIcon from '@mui/icons-material/DirectionsCar'
+import { useRouter } from 'next/navigation'
 import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 
@@ -46,11 +48,37 @@ const STATUS_COLORS: Record<string, 'success' | 'info' | 'warning' | 'error' | '
   RETIRED: 'default',
 }
 
+interface VehicleInfo {
+  id: string
+  name: string
+  type: string
+  status: string
+  qrCodeId: string
+  location: string | null
+  odometer: number | null
+}
+
+const VEHICLE_STATUS_LABELS: Record<string, string> = {
+  ACTIVE: 'Active',
+  IN_MAINTENANCE: 'In Maintenance',
+  OUT_OF_SERVICE: 'Out of Service',
+  RETIRED: 'Retired',
+}
+
+const VEHICLE_STATUS_COLORS: Record<string, 'success' | 'warning' | 'error' | 'default'> = {
+  ACTIVE: 'success',
+  IN_MAINTENANCE: 'warning',
+  OUT_OF_SERVICE: 'error',
+  RETIRED: 'default',
+}
+
 export default function OperatorScanPage() {
   const showToast = useToast()
+  const router = useRouter()
   const { mutate } = useOfflineQueue()
   const [scanning, setScanning] = React.useState(false)
   const [unit, setUnit] = React.useState<UnitInfo | null>(null)
+  const [vehicle, setVehicle] = React.useState<VehicleInfo | null>(null)
   const [error, setError] = React.useState('')
   const [activeRigId, setActiveRigId] = React.useState<string | null>(null)
   const [activeKitItems, setActiveKitItems] = React.useState<KitItemStub[]>([])
@@ -78,6 +106,7 @@ export default function OperatorScanPage() {
     setScanning(true)
     setError('')
     setUnit(null)
+    setVehicle(null)
     try {
       const bitmap = await createImageBitmap(file)
       const canvas = document.createElement('canvas')
@@ -92,14 +121,23 @@ export default function OperatorScanPage() {
         setError('No QR code detected in the image. Try again.')
         return
       }
-      const res = await fetch(`/api/inventory/units/by-qr/${encodeURIComponent(result.data)}`)
-      if (!res.ok) {
-        setError('QR code not recognised — this unit is not in the system.')
+      const code = encodeURIComponent(result.data)
+      // Context-aware resolution (PRD §7.7): a label is either an inventory unit
+      // or a vehicle. Try the unit first, then fall back to a vehicle.
+      const unitRes = await fetch(`/api/inventory/units/by-qr/${code}`)
+      if (unitRes.ok) {
+        const json = await unitRes.json()
+        setUnit({ ...json.unit, inventoryItem: json.item })
+        setReturnCondition('GOOD')
         return
       }
-      const json = await res.json()
-      setUnit({ ...json.unit, inventoryItem: json.item })
-      setReturnCondition('GOOD')
+      const vehRes = await fetch(`/api/vehicles/by-qr/${code}`)
+      if (vehRes.ok) {
+        const json = await vehRes.json()
+        setVehicle(json.vehicle)
+        return
+      }
+      setError('QR code not recognised — it is not registered to any unit or vehicle.')
     } catch {
       setError('Failed to process image. Please try again.')
     } finally {
@@ -299,6 +337,54 @@ export default function OperatorScanPage() {
                   )}
                 </Stack>
               )}
+            </Stack>
+          </Paper>
+        )}
+
+        {vehicle && (
+          <Paper variant="outlined" sx={{ p: 3, width: '100%', maxWidth: 480 }}>
+            <Stack spacing={1.5}>
+              <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
+                <Box>
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <DirectionsCarIcon color="action" />
+                    <Typography variant="h6" fontWeight={700}>{vehicle.name}</Typography>
+                  </Stack>
+                  <Typography variant="body2" color="text.secondary">{vehicle.type}</Typography>
+                </Box>
+                <Chip
+                  label={VEHICLE_STATUS_LABELS[vehicle.status] ?? vehicle.status}
+                  color={VEHICLE_STATUS_COLORS[vehicle.status] ?? 'default'}
+                  size="small"
+                />
+              </Stack>
+
+              {vehicle.location && (
+                <Box>
+                  <Typography variant="caption" color="text.secondary" fontWeight={600}>Location</Typography>
+                  <Typography variant="body2">{vehicle.location}</Typography>
+                </Box>
+              )}
+              {vehicle.odometer != null && (
+                <Box>
+                  <Typography variant="caption" color="text.secondary" fontWeight={600}>Odometer</Typography>
+                  <Typography variant="body2">{vehicle.odometer.toLocaleString()} km</Typography>
+                </Box>
+              )}
+
+              {vehicle.status === 'IN_MAINTENANCE' && (
+                <Alert severity="warning" sx={{ py: 0.5 }}>
+                  This vehicle is in maintenance — contact an admin before operating it.
+                </Alert>
+              )}
+
+              <Button
+                variant="contained"
+                startIcon={<DirectionsCarIcon />}
+                onClick={() => router.push(`/operator/daily-check?vehicleId=${vehicle.id}`)}
+              >
+                Start Daily Check
+              </Button>
             </Stack>
           </Paper>
         )}

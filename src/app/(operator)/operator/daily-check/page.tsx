@@ -57,12 +57,19 @@ export default function OperatorDailyCheckPage() {
   const [step, setStep] = React.useState(0)
 
   React.useEffect(() => {
+    // A scan of a vehicle label routes here as ?vehicleId=<id> (PRD §7.7) —
+    // preselect it when present.
+    const preselect =
+      typeof window !== 'undefined'
+        ? new URLSearchParams(window.location.search).get('vehicleId')
+        : null
+    if (preselect) setVehicleId(preselect)
     fetch('/api/deployments')
       .then((r) => r.json())
       .then((json) => {
         const active: ActiveRig | null = json[0] ?? null
         setRig(active)
-        if (active?.vehicles?.[0]) setVehicleId(active.vehicles[0].vehicle.id)
+        if (!preselect && active?.vehicles?.[0]) setVehicleId(active.vehicles[0].vehicle.id)
       })
       .catch(() => {})
   }, [])

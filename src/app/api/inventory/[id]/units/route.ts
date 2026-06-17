@@ -8,6 +8,9 @@ const bodySchema = z.object({
   count: z.number().int().min(1).max(200).default(1),
   // Optional serials, applied positionally to the newly created units.
   serialNumbers: z.array(z.string().min(1)).optional(),
+  // QR association-on-create (PRD §7.7): existing physical label codes, applied
+  // positionally to the new units. Omit an entry to auto-generate that unit's id.
+  qrCodeIds: z.array(z.string().trim().min(1)).optional(),
 })
 
 // POST /api/inventory/[id]/units
@@ -24,7 +27,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
   }
-  const { count, serialNumbers } = parsed.data
+  const { count, serialNumbers, qrCodeIds } = parsed.data
 
   try {
     const item = await prisma.inventoryItem.findFirst({
@@ -34,10 +37,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!item) return NextResponse.json({ error: 'Item not found' }, { status: 404 })
 
     await prisma.inventoryUnit.createMany({
-      data: Array.from({ length: count }, (_, i) => ({
-        inventoryItemId: id,
-        serialNumber: serialNumbers?.[i]?.trim() || null,
-      })),
+      data: Array.from({ length: count }, (_, i) => {
+        const qr = qrCodeIds?.[i]?.trim()
+        return {
+          inventoryItemId: id,
+          serialNumber: serialNumbers?.[i]?.trim() || null,
+          // Only set qrCodeId when a label code was supplied; otherwise let the
+          // schema default generate one.
+          ...(qr ? { qrCodeId: qr } : {}),
+        }
+      }),
     })
 
     const units = await prisma.inventoryUnit.findMany({
@@ -51,6 +60,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       { status: 201 },
     )
   } catch (err: unknown) {
+    // Duplicate QR label code.
+    if ((err as { code?: string }).code === 'P2002') {
+      return NextResponse.json(
+        { error: 'That QR label code is already assigned to another unit.' },
+        { status: 409 },
+      )
+    }
     const msg = err instanceof Error ? err.message : 'Failed to add units'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
