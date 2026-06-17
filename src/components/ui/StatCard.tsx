@@ -1,6 +1,7 @@
 import * as React from 'react'
 import { Card, CardContent, Typography, Box, Skeleton } from '@mui/material'
 import type { SvgIconComponent } from '@mui/icons-material'
+import Link from 'next/link'
 
 interface StatCardProps {
   title: string
@@ -9,11 +10,19 @@ interface StatCardProps {
   color?: string
   subtitle?: string
   loading?: boolean
+  /** When set, the whole card becomes a link to this route. */
+  href?: string
 }
 
-export function StatCard({ title, value, icon: Icon, color = 'primary.main', subtitle, loading }: StatCardProps) {
-  return (
-    <Card>
+export function StatCard({ title, value, icon: Icon, color = 'primary.main', subtitle, loading, href }: StatCardProps) {
+  const card = (
+    <Card
+      sx={
+        href
+          ? { height: '100%', transition: 'box-shadow .2s', cursor: 'pointer', '&:hover': { boxShadow: 4 } }
+          : { height: '100%' }
+      }
+    >
       <CardContent>
         <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
           <Box>
@@ -32,4 +41,13 @@ export function StatCard({ title, value, icon: Icon, color = 'primary.main', sub
       </CardContent>
     </Card>
   )
+
+  if (href) {
+    return (
+      <Link href={href} style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}>
+        {card}
+      </Link>
+    )
+  }
+  return card
 }

@@ -59,6 +59,35 @@ make logs            # Tail Cloud Run logs
 
 ---
 
+## Testing
+
+Tests run against an **isolated local Postgres** (Docker), never your real database.
+The suite deletes all rows between cases, so two guards make a production wipe
+impossible: `vitest.config.ts` requires `DATABASE_URL_TEST` (it will not fall back
+to `DATABASE_URL`), and `tests/setup.ts` refuses any database that isn't local or
+named `*test*`.
+
+**Prerequisite:** Docker running, and a `.env.test` file (copy from
+`.env.test.example` — it's gitignored).
+
+```bash
+make test            # one-shot: start test DB → apply schema → run the suite
+```
+
+Or step by step:
+
+```bash
+make test-db-up      # start the Docker Postgres test DB on :5433
+make test-prepare    # (re)apply the current Prisma schema to it
+make test            # run the suite
+make test-db-down    # stop the test DB and discard its data
+```
+
+If you run `npm test` without a test database configured, it stops with a clear
+error instead of touching production.
+
+---
+
 ## GCP Deployment
 
 ### Prerequisites

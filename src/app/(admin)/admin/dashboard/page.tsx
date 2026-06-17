@@ -6,6 +6,7 @@ import {
   Chip, CircularProgress, Divider,
 } from '@mui/material'
 import { StatCard } from '@/components/ui/StatCard'
+import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import DirectionsCarIcon from '@mui/icons-material/DirectionsCar'
 import BuildIcon from '@mui/icons-material/Build'
 import InventoryIcon from '@mui/icons-material/Inventory'
@@ -76,6 +77,9 @@ export default function AdminDashboardPage() {
     <Box>
       <Typography variant="h5" mb={3}>Overview</Typography>
       <Grid container spacing={3}>
+        <Grid item xs={12} sm={6} md={4}>
+          <StatCard title="Active Deployments" value={stats?.activeDeployments} icon={LocalShippingIcon} loading={statsLoading} href="/admin/deployments" subtitle="View all →" />
+        </Grid>
         <Grid item xs={12} sm={6} md={4}>
           <StatCard title="Active Vehicles" value={stats?.vehiclesActive} icon={DirectionsCarIcon} loading={statsLoading} />
         </Grid>

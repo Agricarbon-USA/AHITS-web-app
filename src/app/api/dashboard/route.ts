@@ -9,8 +9,10 @@ export async function GET() {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
 
-  const [vehiclesActive, vehiclesInMaintenance, itemsCheckedOut, overdueMaintenanceCount, pendingAlertsCount, todayChecksSubmitted] =
+  const [activeDeployments, vehiclesActive, vehiclesInMaintenance, itemsCheckedOut, overdueMaintenanceCount, pendingAlertsCount, todayChecksSubmitted] =
     await Promise.all([
+      // Active deployments = rigs that have started and not yet ended.
+      prisma.rig.count({ where: { endedAt: null } }),
       prisma.vehicle.count({ where: { status: 'ACTIVE' } }),
       prisma.vehicle.count({ where: { status: 'IN_MAINTENANCE' } }),
       // Count checked-out UNITS — InventoryUnit.status is the source of truth.
@@ -23,6 +25,6 @@ export async function GET() {
     ])
 
   return NextResponse.json({
-    data: { vehiclesActive, vehiclesInMaintenance, itemsCheckedOut, overdueMaintenanceCount, pendingAlertsCount, todayChecksSubmitted },
+    data: { activeDeployments, vehiclesActive, vehiclesInMaintenance, itemsCheckedOut, overdueMaintenanceCount, pendingAlertsCount, todayChecksSubmitted },
   })
 }

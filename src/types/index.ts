@@ -78,6 +78,7 @@ export interface OfflineQueueItem {
 
 // Dashboard stats
 export interface DashboardStats {
+  activeDeployments: number
   vehiclesActive: number
   vehiclesInMaintenance: number
   itemsCheckedOut: number
