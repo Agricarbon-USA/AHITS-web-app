@@ -792,9 +792,14 @@ export default function AdminInventoryPage() {
   const [search, setSearch] = React.useState('')
   const [categoryFilter, setCategoryFilter] = React.useState('')
   const [itemTypeFilter, setItemTypeFilter] = React.useState('')
+  const [hubFilter, setHubFilter] = React.useState('')
+  const [operatorFilter, setOperatorFilter] = React.useState('')
+  const [projectFilter, setProjectFilter] = React.useState('')
   const [loading, setLoading] = React.useState(true)
   const [categories, setCategories] = React.useState<CategoryOption[]>([])
   const [hubs, setHubs] = React.useState<HubOption[]>([])
+  const [operators, setOperators] = React.useState<UserOption[]>([])
+  const [projects, setProjects] = React.useState<{ id: string; name: string }[]>([])
   const [formItem, setFormItem] = React.useState<InventoryItemRow | null>(null)
   const [formOpen, setFormOpen] = React.useState(false)
   const [detailRow, setDetailRow] = React.useState<InventoryItemRow | null>(null)
@@ -806,17 +811,25 @@ export default function AdminInventoryPage() {
     if (search) params.set('q', search)
     if (categoryFilter) params.set('categoryId', categoryFilter)
     if (itemTypeFilter) params.set('itemType', itemTypeFilter)
+    if (hubFilter) params.set('hubId', hubFilter)
+    if (operatorFilter) params.set('operatorId', operatorFilter)
+    if (projectFilter) params.set('projectId', projectFilter)
     const res = await fetch(`/api/inventory?${params}`).then((r) => r.json()).catch(() => ({ data: [], total: 0 }))
     setItems(res.data ?? [])
     setTotal(res.total ?? 0)
     setLoading(false)
-  }, [page, pageSize, search, categoryFilter, itemTypeFilter])
+  }, [page, pageSize, search, categoryFilter, itemTypeFilter, hubFilter, operatorFilter, projectFilter])
 
   React.useEffect(() => { load() }, [load])
 
   React.useEffect(() => {
     fetch('/api/inventory/categories').then((r) => r.json()).then((d) => setCategories(d.data ?? [])).catch(() => {})
     fetch('/api/inventory/hubs').then((r) => r.json()).then((d) => setHubs(d.data ?? [])).catch(() => {})
+    fetch('/api/users').then((r) => r.json()).then((d) => {
+      const all = d.data ?? []
+      setOperators(all.filter((u: UserOption) => u.role === 'OPERATOR' || u.role === 'ADMIN'))
+    }).catch(() => {})
+    fetch('/api/projects').then((r) => r.json()).then((d) => setProjects(d.data ?? d ?? [])).catch(() => {})
   }, [])
 
   const handleRetire = async () => {
@@ -875,6 +888,51 @@ export default function AdminInventoryPage() {
             <MenuItem value="">All categories</MenuItem>
             {categories.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
           </TextField>
+        )}
+        {hubs.length > 0 && (
+          <TextField
+            select
+            size="small"
+            label="Hub"
+            value={hubFilter}
+            onChange={(e) => { setHubFilter(e.target.value); setPage(0) }}
+            sx={{ width: 180 }}
+          >
+            <MenuItem value="">All hubs</MenuItem>
+            {hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.name}</MenuItem>)}
+          </TextField>
+        )}
+        {operators.length > 0 && (
+          <TextField
+            select
+            size="small"
+            label="Operator"
+            value={operatorFilter}
+            onChange={(e) => { setOperatorFilter(e.target.value); setPage(0) }}
+            sx={{ width: 180 }}
+          >
+            <MenuItem value="">All operators</MenuItem>
+            {operators.map((o) => <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>)}
+          </TextField>
+        )}
+        {projects.length > 0 && (
+          <TextField
+            select
+            size="small"
+            label="Project"
+            value={projectFilter}
+            onChange={(e) => { setProjectFilter(e.target.value); setPage(0) }}
+            sx={{ width: 180 }}
+          >
+            <MenuItem value="">All projects</MenuItem>
+            {projects.map((p) => <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>)}
+          </TextField>
+        )}
+        {(categoryFilter || itemTypeFilter || hubFilter || operatorFilter || projectFilter || search) && (
+          <Button size="small" variant="text" onClick={() => {
+            setSearch(''); setCategoryFilter(''); setItemTypeFilter('');
+            setHubFilter(''); setOperatorFilter(''); setProjectFilter(''); setPage(0)
+          }}>Clear filters</Button>
         )}
       </Stack>
 

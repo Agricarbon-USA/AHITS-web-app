@@ -54,6 +54,7 @@ const addSchema = z.object({
 const dispositionSchema = z.object({
   kitItemId: z.string(),
   type: z.enum(['HUB', 'TRANSFER', 'INOPERABLE']),
+  quantity: z.number().int().min(1).optional(), // partial removal for consumables
   returnCondition: z.enum(['GOOD', 'IN_MAINTENANCE', 'INOPERABLE']).optional(),
   hubId: z.string().optional(),
   toOperatorId: z.string().optional(),
@@ -77,6 +78,18 @@ const removeSchema = z.object({
 async function getAuthorizedActiveRig(id: string, session: { userId: string; role: string }) {
   const rig = await prisma.rig.findUnique({ where: { id } })
   if (!rig || rig.endedAt) return null
+  if (session.role === 'ADMIN') return rig
+  if (rig.operatorId === session.userId) return rig
+  const secondary = await prisma.rigOperator.findUnique({
+    where: { rigId_operatorId: { rigId: id, operatorId: session.userId } },
+  })
+  if (secondary) return rig
+  return null
+}
+
+async function getAuthorizedRig(id: string, session: { userId: string; role: string }) {
+  const rig = await prisma.rig.findUnique({ where: { id } })
+  if (!rig) return null
   if (session.role === 'ADMIN') return rig
   if (rig.operatorId === session.userId) return rig
   const secondary = await prisma.rigOperator.findUnique({
@@ -212,13 +225,26 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     },
   })
 
-  await prisma.$transaction(async (tx) => {
+  try {
+    await prisma.$transaction(async (tx) => {
     for (const disp of itemDispositions) {
       const kitItem = kitItems.find((ki) => ki.id === disp.kitItemId)
       if (!kitItem) continue
       const inventoryItemId = kitItem.inventoryItemId
+      const isSerialized = kitItem.item.itemType === 'SERIALIZED'
 
-      await tx.kitItem.update({ where: { id: disp.kitItemId }, data: { removedAt: now } })
+      // Partial removal: consumables can return a subset of quantity
+      const removeQty = isSerialized ? 1 : Math.min(disp.quantity ?? kitItem.quantity, kitItem.quantity)
+      const fullRemoval = isSerialized || removeQty >= kitItem.quantity
+
+      if (fullRemoval) {
+        await tx.kitItem.update({ where: { id: disp.kitItemId }, data: { removedAt: now } })
+      } else {
+        await tx.kitItem.update({
+          where: { id: disp.kitItemId },
+          data: { quantity: kitItem.quantity - removeQty },
+        })
+      }
 
       if (disp.type === 'HUB') {
         await tx.checkLog.create({
@@ -246,7 +272,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
               status: 'CHECKED_OUT',
               ...(excludeUnitIds.length > 0 && { id: { notIn: excludeUnitIds } }),
             },
-            take: kitItem.quantity,
+            take: removeQty,
           })
           if (units.length > 0) {
             await tx.inventoryUnit.updateMany({
@@ -364,11 +390,16 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
           initiatedById: session.userId,
           note,
           status: 'PENDING',
-          items: { create: disps.map((d) => ({ kitItemId: d.kitItemId })) },
+          items: { create: disps.map((d) => ({ kitItemId: d.kitItemId, quantity: d.quantity })) },
         },
       })
     }
-  })
+    }) // end transaction
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Failed to process items'
+    console.error('[DELETE /api/deployments/[id]/items]', err)
+    return NextResponse.json({ error: msg }, { status: 500 })
+  }
 
   const updated = await prisma.rig.findUniqueOrThrow({ where: { id }, include: RIG_INCLUDE })
   return NextResponse.json(updated)

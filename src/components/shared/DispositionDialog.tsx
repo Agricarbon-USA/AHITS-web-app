@@ -35,6 +35,7 @@ type ReturnCondition = 'GOOD' | 'IN_MAINTENANCE' | 'INOPERABLE'
 interface ItemDisposition {
   kitItemId: string
   type: DispositionType
+  quantity?: number
   returnCondition?: ReturnCondition
   hubId?: string
   toOperatorId?: string
@@ -76,6 +77,19 @@ export function DispositionDialog({
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
+  // Reset state when dialog opens with new items
+  React.useEffect(() => {
+    if (open) {
+      const m = new Map<string, ItemDisposition>()
+      for (const item of items) {
+        m.set(item.kitItemId, { kitItemId: item.kitItemId, type: 'HUB', photoUrls: [] })
+      }
+      setDispositions(m)
+      setNote('')
+      setError(null)
+    }
+  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
+
   function setDisp(kitItemId: string, patch: Partial<ItemDisposition>) {
     setDispositions((prev) => {
       const next = new Map(prev)
@@ -100,7 +114,7 @@ export function DispositionDialog({
       })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
-        throw new Error(d.error ?? 'Request failed')
+        throw new Error(typeof d.error === 'string' ? d.error : 'Request failed')
       }
       onComplete()
     } catch (e) {
@@ -112,7 +126,7 @@ export function DispositionDialog({
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>{mode === 'end-deployment' ? 'End Deployment' : 'Return Items'}</DialogTitle>
+      <DialogTitle>{mode === 'end-deployment' ? 'End Deployment' : 'Return / Remove Items'}</DialogTitle>
       <DialogContent>
         <TextField
           label="Overall note"
@@ -126,13 +140,20 @@ export function DispositionDialog({
         <Stack spacing={2} divider={<Divider />}>
           {items.map((item) => {
             const disp = dispositions.get(item.kitItemId)!
+            const isConsumable = item.itemType === 'CONSUMABLE'
+            const currentQty = disp.quantity ?? item.quantity
             return (
               <Stack key={item.kitItemId} spacing={1}>
-                <Stack direction="row" alignItems="center" spacing={1}>
+                <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
                   <Typography variant="body2" fontWeight={600}>{item.name}</Typography>
                   <Chip size="small" label={item.itemType} />
                   {item.inventoryUnit?.serialNumber && (
                     <Chip size="small" label={`S/N: ${item.inventoryUnit.serialNumber}`} variant="outlined" />
+                  )}
+                  {isConsumable && (
+                    <Typography variant="caption" color="text.secondary">
+                      In kit: {item.quantity}
+                    </Typography>
                   )}
                 </Stack>
                 <TextField
@@ -146,14 +167,32 @@ export function DispositionDialog({
                   <MenuItem value="TRANSFER">Transfer to Operator</MenuItem>
                   <MenuItem value="INOPERABLE">Mark Inoperable / Damaged</MenuItem>
                 </TextField>
+                {/* Partial quantity for consumables */}
+                {isConsumable && item.quantity > 1 && (
+                  <TextField
+                    label="Quantity to remove"
+                    type="number"
+                    size="small"
+                    value={currentQty}
+                    onChange={(e) => {
+                      const v = Math.max(1, Math.min(item.quantity, parseInt(e.target.value) || 1))
+                      setDisp(item.kitItemId, { quantity: v })
+                    }}
+                    inputProps={{ min: 1, max: item.quantity }}
+                    helperText={currentQty < item.quantity
+                      ? `${item.quantity - currentQty} will remain in kit`
+                      : 'All will be removed'}
+                  />
+                )}
                 {disp.type === 'HUB' && (
                   <TextField
                     select
-                    label="Hub"
+                    label="Return hub (optional)"
                     size="small"
                     value={disp.hubId ?? ''}
-                    onChange={(e) => setDisp(item.kitItemId, { hubId: e.target.value })}
+                    onChange={(e) => setDisp(item.kitItemId, { hubId: e.target.value || undefined })}
                   >
+                    <MenuItem value="">— No specific hub —</MenuItem>
                     {hubs.map((h) => (
                       <MenuItem key={h.id} value={h.id}>{h.name} — {h.city}, {h.state}</MenuItem>
                     ))}
@@ -162,11 +201,12 @@ export function DispositionDialog({
                 {disp.type === 'TRANSFER' && (
                   <TextField
                     select
-                    label="Operator"
+                    label="Destination operator"
                     size="small"
                     value={disp.toOperatorId ?? ''}
                     onChange={(e) => setDisp(item.kitItemId, { toOperatorId: e.target.value })}
                   >
+                    <MenuItem value="" disabled>Select operator…</MenuItem>
                     {operators.map((o) => (
                       <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>
                     ))}

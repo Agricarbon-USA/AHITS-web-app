@@ -522,6 +522,8 @@ function DeploymentDrawer({
   const [addItemOpen, setAddItemOpen] = React.useState(false)
   const [pendingItems, setPendingItems] = React.useState<Map<string, AdminKitEntry>>(new Map())
   const [noteDialog, setNoteDialog] = React.useState<null | 'addVehicles' | 'removeVehicles' | 'addItems' | 'removeItems' | 'end'>(null)
+  const [vehicleDispositions, setVehicleDispositions] = React.useState<Map<string, { dispositionType: string; toOperatorId?: string }>>(new Map())
+  const [vehicleRemoveNote, setVehicleRemoveNote] = React.useState('')
   const [actionLoading, setActionLoading] = React.useState(false)
   const [transferOpen, setTransferOpen] = React.useState(false)
   const [pendingTransfers, setPendingTransfers] = React.useState<TransferRow[]>([])
@@ -600,29 +602,49 @@ function DeploymentDrawer({
 
   const handleAddVehicles = async (note: string, photoUrls: string[]) => {
     setActionLoading(true)
-    await fetch(`/api/deployments/${rig.id}/vehicles`, {
+    const res = await fetch(`/api/deployments/${rig.id}/vehicles`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ vehicleIds: Array.from(pendingVehicles), note, photoUrls }),
     })
     setActionLoading(false)
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}))
+      showToast(typeof d.error === 'string' ? d.error : 'Failed to add vehicles')
+      return
+    }
     setNoteDialog(null)
     setAddVehicleOpen(false)
     setPendingVehicles(new Set())
     await refresh()
   }
 
-  const handleRemoveVehicles = async (note: string, photoUrls: string[]) => {
+  const handleRemoveVehicles = async () => {
     setActionLoading(true)
-    await fetch(`/api/deployments/${rig.id}/vehicles`, {
+    const vehiclesList = Array.from(selVehicles).map((vehicleId) => {
+      const disp = vehicleDispositions.get(vehicleId)
+      return {
+        vehicleId,
+        dispositionType: disp?.dispositionType ?? 'AVAILABLE',
+        toOperatorId: disp?.toOperatorId,
+      }
+    })
+    const res = await fetch(`/api/deployments/${rig.id}/vehicles`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vehicleIds: Array.from(selVehicles), note, photoUrls }),
+      body: JSON.stringify({ vehicles: vehiclesList, note: vehicleRemoveNote || 'Removed from rig' }),
     })
     setActionLoading(false)
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}))
+      showToast(typeof d.error === 'string' ? d.error : 'Failed to remove vehicles')
+      return
+    }
     setNoteDialog(null)
     setRemovingVehicles(false)
     setSelVehicles(new Set())
+    setVehicleDispositions(new Map())
+    setVehicleRemoveNote('')
     await refresh()
   }
 
@@ -750,7 +772,14 @@ function DeploymentDrawer({
                     <Button size="small" variant="outlined" color="error" onClick={() => setRemovingVehicles(true)}>Remove</Button>
                   )}
                   {removingVehicles && selVehicles.size > 0 && (
-                    <Button size="small" variant="contained" color="error" onClick={() => setNoteDialog('removeVehicles')}>
+                    <Button size="small" variant="contained" color="error" onClick={() => {
+                      // Initialize each selected vehicle with default disposition
+                      const m = new Map<string, { dispositionType: string; toOperatorId?: string }>()
+                      for (const vid of selVehicles) m.set(vid, { dispositionType: 'AVAILABLE' })
+                      setVehicleDispositions(m)
+                      setVehicleRemoveNote('')
+                      setNoteDialog('removeVehicles')
+                    }}>
                       Remove ({selVehicles.size})
                     </Button>
                   )}
@@ -1048,15 +1077,75 @@ function DeploymentDrawer({
         onConfirm={handleAddVehicles}
         confirmLabel="Add Vehicles"
       />
-      <NotePhotoDialog
+      {/* Vehicle disposition dialog */}
+      <Dialog
         open={noteDialog === 'removeVehicles'}
-        title={`Remove ${selVehicles.size} vehicle(s) from rig`}
-        loading={actionLoading}
         onClose={() => setNoteDialog(null)}
-        onConfirm={handleRemoveVehicles}
-        confirmLabel="Remove Vehicles"
-        confirmColor="error"
-      />
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Remove {selVehicles.size} Vehicle{selVehicles.size !== 1 ? 's' : ''} from Rig</DialogTitle>
+        <DialogContent>
+          <TextField
+            label="Overall note"
+            value={vehicleRemoveNote}
+            onChange={(e) => setVehicleRemoveNote(e.target.value)}
+            fullWidth multiline rows={2} sx={{ mb: 3, mt: 1 }}
+          />
+          <Stack spacing={2} divider={<Divider />}>
+            {Array.from(selVehicles).map((vehicleId) => {
+              const rv = rig.vehicles.find((r) => r.vehicle.id === vehicleId)
+              const disp = vehicleDispositions.get(vehicleId) ?? { dispositionType: 'AVAILABLE' }
+              return (
+                <Stack key={vehicleId} spacing={1}>
+                  <Typography variant="body2" fontWeight={600}>{rv?.vehicle.name ?? vehicleId}</Typography>
+                  <TextField
+                    select label="Disposition" size="small"
+                    value={disp.dispositionType}
+                    onChange={(e) => {
+                      const m = new Map(vehicleDispositions)
+                      m.set(vehicleId, { ...disp, dispositionType: e.target.value })
+                      setVehicleDispositions(m)
+                    }}
+                  >
+                    <MenuItem value="AVAILABLE">Return to Fleet (Available)</MenuItem>
+                    <MenuItem value="IN_MAINTENANCE">Send to Maintenance</MenuItem>
+                    <MenuItem value="RETIRED">Retire Vehicle</MenuItem>
+                    <MenuItem value="TRANSFER">Transfer to Another Operator</MenuItem>
+                  </TextField>
+                  {disp.dispositionType === 'TRANSFER' && (
+                    <TextField
+                      select label="Destination operator" size="small"
+                      value={disp.toOperatorId ?? ''}
+                      onChange={(e) => {
+                        const m = new Map(vehicleDispositions)
+                        m.set(vehicleId, { ...disp, toOperatorId: e.target.value })
+                        setVehicleDispositions(m)
+                      }}
+                    >
+                      <MenuItem value="" disabled>Select operator…</MenuItem>
+                      {operators.filter((o) => o.id !== rig.operator.id).map((o) => (
+                        <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>
+                      ))}
+                    </TextField>
+                  )}
+                </Stack>
+              )
+            })}
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setNoteDialog(null)} disabled={actionLoading}>Cancel</Button>
+          <Button
+            variant="contained" color="error"
+            onClick={handleRemoveVehicles}
+            disabled={actionLoading}
+            startIcon={actionLoading ? <CircularProgress size={16} /> : undefined}
+          >
+            {actionLoading ? 'Working…' : 'Confirm Remove'}
+          </Button>
+        </DialogActions>
+      </Dialog>
       <NotePhotoDialog
         open={noteDialog === 'addItems'}
         title="Add items to kit"

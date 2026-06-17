@@ -624,6 +624,11 @@ export default function MyRigPage() {
   const [removeQty, setRemoveQty] = React.useState(1)
   const [removeCondition, setRemoveCondition] = React.useState('GOOD')
 
+  // Log Usage (consumable daily depletion)
+  const [logUsageDialog, setLogUsageDialog] = React.useState<{ open: boolean; kitItem: KitItemRow | null }>({ open: false, kitItem: null })
+  const [logUsageQty, setLogUsageQty] = React.useState(1)
+  const [logUsageLoading, setLogUsageLoading] = React.useState(false)
+
   // Add pickers
   const [addVehicleOpen, setAddVehicleOpen] = React.useState(false)
   const [pendingVehicles, setPendingVehicles] = React.useState<Set<string>>(new Set())
@@ -702,6 +707,25 @@ export default function MyRigPage() {
     })
     if (res.ok) {
       setRemoveDialog({ open: false, kitItem: null })
+      await load()
+    }
+  }
+
+  const handleLogUsage = async () => {
+    if (!logUsageDialog.kitItem || !rig) return
+    setLogUsageLoading(true)
+    const res = await fetch(`/api/deployments/${rig.id}/items/${logUsageDialog.kitItem.id}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        quantity: logUsageQty,
+        returnCondition: 'GOOD',
+        notes: `Daily usage log — ${logUsageQty} used`,
+      }),
+    })
+    setLogUsageLoading(false)
+    if (res.ok) {
+      setLogUsageDialog({ open: false, kitItem: null })
       await load()
     }
   }
@@ -945,7 +969,18 @@ export default function MyRigPage() {
                         <Chip size="small" label={`×${ki.quantity}`}
                           color={isLow ? 'warning' : 'default'} />
                       </Stack>
-                      {!removingItems && (
+                      {!removingItems && ki.item.itemType === 'CONSUMABLE' && (
+                        <Tooltip title="Log daily usage">
+                          <IconButton size="small" color="warning"
+                            onClick={() => {
+                              setLogUsageDialog({ open: true, kitItem: ki })
+                              setLogUsageQty(1)
+                            }}>
+                            <RemoveCircleOutlineIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                      {!removingItems && ki.item.itemType !== 'CONSUMABLE' && (
                         <Tooltip title="Return item">
                           <IconButton size="small" color="error"
                             onClick={() => {
@@ -1339,6 +1374,38 @@ export default function MyRigPage() {
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => setRemoveDialog({ open: false, kitItem: null })}>Cancel</Button>
           <Button variant="contained" color="error" onClick={handleRemoveItem}>Return</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Log Usage dialog — consumables only */}
+      <Dialog open={logUsageDialog.open} onClose={() => setLogUsageDialog({ open: false, kitItem: null })} maxWidth="xs" fullWidth>
+        <DialogTitle>Log Daily Usage</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" mb={2}>
+            Record how many <strong>{logUsageDialog.kitItem?.item.name}</strong> were consumed today.
+            Remaining in kit: {logUsageDialog.kitItem?.quantity ?? 0}
+          </Typography>
+          <TextField
+            type="number"
+            label="Quantity used"
+            value={logUsageQty}
+            onChange={(e) => setLogUsageQty(Math.max(1, Math.min(parseInt(e.target.value) || 1, logUsageDialog.kitItem?.quantity ?? 1)))}
+            inputProps={{ min: 1, max: logUsageDialog.kitItem?.quantity ?? 1 }}
+            fullWidth
+            autoFocus
+          />
+          {logUsageQty >= (logUsageDialog.kitItem?.quantity ?? 0) && (
+            <Typography variant="caption" color="warning.main" mt={1} display="block">
+              This will remove all remaining units from your kit.
+            </Typography>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setLogUsageDialog({ open: false, kitItem: null })} disabled={logUsageLoading}>Cancel</Button>
+          <Button variant="contained" onClick={handleLogUsage} disabled={logUsageLoading}
+            startIcon={logUsageLoading ? <CircularProgress size={16} /> : undefined}>
+            {logUsageLoading ? 'Saving…' : 'Log Usage'}
+          </Button>
         </DialogActions>
       </Dialog>
 

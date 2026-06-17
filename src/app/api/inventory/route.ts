@@ -26,6 +26,9 @@ export async function GET(req: NextRequest) {
   const category = searchParams.get('category') as EquipmentCategory | null
   const categoryId = searchParams.get('categoryId')
   const itemType = searchParams.get('itemType')
+  const hubId = searchParams.get('hubId')
+  const operatorId = searchParams.get('operatorId')
+  const projectId = searchParams.get('projectId')
   // Accept both 'q' and 'search' for backward compat
   const q = searchParams.get('q') ?? searchParams.get('search')
 
@@ -35,7 +38,23 @@ export async function GET(req: NextRequest) {
     ...(category && { category }),
     ...(categoryId && { categoryId }),
     ...(itemType && { itemType }),
+    ...(hubId && { hubId }),
     ...(q && { name: { contains: q, mode: 'insensitive' as const } }),
+    // Filter by active operator/project via kit items → kit → rig
+    ...((operatorId || projectId) && {
+      kitItems: {
+        some: {
+          removedAt: null,
+          kit: {
+            rig: {
+              endedAt: null,
+              ...(operatorId && { operatorId }),
+              ...(projectId && { projectId }),
+            },
+          },
+        },
+      },
+    }),
   }
 
   const [items, total] = await Promise.all([
