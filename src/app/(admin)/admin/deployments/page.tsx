@@ -83,9 +83,9 @@ interface InventoryOption {
   id: string
   name: string
   itemType: 'CONSUMABLE' | 'SERIALIZED'
-  unitCounts: { available: number; checkedOut: number; inMaintenance: number; inoperable: number; retired: number }
+  unitCounts: { available: number; checkedOut: number; inMaintenance: number; inoperable: number; retired: number; totalUnits: number }
   availableUnits: { id: string; serialNumber: string | null; position: number }[]
-  category: string
+  category: { id: string; name: string }
 }
 
 type AdminKitEntry =
@@ -394,7 +394,7 @@ function NewDeploymentDialog({
                         <Box flexGrow={1}>
                           <Typography variant="body2">{item.name}</Typography>
                           <Stack direction="row" spacing={0.5} mt={0.25}>
-                            <Chip size="small" label={item.category} sx={{ height: 16, fontSize: 10 }} />
+                            <Chip size="small" label={item.category?.name ?? ''} sx={{ height: 16, fontSize: 10 }} />
                             {isSerialized && (
                               <Chip size="small" label="Serialized" variant="outlined" color="primary" sx={{ height: 16, fontSize: 10 }} />
                             )}
@@ -955,7 +955,7 @@ function DeploymentDrawer({
                       <Box flexGrow={1}>
                         <Typography variant="body2">{item.name}</Typography>
                         <Stack direction="row" spacing={0.5}>
-                          <Chip size="small" label={item.category} sx={{ height: 16, fontSize: 10 }} />
+                          <Chip size="small" label={item.category?.name ?? ''} sx={{ height: 16, fontSize: 10 }} />
                           {isSerialized && (
                             <Chip size="small" label="Serialized" variant="outlined" color="primary" sx={{ height: 16, fontSize: 10 }} />
                           )}
@@ -1163,7 +1163,15 @@ export default function AdminDeploymentsPage() {
   React.useEffect(() => {
     fetch('/api/users').then((r) => r.json()).then((d) => setOperators(d.data ?? [])).catch(() => {})
     fetch('/api/vehicles').then((r) => r.json()).then((d) => setVehicles(d.data ?? d ?? [])).catch(() => {})
-    fetch('/api/inventory?pageSize=200').then((r) => r.json()).then((d) => setInventoryItems(d.data ?? [])).catch(() => {})
+    fetch('/api/inventory?pageSize=200').then((r) => r.json()).then((d) => {
+      const items = (d.data ?? []).map((item: InventoryOption & { units?: { id: string; serialNumber: string | null; status: string }[] }) => ({
+        ...item,
+        availableUnits: (item.units ?? [])
+          .filter((u) => u.status === 'AVAILABLE')
+          .map((u, idx) => ({ id: u.id, serialNumber: u.serialNumber, position: idx + 1 })),
+      }))
+      setInventoryItems(items)
+    }).catch(() => {})
     fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(d ?? [])).catch(() => {})
   }, [])
 
