@@ -6,7 +6,7 @@ import {
   Chip, CircularProgress, Checkbox, TextField, MenuItem,
   Dialog, DialogTitle, DialogContent, DialogActions, List,
   ListItem, ListItemText, ListItemIcon, Stepper, Step, StepLabel,
-  Alert, Switch, FormControlLabel, Divider,
+  Alert, Switch, FormControlLabel, Divider, IconButton, Tooltip,
 } from '@mui/material'
 import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import TerrainIcon from '@mui/icons-material/Terrain'
@@ -16,6 +16,7 @@ import SwapHorizIcon from '@mui/icons-material/SwapHoriz'
 import StopCircleIcon from '@mui/icons-material/StopCircle'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner'
+import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline'
 import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
 import { DispositionDialog, KitItemSummary } from '@/components/shared/DispositionDialog'
 import { RentalVehicleForm, RentalVehicleFields } from '@/components/shared/RentalVehicleForm'
@@ -146,6 +147,9 @@ function TransferDialog({
   const [selKitItems, setSelKitItems] = React.useState<Set<string>>(
     new Set(kitItems.map((ki) => ki.id))
   )
+  const [transferQtys, setTransferQtys] = React.useState<Map<string, number>>(
+    new Map(kitItems.map((ki) => [ki.id, ki.quantity]))
+  )
   const [loading, setLoading] = React.useState(false)
 
   const doTransfer = async (note: string, photoUrls: string[]) => {
@@ -158,7 +162,13 @@ function TransferDialog({
         note,
         photoUrls,
         vehicleIds: Array.from(selVehicles),
-        kitItemIds: Array.from(selKitItems),
+        items: kitItems
+          .filter((ki) => selKitItems.has(ki.id))
+          .map((ki) => ({
+            kitItemId: ki.id,
+            quantity: transferQtys.get(ki.id) ?? ki.quantity,
+            inventoryUnitId: ki.inventoryUnit?.id ?? undefined,
+          })),
       }),
     })
     setLoading(false)
@@ -226,18 +236,43 @@ function TransferDialog({
             {kitItems.length > 0 && (
               <Box>
                 <Typography variant="subtitle2" fontWeight={600} mb={1}>Kit Items</Typography>
-                {kitItems.map((ki) => (
-                  <Stack key={ki.id} direction="row" alignItems="center" spacing={1}>
-                    <Checkbox size="small" checked={selKitItems.has(ki.id)}
-                      onChange={(e) => {
-                        const s = new Set(selKitItems)
-                        e.target.checked ? s.add(ki.id) : s.delete(ki.id)
-                        setSelKitItems(s)
-                      }} />
-                    <Typography variant="body2">{ki.item.name}</Typography>
-                    <Typography variant="caption" color="text.secondary">×{ki.quantity}</Typography>
-                  </Stack>
-                ))}
+                <Stack spacing={0.5}>
+                  {kitItems.map((ki) => (
+                    <Stack key={ki.id} direction="row" alignItems="center" spacing={1}>
+                      <Checkbox size="small" checked={selKitItems.has(ki.id)}
+                        onChange={(e) => {
+                          const s = new Set(selKitItems)
+                          e.target.checked ? s.add(ki.id) : s.delete(ki.id)
+                          setSelKitItems(s)
+                        }} />
+                      <Box flexGrow={1}>
+                        <Typography variant="body2">{ki.item.name}</Typography>
+                        {ki.inventoryUnit && (
+                          <Typography variant="caption" color="text.secondary">
+                            {ki.inventoryUnit.serialNumber ?? ki.inventoryUnit.qrCodeId.slice(0, 8)}
+                          </Typography>
+                        )}
+                      </Box>
+                      {ki.item.itemType === 'CONSUMABLE' && selKitItems.has(ki.id) ? (
+                        <TextField
+                          type="number"
+                          size="small"
+                          value={transferQtys.get(ki.id) ?? ki.quantity}
+                          onChange={(e) => {
+                            const qty = Math.max(1, Math.min(parseInt(e.target.value) || 1, ki.quantity))
+                            const m = new Map(transferQtys)
+                            m.set(ki.id, qty)
+                            setTransferQtys(m)
+                          }}
+                          inputProps={{ min: 1, max: ki.quantity }}
+                          sx={{ width: 70 }}
+                        />
+                      ) : (
+                        <Typography variant="caption" color="text.secondary">×{ki.quantity}</Typography>
+                      )}
+                    </Stack>
+                  ))}
+                </Stack>
               </Box>
             )}
           </Stack>
@@ -448,9 +483,14 @@ export default function MyRigPage() {
   const [removingVehicles, setRemovingVehicles] = React.useState(false)
   const [selVehicles, setSelVehicles] = React.useState<Set<string>>(new Set())
 
-  // Kit remove
+  // Kit remove (bulk — DispositionDialog flow)
   const [removingItems, setRemovingItems] = React.useState(false)
   const [selItems, setSelItems] = React.useState<Set<string>>(new Set())
+
+  // Kit remove (per-item — simple dialog)
+  const [removeDialog, setRemoveDialog] = React.useState<{ open: boolean; kitItem: KitItemRow | null }>({ open: false, kitItem: null })
+  const [removeQty, setRemoveQty] = React.useState(1)
+  const [removeCondition, setRemoveCondition] = React.useState('GOOD')
 
   // Add pickers
   const [addVehicleOpen, setAddVehicleOpen] = React.useState(false)
@@ -520,6 +560,19 @@ export default function MyRigPage() {
     setCancelLoading(false)
     setCancelTransferId(null)
     await loadTransfers()
+  }
+
+  const handleRemoveItem = async () => {
+    if (!removeDialog.kitItem || !rig) return
+    const res = await fetch(`/api/deployments/${rig.id}/items/${removeDialog.kitItem.id}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quantity: removeQty, returnCondition: removeCondition }),
+    })
+    if (res.ok) {
+      setRemoveDialog({ open: false, kitItem: null })
+      await load()
+    }
   }
 
   const kitItems = rig?.kits.flatMap((k) => k.items) ?? []
@@ -757,6 +810,18 @@ export default function MyRigPage() {
                         <Chip size="small" label={`×${ki.quantity}`}
                           color={isLow ? 'warning' : 'default'} />
                       </Stack>
+                      {!removingItems && (
+                        <Tooltip title="Return item">
+                          <IconButton size="small" color="error"
+                            onClick={() => {
+                              setRemoveDialog({ open: true, kitItem: ki })
+                              setRemoveQty(ki.quantity)
+                              setRemoveCondition('GOOD')
+                            }}>
+                            <RemoveCircleOutlineIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
                     </Stack>
                   )
                 })}
@@ -1111,6 +1176,37 @@ export default function MyRigPage() {
         onConfirm={(note, photoUrls) => doAction('addItems', note, photoUrls)}
         confirmLabel="Add Items"
       />
+      {/* Per-item return dialog */}
+      <Dialog open={removeDialog.open} onClose={() => setRemoveDialog({ open: false, kitItem: null })} maxWidth="xs" fullWidth>
+        <DialogTitle>Return Item</DialogTitle>
+        <DialogContent>
+          <Typography mb={2}>
+            Returning <strong>{removeDialog.kitItem?.item.name}</strong>
+            {removeDialog.kitItem?.inventoryUnit && ` (Unit: ${removeDialog.kitItem.inventoryUnit.serialNumber ?? removeDialog.kitItem.inventoryUnit.qrCodeId.slice(0, 8)})`}
+          </Typography>
+          {removeDialog.kitItem?.item.itemType === 'CONSUMABLE' && (
+            <TextField
+              type="number"
+              label="Quantity to return"
+              value={removeQty}
+              onChange={(e) => setRemoveQty(Math.max(1, Math.min(parseInt(e.target.value) || 1, removeDialog.kitItem?.quantity ?? 1)))}
+              inputProps={{ min: 1, max: removeDialog.kitItem?.quantity ?? 1 }}
+              fullWidth
+              sx={{ mb: 2 }}
+            />
+          )}
+          <TextField select label="Condition" value={removeCondition} onChange={(e) => setRemoveCondition(e.target.value)} fullWidth>
+            <MenuItem value="GOOD">Good</MenuItem>
+            <MenuItem value="IN_MAINTENANCE">Needs Maintenance</MenuItem>
+            <MenuItem value="INOPERABLE">Inoperable</MenuItem>
+          </TextField>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setRemoveDialog({ open: false, kitItem: null })}>Cancel</Button>
+          <Button variant="contained" color="error" onClick={handleRemoveItem}>Return</Button>
+        </DialogActions>
+      </Dialog>
+
       {noteDialog === 'removeItems' && selItems.size > 0 && (
         <DispositionDialog
           open={true}

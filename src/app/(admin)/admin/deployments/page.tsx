@@ -16,6 +16,7 @@ import AgricultureIcon from '@mui/icons-material/Agriculture'
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz'
 import StopCircleIcon from '@mui/icons-material/StopCircle'
 import CloseIcon from '@mui/icons-material/Close'
+import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline'
 import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
 import { DispositionDialog } from '@/components/shared/DispositionDialog'
 import type { HubOption, UserOption } from '@/components/shared/DispositionDialog'
@@ -43,7 +44,8 @@ interface RigVehicleRow {
 interface KitItemRow {
   id: string
   quantity: number
-  item: { id: string; name: string; category: { name: string } }
+  item: { id: string; name: string; itemType: string; category: { name: string } }
+  inventoryUnit: { id: string; serialNumber: string | null; qrCodeId: string } | null
 }
 
 interface KitRow {
@@ -130,15 +132,30 @@ function TransferDialog({
   const [toOperatorId, setToOperatorId] = React.useState('')
   const [selVehicles, setSelVehicles] = React.useState<Set<string>>(new Set(rig.vehicles.map((rv) => rv.vehicle.id)))
   const [selKitItems, setSelKitItems] = React.useState<Set<string>>(new Set(rig.kits.flatMap((k) => k.items.map((ki) => ki.id))))
-  const [loading, setLoading] = React.useState(false)
   const kitItems = rig.kits.flatMap((k) => k.items)
+  const [transferQtys, setTransferQtys] = React.useState<Map<string, number>>(
+    new Map(kitItems.map((ki) => [ki.id, ki.quantity]))
+  )
+  const [loading, setLoading] = React.useState(false)
 
   const doTransfer = async (note: string, photoUrls: string[]) => {
     setLoading(true)
     await fetch(`/api/deployments/${rig.id}/transfer`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ toOperatorId, note, photoUrls, vehicleIds: Array.from(selVehicles), kitItemIds: Array.from(selKitItems) }),
+      body: JSON.stringify({
+        toOperatorId,
+        note,
+        photoUrls,
+        vehicleIds: Array.from(selVehicles),
+        items: kitItems
+          .filter((ki) => selKitItems.has(ki.id))
+          .map((ki) => ({
+            kitItemId: ki.id,
+            quantity: transferQtys.get(ki.id) ?? ki.quantity,
+            inventoryUnitId: ki.inventoryUnit?.id ?? undefined,
+          })),
+      }),
     })
     setLoading(false)
     showToast(`Transfer request sent — waiting for ${operators.find((o) => o.id === toOperatorId)?.name ?? 'operator'} to accept.`)
@@ -200,8 +217,31 @@ function TransferDialog({
                     <Stack key={ki.id} direction="row" alignItems="center" spacing={1}>
                       <Checkbox size="small" checked={selKitItems.has(ki.id)}
                         onChange={(e) => { const s = new Set(selKitItems); e.target.checked ? s.add(ki.id) : s.delete(ki.id); setSelKitItems(s) }} />
-                      <Typography variant="body2">{ki.item.name}</Typography>
-                      <Typography variant="caption" color="text.secondary">×{ki.quantity}</Typography>
+                      <Box flexGrow={1}>
+                        <Typography variant="body2">{ki.item.name}</Typography>
+                        {ki.inventoryUnit && (
+                          <Typography variant="caption" color="text.secondary">
+                            {ki.inventoryUnit.serialNumber ?? ki.inventoryUnit.qrCodeId.slice(0, 8)}
+                          </Typography>
+                        )}
+                      </Box>
+                      {ki.item.itemType === 'CONSUMABLE' && selKitItems.has(ki.id) ? (
+                        <TextField
+                          type="number"
+                          size="small"
+                          value={transferQtys.get(ki.id) ?? ki.quantity}
+                          onChange={(e) => {
+                            const qty = Math.max(1, Math.min(parseInt(e.target.value) || 1, ki.quantity))
+                            const m = new Map(transferQtys)
+                            m.set(ki.id, qty)
+                            setTransferQtys(m)
+                          }}
+                          inputProps={{ min: 1, max: ki.quantity }}
+                          sx={{ width: 70 }}
+                        />
+                      ) : (
+                        <Typography variant="caption" color="text.secondary">×{ki.quantity}</Typography>
+                      )}
                     </Stack>
                   ))}
                 </Stack>
@@ -427,6 +467,9 @@ function DeploymentDrawer({
   const [selVehicles, setSelVehicles] = React.useState<Set<string>>(new Set())
   const [removingItems, setRemovingItems] = React.useState(false)
   const [selItems, setSelItems] = React.useState<Set<string>>(new Set())
+  const [removeDialog, setRemoveDialog] = React.useState<{ open: boolean; kitItem: KitItemRow | null }>({ open: false, kitItem: null })
+  const [removeQty, setRemoveQty] = React.useState(1)
+  const [removeCondition, setRemoveCondition] = React.useState('GOOD')
   const [addVehicleOpen, setAddVehicleOpen] = React.useState(false)
   const [pendingVehicles, setPendingVehicles] = React.useState<Set<string>>(new Set())
   const [addItemOpen, setAddItemOpen] = React.useState(false)
@@ -544,12 +587,37 @@ function DeploymentDrawer({
     await refresh()
   }
 
+  const handleRemoveItem = async () => {
+    if (!removeDialog.kitItem) return
+    const res = await fetch(`/api/deployments/${rig.id}/items/${removeDialog.kitItem.id}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quantity: removeQty, returnCondition: removeCondition }),
+    })
+    if (res.ok) {
+      setRemoveDialog({ open: false, kitItem: null })
+      await refresh()
+    }
+  }
+
   const selectedItems = kitItems
     .filter((ki) => selItems.has(ki.id))
-    .map((ki) => ({ kitItemId: ki.id, itemId: ki.item.id, name: ki.item.name, quantity: ki.quantity }))
+    .map((ki) => ({
+      kitItemId: ki.id,
+      itemId: ki.item.id,
+      name: ki.item.name,
+      quantity: ki.quantity,
+      itemType: ki.item.itemType,
+      inventoryUnit: ki.inventoryUnit ?? null,
+    }))
 
   const allKitItemSummaries = kitItems.map((ki) => ({
-    kitItemId: ki.id, itemId: ki.item.id, name: ki.item.name, quantity: ki.quantity,
+    kitItemId: ki.id,
+    itemId: ki.item.id,
+    name: ki.item.name,
+    quantity: ki.quantity,
+    itemType: ki.item.itemType,
+    inventoryUnit: ki.inventoryUnit ?? null,
   }))
 
   return (
@@ -676,9 +744,28 @@ function DeploymentDrawer({
                       <Checkbox size="small" checked={selItems.has(ki.id)}
                         onChange={(e) => { const s = new Set(selItems); e.target.checked ? s.add(ki.id) : s.delete(ki.id); setSelItems(s) }} />
                     )}
-                    <Typography variant="body2" flexGrow={1}>{ki.item.name}</Typography>
+                    <Box flexGrow={1}>
+                      <Typography variant="body2">{ki.item.name}</Typography>
+                      {ki.inventoryUnit && (
+                        <Typography variant="caption" color="text.secondary">
+                          Unit: {ki.inventoryUnit.serialNumber ?? ki.inventoryUnit.qrCodeId.slice(0, 8)}
+                        </Typography>
+                      )}
+                    </Box>
                     <Chip size="small" label={ki.item.category.name} sx={{ height: 18, fontSize: 10 }} />
                     <Typography variant="body2" color="text.secondary">×{ki.quantity}</Typography>
+                    {isActive && !removingItems && (
+                      <Tooltip title="Return item">
+                        <IconButton size="small" color="error"
+                          onClick={() => {
+                            setRemoveDialog({ open: true, kitItem: ki })
+                            setRemoveQty(ki.quantity)
+                            setRemoveCondition('GOOD')
+                          }}>
+                          <RemoveCircleOutlineIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
                   </Stack>
                 ))}
               </Stack>
@@ -878,6 +965,37 @@ function DeploymentDrawer({
         onConfirm={handleAddItems}
         confirmLabel="Add Items"
       />
+
+      {/* Per-item return dialog */}
+      <Dialog open={removeDialog.open} onClose={() => setRemoveDialog({ open: false, kitItem: null })} maxWidth="xs" fullWidth>
+        <DialogTitle>Return Item</DialogTitle>
+        <DialogContent>
+          <Typography mb={2}>
+            Returning <strong>{removeDialog.kitItem?.item.name}</strong>
+            {removeDialog.kitItem?.inventoryUnit && ` (Unit: ${removeDialog.kitItem.inventoryUnit.serialNumber ?? removeDialog.kitItem.inventoryUnit.qrCodeId.slice(0, 8)})`}
+          </Typography>
+          {removeDialog.kitItem?.item.itemType === 'CONSUMABLE' && (
+            <TextField
+              type="number"
+              label="Quantity to return"
+              value={removeQty}
+              onChange={(e) => setRemoveQty(Math.max(1, Math.min(parseInt(e.target.value) || 1, removeDialog.kitItem?.quantity ?? 1)))}
+              inputProps={{ min: 1, max: removeDialog.kitItem?.quantity ?? 1 }}
+              fullWidth
+              sx={{ mb: 2 }}
+            />
+          )}
+          <TextField select label="Condition" value={removeCondition} onChange={(e) => setRemoveCondition(e.target.value)} fullWidth>
+            <MenuItem value="GOOD">Good</MenuItem>
+            <MenuItem value="IN_MAINTENANCE">Needs Maintenance</MenuItem>
+            <MenuItem value="INOPERABLE">Inoperable</MenuItem>
+          </TextField>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setRemoveDialog({ open: false, kitItem: null })}>Cancel</Button>
+          <Button variant="contained" color="error" onClick={handleRemoveItem}>Return</Button>
+        </DialogActions>
+      </Dialog>
 
       {/* DispositionDialog — remove items */}
       {noteDialog === 'removeItems' && selectedItems.length > 0 && (

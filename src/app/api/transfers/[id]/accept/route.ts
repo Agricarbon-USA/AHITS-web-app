@@ -73,6 +73,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (!stillPresent) {
         throw new Error(`Kit item is no longer in the source deployment`)
       }
+      if (ti.quantity != null && stillPresent.quantity < ti.quantity) {
+        throw new Error(`Insufficient quantity remaining for a kit item`)
+      }
     }
 
     // Find or create destination rig (source rig stays active regardless)
@@ -111,18 +114,29 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       })
     }
 
-    // Transfer kit items (only removes transferred items — remaining items stay in source rig)
+    // Transfer kit items (partial or full — remaining items stay in source rig)
     for (const ti of transfer.items) {
-      await tx.kitItem.update({
-        where: { id: ti.kitItemId },
-        data: { removedAt: now },
-      })
+      const transferQty = ti.quantity ?? ti.kitItem.quantity
+      const currentKitItem = await tx.kitItem.findUnique({ where: { id: ti.kitItemId } })
+      const currentQty = currentKitItem?.quantity ?? ti.kitItem.quantity
+
+      if (transferQty >= currentQty) {
+        await tx.kitItem.update({
+          where: { id: ti.kitItemId },
+          data: { removedAt: now },
+        })
+      } else {
+        await tx.kitItem.update({
+          where: { id: ti.kitItemId },
+          data: { quantity: currentQty - transferQty },
+        })
+      }
       await tx.kitItem.create({
         data: {
           kitId: destKit.id,
           inventoryItemId: ti.kitItem.inventoryItemId,
-          quantity: ti.kitItem.quantity,
-          inventoryUnitId: ti.kitItem.inventoryUnitId ?? null,
+          quantity: transferQty,
+          inventoryUnitId: ti.inventoryUnitId ?? ti.kitItem.inventoryUnitId ?? null,
         },
       })
       await tx.checkLog.create({

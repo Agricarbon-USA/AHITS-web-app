@@ -8,7 +8,11 @@ const schema = z.object({
   note: z.string().min(1, 'Note is required'),
   photoUrls: z.array(z.string()).default([]),
   vehicleIds: z.array(z.string()).default([]),
-  kitItemIds: z.array(z.string()).default([]),
+  items: z.array(z.object({
+    kitItemId: z.string(),
+    quantity: z.number().int().min(1).optional(),
+    inventoryUnitId: z.string().optional(),
+  })).default([]),
 })
 
 const TRANSFER_INCLUDE = {
@@ -47,9 +51,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const parsed = schema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const { toOperatorId, note, photoUrls, vehicleIds, kitItemIds } = parsed.data
+  const { toOperatorId, note, photoUrls, vehicleIds, items } = parsed.data
 
-  if (vehicleIds.length === 0 && kitItemIds.length === 0) {
+  if (vehicleIds.length === 0 && items.length === 0) {
     return NextResponse.json({ error: 'Select at least one vehicle or item to transfer' }, { status: 400 })
   }
 
@@ -66,10 +70,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
   }
 
-  // Verify all kitItemIds belong to this rig's active kit items
-  if (kitItemIds.length > 0) {
+  // Verify all item kitItemIds belong to this rig's active kit items
+  if (items.length > 0) {
     const activeKitItemIds = new Set(rig.kits.flatMap((k) => k.items.map((ki) => ki.id)))
-    const invalid = kitItemIds.filter((kid) => !activeKitItemIds.has(kid))
+    const invalid = items.filter((i) => !activeKitItemIds.has(i.kitItemId))
     if (invalid.length > 0) {
       return NextResponse.json({ error: 'One or more items are not in this rig\'s kit' }, { status: 400 })
     }
@@ -88,7 +92,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           create: vehicleIds.map((vehicleId) => ({ vehicleId })),
         },
         items: {
-          create: kitItemIds.map((kitItemId) => ({ kitItemId })),
+          create: items.map((i) => ({
+            kitItemId: i.kitItemId,
+            quantity: i.quantity,
+            inventoryUnitId: i.inventoryUnitId,
+          })),
         },
       },
       include: TRANSFER_INCLUDE,

@@ -293,8 +293,11 @@ model TransferItem {
   id                String          @id @default(cuid())
   transferRequestId String
   kitItemId         String
+  quantity          Int?
+  inventoryUnitId   String?
   transferRequest   TransferRequest @relation(fields: [transferRequestId], references: [id])
   kitItem           KitItem         @relation(fields: [kitItemId], references: [id])
+  inventoryUnit     InventoryUnit?  @relation(fields: [inventoryUnitId], references: [id])
 
   @@map("transfer_items")
 }
@@ -346,8 +349,9 @@ model InventoryUnit {
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 
-  kitItems  KitItem[]
-  checkLogs CheckLog[]
+  kitItems      KitItem[]
+  checkLogs     CheckLog[]
+  transferItems TransferItem[]
 
   @@map("inventory_units")
 }
