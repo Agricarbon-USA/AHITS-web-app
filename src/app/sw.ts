@@ -22,9 +22,11 @@ const serwist = new Serwist({
       matcher: ({ sameOrigin, url: { pathname } }) =>
         sameOrigin &&
         (pathname === '/api/dashboard' ||
+          pathname.startsWith('/api/deployments') ||
           pathname.startsWith('/api/inventory') ||
           pathname.startsWith('/api/vehicles') ||
-          pathname.startsWith('/api/maintenance')),
+          pathname.startsWith('/api/maintenance') ||
+          pathname.startsWith('/api/daily-check')),
       method: 'GET',
       handler: new NetworkFirst({
         cacheName: 'ahits-field-reads',

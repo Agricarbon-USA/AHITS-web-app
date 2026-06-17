@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { getSession } from '@/lib/auth/session'
 import { sendEmail } from '@/lib/email/resend'
 import { dailyCheckFailedEmail } from '@/lib/email/templates'
+import { createAlert } from '@/lib/alerts'
 
 const schema = z.object({
   vehicleId: z.string(),
@@ -88,6 +89,29 @@ export async function POST(req: NextRequest) {
       syncedAt: new Date(),
     },
   })
+
+  // Fire-and-forget: alert if any kit items have been out > 90 days
+  if (session.userId) {
+    prisma.rig.findFirst({
+      where: { operatorId: session.userId, endedAt: null },
+      include: {
+        kits: { include: { items: { where: { removedAt: null }, include: { item: { select: { name: true } } } } } },
+      },
+    }).then(async (rig) => {
+      if (!rig) return
+      const kitItems = rig.kits.flatMap((k) => k.items)
+      const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
+      if (rig.startedAt < cutoff) {
+        for (const ki of kitItems) {
+          await createAlert('EQUIPMENT_NOT_RETURNED', 'kit_items', ki.id, {
+            itemName: ki.item.name,
+            rigId: rig.id,
+            daysSinceCheckout: Math.floor((Date.now() - rig.startedAt.getTime()) / 86400000),
+          })
+        }
+      }
+    }).catch(() => {})
+  }
 
   // Notify admin on fail
   if (!passFail && process.env.ADMIN_EMAIL) {

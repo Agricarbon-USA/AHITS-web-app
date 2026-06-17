@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { getSession } from '@/lib/auth/session'
+import { createAlert } from '@/lib/alerts'
 
 export async function GET(req: NextRequest) {
   const session = await getSession()
@@ -22,6 +23,19 @@ export async function GET(req: NextRequest) {
       item: { select: { id: true, name: true } },
     },
   })
+
+  // Fire-and-forget: create alerts for overdue tasks
+  const now = new Date()
+  for (const task of tasks) {
+    if (task.status === 'OVERDUE' && task.nextDue && task.nextDue < now) {
+      createAlert('MAINTENANCE_OVERDUE', 'maintenance_tasks', task.id, {
+        taskName: task.taskName,
+        itemId: task.itemId ?? null,
+        daysPastDue: Math.floor((now.getTime() - task.nextDue.getTime()) / 86400000),
+      }).catch(() => {})
+    }
+  }
+
   return NextResponse.json({ data: tasks })
 }
 

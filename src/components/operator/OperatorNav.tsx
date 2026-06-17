@@ -13,7 +13,7 @@ import { useAuth } from '@/hooks/useAuth'
 const NAV_ITEMS = [
   { label: 'My Dashboard', href: '/operator/dashboard', icon: DashboardIcon },
   { label: 'Daily Check', href: '/operator/daily-check', icon: ChecklistIcon },
-  { label: 'Check Out / In', href: '/operator/checkout', icon: SwapHorizIcon },
+  { label: 'Check Out / In', href: '/operator/scan', icon: SwapHorizIcon },
   { label: 'Scan QR', href: '/operator/scan', icon: QrCodeScannerIcon },
 ]
 

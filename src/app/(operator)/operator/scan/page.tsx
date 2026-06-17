@@ -1,12 +1,314 @@
-import { Typography, Box } from '@mui/material'
+'use client'
+
+import * as React from 'react'
+import {
+  Box, Typography, Button, Stack, Alert, Chip, CircularProgress, Paper,
+  Select, MenuItem, FormControl, InputLabel, Dialog, DialogTitle,
+  DialogContent, DialogActions,
+} from '@mui/material'
+import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner'
+import { useToast } from '@/components/shared/useToast'
+
+interface UnitInfo {
+  id: string
+  qrCodeId: string
+  serialNumber: string | null
+  status: string
+  notes: string | null
+  inventoryItem: {
+    id: string
+    name: string
+    itemType: string
+    category: { name: string }
+  }
+}
+
+interface KitItemStub {
+  id: string
+  inventoryUnitId: string | null
+  inventoryItemId: string
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  AVAILABLE: 'Available',
+  CHECKED_OUT: 'Checked Out',
+  IN_MAINTENANCE: 'In Maintenance',
+  INOPERABLE: 'Inoperable',
+  RETIRED: 'Retired',
+}
+
+const STATUS_COLORS: Record<string, 'success' | 'info' | 'warning' | 'error' | 'default'> = {
+  AVAILABLE: 'success',
+  CHECKED_OUT: 'info',
+  IN_MAINTENANCE: 'warning',
+  INOPERABLE: 'error',
+  RETIRED: 'default',
+}
 
 export default function OperatorScanPage() {
+  const showToast = useToast()
+  const [scanning, setScanning] = React.useState(false)
+  const [unit, setUnit] = React.useState<UnitInfo | null>(null)
+  const [error, setError] = React.useState('')
+  const [activeRigId, setActiveRigId] = React.useState<string | null>(null)
+  const [activeKitItems, setActiveKitItems] = React.useState<KitItemStub[]>([])
+  const [returnCondition, setReturnCondition] = React.useState<'GOOD' | 'IN_MAINTENANCE' | 'INOPERABLE'>('GOOD')
+  const [actionLoading, setActionLoading] = React.useState(false)
+  const [addDialogOpen, setAddDialogOpen] = React.useState(false)
+
+  React.useEffect(() => {
+    fetch('/api/deployments')
+      .then((r) => r.json())
+      .then((json) => {
+        const active = json[0] ?? null
+        if (active) {
+          setActiveRigId(active.id)
+          const items: KitItemStub[] = active.kits?.flatMap((k: { items: KitItemStub[] }) => k.items) ?? []
+          setActiveKitItems(items)
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  const handleCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setScanning(true)
+    setError('')
+    setUnit(null)
+    try {
+      const bitmap = await createImageBitmap(file)
+      const canvas = document.createElement('canvas')
+      canvas.width = bitmap.width
+      canvas.height = bitmap.height
+      const ctx = canvas.getContext('2d')!
+      ctx.drawImage(bitmap, 0, 0)
+      const imgData = ctx.getImageData(0, 0, bitmap.width, bitmap.height)
+      const jsQR = (await import('jsqr')).default
+      const result = jsQR(imgData.data, bitmap.width, bitmap.height)
+      if (!result?.data) {
+        setError('No QR code detected in the image. Try again.')
+        return
+      }
+      const res = await fetch(`/api/inventory/units/by-qr/${encodeURIComponent(result.data)}`)
+      if (!res.ok) {
+        setError('QR code not recognised — this unit is not in the system.')
+        return
+      }
+      const json = await res.json()
+      setUnit({ ...json.unit, inventoryItem: json.item })
+      setReturnCondition('GOOD')
+    } catch {
+      setError('Failed to process image. Please try again.')
+    } finally {
+      setScanning(false)
+      e.target.value = ''
+    }
+  }
+
+  const kitItemForUnit = unit ? activeKitItems.find((ki) => ki.inventoryUnitId === unit.id) : undefined
+  const canReturn = !!kitItemForUnit && unit?.status === 'CHECKED_OUT'
+  const canAdd = unit?.status === 'AVAILABLE' && !!activeRigId
+
+  const handleReturn = async () => {
+    if (!activeRigId || !kitItemForUnit || !unit) return
+    setActionLoading(true)
+    try {
+      const res = await fetch(`/api/deployments/${activeRigId}/items/${kitItemForUnit.id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ returnCondition }),
+      })
+      if (res.ok) {
+        showToast({ message: `${unit.inventoryItem.name} returned to hub.`, severity: 'success' })
+        setUnit(null)
+        const updated = await fetch('/api/deployments').then((r) => r.json())
+        const active = updated[0] ?? null
+        if (active) {
+          setActiveRigId(active.id)
+          setActiveKitItems(active.kits?.flatMap((k: { items: KitItemStub[] }) => k.items) ?? [])
+        }
+      } else {
+        const d = await res.json()
+        setError(d.error ?? 'Return failed')
+      }
+    } catch {
+      setError('Network error. Please try again.')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleAddToKit = async () => {
+    if (!activeRigId || !unit) return
+    setActionLoading(true)
+    setAddDialogOpen(false)
+    try {
+      const res = await fetch(`/api/deployments/${activeRigId}/items`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: [{ itemType: 'SERIALIZED', inventoryItemId: unit.inventoryItem.id, inventoryUnitId: unit.id }],
+          note: 'Added via scan',
+        }),
+      })
+      if (res.ok) {
+        showToast({ message: `${unit.inventoryItem.name} added to your kit.`, severity: 'success' })
+        setUnit(null)
+        const updated = await fetch('/api/deployments').then((r) => r.json())
+        const active = updated[0] ?? null
+        if (active) {
+          setActiveRigId(active.id)
+          setActiveKitItems(active.kits?.flatMap((k: { items: KitItemStub[] }) => k.items) ?? [])
+        }
+      } else {
+        const d = await res.json()
+        setError(d.error ?? 'Failed to add to kit')
+      }
+    } catch {
+      setError('Network error. Please try again.')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
   return (
     <Box>
       <Typography variant="h5">Scan</Typography>
       <Typography color="text.secondary" mt={1}>
         Scan — implementation in progress.
       </Typography>
+
+      <Stack alignItems="center" spacing={2}>
+        <Button
+          component="label"
+          variant="contained"
+          size="large"
+          startIcon={scanning ? <CircularProgress size={20} color="inherit" /> : <QrCodeScannerIcon />}
+          disabled={scanning}
+          sx={{ minWidth: 220 }}
+        >
+          {scanning ? 'Scanning…' : 'Scan QR Label'}
+          <input
+            type="file"
+            accept="image/*"
+            capture="environment"
+            style={{ display: 'none' }}
+            onChange={handleCapture}
+          />
+        </Button>
+
+        {error && (
+          <Alert severity="error" sx={{ width: '100%', maxWidth: 480 }} onClose={() => setError('')}>
+            {error}
+          </Alert>
+        )}
+
+        {unit && (
+          <Paper variant="outlined" sx={{ p: 3, width: '100%', maxWidth: 480 }}>
+            <Stack spacing={1.5}>
+              <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
+                <Box>
+                  <Typography variant="h6" fontWeight={700}>{unit.inventoryItem.name}</Typography>
+                  <Typography variant="body2" color="text.secondary">{unit.inventoryItem.category.name}</Typography>
+                </Box>
+                <Chip
+                  label={STATUS_LABELS[unit.status] ?? unit.status}
+                  color={STATUS_COLORS[unit.status] ?? 'default'}
+                  size="small"
+                />
+              </Stack>
+
+              {unit.serialNumber && (
+                <Box>
+                  <Typography variant="caption" color="text.secondary" fontWeight={600}>Serial Number</Typography>
+                  <Typography variant="body2">{unit.serialNumber}</Typography>
+                </Box>
+              )}
+
+              <Box>
+                <Typography variant="caption" color="text.secondary" fontWeight={600}>Unit ID</Typography>
+                <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: 12 }}>{unit.qrCodeId}</Typography>
+              </Box>
+
+              <Box>
+                <Typography variant="caption" color="text.secondary" fontWeight={600}>Item Type</Typography>
+                <Typography variant="body2">{unit.inventoryItem.itemType === 'SERIALIZED' ? 'Serialized' : 'Consumable'}</Typography>
+              </Box>
+
+              {unit.status === 'CHECKED_OUT' && !canReturn && (
+                <Alert severity="info" sx={{ py: 0.5 }}>
+                  This unit is currently checked out on a deployment.
+                </Alert>
+              )}
+
+              {unit.status === 'INOPERABLE' && (
+                <Alert severity="error" sx={{ py: 0.5 }}>
+                  This unit is marked inoperable and is pending admin review.
+                </Alert>
+              )}
+
+              {unit.notes && (
+                <Box>
+                  <Typography variant="caption" color="text.secondary" fontWeight={600}>Notes</Typography>
+                  <Typography variant="body2">{unit.notes}</Typography>
+                </Box>
+              )}
+
+              {(canReturn || canAdd) && (
+                <Stack spacing={1} mt={1}>
+                  {canReturn && (
+                    <>
+                      <FormControl size="small" fullWidth>
+                        <InputLabel>Return condition</InputLabel>
+                        <Select
+                          value={returnCondition}
+                          label="Return condition"
+                          onChange={(e) => setReturnCondition(e.target.value as typeof returnCondition)}
+                        >
+                          <MenuItem value="GOOD">Good</MenuItem>
+                          <MenuItem value="IN_MAINTENANCE">Needs maintenance</MenuItem>
+                          <MenuItem value="INOPERABLE">Inoperable</MenuItem>
+                        </Select>
+                      </FormControl>
+                      <Button
+                        variant="contained"
+                        color="success"
+                        onClick={handleReturn}
+                        disabled={actionLoading}
+                      >
+                        {actionLoading ? <CircularProgress size={20} /> : 'Return to Hub'}
+                      </Button>
+                    </>
+                  )}
+                  {canAdd && (
+                    <Button
+                      variant="outlined"
+                      onClick={() => setAddDialogOpen(true)}
+                      disabled={actionLoading}
+                    >
+                      Add to My Kit
+                    </Button>
+                  )}
+                </Stack>
+              )}
+            </Stack>
+          </Paper>
+        )}
+      </Stack>
+
+      <Dialog open={addDialogOpen} onClose={() => setAddDialogOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Add to Kit</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Add <strong>{unit?.inventoryItem.name}</strong> to your active deployment kit?
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setAddDialogOpen(false)}>Cancel</Button>
+          <Button variant="contained" onClick={handleAddToKit}>Confirm</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }
