@@ -60,8 +60,8 @@ export async function GET(req: NextRequest) {
             kit: {
               select: {
                 rig: {
-                  where: { endedAt: null },
                   select: {
+                    endedAt: true,
                     operator: { select: { id: true, name: true } },
                     project: { select: { id: true, name: true, location: true } },
                   },
@@ -91,7 +91,7 @@ export async function GET(req: NextRequest) {
     }
 
     // Find active rig assignment via kit items
-    const activeKit = item.kitItems.find((ki) => ki.kit.rig !== null)
+    const activeKit = item.kitItems.find((ki) => ki.kit.rig !== null && ki.kit.rig.endedAt === null)
     const activeRig = activeKit?.kit.rig ?? null
 
     const { kitItems, categoryRef, ...rest } = item

@@ -88,6 +88,7 @@ export async function POST(
           rigId: destRig.id,
           vehicleId,
           addedAt: now,
+          addNote: `Transferred from rig ${transfer.fromRigId}`,
         })),
       })
     }
