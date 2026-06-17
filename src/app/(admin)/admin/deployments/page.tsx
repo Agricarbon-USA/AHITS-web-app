@@ -433,6 +433,7 @@ function NewDeploymentDialog({
                             inputProps={{ min: 1, style: { MozAppearance: 'textfield', width: 60 } }}
                             sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }} />
                         )}
+                      </Stack>
                     </Stack>
                   )
                 })}
