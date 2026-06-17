@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
-import { getSession } from '@/lib/auth/session'
+import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import type { EquipmentCategory, EquipmentStatus } from '@prisma/client'
 import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions } from '@/lib/inventory'
 
 export async function GET(req: NextRequest) {
-  const session = await getSession()
+  const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = req.nextUrl
@@ -101,9 +101,18 @@ export async function GET(req: NextRequest) {
     void kitItems
     void categoryRef
 
+    const positionedUnits = withPositions(item.units)
+
     return {
       ...rest,
-      units: withPositions(item.units),
+      units: positionedUnits,
+      // The deployment Build-Kit / Add-Items unit pickers select from this list
+      // (documented contract in PRD_ADDITIONS_V2). Restored after the Wave-0
+      // refactor dropped it, which left the pickers showing "Select a unit…"
+      // with no options even when units were available.
+      availableUnits: positionedUnits
+        .filter((u) => u.status === 'AVAILABLE')
+        .map((u) => ({ id: u.id, serialNumber: u.serialNumber, qrCodeId: u.qrCodeId, position: u.position })),
       category: categoryDisplay(item),
       unitCounts,
       // Derived single-source-of-truth quantities (units for serialized, stored count for consumables)
@@ -134,8 +143,8 @@ const createSchema = z.object({
 })
 
 export async function POST(req: NextRequest) {
-  const session = await getSession()
-  if (!session || session.role !== 'ADMIN') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const session = await requireAdmin()
+  if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const parsed = createSchema.safeParse(await req.json())
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })

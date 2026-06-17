@@ -78,3 +78,24 @@ Legend: 🔴 blocker · 🟠 high · 🟡 medium · ⚪ minor/polish · ✅ work
 | 🧪 Test gap | No 2nd operator → transfer + idempotency unverified | Seed test data |
 
 **Net:** daily checks and kit removal/usage are solid; the **Add Items crash is the one true blocker** and should jump the Wave 2 queue. Transfer and idempotency need a second operator account to verify.
+
+---
+
+## Resume pass — after the category‑render fix (`fe2c54e`)
+
+- ✅ **Crash fixed.** Both **Build Kit** (Start Deployment) and **Add Items** now render the item list with correct category names ("Hand Tools", "Electronics / GPS", etc.). No more React #31.
+
+**🔴 NEW — serialized unit picker is empty (BLOCKER, same Wave‑0 root family).**
+- **Repro:** Start Deployment → Build Kit → check a serialized item → **Pick from list** shows only "Select a unit…", **no units** — even for items with available units. Same on My Rig → Add Items.
+- **Verified against `/api/inventory`:** Field Tool Set has **4** available units (SET‑01/02/03/05), Hand Corer has **2** (001, 002) — they exist and are `AVAILABLE`, but the picker shows none.
+- **Root cause (located):** `my-rig/page.tsx` reads `item.availableUnits` (type line 95; rendered at lines 555 and 1357), but the **`/api/inventory` GET response no longer returns `availableUnits`** — it returns `units` (full array) + `unitCounts`. So `item.availableUnits` is `undefined` → `(item.availableUnits ?? []).map(...)` → empty. `PRD_ADDITIONS_V2.md` documents the contract as returning `availableUnits`; the Wave‑0 source‑of‑truth refactor dropped it.
+- **Fix (recommended — restore the documented contract, one place):** in `src/app/api/inventory/route.ts` GET mapping, add
+  `availableUnits: withPositions(item.units).filter(u => u.status === 'AVAILABLE').map(({id, serialNumber, qrCodeId, position}) => ({id, serialNumber, qrCodeId, position}))`.
+  (Alternative: derive in the UI from `item.units` — but restoring the API field fixes every consumer at once and matches PRD_ADDITIONS.)
+- **Impact:** operators can't pick a serialized unit when **building a kit** or **adding items** from the list; the only way to attach a serialized unit is **Scan → Add to Kit** by QR. Blocks kit assembly and therefore transfer setup.
+- **Placement:** **Wave 2 — Correctness, hotfix alongside the category fix.**
+
+**🟡 NEW — transfer Destination Operator dropdown empty despite a second operator existing.**
+- The `/api/inventory` data shows **Field Op 2 exists** and currently holds an active deployment (it's the `currentOperator` on many items). Yet the earlier Transfer → Destination Operator dropdown was **empty**.
+- **To investigate:** how the operator list for transfer is built (my‑rig fetches `/api/users`). Likely either it's filtering out operators who already have an active deployment (wrong — you should be able to transfer *to* a deployed operator), or the roster isn't loading. Re‑test after seeding state / fixing.
+- **Placement:** Wave 2 — Correctness/UX.
