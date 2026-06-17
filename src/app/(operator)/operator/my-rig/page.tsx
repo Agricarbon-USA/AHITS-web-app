@@ -682,8 +682,10 @@ export default function MyRigPage() {
     load()
     fetch('/api/vehicles').then((r) => r.json()).then((d) => setVehicles(d.data ?? d ?? [])).catch(() => {})
     fetch('/api/inventory?pageSize=200').then((r) => r.json()).then((d) => setInventoryItems(d.data ?? [])).catch(() => {})
-    fetch('/api/users').then((r) => r.json()).then((d) => {
-      setOperators((d.data ?? []).filter((u: UserOption) => u.role === 'OPERATOR'))
+    // Operator-readable roster (the full /api/users is admin-only → 403 for
+    // operators, which left the transfer destination dropdown empty).
+    fetch('/api/operators').then((r) => r.json()).then((d) => {
+      setOperators(d.data ?? [])
     }).catch(() => {})
     fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(d ?? [])).catch(() => {})
   }, [load])

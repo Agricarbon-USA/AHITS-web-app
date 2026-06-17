@@ -95,7 +95,14 @@ Legend: 🔴 blocker · 🟠 high · 🟡 medium · ⚪ minor/polish · ✅ work
 - **Impact:** operators can't pick a serialized unit when **building a kit** or **adding items** from the list; the only way to attach a serialized unit is **Scan → Add to Kit** by QR. Blocks kit assembly and therefore transfer setup.
 - **Placement:** **Wave 2 — Correctness, hotfix alongside the category fix.**
 
-**🟡 NEW — transfer Destination Operator dropdown empty despite a second operator existing.**
-- The `/api/inventory` data shows **Field Op 2 exists** and currently holds an active deployment (it's the `currentOperator` on many items). Yet the earlier Transfer → Destination Operator dropdown was **empty**.
-- **To investigate:** how the operator list for transfer is built (my‑rig fetches `/api/users`). Likely either it's filtering out operators who already have an active deployment (wrong — you should be able to transfer *to* a deployed operator), or the roster isn't loading. Re‑test after seeding state / fixing.
-- **Placement:** Wave 2 — Correctness/UX.
+**🔴 NEW — operators can't transfer: destination roster comes from an admin‑only endpoint (root cause found + FIXED).**
+- **Symptom:** Transfer → Destination Operator dropdown is **empty** even though **Field Op 2 exists** (confirmed in `/api/inventory` data and again with the picker fix deployed).
+- **Root cause:** `my-rig/page.tsx` (line 685) builds the operator list from **`GET /api/users`**, which is **admin‑only** — it returns `{"error":"Forbidden"}` (403) for an operator session (verified live). So `d.data` is undefined → empty roster → no transfer targets. Pre‑existing (the endpoint was always admin‑gated; the Wave‑0/auth refactor only preserved it).
+- **Fix (applied):** added `GET /api/operators` — a minimal, **any‑authenticated‑user** roster returning only `{id, name, role}` for active operators (no email/PIN) — and pointed My Rig at it. `tsc`/`eslint` clean.
+- **Placement:** **Wave 2 — Correctness, hotfix** (unblocks the entire operator transfer feature).
+
+### Resume pass 2 (kit assembly + transfer, `94537e1`)
+- ✅ **availableUnits fix confirmed.** Build Kit "Pick from list" now shows the right units (Field Tool Set → SET‑01/02/03/05; SET‑04 checked‑out correctly excluded). Built a kit and **Launched** a deployment successfully.
+- ✅ **Add Items works** — added Hand Corer (Unit 001) to the kit.
+- 🟡 **Add Items doesn't refresh the kit panel** — the added item only appears after a manual page reload (the kit list doesn't re‑render post‑add). Minor UX bug. → Wave 2.
+- 🟡 **Consumables can't be added via Add Items / Build Kit.** Both lists only show **serialized** items, because they filter on `unitCounts.available > 0` and consumables have **no unit rows** (their stock lives in `quantity` / `availableQuantity`). So there's **no UI path for an operator to add a consumable to a kit** (only Scan works, and only for serialized QR units). Consumables in existing kits appear to have been seeded. → Wave 2 — Correctness (decide intended UX; likely include consumables with a quantity input).
