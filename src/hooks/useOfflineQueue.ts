@@ -225,7 +225,6 @@ export function useOfflineQueue() {
     listFailed,
     refresh,
     // Honest indicators:
-    queueSize: pending, // back-compat alias (pending, not "everything")
     pending,
     failed,
     syncing,

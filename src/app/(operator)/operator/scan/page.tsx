@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import {
-  Box, Typography, Button, Stack, Alert, Chip, CircularProgress, Paper,
+  Box, Typography, Button, Stack, Alert, CircularProgress, Paper,
   Select, MenuItem, FormControl, InputLabel, Dialog, DialogTitle,
   DialogContent, DialogActions,
 } from '@mui/material'
@@ -11,6 +11,7 @@ import DirectionsCarIcon from '@mui/icons-material/DirectionsCar'
 import { useRouter } from 'next/navigation'
 import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
+import { StatusChip } from '@/components/shared/StatusChip'
 
 interface UnitInfo {
   id: string
@@ -32,22 +33,6 @@ interface KitItemStub {
   inventoryItemId: string
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  AVAILABLE: 'Available',
-  CHECKED_OUT: 'Checked Out',
-  IN_MAINTENANCE: 'In Maintenance',
-  INOPERABLE: 'Inoperable',
-  RETIRED: 'Retired',
-}
-
-const STATUS_COLORS: Record<string, 'success' | 'info' | 'warning' | 'error' | 'default'> = {
-  AVAILABLE: 'success',
-  CHECKED_OUT: 'info',
-  IN_MAINTENANCE: 'warning',
-  INOPERABLE: 'error',
-  RETIRED: 'default',
-}
-
 interface VehicleInfo {
   id: string
   name: string
@@ -56,20 +41,6 @@ interface VehicleInfo {
   qrCodeId: string
   location: string | null
   odometer: number | null
-}
-
-const VEHICLE_STATUS_LABELS: Record<string, string> = {
-  ACTIVE: 'Active',
-  IN_MAINTENANCE: 'In Maintenance',
-  OUT_OF_SERVICE: 'Out of Service',
-  RETIRED: 'Retired',
-}
-
-const VEHICLE_STATUS_COLORS: Record<string, 'success' | 'warning' | 'error' | 'default'> = {
-  ACTIVE: 'success',
-  IN_MAINTENANCE: 'warning',
-  OUT_OF_SERVICE: 'error',
-  RETIRED: 'default',
 }
 
 export default function OperatorScanPage() {
@@ -257,11 +228,7 @@ export default function OperatorScanPage() {
                   <Typography variant="h6" fontWeight={700}>{unit.inventoryItem.name}</Typography>
                   <Typography variant="body2" color="text.secondary">{unit.inventoryItem.category.name}</Typography>
                 </Box>
-                <Chip
-                  label={STATUS_LABELS[unit.status] ?? unit.status}
-                  color={STATUS_COLORS[unit.status] ?? 'default'}
-                  size="small"
-                />
+                <StatusChip status={unit.status} />
               </Stack>
 
               {unit.serialNumber && (
@@ -352,11 +319,7 @@ export default function OperatorScanPage() {
                   </Stack>
                   <Typography variant="body2" color="text.secondary">{vehicle.type}</Typography>
                 </Box>
-                <Chip
-                  label={VEHICLE_STATUS_LABELS[vehicle.status] ?? vehicle.status}
-                  color={VEHICLE_STATUS_COLORS[vehicle.status] ?? 'default'}
-                  size="small"
-                />
+                <StatusChip status={vehicle.status} kind="vehicle" />
               </Stack>
 
               {vehicle.location && (

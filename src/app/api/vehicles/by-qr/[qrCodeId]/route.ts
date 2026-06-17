@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getSession } from '@/lib/auth/session'
+import { parseScannedCode } from '@/lib/qr'
 
 // GET /api/vehicles/by-qr/[qrCodeId]
 // Resolve a scanned QR payload to a Vehicle. Mirrors the inventory-unit
@@ -12,8 +13,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ qrC
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { qrCodeId } = await params
-  const raw = decodeURIComponent(qrCodeId)
-  const key = raw.includes('/') ? (raw.split(/[/?#]/).filter(Boolean).pop() ?? raw) : raw
+  const key = parseScannedCode(decodeURIComponent(qrCodeId))
 
   const vehicle = await prisma.vehicle.findFirst({
     where: { qrCodeId: key },

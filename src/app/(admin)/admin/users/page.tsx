@@ -8,6 +8,7 @@ import {
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Paper, Avatar, Skeleton,
 } from '@mui/material'
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import PersonAddIcon from '@mui/icons-material/PersonAdd'
 import EditIcon from '@mui/icons-material/Edit'
 import LockIcon from '@mui/icons-material/Lock'
@@ -195,40 +196,6 @@ function EditDialog({
 }
 
 // ── Confirm Dialog ────────────────────────────────────────────────
-function ConfirmDialog({
-  open, title, message, confirmLabel, confirmColor, onClose, onConfirm,
-}: {
-  open: boolean
-  title: string
-  message: string
-  confirmLabel: string
-  confirmColor?: 'error' | 'warning' | 'primary'
-  onClose: () => void
-  onConfirm: () => Promise<void>
-}) {
-  const [loading, setLoading] = React.useState(false)
-  const handle = async () => {
-    setLoading(true)
-    await onConfirm()
-    setLoading(false)
-  }
-  return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>{title}</DialogTitle>
-      <DialogContent>
-        <Typography>{message}</Typography>
-      </DialogContent>
-      <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button onClick={onClose} disabled={loading}>Cancel</Button>
-        <Button variant="contained" color={confirmColor ?? 'primary'} onClick={handle} disabled={loading}
-          startIcon={loading ? <CircularProgress size={16} color="inherit" /> : null}>
-          {loading ? 'Working…' : confirmLabel}
-        </Button>
-      </DialogActions>
-    </Dialog>
-  )
-}
-
 // ── Main Page ─────────────────────────────────────────────────────
 export default function AdminUsersPage() {
   const [users, setUsers] = React.useState<UserRow[]>([])

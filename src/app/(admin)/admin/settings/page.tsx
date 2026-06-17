@@ -8,6 +8,7 @@ import {
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Paper, Card, CardContent,
 } from '@mui/material'
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
@@ -31,38 +32,6 @@ interface Hub {
 }
 
 // ── ConfirmDialog ─────────────────────────────────────────────────
-
-function ConfirmDialog({
-  open, title, message, onClose, onConfirm,
-}: {
-  open: boolean
-  title: string
-  message: string
-  onClose: () => void
-  onConfirm: () => Promise<void>
-}) {
-  const [loading, setLoading] = React.useState(false)
-  const handle = async () => {
-    setLoading(true)
-    await onConfirm()
-    setLoading(false)
-  }
-  return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>{title}</DialogTitle>
-      <DialogContent>
-        <Typography>{message}</Typography>
-      </DialogContent>
-      <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button onClick={onClose} disabled={loading}>Cancel</Button>
-        <Button variant="contained" color="error" onClick={handle} disabled={loading}
-          startIcon={loading ? <CircularProgress size={16} color="inherit" /> : null}>
-          {loading ? 'Working…' : 'Delete'}
-        </Button>
-      </DialogActions>
-    </Dialog>
-  )
-}
 
 // ── Settings Page ─────────────────────────────────────────────────
 
@@ -402,6 +371,8 @@ export default function SettingsPage() {
         open={!!deleteCat}
         title={`Delete "${deleteCat?.name ?? ''}"?`}
         message="This will permanently delete this category. Any items using it must be reassigned first."
+        confirmLabel="Delete"
+        confirmColor="error"
         onClose={() => setDeleteCat(null)}
         onConfirm={deleteCatConfirm}
       />
@@ -411,6 +382,8 @@ export default function SettingsPage() {
         open={!!deleteHub}
         title={`Deactivate "${deleteHub?.name ?? ''}"?`}
         message="This hub will be hidden from the hub list. Items assigned to it will retain their assignment."
+        confirmLabel="Delete"
+        confirmColor="error"
         onClose={() => setDeleteHub(null)}
         onConfirm={deleteHubConfirm}
       />

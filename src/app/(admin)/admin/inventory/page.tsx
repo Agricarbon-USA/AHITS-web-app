@@ -21,24 +21,8 @@ import ExpandLessIcon from '@mui/icons-material/ExpandLess'
 import QRCode from 'qrcode'
 import { useToast } from '@/components/shared/useToast'
 import { QrScanField } from '@/components/shared/QrScanField'
-
-// ── Helper maps ───────────────────────────────────────────────────
-
-const STATUS_CHIP_COLOR: Record<string, 'success' | 'info' | 'primary' | 'warning' | 'default' | 'error'> = {
-  AVAILABLE: 'success',
-  CHECKED_OUT: 'info',
-  IN_MAINTENANCE: 'warning',
-  INOPERABLE: 'error',
-  RETIRED: 'default',
-}
-
-const STATUS_LABELS: Record<string, string> = {
-  AVAILABLE: 'Available',
-  CHECKED_OUT: 'Checked Out',
-  IN_MAINTENANCE: 'In Maintenance',
-  INOPERABLE: 'Inoperable',
-  RETIRED: 'Retired',
-}
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { EQUIPMENT_STATUS } from '@/lib/status'
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -113,29 +97,6 @@ interface UserOption { id: string; name: string; role: string }
 interface ProjectOption { id: string; name: string }
 
 // ── Confirm Dialog ────────────────────────────────────────────────
-
-function ConfirmDialog({
-  open, title, message, confirmLabel, confirmColor, onClose, onConfirm,
-}: {
-  open: boolean; title: string; message: string; confirmLabel: string
-  confirmColor?: 'error' | 'warning' | 'primary'; onClose: () => void; onConfirm: () => Promise<void>
-}) {
-  const [loading, setLoading] = React.useState(false)
-  const handle = async () => { setLoading(true); await onConfirm(); setLoading(false) }
-  return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>{title}</DialogTitle>
-      <DialogContent><Typography>{message}</Typography></DialogContent>
-      <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button onClick={onClose} disabled={loading}>Cancel</Button>
-        <Button variant="contained" color={confirmColor ?? 'primary'} onClick={handle} disabled={loading}
-          startIcon={loading ? <CircularProgress size={16} color="inherit" /> : null}>
-          {loading ? 'Working…' : confirmLabel}
-        </Button>
-      </DialogActions>
-    </Dialog>
-  )
-}
 
 // ── Repair Dialog (admin review — per unit) ───────────────────────
 
@@ -645,8 +606,8 @@ function DetailDrawer({
                                 sx={{ minWidth: 130 }}
                                 SelectProps={{ style: { fontSize: 13 } }}
                               >
-                                {Object.entries(STATUS_LABELS).map(([v, l]) => (
-                                  <MenuItem key={v} value={v}>{l}</MenuItem>
+                                {Object.entries(EQUIPMENT_STATUS).map(([v, m]) => (
+                                  <MenuItem key={v} value={v}>{m.label}</MenuItem>
                                 ))}
                               </TextField>
                             </TableCell>

@@ -5,6 +5,7 @@ import {
   TextField, IconButton, InputAdornment, CircularProgress, Tooltip,
 } from '@mui/material'
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner'
+import { parseScannedCode } from '@/lib/qr'
 
 interface QrScanFieldProps {
   value: string
@@ -55,10 +56,7 @@ export function QrScanField({
         setErr('No QR detected — try again or type the code.')
         return
       }
-      // Tolerate a URL payload by taking its last path segment.
-      const raw = result.data.trim()
-      const code = raw.includes('/') ? (raw.split(/[/?#]/).filter(Boolean).pop() ?? raw) : raw
-      onChange(code)
+      onChange(parseScannedCode(result.data))
     } catch {
       setErr('Could not read the image — type the code instead.')
     } finally {

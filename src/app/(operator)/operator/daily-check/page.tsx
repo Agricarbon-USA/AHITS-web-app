@@ -40,7 +40,7 @@ interface ActiveRig {
 
 export default function OperatorDailyCheckPage() {
   const showToast = useToast()
-  const { enqueue, queueSize, isOffline } = useOfflineQueue()
+  const { enqueue, pending, isOffline } = useOfflineQueue()
 
   const [rig, setRig] = React.useState<ActiveRig | null>(null)
   const [vehicleId, setVehicleId] = React.useState('')
@@ -148,8 +148,8 @@ export default function OperatorDailyCheckPage() {
                 </List>
               </Box>
             )}
-            {queueSize > 0 && (
-              <Alert severity="info">{queueSize} daily check(s) pending sync</Alert>
+            {pending > 0 && (
+              <Alert severity="info">{pending} daily check(s) pending sync</Alert>
             )}
             <Button variant="outlined" onClick={handleReset}>Start New Check</Button>
           </Stack>
@@ -167,8 +167,8 @@ export default function OperatorDailyCheckPage() {
         Complete before operating any vehicle.
       </Typography>
 
-      {queueSize > 0 && (
-        <Alert severity="info" sx={{ mb: 2 }}>{queueSize} daily check(s) pending sync</Alert>
+      {pending > 0 && (
+        <Alert severity="info" sx={{ mb: 2 }}>{pending} daily check(s) pending sync</Alert>
       )}
 
       <Stepper activeStep={step} sx={{ mb: 3 }}>
