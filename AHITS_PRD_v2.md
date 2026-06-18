@@ -420,6 +420,16 @@ Operators are contractors. This feature lets them track hours, log mileage and e
 
 **Build status:** ⛔ not started (Phase 3). None of the seven models exist yet.
 
+### 11.13 Deployment Requests (pre-deployment provisioning)
+
+Lets an Operator or Admin pre-specify the equipment a deployment needs — the **kit and rig, at the item-type + quantity level** ("2× GPS, 1× truck, 1× Christie drill, 500× bags"), with optional specific-asset requests — at a **target Hub**, *before* arriving to pick it up. This turns provisioning from a reactive scramble into a planned hand-off and is the proactive complement to the existing transfer/disposition flows.
+
+**Three-step flow.** (1) **Request** — operator/admin builds the pick list; submitting creates a Deployment in `REQUESTED` and notifies the hub's fulfiller(s). (2) **Stage** — a **per-hub fulfiller** (an operator or admin assigned to that Hub, or any admin) resolves each line to **specific** units/vehicles, **reserves** them, runs a **per-item operable + presence quality check** (a failed item routes into the breakdown/maintenance flow, §11.6), substitutes as needed, and marks the rig `STAGED` (notifying the requester it's ready). (3) **Check-out** — the operator arrives, scans/confirms the staged rig, which flips reserved units to `CHECKED_OUT`, opens their `PRIMARY` assignment, and sets the Deployment `ACTIVE`; last-minute changes allowed. This reuses the existing check-out/transfer mechanic, seeded earlier in the timeline.
+
+**Lifecycle:** `DRAFT → REQUESTED → STAGED → ACTIVE → COMPLETED` (`CANCELLED` releases reservations). **Reservation:** a new `RESERVED` equipment status removes staged gear from the available pool so it can't be double-booked; an unfulfillable line surfaces a **shortage** (feeds low-stock/reorder). **Roles:** request = operator (own) or admin; stage = hub assignees or admin; check-out = the operator. New models: `DeploymentRequestLine`, `HubAssignment`, plus `Deployment` lifecycle/request fields and `RESERVED` on units/vehicles.
+
+**Build status:** ⛔ not started — **fully specified in PRD v2.1 Addendum §F**; slotted as a dedicated **Wave 3** block (depends on the Wave 2B Deployment model; reads best with the Wave 3 notifications dispatcher).
+
 ---
 
 ## 12. Core data entities
@@ -524,6 +534,7 @@ The original v1 **phases** define product scope; the **waves** are the consolida
 11. **Deployment hardening:** run `prisma migrate deploy` in the container entrypoint (Docker currently doesn't migrate — schema‑drift footgun); add `/api/health` + a Cloud Run startup probe; confirm CI gates prod PRs; tighten `serverActions.allowedOrigins`.
 12. **Sessions/devices:** add a trusted‑device/session model (§10.1 "up to 3 trusted devices"; 30‑day idle) so deactivate/demote takes effect and sessions can be revoked.
 13. **Tests:** expand coverage, **auth first** (PIN lockout, session expiry/revocation, invite flow), then transfer/consumable/idempotency integration tests, then a real‑device offline pass. *(A dedicated test database must be set up first — the current suite would otherwise run against, and erase, production data.)*
+14. **Deployment Requests (§11.13 / Addendum §F).** Request → stage (hard‑reserve + per‑item quality check) → check‑out; `HubAssignment` (per‑hub fulfiller), `RESERVED` status, `DeploymentRequestLine`, and request notifications (in‑app first, then via the item‑9 dispatcher). **Depends on the Wave 2B Deployment model** (lifecycle states, `DeploymentAssignment`, M2M projects); shippable in two increments (in‑app, then push/email).
 
 **Phase 3 capstones (after Wave 3):** Deployment Map (§11.11); Time Tracking/Invoicing/Availability (§11.12); advanced reporting; QR‑only web form; contractor self‑onboarding; admin mobile optimization.
 
@@ -620,5 +631,8 @@ The original v1 **phases** define product scope; the **waves** are the consolida
 | Secondary operator | An additional operator sharing one deployment (`role = SECONDARY` on `DeploymentAssignment`; formerly `RigOperator`). |
 | Resolution path | After an item is marked inoperable, how it is repaired: **In-field** (lightweight fix log), **Hub** (ship now or carry back at deployment end), or **Shop** (deliver or ship). On repair close, the return destination is chosen per-case. (PRD v2.1 Addendum §A.) |
 | Handoff | Transfer of an entire **Deployment** from one operator to another — closes the current PRIMARY `DeploymentAssignment` and opens a new one. **Operators can initiate, confirm, and receive handoffs without admin help** (transfer-accept pattern); admins can initiate/confirm any portion. All handoffs are audit-logged. Distinct from a per-item transfer. |
+| Deployment Request | A pre-deployment "pick list": an operator/admin specifies the equipment a deployment needs (kit + rig, by type × qty) at a target Hub *before* pickup. Modeled as a Deployment in a `REQUESTED → STAGED → ACTIVE` lifecycle. (PRD v2.1 Addendum §F.) |
+| Staging | The Hub fulfiller resolving a request's lines to specific units/vehicles, **reserving** them, running a per-item operable+presence quality check, and marking the rig ready for pickup. |
+| Reserved | An equipment status (`RESERVED`) for a unit/vehicle the Hub has staged for a specific Deployment — removed from the available pool until check-out (or released on cancel). |
 
 **Immediate next actions (recommended order):** (1) commit + deploy the auth‑route transforms and the two diagnosed fixes (#1, #2); (2) run the admin‑side walkthrough to close the open verifications (consumable decrement, damage alert) and exercise admin flows; (3) begin Wave 2 with consumable accounting + addability (#3) and the maintenance loop.
