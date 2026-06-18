@@ -1,7 +1,7 @@
 # AHITS — Product Requirements Document, v2 (Comprehensive)
 
 **Agricarbon Hardware Inventory & Tracking System**
-Version 2.2 · prepared 2026‑06‑18 · supersedes `AHITS_PRD_v1`, the June "Post Wave 0" status update, and PRD v2.0/v2.1
+Version 2.3 · prepared 2026‑06‑18 · supersedes `AHITS_PRD_v1`, the June "Post Wave 0" status update, and PRD v2.0/v2.1/v2.2
 
 ---
 
@@ -10,14 +10,15 @@ Version 2.2 · prepared 2026‑06‑18 · supersedes `AHITS_PRD_v1`, the June "P
 **Revision history.**
 - **v2.0** — comprehensive merge of v1 spec + the Wave 0/Wave 1 implementation-and-QA cycle (build-status matrix, changelog, QA results, punch list).
 - **v2.1** — companion `AHITS_PRD_v2.1_ADDENDUM.md` folded in: equipment lifecycle & maintenance states (§A), account management (§B), Kit/Rig/Deployment terminology (§C), and Deployment Requests (§F). Glossary, open-questions, and roadmap updated.
-- **v2.2 (this revision)** — brings the document current through a second build session that shipped **Wave 1.5 (hotfixes)**, **Wave 2A (security hardening)**, **Wave 2A.5 (account management)**, a **CI test-gating** change, and **four forward-ported API gaps** (deployment GET/PATCH, secondary-operator management, review-inoperable, and a Supabase Storage photo-upload endpoint). Adds **§21 Workflow recommendations** and **§22 Forward recommendations & concerns**. The freshest current-state material is now **§3.2** (session-2 changelog) and the updated **§2** matrix; read those first.
+- **v2.2** — brought the document current through a second build session that shipped **Wave 1.5 (hotfixes)**, **Wave 2A (security hardening)**, **Wave 2A.5 (account management)**, a **CI test-gating** change, and **four forward-ported API gaps** (deployment GET/PATCH, secondary-operator management, review-inoperable, and a Supabase Storage photo-upload endpoint). Added **§21 Workflow recommendations** and **§22 Forward recommendations & concerns**.
+- **v2.3 (this revision)** — brings the document current through a **third build session** (assessment-driven Wave 2 completion). Shipped, as a stack of reviewable PRs: a **Critical credential-leak hotfix (SEC-1)**, the **consumable inventory-model rebuild (DAT-1)**, the **tail of security hardening (Wave 2A′** — vehicle-PII minimization, upload magic-byte validation, security headers + Report-Only CSP, CSRF removal, session-expiry UX), the **no-migration correctness cluster (Wave 2B-A** — offline-bypass writes through the queue, soft-deletes, atomic transfer flips), the **maintenance lifecycle (DAT-5** — unified damage path + repair-completion unit recovery + resolution tracking, *additive migration*), and **schema hardening (DAT-7** — itemType enum, serial uniqueness, atomic alert dedup, *migration*). The freshest current-state material is now **§3.4** (session-3 changelog) and the updated **§2** matrix; read those first. Companions: `AHITS_Comprehensive_Assessment_2026-06-18.md` (the assessment that drove this session) and `WAVE2_COMPLETE.md` (the session record).
 
 **v2 is a superset of v1 — nothing has been dropped.** This document preserves every product specification from v1 in full (problem statement, goals, personas, platform, authentication, all feature specifications 7.1–7.12 including the Deployment Map and the Time‑Tracking/Invoicing/Availability module, the data model, non‑functional requirements, out‑of‑scope list, phases, open questions, and glossary). On top of that enduring spec, v2 folds in everything learned and shipped during the latest implementation‑and‑QA cycle: a build‑status matrix, a session changelog, the deploy/commit state and loose ends, hands‑on QA verification results, a **severity‑ranked operator defect punch list slotted into the wave/phase where each item should be fixed**, an updated forward work plan, and a sweep of gaps in the PRD, codebase, and workflow. **Where v2 differs from v1, v2 takes precedence.**
 
 **How to read this document.** Sections 1–5 are the *current state* (status, changelog, QA, punch list) — the freshest material. Sections 6–20 are the *enduring product specification* carried forward from v1, annotated with a short **Build status** line per feature so the spec doubles as a live tracker. Status key used throughout: ✅ built & verified · 🟢 built, light verification · 🟡 partial / has defects · ⛔ not started.
 
 **Companion repo documents** (current; in the repo root):
-`AHITS_PRD_v2.1_ADDENDUM.md` (maintenance states · account management · Kit/Rig/Deployment — folds into this PRD) · `AHITS_INDEPENDENT_ASSESSMENT_AND_ROADMAP.md` (independent code+staging review, issue/risk register, wave roadmap) · `AHITS_QA_STAGING_ISSUES.md` (raw QA record).
+`AHITS_PRD_v2.1_ADDENDUM.md` (maintenance states · account management · Kit/Rig/Deployment — folds into this PRD) · `AHITS_Comprehensive_Assessment_2026-06-18.md` (the Session-3 independent assessment — issue/risk register, per-user analysis, consistency blueprint, cross-platform/offline matrix; supersedes the earlier `AHITS_INDEPENDENT_ASSESSMENT_AND_ROADMAP.md`) · `WAVE2_COMPLETE.md` (the Session-3 build record — every change, PR/branch/migration map, verification status, caveats, workflow recommendations, forward backlog) · `AHITS_QA_STAGING_ISSUES.md` (raw QA record).
 
 **Historical / superseded docs** have been moved to `docs/archive/` (see `docs/archive/README.md`): the earlier `AHITS_WAVE1_ANALYSIS_AND_ROADMAP.md`, `AHITS_STATE_ANALYSIS.md`, `AHITS_SIMPLIFICATION_REVIEW.md`, `AUDIT_REPORT.md`, `AHITS_REVIEW(_V2).md`, `PRD_ADDITIONS_V2.md`, `AHITS_QA_RESUME_CHECKLIST.md`, and the `CLAUDE_SPRINT_*` / `CLAUDE_*_FEATURE.md` build logs. They remain available for engineering detail but are pinned to older baselines.
 
@@ -33,7 +34,7 @@ AHITS is a purpose‑built, full‑service application that gives every field op
 
 **Target outcome:** 95% of daily vehicle checks submitted on time, zero equipment "lost" for more than 24 hours, and a 25%+ reduction in equipment costs through preventative maintenance — within 6 months of full deployment.
 
-**Where the build stands now (as of v2.2).** The product has moved from "broad but shallow" to a genuinely working, increasingly hardened core. Wave 0 (inventory source‑of‑truth, login hardening) and **Wave 1** (the offline‑first promise — durable queue, idempotent replay, QR scan‑routing) are done and verified. Since then, a second build session shipped:
+**Where the build stands now (as of v2.3).** The product has moved from "broad but shallow" to a genuinely working, increasingly hardened core. Wave 0 (inventory source‑of‑truth, login hardening), **Wave 1** (the offline‑first promise — durable queue, idempotent replay, QR scan‑routing), the Wave 1.5/2A/2A.5 security-and-accounts work, and now (Session 3) the **entire assessment-identified Wave 2 plan** — the consumable-model rebuild, the security-hardening tail, the no-migration correctness cluster, the maintenance lifecycle, and schema hardening — are done and verified (see §3.4). Since the first cycle, a second build session shipped:
 
 - **Wave 1.5 — hotfixes (merged, PR #19):** consumable‑transfer banner quantity (Punch #2); a `?direction=` filter so the pending‑transfer banner no longer leaks between sender and recipient (Punch #4); deleted the divergent dynamic transfer handler + added a guard test (C2); odometer units settled to miles (O7).
 - **Wave 2A — security hardening (merged, PR #23):** CSPRNG invite tokens + throttling + a TOCTOU fix (S1); zod field‑whitelists on the mass‑assignment PATCH routes (S2); cost/spend fields hidden from operators (S5); HTML‑escaped email templates (S7); seed hardened against production + randomized admin password (S4); transfer accept/decline wrapped in idempotency (C1).
@@ -41,35 +42,36 @@ AHITS is a purpose‑built, full‑service application that gives every field op
 - **CI hardening:** the vitest suite now runs on every PR against a Postgres service container (previously CI ran only lint + type‑check).
 - **Four forward‑ported API gaps:** `GET/PATCH /api/deployments/[id]`, `GET/POST/DELETE /api/deployments/[id]/operators` (secondary operators — closes Punch #8), `POST /api/inventory/[id]/review-inoperable` (admin RETIRE/REPAIR decision), and **`POST /api/uploads` — a Supabase Storage photo‑upload endpoint** (the first real piece of the long‑absent photo pipeline).
 
-The load‑bearing flows work and are verified on staging. The next move remains **consolidation before new features**: **Wave 2B correctness** (the Kit/Rig/Deployment model, consumable accounting, the maintenance/breakdown state machine), then close Phase 2 (finish photos end‑to‑end, the maintenance loop, notifications), then the Phase 3 capstones (Deployment Map; Time‑Tracking/Invoicing/Availability) — with **Deployment Requests** (Addendum §F / §11.13) slotted into Wave 3. A detailed forward plan and risk list is in §21–§22.
+The load‑bearing flows work and are verified on staging. **Session 3 then completed the entire Wave 2 consolidation plan** (§3.4): the consumable accounting model is rebuilt, the security‑hardening tail is done, the no‑migration correctness cluster (offline writes, soft‑deletes, atomic transfers) shipped, the **maintenance/breakdown lifecycle** is built (unified damage path + repair‑completion unit recovery), and the schema is hardened (itemType enum, serial uniqueness, atomic alert dedup). The next move is the remaining Phase‑2 close‑out: **Wave 2C** (photos end‑to‑end + private storage), **Wave 2D** (consistency unification), then **Wave 3** (the notification dispatcher + external‑recipient delivery, the four stub admin pages, sessions/devices, deploy hardening, tests) — with the Phase‑3 capstones (Deployment Map; Time‑Tracking/Invoicing/Availability; **Deployment Requests**, Addendum §F / §11.13) after. A detailed forward plan and risk list is in §21–§22; the full session record (with caveats) is in `WAVE2_COMPLETE.md`.
 
 ---
 
-## 2. Build status — phases × waves (current, v2.2)
+## 2. Build status — phases × waves (current, v2.3)
 
-**Phase 1 — Foundation** (v1 target "50% by end of June") ≈ **92%**
-- ✅ PIN + admin login, with login rate limiting + admin lockout (Wave 0). **Sessions are now revocable** (Wave 2A.5) — suspend/force‑logout/demote take effect immediately.
-- ✅ Inventory single source of truth (`InventoryUnit`‑derived counts); `availableUnits` restored.
-- ✅ Vehicle CRUD — PATCH now zod‑validated/whitelisted (Wave 2A, S2). *(Note: the forward‑port baseline restored an unvalidated copy on one integration branch — see §3.2; confirm the S2 version is the one merged.)*
+**Phase 1 — Foundation** (v1 target "50% by end of June") ≈ **95%**
+- ✅ PIN + admin login, with login rate limiting + admin lockout (Wave 0). **Sessions are revocable** (Wave 2A.5). Session‑expiry is now visible client‑side — `useAuth` redirects on 401 (Session 3, UX‑5).
+- ✅ Inventory single source of truth — serialized counts `InventoryUnit`‑derived; **consumables rebuilt onto a total‑owned / derived‑availability model** and addable to kits (Session 3, DAT‑1). `itemType` is now a DB enum (DAT‑7).
+- ✅ Vehicle CRUD — PATCH zod‑validated/whitelisted (Wave 2A, S2). **VIN/plate/insurance PII withheld from operators** (Session 3, SEC‑2). DELETE is now a soft‑retire with an in‑use guard (DAT‑2).
 - ✅ Daily vehicle check — verified online **and** offline with idempotent sync; odometer in miles.
 - ✅ Equipment check in/out — verified via scan and My‑Rig; durable offline.
-- 🟡 Admin dashboard — stat cards + Active Deployments tile; §11.1 operational feeds/tables still not built.
+- 🟡 Admin dashboard — stat cards + Active Deployments tile; §11.1 operational feeds/tables still not built (Wave 3).
 - ✅ QR association/lookup — association‑on‑create (vehicles + units) shipped.
 - 🟡 Settings — categories + hubs management; alert‑threshold/cutoff config not wired.
-- ✅ Rigs/Kits/Deployments + transfers — verified end‑to‑end; now with `GET/PATCH /api/deployments/[id]` + secondary‑operator management (forward‑port). Transfer banners fixed (Wave 1.5).
-- ✅ **Team / account management** — invite, lifecycle (reset PIN, suspend/reactivate, force‑logout), roles with last‑admin guardrail, per‑operator defaults, audit log (Wave 2A.5).
+- ✅ Rigs/Kits/Deployments + transfers — verified end‑to‑end; `GET/PATCH /api/deployments/[id]` + secondary‑operator management. **Transfer status flips are now atomic** (DAT‑3); **start‑deploy + transfer create/respond/cancel are offline‑safe** through the queue (OFF‑3).
+- ✅ **Team / account management** — invite, lifecycle, roles with last‑admin guardrail, per‑operator defaults, audit log (Wave 2A.5).
+- ✅ **App‑wide security headers** (HSTS/nosniff/frame‑options/referrer/permissions) + **CSP (Report‑Only)** with a violation sink; CSRF footgun removed (Session 3, SEC‑4/SEC‑5).
 
-**Phase 2 — Core Operations** (v1 target "95% by end of July") ≈ **45%**
-- ✅ **Offline + background sync — Wave 1** (queue, honest indicators, idempotent replay).
-- 🟡 Maintenance scheduling/tracking — damage‑report tasks created; **`review-inoperable` RETIRE/REPAIR decision now exists** (forward‑port). The mark‑complete recurrence loop, the mileage trigger, and the full breakdown/resolution‑path state machine (Addendum §A) are **Wave 2B/3**.
-- 🟡 Photo capture — **a `POST /api/uploads` Supabase Storage endpoint now exists** (forward‑port, 10 MB / images only, service‑role client). Still missing: in‑app capture UI, client‑side compression, offline blob queueing, and damage‑photo‑required enforcement (Wave 2C).
-- 🟡 Notifications — daily‑check‑fail email wired; `DAMAGE_REPORTED` alerts created; the other five alert types + push are **Wave 3**.
-- ✅ Item disposition (INOPERABLE / damage) — verified.
-- ✅ **Security hardening — Wave 2A** (invite tokens, mass‑assignment validation, cost‑field gating, email escaping, seed, transfer idempotency).
+**Phase 2 — Core Operations** (v1 target "95% by end of July") ≈ **60%**
+- ✅ **Offline + background sync — Wave 1** (queue, honest indicators, idempotent replay); **all operator writes now route through the queue** (Session 3, OFF‑3).
+- 🟢 **Maintenance lifecycle — built (Session 3, DAT‑5).** One unified damage path (`lib/maintenance.createDamageReport`): every return/disposition that flags damage now flips the unit, opens a **unit‑linked** `MaintenanceTask`, and raises one `DAMAGE_REPORTED` alert (the quick per‑item "Needs maintenance" return previously notified no one). Completing a task returns that exact unit to `AVAILABLE`. `resolutionPath` (IN_FIELD/HUB/SHOP) + `locationNote` answer "where is it?" *Still Wave 3:* the recurrence/mileage trigger and the admin Maintenance **page** (the backend now exists to drive it).
+- 🟡 Photo capture — `POST /api/uploads` exists and is now **hardened** (magic‑byte validation, SVG blocked, per‑user rate limit; Session 3, SEC‑3). Still missing: in‑app capture UI, client‑side compression, offline blob queueing, the **private bucket + signed URLs**, and damage‑photo‑required enforcement (**Wave 2C**).
+- 🟡 Notifications — daily‑check‑fail email wired; `DAMAGE_REPORTED` alerts created and **now de‑duplicated atomically** (DAT‑7, `activeKey`); the other five alert types, push, scheduled triggers, a notification center, and **external‑recipient delivery** are **Wave 3** (the dispatcher).
+- ✅ Item disposition (INOPERABLE / damage) — verified; unified under DAT‑5.
+- ✅ **Security hardening — Wave 2A + Wave 2A′ (Session 3)** — invite tokens, mass‑assignment validation, cost‑field gating, email escaping, seed, transfer idempotency, **plus** vehicle‑PII minimization, upload hardening, security headers/CSP, CSRF removal, session‑expiry UX.
 
 **Phase 3 — Scale & Polish** (v1 target Q4 2026): ⛔ **not started.** Deployment Map, time/invoicing/availability, advanced reporting, **Deployment Requests** (§11.13). None of the new Phase‑3 models exist; GPS is still on `Photo`, not `DailyCheck`.
 
-"95% by end of July" still requires descoping; **Wave 2B** is the prerequisite.
+"95% by end of July" still requires descoping; the remaining Phase‑2 prerequisites are now **Wave 2C** (photos) and **Wave 3** (notifications + admin pages).
 
 ---
 
@@ -144,6 +146,26 @@ The session's many branches have now been **reconciled into a single integration
 - The reconciliation merge was **clean** — the two work lines were almost entirely disjoint (the only overlapping code file, `README.md`, auto‑merged). A **security‑regression check confirmed no regression**: the Wave‑2A validated `vehicles/maintenance/inventory [id]` PATCH routes, escaped email templates, session revocation, and the last‑admin guardrail are all present; the forward‑ported endpoints are in; the dead `[action]` route stayed removed; the schema carries both `AccountAuditLog` and the `linux-musl` binary target. `eslint` is clean.
 - **Remaining for the maintainer:** run `make db-migrate-dev` + a full `make verify` (the type‑check needs a freshly generated Prisma client — the build sandbox can't regenerate it; **CI is the validation source of truth**), then push `staging/20260618-reconciled`, let CI gate it, and **retire the superseded `staging/20260618-post-merge` and `staging/20260618-wave2a` branches**.
 
+### 3.4 Session‑3 changelog — assessment, SEC‑1, DAT‑1, Wave 2A′, Wave 2B‑A, DAT‑5, DAT‑7
+
+A third build session opened with a **fresh independent assessment** (`AHITS_Comprehensive_Assessment_2026-06-18.md`) and then executed the assessment's Wave 2 plan in full. Everything was `tsc`/ESLint‑clean; the migration‑bearing work was applied to the dev DB, the client regenerated, `make verify` run green, and `prisma migrate status` confirmed in sync (11 migrations total). Shipped as a **stack of PRs** off `main` (branches under `feature/20260618/maxwellslater-*`): `sec1-consumables` → `wave2b-correctness` → `dat5-maintenance-lifecycle` (**PR #31**) → `dat7-schema-hardening` (**PR #32**). The full record — files, commits, verification, caveats — is in `WAVE2_COMPLETE.md`.
+
+**Independent assessment (no code).** A code‑and‑staging re‑review confirmed the foundation is sound and reframed remaining work as consolidation. It superseded the earlier independent assessment, systematized the API‑consistency drift, and — importantly — **found one new Critical** (the `vehicles/[id]` credential leak, below). It also re‑confirmed the `proxy.ts` "dead middleware" claim is a **false positive** (Next 16's first‑class `proxy` convention; verified against `node_modules`), so that must not be "fixed."
+
+**SEC‑1 — Critical credential leak (hotfix).** `GET /api/vehicles/[id]` used `include: { dailyChecks: { include: { operator: true } } }`, serializing full `User` rows — incl. bcrypt `pinHash`, email, `hourlyRate` — to any authenticated operator. With 6‑digit PINs, a leaked hash is trivially brute‑forced → account/admin takeover. Scoped to `operator: { select: { id, name } }` (the only `operator: true` in the codebase). *No migration.*
+
+**DAT‑1 — consumable inventory model rebuild.** Consumables were declared "pure counts" but implemented as anonymous serialized units, so they failed checkout ("Only 0 units available"), `InventoryItem.quantity` was never mutated, and the kit‑add UI filtered them out — there was **no working path to put a consumable in a kit**. Rebuilt onto the product‑owner‑chosen model: **`quantity` = total owned, mutated only on permanent loss; availability = `quantity − Σ(open consumable reservations)`, derived on read; consumables never touch `InventoryUnit` rows.** New `src/lib/consumables.ts` centralizes the reserved‑sum, a **row‑locked availability guard** (`SELECT … FOR UPDATE`), and the guarded consume; a new **`RETURN` vs `CONSUME`** mode on per‑item return distinguishes "back to the shelf" from "used in the field." Applied across build‑kit, add‑items, return, end‑deployment, transfer‑decline, and both UI builders. New `tests/consumable-model.test.ts` covers the lifecycle. *No migration.*
+
+**Wave 2A′ — finish security hardening.** (a) **SEC‑2:** operators no longer receive vehicle VIN/plate/insurance/registration/notes (role‑aware `select` + field‑strip). (b) **SEC‑3:** uploads validated by **magic bytes** (new `src/lib/image-validation.ts`), **SVG blocked**, sniffed Content‑Type stored, per‑user **rate limit** (private bucket + signed URLs deferred to Wave 2C). (c) **SEC‑4:** enforced **HSTS / nosniff / X‑Frame‑Options DENY / Referrer‑Policy / Permissions‑Policy**, plus a **Report‑Only CSP** tuned for Emotion/MUI/Serwist/Supabase with an `/api/csp-report` sink. (d) **SEC‑5:** removed `serverActions.allowedOrigins: ['*']` (no Server Actions exist); cookie stays `sameSite: 'lax'`. (e) **UX‑5:** `useAuth` treats 401 as logged‑out and redirects to `/login`. *No migration.* *Follow‑up: flip CSP to enforcing after observing `/api/csp-report` on staging.*
+
+**Wave 2B‑A — no‑migration correctness cluster.** (a) **OFF‑3:** start‑deploy and transfer create/accept/decline/cancel now route through the durable offline `mutate()` queue (no more hard‑fail/data‑loss on a flaky connection); `POST /api/deployments` and `DELETE /api/transfers/[id]` wrapped in `withIdempotency` so a queued replay applies once. (b) **DAT‑2:** inventory/vehicle DELETE → **soft‑delete** (`deletedAt` / `status RETIRED`) with an "in active deployment" guard, replacing hard‑deletes that threw RESTRICT‑FK 500s. (c) **DAT‑3:** transfer accept/decline/cancel flip status via conditional `updateMany(where status PENDING)` (compare‑and‑set). *No migration. Caveat: OFF‑3 needs a real‑device offline pass — see §4.*
+
+**DAT‑5 — maintenance lifecycle (migration `20260618190000_maintenance_lifecycle`, additive).** New `src/lib/maintenance.createDamageReport()` is the single damage path; the quick per‑item return now spawns a task + alert like the rich path. `MaintenanceTask` gains `inventoryUnitId` (FK), `resolutionPath` (enum IN_FIELD/HUB/SHOP, derived from `RepairType`), and `locationNote`; **completing a task** (`PATCH /api/maintenance/[id]`) returns the linked `IN_MAINTENANCE` unit to `AVAILABLE` (and auto‑stamps `completedAt`). Closes the Addendum §A breakdown/resolution‑path gap at the model + API level; the admin Maintenance **page** to drive it is Wave 3.
+
+**DAT‑7 — schema hardening (migration `20260618200000_dat7_schema_hardening`).** Pre‑flight data checks confirmed clean data, then: **`itemType` String→enum `ItemType`** (DB enforces SERIALIZED/CONSUMABLE); **`@@unique([inventoryItemId, serialNumber])`** on `InventoryUnit` (NULLs distinct); and **atomic alert dedup** via a nullable‑unique **`Alert.activeKey`** (`${type}:${sourceTable}:${sourceId}` while unresolved, NULL once resolved) — enforcing "one unresolved alert per source" and replacing the race‑prone findFirst‑then‑create in `createAlert`. The migration backfills existing unresolved alerts.
+
+**Net effect on the security‑outstanding list (§16):** SEC‑1, vehicle‑PII, upload hardening, security‑headers/CSP, CSRF, and the session‑expiry UX are now **resolved**; the alert‑dedup and the consumable/maintenance correctness items are resolved. Remaining security items are the **private photo bucket + signed URLs** (Wave 2C) and the **shared‑store rate limiting + XFF parsing** (Wave 3), plus the **CSP enforce‑flip**.
+
 ---
 
 ## 4. QA verification results — proven working on staging
@@ -157,9 +179,15 @@ Driven hands‑on through the live app as **Field Op 1 and Field Op 2** (and via
 - **End Deployment:** rich per‑item disposition flow; all items returned to hub.
 - **Scan QR routing (Wave 1):** vehicle → Start Daily Check **with the vehicle pre‑selected**; available unit → Add to Kit; checked‑out unit → Return to Hub; unregistered code → clear error.
 
-**⏸ Open verifications (do on the admin walkthrough):** confirm Field Op 2's Bakery Bag **decremented 83 → 73** after the transfer (no consumable double‑count); confirm the `DAMAGE_REPORTED` alert fired for the Hand Corer report (admin‑only endpoint).
+**⏸ Open verifications (do on the admin/staging walkthrough):**
+- **(Session 3, DAT‑1)** Confirm a consumable can be **added to a kit through the UI** end‑to‑end (the unit suite proves the API; the picker is the last mile) and that owned `quantity` derives availability correctly (checkout reserves, return releases, log‑usage decrements).
+- **(Session 3, DAT‑5)** Confirm the quick **"Needs maintenance" per‑item return now raises a `DAMAGE_REPORTED` alert** and opens a unit‑linked task, and that **completing a maintenance task returns its unit to `AVAILABLE`**.
+- **(Session 3, SEC‑4)** Watch `/api/csp-report` on staging for genuine CSP violations before flipping the policy to enforcing.
 
-**🧪 Test gaps (need a real device / dedicated harness, not blockers):** service‑worker **cold‑offline launch**; **terminal‑failure "needs attention"** queue path; **conflict resolution** (two devices, same unit, offline); **auth tests** remain at **zero** (PIN lockout, session expiry, invite flow are the most security‑critical untested code).
+**🧪 Test gaps (need a real device / dedicated harness, not blockers):**
+- **OFF‑3 real‑device offline pass (highest value):** submit each converted write (start‑deploy, transfer create/accept/decline/cancel) **offline** on a phone, reconnect, and confirm a **single clean sync, no duplicates** — neither static analysis nor the unit suite can prove this runtime path.
+- Service‑worker **cold‑offline launch**; **terminal‑failure "needs attention"** queue path; **conflict resolution** (two devices, same unit, offline).
+- **auth tests** remain at **zero** (PIN lockout, session expiry/revocation, invite flow are the most security‑critical untested code) — Wave 3 starts here. *(The consumable model and the maintenance‑return path now have integration coverage; broaden from there.)*
 
 ---
 
@@ -171,10 +199,10 @@ Every item traces to `AHITS_QA_STAGING_ISSUES.md`. **Slot** = where it should be
 |---|-----|--------|------------|-----|------|
 | 1 | ✅ | **Operator vehicle remove fails** ("Request failed", 400) — **FIXED (`0d5591c`)** | `DELETE /api/deployments/[id]/vehicles` expected `{vehicles:[{vehicleId,dispositionType}],note}`; UI sent `{vehicleIds,…}` | UI now sends `vehicles:[{vehicleId,dispositionType:'AVAILABLE'}]` | ~~Wave 2~~ **Done** |
 | 2 | ✅ | **Consumable‑transfer banner shows wrong qty** (×83 not ×10) — **FIXED (Wave 1.5)** | Banner read source `kitItem.quantity`, not the transfer line's qty | Banners render `ti.quantity ?? ti.kitItem.quantity` | ~~Wave 2~~ **Done** |
-| 3 | 🔴 | **Consumables can't be added to a kit via UI** | Add‑Items/Build‑Kit filter on `unitCounts.available > 0`; consumables have no unit rows → excluded | Include consumables with a quantity input (transfer Select‑Items already does this) | **Wave 2 — Correctness** |
+| 3 | ✅ | **Consumables can't be added to a kit via UI** — **FIXED (Session 3, DAT‑1)** | Add‑Items/Build‑Kit filtered on `unitCounts.available > 0`; consumables have no unit rows → excluded. Whole consumable model was broken (couldn't check out at all). | Rebuilt onto total‑owned / derived‑availability; pickers gate on `availableQuantity`; full lifecycle (reserve/return/consume) correct | ~~Wave 2~~ **Done** |
 | 4 | ✅ | **Pending‑transfer "Waiting…/Cancel" banner leaks to recipient** — **FIXED (Wave 1.5)** | UI passed `?direction=incoming/outgoing` but `GET /api/transfers` **ignored** the param, so both banners got identical data | API now filters by `direction` relative to the current user | ~~Wave 2~~ **Done** |
 | 5 | ✅ | **UI doesn't auto‑refresh** after mutations — **FIXED (`0d5591c`)** | Handlers didn't re‑run `load()` on success | `await load()` after every operator mutation | ~~Wave 2~~ **Done** |
-| 6 | 🟡 | **"Needs maintenance" quick return creates no task/alert** (silent `IN_MAINTENANCE`) while disposition path does | Per‑item `kitItem` DELETE only flips status; no task/`createAlert` | Decide whether the simple path also spawns a task/alert (likely yes) | **Wave 2 — Correctness** |
+| 6 | ✅ | **"Needs maintenance" quick return creates no task/alert** — **FIXED (Session 3, DAT‑5)** | Per‑item `kitItem` DELETE only flipped status; no task/`createAlert` | Unified all damage paths behind `lib/maintenance.createDamageReport` — the quick return now opens a unit‑linked task + one `DAMAGE_REPORTED` alert | ~~Wave 2~~ **Done** |
 | 7 | 🟡 | **No damage‑photo capture** (daily‑check fails, check‑in damage) | Photo capture unimplemented app‑wide | Build photo capture end‑to‑end (§11.10 / Wave 2 photos) | **Wave 2 — Photos** |
 | 8 | 🟡 | **No operator‑side UI to add a secondary operator** to a deployment | Model supports `RigOperator`; no operator UI | Confirm flow (admin‑assigns vs. operator‑shares); build it | **Wave 2/3** |
 | 9 | 🟡 | **Consumable category mislabel** — "Bakery Bag" chip shows category "Storage" while peers show "CONSUMABLE" | Inconsistent item‑type vs. category rendering | Standardize the chip via shared `StatusChip`/vocabulary | **Wave 2 — UI unification** |
@@ -186,7 +214,9 @@ Every item traces to `AHITS_QA_STAGING_ISSUES.md`. **Slot** = where it should be
 | 15 | ⚪ | **Per‑item daily‑check note optional** (only overall fail summary required) | Validation only checks summary | Require a note per failing item (§11.4 intent) | Wave 2 — Correctness |
 | 16 | 🟡 | **Checklist condensed** (9 items vs §11.4's ~16) and **no per‑vehicle‑type custom items** | Hard‑coded default checklist; no admin config | Expand to the full list; add per‑type/per‑project checklists | **Phase 2/3 — Per‑project checklists** |
 
-**✅ Fixed this cycle (closed):** kit‑builder crash (React #31), empty unit pickers (`availableUnits`), operator transfer roster (`/api/operators`). See §3.
+**✅ Fixed in the prior cycle (closed):** kit‑builder crash (React #31), empty unit pickers (`availableUnits`), operator transfer roster (`/api/operators`). See §3.
+
+**✅ Fixed in Session 3 (closed):** #3 consumables‑in‑kit (DAT‑1), #6 silent needs‑maintenance return (DAT‑5). Remaining open punch items are UI‑polish (#9 consumable chip, #10 pending badge, #11 hydration dates, #12 empty‑state, #13 stable ordering, #14 Pass review, #15 per‑item note) — fold into **Wave 2D UI unification** — plus #7 photos (**Wave 2C**), #8 secondary‑operator UI and #16 expanded/per‑type checklists (**Wave 3 / Phase 2‑3**). See §3.4.
 
 ---
 
@@ -366,7 +396,7 @@ Highest‑volume workflow: up to 12 submissions/day across 12 operators in 12 lo
 
 **Breakdown / repair states (NEW — PRD v2.1 Addendum §A).** Beyond scheduled maintenance, the app must be comprehensive of what happens when a tool breaks **in the field**. An inoperable report (unit → `IN_MAINTENANCE`, task + alert) is followed by one of three **resolution paths**: **(A) Fixed in-field** — operator marks it operable and logs a *lightweight completed* `IN_FIELD_REPAIR` record (note required, cost/photo optional); unit rejoins the rig. **(B) Hub repair** — item is *shipped to the hub now* (leaves the rig) **or** *carried back at end of deployment* (stays with the rig, flagged `IN_MAINTENANCE`). **(C) Shop repair** — operator *delivers* or *ships* to a shop (`shopName`/`shopAddress`), which generates a **work order** to the shop. On close of a hub/shop repair, the **return destination must be explicitly selected** (no default — the repair can't close until one is chosen): originating hub (→ `AVAILABLE`), an active deployment (→ `CHECKED_OUT`), or a different hub. Location during repair is tracked as **status + a free-text location note** (no transit-state enum). This single flow **replaces the two divergent "needs maintenance" paths** (Punch #6) and is the home for *all* repair history (in-field included).
 
-**Build status:** 🟡 damage‑report tasks are created (verified). The mark‑complete recurrence loop and the mileage trigger are **not built** (Wave 3). The **breakdown resolution-path flow above is specified and slotted into Wave 2B** (Addendum §A.7).
+**Build status:** 🟢 **the breakdown/repair lifecycle is built (Session 3, DAT‑5).** A single unified damage path (`lib/maintenance.createDamageReport`) now backs *every* return/disposition that flags damage — including the quick per‑item "Needs maintenance" return, which previously flipped the unit silently with no task or alert (Punch #6 closed). The `MaintenanceTask` is **linked to the specific unit** (`inventoryUnitId`), carries a **`resolutionPath`** (IN_FIELD/HUB/SHOP, derived from `RepairType`) and a free‑text **`locationNote`**, and **completing the task returns that exact unit to `AVAILABLE`** (`PATCH /api/maintenance/[id]`, conditional on `IN_MAINTENANCE`). Still **not built (Wave 3):** the mark‑complete **recurrence** loop (auto‑create the next scheduled task) and the **mileage trigger**; and the admin **Maintenance page** UI to drive this lifecycle (the backend + API now exist for it). Hub/shop return‑destination selection on close and the in‑field lightweight‑repair record are partially expressed via the disposition options + `resolutionPath`/`locationNote`; finish in the Wave 3 Maintenance page.
 
 ### 11.7 QR code system
 
@@ -398,7 +428,7 @@ All automated alerts go to Admin / Operations users. Operators receive only dire
 
 **Channels:** push (iOS + Android) primary for time‑sensitive; email secondary (always sent alongside for archival); in‑app alert badge + notification center (persists until resolved). **Admin config:** cutoff time for daily‑check alerts, low‑inventory thresholds per item, which alert types are enabled, and which admins receive which types.
 
-**Build status:** 🟡 daily‑check‑fail email is wired and `DAMAGE_REPORTED` alert rows are created; the other five alert types and any push are **not** built (Wave 3). Resend is already a dependency.
+**Build status:** 🟡 daily‑check‑fail email is wired and `DAMAGE_REPORTED` alert rows are created — and, as of Session 3 (DAT‑7), **de‑duplicated atomically** (the `Alert.activeKey` nullable‑unique constraint enforces one unresolved alert per source, replacing the race‑prone findFirst‑then‑create; the key is cleared on resolve). DAT‑5 also made the alert stream cleaner (unit‑linked, single‑path). **Still Wave 3 — the notification dispatcher:** the other five alert types, **push**, **scheduled triggers** (overdue/not‑returned/expiry on a cron, not lazily on a GET), the **in‑app notification center**, per‑admin/per‑type routing, and — the biggest product gap — **external‑recipient delivery** (the maintenance‑shop work order; the Phase‑3 invoice→processor loop). Design it as **one escaped channel** that serves admin push/email *and* external email. Resend is already a dependency.
 
 ### 11.9 Offline mode & sync
 
@@ -424,7 +454,7 @@ The app must function identically offline as online for all operator workflows.
 
 **Technical handling:** photos compressed to max 1200px longest edge, JPEG 85% before upload; stored in cloud object storage (Supabase Storage); thumbnails generated server‑side; stored locally when offline and uploaded on next sync; damage photos cannot be deleted by operators (Admin only).
 
-**Build status:** 🟡 **partial (v2.2).** A `POST /api/uploads` Supabase Storage endpoint now exists (forward‑port: 10 MB, images only, via a service‑role `src/lib/supabase/admin.ts` client) — the upload foundation. Still missing: **in‑app camera capture, 1200px/JPEG‑85 compression, offline blob queueing, signed‑download URLs, damage‑photo‑required enforcement, and `Photo.url` validation** (still a free‑form string → stored‑XSS/SSRF surface). Finish in **Wave 2C** (Punch #7).
+**Build status:** 🟡 **partial (v2.3).** The `POST /api/uploads` Supabase Storage endpoint is now **hardened (Session 3, SEC‑3):** uploads are validated by **magic bytes** (real JPEG/PNG/WebP/GIF/HEIC only), **SVG is blocked** (script vector), the sniffed type is stored as the Content‑Type, and a **per‑user rate limit** caps abuse. Still missing (**Wave 2C**): **in‑app camera capture, 1200px/JPEG‑85 compression, offline blob queueing** (the JSON queue can't carry Blobs — needs a separate blob store), the **private bucket + signed‑download URLs** (deliberately deferred from SEC‑3 since capture isn't built yet), **damage‑photo‑required enforcement**, and **`Photo.url` validation** to the storage origin. Finish in **Wave 2C** (Punch #7).
 
 ### 11.11 Deployment map
 
@@ -495,14 +525,14 @@ Primary data objects in AHITS. Detailed schema (types, constraints, relationship
 | Entity | Key fields | Primary relationships |
 |--------|-----------|----------------------|
 | User | name, role, PIN hash, email, assigned vehicles, trusted devices, hourlyRate | Many projects; many check‑out logs |
-| InventoryItem | name, category, SKU, qty, cost, status, location, QR code ID | Many check‑out logs; many photos; many units |
-| InventoryUnit | itemId, status, QR code ID | One item (serialized count source of truth) |
+| InventoryItem | name, category, **itemType (enum SERIALIZED/CONSUMABLE — DB‑enforced, DAT‑7)**, SKU, qty, cost, status, location, QR code ID | Many check‑out logs; many photos; many units. **Consumables (DAT‑1): `quantity` = total owned; availability = `quantity − Σ(open consumable reservations)`, derived; mutated only on consumption/write‑off.** |
+| InventoryUnit | itemId, status, **serialNumber (unique within item, DAT‑7)**, QR code ID | One item (serialized count source of truth); many maintenance tasks (DAT‑5) |
 | Vehicle | name, type, VIN, plate, odometer, status, location | Many daily checks; many maintenance tasks; many photos |
 | CheckOutLog | timestamp, action (in/out), item, operator, project, location, condition, photos | One item; one user; one project |
 | DailyVehicleCheck | date, vehicle, operator, site, odometer, checklist responses, issues, photos, pass/fail, (future: gpsLat/gpsLng/gpsAccuracy) | One vehicle; one user |
-| MaintenanceTask | asset, task, interval, priority, last done, next due, status, cost | One vehicle or item; many history records |
+| MaintenanceTask | asset, task, interval, priority, last done, next due, status, cost, **inventoryUnitId (FK), resolutionPath (IN_FIELD/HUB/SHOP), locationNote (DAT‑5)** | One vehicle or item; **one unit (DAT‑5 — completing the task returns that unit to AVAILABLE)**; many history records |
 | Project | name, type, location, start/end, status, lead, equipment list | Many users; many inventory items |
-| Alert | type, trigger time, target (admin), resolved, link to triggering record | One admin user; one source record |
+| Alert | type, trigger time, target (admin), resolved, **activeKey (nullable‑unique dedup — one unresolved alert per source; cleared on resolve, DAT‑7)**, link to triggering record | One admin user; one source record |
 | Photo | URL, thumbnail URL, timestamp, GPS, uploader, context (damage/check/maintenance) | Polymorphic — linked to any parent |
 | Hub | name, state, address | Many rigs; many kits |
 | Rig | name, type, status, hubId | One hub; many kits; many deployments |
@@ -565,7 +595,7 @@ The original v1 **phases** define product scope; the **waves** are the consolida
 
 ### 15.2 Waves (execution increments)
 
-> **Status update (v2.2):** Waves **0, 1, 1.5, 2A** are ✅ **done/merged**; **2A.5** is ✅ **built (pending merge)**. The current next block is **Wave 2B (correctness)** — items 2, 2a, 2b, 3, 5, 6 below. Items 1, 4, and the Wave‑2A security carryovers are **done** (see §3.2). The wave list below is annotated accordingly.
+> **Status update (v2.3):** Waves **0, 1, 1.5, 2A, 2A.5** are ✅ **done**. **Session 3** then shipped, as stacked PRs (§3.4): **SEC‑1** (Critical hotfix), **DAT‑1** (the consumable accounting rebuild — item 2 below), **Wave 2A′** (the security carryovers — item 8, plus vehicle‑PII/uploads/headers‑CSP/CSRF/session‑UX), **Wave 2B‑A** (offline‑safe writes, soft‑deletes, **atomic transfer handlers** — item 3), and **DAT‑5** (the breakdown/resolution‑path lifecycle — item 2b) and **DAT‑7** (schema hardening). **Remaining of Wave 2:** **2C photos** (item 7), **2D UI unification** (item 6), and the **2a Deployment‑model M2M/assignment refactor** (sequenced with Wave 3). The scheduled maintenance loop + mileage trigger (item 5) moves to Wave 3 with notifications. The list below is annotated accordingly.
 
 **Wave 0 — ✅ done.** Single source of truth for inventory; restored unit/QR sub‑system; corrected dashboard "checked out"; removed dead/mislabeled controls; success messages only on real success; login rate‑limit + admin lockout; automated linting.
 
@@ -617,19 +647,29 @@ The original v1 **phases** define product scope; the **waves** are the consolida
 **Gaps in the codebase (beyond the punch list) — with v2.2 status:**
 - ✅ **Sessions can't be revoked** — **FIXED (Wave 2A.5):** `getSession` re‑checks `isActive` + `tokenVersion` and returns fresh role; suspend/force‑logout/demote are immediate. (Full trusted‑device/per‑device model still deferred to Wave 3.)
 - ✅ **Invite tokens use `cuid()` not a CSPRNG** — **FIXED (Wave 2A, S1):** CSPRNG tokens + throttling + TOCTOU fix.
-- 🟡 **Photos not wired to Supabase Storage** — **PARTIAL:** a `POST /api/uploads` service‑role Storage endpoint now exists (forward‑port). Still missing: in‑app capture, compression, offline blob queue, signed‑download URLs, and `Photo.url` validation. (Wave 2C.)
-- ✅ **Operators can read cost/spend fields** — **FIXED (Wave 2A, S5).**
-- ✅ **Mass‑assignment PATCH routes** — **FIXED (Wave 2A, S2)** for vehicles/maintenance/inventory. *(Confirm the validated version is what merged — the forward‑port baseline contains an older unvalidated copy on one branch; see §3.3.)*
-- 🟡 **Maintenance complete‑loop + mileage trigger** — still missing (Wave 3); `review-inoperable` decision endpoint now exists (forward‑port).
+- 🟡 **Photos not wired to Supabase Storage** — **PARTIAL:** `POST /api/uploads` now **hardened (Session 3, SEC‑3)** — magic‑byte validation, SVG blocked, per‑user rate limit. Still missing: in‑app capture, compression, offline blob queue, **private bucket + signed URLs**, and `Photo.url` validation. (Wave 2C.)
+- ✅ **Operators can read cost/spend fields** — **FIXED (Wave 2A, S5).** Plus **vehicle VIN/plate/insurance PII** now withheld from operators (Session 3, SEC‑2).
+- ✅ **Mass‑assignment PATCH routes** — **FIXED (Wave 2A, S2)** for vehicles/maintenance/inventory.
+- ✅ **Consumable model broken** — **FIXED (Session 3, DAT‑1):** total‑owned / derived‑availability; consumables now addable to kits and correctly accounted (no double‑count, no phantom units).
+- ✅ **`vehicles/[id]` leaked `pinHash`/PII** — **FIXED (Session 3, SEC‑1).**
+- ✅ **Two divergent "needs maintenance" paths / units stranded in maintenance** — **FIXED (Session 3, DAT‑5):** one unified, unit‑linked damage path; repair completion returns the unit to service.
+- ✅ **Hard deletes threw RESTRICT‑FK 500s; non‑atomic transfer flips; offline‑bypass writes lost data** — **FIXED (Session 3, Wave 2B‑A):** soft‑deletes + in‑use guards (DAT‑2), atomic compare‑and‑set (DAT‑3), queue‑routed writes (OFF‑3).
+- ✅ **`itemType` free string; no serial uniqueness; duplicate unresolved alerts** — **FIXED (Session 3, DAT‑7):** DB enum, `@@unique` serials, atomic `activeKey` alert dedup.
+- ✅ **No security headers / CSP; `serverActions` CSRF footgun; invisible session expiry** — **FIXED (Session 3, SEC‑4/5, UX‑5).** *(CSP is Report‑Only — flip to enforcing after observing `/api/csp-report` on staging.)*
+- 🟢 **Maintenance lifecycle** — **built (Session 3, DAT‑5)**; the scheduled complete‑loop + mileage trigger and the admin Maintenance **page** remain Wave 3.
 - 🟡 **Admin dashboard feeds/tables + four stub pages** — still not built (Wave 3).
-- 🟡 **Zero auth tests** — the isolated test DB + **CI test gating** are now in place; auth‑specific tests still to be written (Wave 3, test expansion).
+- 🟡 **Zero auth tests** — the isolated test DB + **CI test gating** are in place; the consumable model + maintenance‑return path now have integration coverage; auth‑specific tests still to be written (Wave 3, test expansion).
+- 🟡 **In‑memory rate limiting + spoofable `X-Forwarded-For` parsing** — login/invite/upload throttles are per‑instance and read the wrong XFF end; move to a shared store + fix XFF (Wave 3, SEC‑6).
 
-**Gaps in the workflow / process:**
-- **Docker build doesn't run migrations.** The `CLAUDE.md` flow leans on a manual `make db-migrate` per PR — a schema‑drift footgun. Move migration into the deploy (entrypoint or a gated CI step).
-- **No `/api/health` + Cloud Run startup probe** — and it means external QA can't cleanly verify a deploy without logging in (the auth proxy redirects everything).
-- **CI branch‑name gating** — confirm prod PRs actually run lint/type‑check; the dev/deploy branch names have drifted historically.
-- **Commit discipline** — this cycle ended with a substantive refactor (37 auth routes) uncommitted (§3.1). Worth a "no orphaned working‑tree" check before calling work done.
-- **Real‑device offline testing** isn't in the loop — the SW cold‑launch and conflict paths can only be confirmed on a phone in airplane mode.
+**Gaps in the workflow / process (updated through Session 3):**
+- **Docker build doesn't run migrations.** The `CLAUDE.md` flow leans on a manual `make db-migrate` per PR — a schema‑drift footgun, and the most important remaining workflow fix. Session 3 added two migrations (`maintenance_lifecycle`, `dat7_schema_hardening`) and confirmed `migrate status` in sync each time, but production still depends on a human running the migrate step. **Move `prisma migrate deploy` into the container entrypoint or a gated CI step before any further migration‑bearing work ships.**
+- **No `/api/health` + Cloud Run startup probe** — external QA can't cleanly verify a deploy without logging in (the auth proxy redirects everything).
+- **CI branch‑name gating** — confirm prod PRs actually run lint/type‑check + the vitest suite; branch names have drifted historically.
+- **`tsc` + ESLint is not a sufficient gate on its own.** Session 3 confirmed the lesson twice: two existing tests (`consumable-return-scoping`, the `ItemType` fixtures) only failed when `make verify` actually ran them against a database — because the authoring environment had no DB. **`make verify` (which runs the Postgres‑backed vitest suite) is the real definition‑of‑done**, and it must stay the CI merge gate. The DB‑backed suite catches contract drift that types can't.
+- **Migration discipline (new, from Session 3).** For any schema change: (1) **pre‑check the data** for any uniqueness/enum/NOT‑NULL constraint (a quick read‑only `SELECT … HAVING COUNT(*)>1` / `DISTINCT` — DAT‑7 would have failed the migration on dup serials otherwise); (2) order is **schema → migrate/generate → `make verify` → commit** (the client must regenerate before the typecheck can pass); (3) after a **hand‑written** migration (needed when Prisma can't express a partial index or a data backfill, as in DAT‑5/DAT‑7), always run **`prisma migrate status`** to confirm it's recorded and in sync, or `migrate deploy` in CI/prod can try to re‑run it; (4) **one migration per PR**, never bundled with unrelated code.
+- **Stacked, single‑concern PRs work well** — Session 3 shipped as a clean stack (security/consumables → correctness → DAT‑5 → DAT‑7), each retargeting as its base merged. Keep this; it kept reviews legible and let staging validate increments.
+- **Real‑device offline testing** still isn't in the loop — and Session 3's OFF‑3 (routing all operator writes through the queue) **raises the stakes**: the SW cold‑launch, the converted writes, and conflict paths can only be confirmed on a phone in airplane mode. Make a real‑device pass a release‑gate checklist item before any field pilot.
+- **Track the CSP enforce‑flip.** The Report‑Only CSP provides no protection until enforced; it's a one‑line change behind a short observation window — keep it on the board so it doesn't linger.
 
 ---
 
@@ -654,11 +694,13 @@ The original v1 **phases** define product scope; the **waves** are the consolida
 
 ## 18. Data model additions required
 
-- **`idempotency_key`** (shipped this cycle, raw‑SQL/Prisma model) — dedup store for offline replay.
+- ✅ **`idempotency_key`** (raw‑SQL/Prisma model) — dedup store for offline replay.
+- ✅ **`ItemType` enum** + **`InventoryUnit @@unique([inventoryItemId, serialNumber])`** (Session 3, DAT‑7).
+- ✅ **`MaintenanceTask.inventoryUnitId` (FK) + `resolutionPath` + `locationNote`**, `ResolutionPath` enum (Session 3, DAT‑5).
+- ✅ **`Alert.activeKey` nullable‑unique** (Session 3, DAT‑7) — replaces the earlier proposed `(type, sourceTable, sourceId, resolved)` constraint; enforces one unresolved alert per source atomically, cleared on resolve. *(This supersedes the v2.2 proposal below.)*
 - **`DailyCheck.gpsLat/gpsLng/gpsAccuracy`** (Phase 3 map) — GPS currently lives on `Photo`.
 - **Trusted‑device / session model** (Wave 3) — for the "3 trusted devices", 30‑day idle, and revocation.
 - **Phase‑3 module** (§11.12): `TaskType`, `OperatorRate`, `TimeEntry`, `Expense`, `Invoice`, `InvoiceLineItem`, `Availability`; `User.hourlyRate`; `Settings.milesReimbursementRate`.
-- **`Alert` uniqueness** on `(type, sourceTable, sourceId, resolved)` to prevent duplicate unresolved alerts.
 
 ---
 
@@ -666,8 +708,8 @@ The original v1 **phases** define product scope; the **waves** are the consolida
 
 - **Wave 0 — ✅ done.** Inventory truth, login hardening, dead‑control fixes.
 - **Wave 1 — ✅ done & verified.** Offline durable queue + honest indicators + idempotent sync; QR association‑on‑create + context‑aware scan routing. *(Caveat: SW cold‑launch + conflict paths await a real‑device pass.)*
-- **Wave 2 — in progress.** Exit when the punch‑list blockers are fixed, consumables are addable & correctly accounted, one transfer handler each, all edit endpoints validated, the maintenance loop works, photos are captured & stored privately, and the UI is unified with reliable post‑mutation refresh.
-- **Wave 3 — not started.** Notifications (all six alert types + shop/invoice outputs), admin completeness, deploy hardening, sessions/devices, test expansion.
+- **Wave 2 — mostly done (Session 3).** ✅ Punch‑list blockers fixed; ✅ consumables addable & correctly accounted (DAT‑1); ✅ one transfer handler each + atomic flips (DAT‑3); ✅ all edit endpoints validated; ✅ the breakdown/maintenance **lifecycle** works (DAT‑5); ✅ security hardening complete (Wave 2A′); ✅ offline‑safe writes + soft‑deletes (Wave 2B‑A). **Remaining for Wave 2 exit:** **2C** photos captured & stored privately; **2D** UI unification (one contract/vocabulary/primitives, post‑mutation refresh polish); and the **Deployment‑model M2M/assignment** refactor. The *scheduled* maintenance loop + mileage trigger moved to Wave 3.
+- **Wave 3 — not started.** The **notification dispatcher** (all six alert types + push + scheduled triggers + notification center + shop/invoice external outputs), admin completeness (four stub pages incl. the Maintenance UI), the scheduled maintenance loop + mileage trigger, deploy hardening (migrations in deploy path; `/api/health`; CSP enforce‑flip; shared‑store rate limiting), sessions/devices, test expansion (auth first), and Deployment Requests.
 - **Phase 3 — not started.** Deployment Map; Time/Invoicing/Availability; advanced reporting.
 
 ---
@@ -703,7 +745,7 @@ The original v1 **phases** define product scope; the **waves** are the consolida
 
 ---
 
-## 21. Workflow recommendations (from the v2.2 build session)
+## 21. Workflow recommendations (from the v2.2 build session; extended through Session 3 in §21.7)
 
 This session moved fast across many branches with two builders (an in‑session agent and the maintainer's local machine) committing to the same repo. That produced real velocity but also avoidable friction. These recommendations are concrete and grounded in what happened.
 
@@ -742,21 +784,31 @@ Two builders editing the **same repo folder** concurrently caused branch‑switc
 - Keep a **deploy marker commit** convention (the session used `chore: staging deploy marker …`) — useful, but pair it with the health endpoint for real verification.
 - Watch the **session‑revocation DB read** (Wave 2A.5) in Cloud Run latency dashboards; cache if needed (§22).
 
+**21.7 Session‑3 workflow learnings (what worked, what to codify).** Session 3 ran clean — four stacked, single‑concern PRs, two in‑sync migrations, no orphaned working tree — and confirmed a handful of practices that should become standing policy:
+- **`make verify` is the definition‑of‑done, not `tsc` + ESLint.** Two existing tests failed only when the DB‑backed suite actually executed them (the consumable‑return‑scoping test and the `ItemType` fixtures), because the authoring environment had no database. Run `make verify` (db‑generate + typecheck + lint + Postgres vitest) before every PR; keep it the CI merge gate. Types are necessary but not sufficient — the suite catches contract drift types can't.
+- **Migration‑bearing work has a fixed order: pre‑check data → schema → migrate/generate → `make verify` → commit.** The client must regenerate before the typecheck can pass, so a schema change can't be verified until the migration is applied. Codify this in `CLAUDE.md`'s deploy section.
+- **Pre‑check data before any uniqueness/enum/NOT‑NULL constraint.** DAT‑7's serial‑uniqueness and itemType‑enum migrations would have failed against dirty data; three read‑only `SELECT … HAVING COUNT(*)>1` / `DISTINCT` checks confirmed they were safe. Keep a `scripts/` helper for this and make it a standard pre‑flight.
+- **After a hand‑written migration, always `prisma migrate status`.** When Prisma can't express a change in the schema (a partial index, or a data backfill — both needed in DAT‑5/DAT‑7), the migration is hand‑authored; confirm it's recorded in `_prisma_migrations` and the DB is "in sync," or `migrate deploy` can try to re‑run it in CI/prod. (Both Session‑3 migrations were confirmed in sync.)
+- **Stacked, single‑concern PRs are the right shape.** Security/consumables → correctness → DAT‑5 → DAT‑7, each retargeting as its base merges, kept reviews legible and let staging validate increments. One migration per PR; never bundle a data migration with unrelated code.
+- **Schedule the deferred one‑liners.** The **CSP Report‑Only → enforce** flip and the **`mustChangePin` operator screen** are small, security‑relevant follow‑ups that will linger unless tracked on the board.
+
 ---
 
 ## 22. Forward recommendations & concerns
 
 Ranked roughly by urgency. The rest is product/engineering sequencing.
 
+**22.0 Session‑3 status & the new critical path.** Session 3 completed the assessment's Wave 2 plan (§3.4): the consumable accounting, the security‑hardening tail, the correctness cluster, the maintenance/breakdown lifecycle, and schema hardening are all done. Several items below are now partly or fully addressed — annotated inline. **The single highest‑leverage next investment is the notification dispatcher (22.10):** everything *inbound* (operator capture, inventory truth, the now‑clean maintenance event stream) is solid, but the system still mostly *holds* information rather than *delivering* it — nothing reaches external recipients (shops, hubs). After that, **Wave 2C photos** (22.4) is the next hidden dependency, then **Wave 2D consistency unification** (new — see 22.11). And before any field pilot, do the **real‑device offline pass** (22.8), whose stakes rose now that all operator writes route through the queue (OFF‑3).
+
 **22.1 ✅ DONE — Branches reconciled.** All work lines were integrated into **`staging/20260618-reconciled`** (see §3.3). The maintainer still needs to `make verify` + push + let CI gate it, and retire the two superseded staging branches — but the divergence risk is resolved.
 
 **22.2 ✅ VERIFIED — No security regression from the forward‑port.** The reconciliation merge was three‑way (common ancestor `3c7516c`), so the Wave‑2A (S2) validated PATCH routes — which only the Wave‑2A line modified — won automatically over the forward‑port baseline's untouched originals. Confirmed by direct check: `vehicles/maintenance/inventory [id]` PATCH all carry their zod whitelists, emails are escaped, and cost gating is intact. **General rule retained for future forward‑ports:** always merge three‑way (or diff against the latest hardened code) rather than cherry‑pick‑overwriting, so hardening can't be silently reverted.
 
-**22.3 Wave 2B is the keystone — do the model first.** The Kit ⊂ Rig ⊂ Deployment model (Addendum §C: `Deployment↔Project` M2M, `DeploymentAssignment`) is a prerequisite for (a) clean consumable accounting (#3), (b) the breakdown/resolution‑path state machine (§A / #6), and (c) Deployment Requests (§F). Sequence: **model → consumable accounting → breakdown flow → UI vocabulary rename ("My Rig"→"My Deployment")**.
+**22.3 Wave 2B — mostly done (Session 3); the model refactor remains.** ✅ Consumable accounting (DAT‑1) and ✅ the breakdown/resolution‑path lifecycle (DAT‑5) shipped, plus the correctness cluster (DAT‑2/3, OFF‑3). **Still open:** the Kit ⊂ Rig ⊂ Deployment **model refactor** (Addendum §C: `Deployment↔Project` M2M, a `DeploymentAssignment` operator‑handoff history folding in `RigOperator`) and the **UI vocabulary rename** ("My Rig"→"My Deployment"). These remain a prerequisite for **Deployment Requests** (§F, Wave 3), so sequence the model refactor early in the Wave 3 run (or as a small Wave 2D.5). It is no longer blocking consumables or maintenance, which are done.
 
 **22.4 Finish the photo pipeline.** The `POST /api/uploads` endpoint is the foundation; now build **in‑app capture → 1200px/JPEG‑85 compression → offline blob queue → signed‑download URLs → damage‑photo‑required enforcement**, and **validate `Photo.url`** (currently a free string — stored‑XSS/SSRF surface). Until then, damage documentation — a core "faster than texting a photo" promise — is only half‑built.
 
-**22.5 Test the security‑critical new code.** Account management + session revocation are now the most powerful and least‑tested code in the app. With CI test‑gating in place, prioritize tests for: PIN lockout, session expiry/revocation (`tokenVersion`), the invite flow (CSPRNG + TOCTOU), the last‑admin guardrail, and consumable/transfer idempotency.
+**22.5 Test the security‑critical new code.** Account management + session revocation remain the most powerful, least‑tested code in the app. Session 3 added integration coverage for the **consumable model** and the **maintenance‑return path**; prioritize next: PIN lockout, session expiry/revocation (`tokenVersion`), the invite flow (CSPRNG + TOCTOU), the last‑admin guardrail, transfer accept/decline idempotency + the new atomic status flips (DAT‑3), and the alert‑dedup constraint (DAT‑7).
 
 **22.6 Build the operator `mustChangePin` screen.** Reset‑PIN sets the flag and login returns it, but nothing forces the change — so admin‑reset PINs aren't actually rotated by the operator. Small, security‑relevant follow‑up.
 
@@ -766,7 +818,11 @@ Ranked roughly by urgency. The rest is product/engineering sequencing.
 
 **22.9 Admin completeness.** Four admin pages (Vehicles, Maintenance, Projects, Reports) are still stubs but linked live, and the §11.1 dashboard feeds/tables are unbuilt — admins hit dead ends. Schedule for Wave 3 alongside the maintenance loop + notifications.
 
-**22.10 Build one notifications dispatcher.** Five missing alert types, maintenance‑shop work orders, Deployment‑Request notifications, and (Phase 3) invoice emails all want a single, escaped outbound channel. Build it once in Wave 3 rather than scattering `sendEmail` calls.
+**22.10 Build one notifications dispatcher (the new critical path).** Five missing alert types, **push**, **scheduled triggers** (overdue/not‑returned/expiry on a cron, not lazily on a GET), an **in‑app notification center**, per‑admin/per‑type routing, the **maintenance‑shop work order**, Deployment‑Request notifications, and (Phase 3) invoice emails all want a **single, escaped outbound channel** that serves admin push/email *and* external email. DAT‑5/DAT‑7 left a clean, unit‑linked, de‑duplicated alert/maintenance event stream to build on. This is the highest‑leverage next investment — build it once in Wave 3 rather than scattering `sendEmail` calls, and treat the **external‑recipient experience (shops, hubs) as a first‑class design surface**, not an afterthought.
+
+**22.11 Consolidate before adding breadth — Wave 2D consistency unification (new).** The app still has two dialects (a clean offline‑first operator dialect; a hand‑rolled admin dialect). Before Wave 3, spend ~3–5 days unifying: **one response contract** (the declared `{data}` envelope + a single `apiError()` helper + published DTOs — erases the defensive `?? d` / `typeof d.error` hedges in the client), **one vocabulary** (extend `lib/status.ts` to *every* enum — `VehicleType`, `TransferStatus`, `Condition`, `Priority`, `AlertType` — and route all rendering through typed chips), **one set of primitives** (collapse the ~20 hand‑rolled dialogs and 3 toast systems into `ConfirmDialog`/`useToast`/`StatusChip`), and **one "Deployment" noun**. It's mostly deletion, and it compounds: every subsequent feature (notifications, admin pages, reporting) gets cheaper and less bug‑prone once it lands. A useful "done" test: a new feature should be buildable by composing existing primitives without inventing a new dialog, fetch wrapper, status map, or email send.
+
+**22.12 Watch the migration discipline (process).** The codebase carries some historical drift (mixed `db push` / `migrate dev`, hand‑authored SQL). Session 3 added two clean, in‑sync migrations and confirmed status each time — keep that bar: data pre‑checks for constraints, `migrate status` after hand‑written SQL, one migration per PR, and — the most important remaining infra fix — **migrations in the automated deploy path** (Docker entrypoint or gated CI step) so production never depends on a human remembering to run `make db-migrate` (§16, §21.2).
 
 **22.11 Settings & configurability.** Alert‑threshold/cutoff config, per‑item low‑stock thresholds, per‑operator rates/defaults, and (later) per‑project/per‑vehicle‑type checklists all converge on the Settings surface — plan it as a coherent admin config area rather than piecemeal.
 
