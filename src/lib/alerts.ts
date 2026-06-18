@@ -8,12 +8,20 @@ export async function createAlert(
   sourceId: string,
   metadata?: AlertMeta,
 ) {
-  const existing = await prisma.alert.findFirst({
-    where: { type: type as never, sourceTable, sourceId, resolved: false },
-  })
-  if (existing) return existing
-
-  return prisma.alert.create({
-    data: { type: type as never, sourceTable, sourceId, metadata: metadata ?? {} },
-  })
+  // activeKey enforces "at most one UNRESOLVED alert per source" via a unique
+  // constraint (DAT-7), so this is atomic — no findFirst-then-create race. The
+  // key is cleared when the alert is resolved, freeing a future alert.
+  const activeKey = `${type}:${sourceTable}:${sourceId}`
+  try {
+    return await prisma.alert.create({
+      data: { type: type as never, sourceTable, sourceId, metadata: metadata ?? {}, activeKey },
+    })
+  } catch (err) {
+    // Unique violation → an unresolved alert already exists for this source.
+    if ((err as { code?: string }).code === 'P2002') {
+      const existing = await prisma.alert.findFirst({ where: { activeKey } })
+      if (existing) return existing
+    }
+    throw err
+  }
 }

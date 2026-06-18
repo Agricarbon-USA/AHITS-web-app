@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { ItemType } from '@prisma/client'
 import { NextRequest } from 'next/server'
 import { POST as endDeployment } from '../src/app/api/deployments/[id]/end/route'
 import { POST as acceptTransfer } from '../src/app/api/transfers/[id]/accept/route'
@@ -30,7 +31,7 @@ describe('End-of-deployment TRANSFER lifecycle', () => {
   })
 
   it('end-deployment TRANSFER items are not marked removedAt until accepted', async () => {
-    const item = await createInventoryItem(cat.id, { itemType: 'SERIALIZED', quantity: 0 })
+    const item = await createInventoryItem(cat.id, { itemType: ItemType.SERIALIZED, quantity: 0 })
     const unit = await createInventoryUnit(item.id, { status: 'CHECKED_OUT' })
     const { rig, kit } = await createRig(op1.id)
     const kitItem = await prisma.kitItem.create({
@@ -83,7 +84,7 @@ describe('End-of-deployment TRANSFER lifecycle', () => {
   })
 
   it('declining an end-of-deployment transfer restores units to AVAILABLE', async () => {
-    const item = await createInventoryItem(cat.id, { itemType: 'SERIALIZED', quantity: 0 })
+    const item = await createInventoryItem(cat.id, { itemType: ItemType.SERIALIZED, quantity: 0 })
     const unit = await createInventoryUnit(item.id, { status: 'CHECKED_OUT' })
     const { rig, kit } = await createRig(op1.id)
     const kitItem = await prisma.kitItem.create({

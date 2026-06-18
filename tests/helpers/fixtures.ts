@@ -1,3 +1,4 @@
+import { ItemType } from '@prisma/client'
 import { prisma } from '../../src/lib/prisma'
 
 let counter = 0
@@ -34,7 +35,7 @@ export async function createCategory(overrides?: { name?: string }) {
 export async function createInventoryItem(
   categoryId: string,
   overrides?: {
-    itemType?: string
+    itemType?: ItemType
     quantity?: number
     name?: string
     status?: string
@@ -44,7 +45,7 @@ export async function createInventoryItem(
     data: {
       name: overrides?.name ?? `Item-${uid()}`,
       categoryId,
-      itemType: overrides?.itemType ?? 'CONSUMABLE',
+      itemType: overrides?.itemType ?? ItemType.CONSUMABLE,
       quantity: overrides?.quantity ?? 1,
       status: (overrides?.status ?? 'AVAILABLE') as never,
     },

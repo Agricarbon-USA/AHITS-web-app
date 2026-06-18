@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import type { EquipmentCategory, EquipmentStatus } from '@prisma/client'
+import { ItemType } from '@prisma/client'
 import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions, CONSUMABLE } from '@/lib/inventory'
 import { reservedConsumableMap } from '@/lib/consumables'
 
@@ -28,7 +29,7 @@ export async function GET(req: NextRequest) {
     ...(status && { status }),
     ...(category && { category }),
     ...(categoryId && { categoryId }),
-    ...(itemType && { itemType }),
+    ...(itemType && { itemType: itemType as ItemType }),
     ...(hubId && { hubId }),
     ...(q && { name: { contains: q, mode: 'insensitive' as const } }),
     // Filter by active operator/project via kit items → kit → rig
@@ -140,7 +141,7 @@ export async function GET(req: NextRequest) {
 const createSchema = z.object({
   name: z.string().min(1),
   categoryId: z.string().optional(),
-  itemType: z.string().optional(),
+  itemType: z.nativeEnum(ItemType).optional(),
   unitId: z.string().optional(),
   quantity: z.number().int().min(0).default(1),
   expectedQuantity: z.number().int().optional(),

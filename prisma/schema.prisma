@@ -338,11 +338,16 @@ model TransferItem {
   @@map("transfer_items")
 }
 
+enum ItemType {
+  SERIALIZED
+  CONSUMABLE
+}
+
 model InventoryItem {
   id                String            @id @default(cuid())
   name              String
   category          EquipmentCategory @default(OTHER)
-  itemType          String            @default("CONSUMABLE")
+  itemType          ItemType          @default(CONSUMABLE)
   unitId            String?
   sku               String?
   quantity          Int               @default(1)
@@ -399,6 +404,9 @@ model InventoryUnit {
   @@index([inventoryItemId])
   @@index([status])
   @@index([deletedAt])
+  // Serial numbers must be unique within an item (DAT-7). NULLs are allowed and
+  // treated as distinct by Postgres, so unserialized units don't collide.
+  @@unique([inventoryItemId, serialNumber])
   @@map("inventory_units")
 }
 
@@ -570,6 +578,11 @@ model Alert {
   sourceTable String?
   sourceId    String?
   metadata    Json?
+  // Dedup key (DAT-7): set to `${type}:${sourceTable}:${sourceId}` while an alert
+  // is unresolved, NULL once resolved. The @unique constraint then enforces "at
+  // most one UNRESOLVED alert per source" (multiple NULLs are allowed). Replaces
+  // the race-prone findFirst-then-create dedup in createAlert.
+  activeKey   String?   @unique
 
   admin User? @relation(fields: [adminId], references: [id])
 

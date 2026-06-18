@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { ItemType } from '@prisma/client'
 import { NextRequest } from 'next/server'
 import { DELETE as deleteKitItem } from '../src/app/api/deployments/[id]/items/[kitItemId]/route'
 import { prisma } from '../src/lib/prisma'
@@ -24,7 +25,7 @@ describe('Consumable return: unit scoping', () => {
 
     // Consumable item — quantity tracks owned stock; units are irrelevant to the
     // checkout/return flow but may exist (e.g. created before the model change).
-    const item = await createInventoryItem(cat.id, { itemType: 'CONSUMABLE', quantity: 3 })
+    const item = await createInventoryItem(cat.id, { itemType: ItemType.CONSUMABLE, quantity: 3 })
     const unitA = await createInventoryUnit(item.id, { status: 'CHECKED_OUT' })
     const unitB = await createInventoryUnit(item.id, { status: 'CHECKED_OUT' })
 

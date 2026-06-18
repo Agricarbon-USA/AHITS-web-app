@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { ItemType } from '@prisma/client'
 import { NextRequest } from 'next/server'
 import { POST as addItems } from '../src/app/api/deployments/[id]/items/route'
 import { DELETE as removeKitItem } from '../src/app/api/deployments/[id]/items/[kitItemId]/route'
@@ -72,7 +73,7 @@ describe('Consumable stock model (total-owned, derived availability)', () => {
   })
 
   it('checkout reserves without mutating owned quantity; availability is derived', async () => {
-    const item = await createInventoryItem(cat.id, { itemType: 'CONSUMABLE', quantity: 50 })
+    const item = await createInventoryItem(cat.id, { itemType: ItemType.CONSUMABLE, quantity: 50 })
     const { rig } = await createRig(op.id)
 
     const res = await checkout(rig.id, item.id, 10)
@@ -88,7 +89,7 @@ describe('Consumable stock model (total-owned, derived availability)', () => {
   })
 
   it('rejects a checkout that exceeds available stock (409)', async () => {
-    const item = await createInventoryItem(cat.id, { itemType: 'CONSUMABLE', quantity: 5 })
+    const item = await createInventoryItem(cat.id, { itemType: ItemType.CONSUMABLE, quantity: 5 })
     const { rig } = await createRig(op.id)
 
     const res = await checkout(rig.id, item.id, 10)
@@ -97,7 +98,7 @@ describe('Consumable stock model (total-owned, derived availability)', () => {
   })
 
   it('plain RETURN releases the reservation and does not change owned stock', async () => {
-    const item = await createInventoryItem(cat.id, { itemType: 'CONSUMABLE', quantity: 50 })
+    const item = await createInventoryItem(cat.id, { itemType: ItemType.CONSUMABLE, quantity: 50 })
     const { rig } = await createRig(op.id)
     await checkout(rig.id, item.id, 10)
     const kitItemId = await openKitItemId(rig.id, item.id)
@@ -112,7 +113,7 @@ describe('Consumable stock model (total-owned, derived availability)', () => {
   })
 
   it('CONSUME (log usage) permanently reduces owned stock', async () => {
-    const item = await createInventoryItem(cat.id, { itemType: 'CONSUMABLE', quantity: 50 })
+    const item = await createInventoryItem(cat.id, { itemType: ItemType.CONSUMABLE, quantity: 50 })
     const { rig } = await createRig(op.id)
     await checkout(rig.id, item.id, 10)
     const kitItemId = await openKitItemId(rig.id, item.id)
@@ -127,7 +128,7 @@ describe('Consumable stock model (total-owned, derived availability)', () => {
   })
 
   it('full lifecycle reconciles: checkout → consume → return', async () => {
-    const item = await createInventoryItem(cat.id, { itemType: 'CONSUMABLE', quantity: 20 })
+    const item = await createInventoryItem(cat.id, { itemType: ItemType.CONSUMABLE, quantity: 20 })
     const { rig } = await createRig(op.id)
 
     await checkout(rig.id, item.id, 8) // owned 20, reserved 8, available 12

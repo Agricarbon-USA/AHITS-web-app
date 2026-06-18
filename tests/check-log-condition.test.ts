@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { ItemType } from '@prisma/client'
 import { NextRequest } from 'next/server'
 import { DELETE as deleteKitItem } from '../src/app/api/deployments/[id]/items/[kitItemId]/route'
 import { prisma } from '../src/lib/prisma'
@@ -27,7 +28,7 @@ describe('CheckLog.condition on returns', () => {
   })
 
   it('sets NEEDS_REPAIR on IN_MAINTENANCE return', async () => {
-    const item = await createInventoryItem(cat.id, { itemType: 'SERIALIZED', quantity: 0 })
+    const item = await createInventoryItem(cat.id, { itemType: ItemType.SERIALIZED, quantity: 0 })
     const unit = await createInventoryUnit(item.id, { status: 'CHECKED_OUT' })
     const { rig, kit } = await createRig(op.id)
     const kitItem = await prisma.kitItem.create({
@@ -47,7 +48,7 @@ describe('CheckLog.condition on returns', () => {
   })
 
   it('sets MISSING_PARTS on INOPERABLE return', async () => {
-    const item = await createInventoryItem(cat.id, { itemType: 'SERIALIZED', quantity: 0 })
+    const item = await createInventoryItem(cat.id, { itemType: ItemType.SERIALIZED, quantity: 0 })
     const unit = await createInventoryUnit(item.id, { status: 'CHECKED_OUT' })
     const { rig, kit } = await createRig(op.id)
     const kitItem = await prisma.kitItem.create({
@@ -67,7 +68,7 @@ describe('CheckLog.condition on returns', () => {
   })
 
   it('sets GOOD on GOOD return', async () => {
-    const item = await createInventoryItem(cat.id, { itemType: 'SERIALIZED', quantity: 0 })
+    const item = await createInventoryItem(cat.id, { itemType: ItemType.SERIALIZED, quantity: 0 })
     const unit = await createInventoryUnit(item.id, { status: 'CHECKED_OUT' })
     const { rig, kit } = await createRig(op.id)
     const kitItem = await prisma.kitItem.create({
