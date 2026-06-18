@@ -54,10 +54,19 @@ export async function POST(req: NextRequest) {
 
     if (!valid) return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
 
-    const token = await createSession({ userId: user.id, role: user.role, name: user.name, email: user.email })
+    // Record last login (best-effort) for the account audit surface.
+    await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } }).catch(() => {})
+
+    const token = await createSession({
+      userId: user.id,
+      role: user.role,
+      name: user.name,
+      email: user.email,
+      tokenVersion: user.tokenVersion,
+    })
     await setSessionCookie(token)
 
-    return NextResponse.json({ role: user.role })
+    return NextResponse.json({ role: user.role, mustChangePin: user.mustChangePin })
   } catch (err) {
     console.error('[auth/login]', err)
     return NextResponse.json({ error: 'Server error' }, { status: 500 })

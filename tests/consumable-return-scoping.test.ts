@@ -10,6 +10,8 @@ import {
 let mockSession: object | null = null
 vi.mock('../src/lib/auth/session', () => ({
   getSession: () => Promise.resolve(mockSession),
+  requireAuth: () => Promise.resolve(mockSession),
+  requireAdmin: () => Promise.resolve((mockSession as { role?: string } | null)?.role === 'ADMIN' ? mockSession : null),
 }))
 
 vi.mock('../src/lib/alerts', () => ({ createAlert: vi.fn().mockResolvedValue({}) }))

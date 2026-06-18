@@ -2,12 +2,19 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
+import { withIdempotency } from '@/lib/idempotency'
 
 const schema = z.object({
   responseNote: z.string().optional(),
 })
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+// Accepting a transfer moves vehicles/units and writes CheckLogs — a replay
+// (e.g. an offline double-tap) must not double-apply. Wrap in withIdempotency.
+export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  return withIdempotency(req, 'transfers.accept.POST', () => _POST(req, ctx))
+}
+
+async function _POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { id } = await params
