@@ -249,7 +249,7 @@ The four shaping decisions (recommended defaults, **[ADOPTED]** 2026-06-18 — f
    (notify hub assignees)       (notify requester: "ready")     (ownership transferred)
 ```
 
-**Step 1 — Request (Operator or Admin).** The requester picks a **target Hub**, the intended **project(s)** and **operator(s)**, and lists needed equipment as **request lines** at the *type + quantity* level — e.g., "2× GPS unit, 1× Truck, 1× Christie drill, 500× sample bags" — with the option to request a **specific** asset by name/QR ("Christie-Drill-1"). Submitting creates a Deployment in `REQUESTED` status and notifies the hub's fulfiller(s).
+**Step 1 — Request (Operator or Admin).** The requester picks a **target Hub**, the intended **project(s)** and **operator(s)** (an **Admin** creating the request assigns the operator[s] who will run the deployment; an operator creating their own is the assignee), and lists needed equipment as **request lines** at the *type + quantity* level — e.g., "2× GPS unit, 1× Truck, 1× Christie drill, 500× sample bags" — with the option to request a **specific serialized asset** by name/QR ("Christie-Drill-1"). Submitting creates a Deployment in `REQUESTED` status and notifies the hub's fulfiller(s).
 
 **Step 2 — Stage / fulfill (Hub assignee or any admin).** The fulfiller resolves each request line to **specific** `InventoryUnit`s and `Vehicle`s, **reserving** them (F.3). They run the **per-item operable + presence quality check**; an item that fails is *not* staged — it's sent into the breakdown/maintenance flow (§A) and the fulfiller picks a substitute. They can **substitute** freely (swap a unit, add/drop a line). When the rig is complete and checked, they mark it `STAGED`, which notifies the requester that their gear is ready for pickup.
 
@@ -267,7 +267,7 @@ The four shaping decisions (recommended defaults, **[ADOPTED]** 2026-06-18 — f
 
 ### F.4 Roles, permissions & notifications
 
-- **Create/submit a request:** an Operator (for a deployment they'll run) or an Admin (any). Consistent with the operator-self-service stance on handoffs (§C.1).
+- **Create/submit a request:** an **Operator** (for a deployment they'll run) **or an Admin**. An Admin can create a request **on behalf of others and assign the operator(s)** who will run it — the assignee(s) become the `PRIMARY`/`SECONDARY` `DeploymentAssignment` (§C) at check-out and are notified when it's `STAGED`. Operators self-serve their own requests; admins can provision for anyone. Consistent with the self-service stance on handoffs (§C.1).
 - **Stage/fulfill:** the target hub's assignees (operators or admins in `HubAssignment`) or any admin.
 - **Check-out:** the assigned operator (or an admin on their behalf).
 - **Notifications** (through the §B / Wave-3 dispatcher; in-app first, push/email when the dispatcher lands): `DEPLOYMENT_REQUEST_SUBMITTED` → hub assignees; `DEPLOYMENT_REQUEST_STAGED` → requester ("ready for pickup"); `DEPLOYMENT_REQUEST_CHANGED` / `…_SHORTAGE` → requester/admin.
@@ -302,8 +302,10 @@ Builds on the Deployment model from §C (lifecycle, `DeploymentAssignment`, Depl
 
 A substantial net-new workflow that **depends on the Wave 2B Deployment model** (lifecycle states, `DeploymentAssignment`, M2M projects) and reads best **with the Wave 3 notifications dispatcher**. Recommended slot: **Wave 3, as a dedicated "Deployment Requests" block**, after the Deployment model lands and alongside/after notifications. Ship in two increments: (1) request → stage → check-out with **in-app** notifications and reservations; (2) push/email once the dispatcher is built. It must **not** precede Wave 2B — it would have to invent the very Deployment model 2B introduces.
 
-### F.9 Open confirmations (F)
+### F.9 Confirmations — RESOLVED (2026-06-18)
 
-1. **Specific-asset requests:** confirm operators may request a *named* asset ("Christie-Drill-1"), not just a type — adds a little contention but crews often need a known-good rig. *(Recommend: yes.)*
-2. **New Rig vs. template:** a request can spin up a brand-new Rig at the hub or clone an existing parked Rig template. *(Recommend: support both — new by default, "clone a template" as a fast path.)*
-3. **Approval gate:** should an operator-created request need admin approval before the hub acts, or is hub fulfillment the only gate? *(Recommend: no separate approval — hub fulfillment is the gate, matching the self-service handoff model.)*
+1. **Specific-asset requests: YES.** An operator (or admin) may request a *named* serialized asset ("Christie-Drill-1"), not just a type. Honored at staging where available; otherwise the fulfiller substitutes and flags it.
+2. **New Rig vs. template: BOTH.** A request can spin up a brand-new Rig at the hub *or* clone an existing parked Rig template (the fast path). New is the default.
+3. **Approval gate: NONE.** An operator-created request needs no separate admin approval — **hub fulfillment is the only gate**, matching the self-service handoff model. (Admins can of course create/assign/fulfill directly.)
+
+No open product questions remain for the Deployment Requests feature.
