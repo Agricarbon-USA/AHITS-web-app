@@ -18,10 +18,10 @@ make setup                    # Install, migrate, seed
 make dev                       # Start dev server → http://localhost:3000
 ```
 
-Default seed credentials:
+Default seed credentials (local/dev only — the seed refuses to run with `NODE_ENV=production`):
 
-- **Admin:** `ops@agricarbon.com` / password `Admin1234!`
-- **Operator:** `operator1@agricarbon.com` / PIN `123456`
+- **Admin:** `ops@agricarbon.com`. The password is generated randomly and **printed once** by `make db-seed` (or set `SEED_ADMIN_PASSWORD` to choose your own). Change it after first login.
+- **Operator:** `operator1@agricarbon.com` / PIN `123456` (sample dev account).
 
 ---
 
