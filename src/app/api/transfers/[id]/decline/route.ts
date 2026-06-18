@@ -2,12 +2,19 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
+import { withIdempotency } from '@/lib/idempotency'
 
 const schema = z.object({
   responseNote: z.string().optional(),
 })
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+// Declining can restore units for an ended-rig transfer and writes CheckLogs —
+// guard against replay double-application.
+export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  return withIdempotency(req, 'transfers.decline.POST', () => _POST(req, ctx))
+}
+
+async function _POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { id } = await params
