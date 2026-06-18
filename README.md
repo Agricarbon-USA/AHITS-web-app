@@ -40,6 +40,7 @@ Copy `.env.example` to `.env` and fill in:
 | `RESEND_API_KEY`                | Resend API key for email alerts                        |
 | `ADMIN_EMAIL`                   | Email to receive system alerts                         |
 | `GCP_PROJECT_ID`                | GCP project ID for deployment                          |
+| `EMAIL_FROM`                | Email that resend will send FROM                          |
 
 ---
 
