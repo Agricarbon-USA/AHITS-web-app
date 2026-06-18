@@ -19,6 +19,7 @@ export async function GET(req: NextRequest) {
 
   if (!invite) return NextResponse.json({ error: 'Invalid invite link' }, { status: 404 })
   if (invite.usedAt) return NextResponse.json({ error: 'This invite has already been used' }, { status: 410 })
+  if (invite.revokedAt) return NextResponse.json({ error: 'This invite has been revoked' }, { status: 410 })
   if (invite.expiresAt < new Date()) return NextResponse.json({ error: 'This invite link has expired' }, { status: 410 })
 
   return NextResponse.json({
