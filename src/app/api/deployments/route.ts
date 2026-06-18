@@ -102,6 +102,21 @@ export async function POST(req: NextRequest) {
     })
 
     if (vehicleIds.length > 0) {
+      // Reject vehicles already held by another active deployment (open RigVehicle).
+      const vehicleConflicts = await tx.rigVehicle.findMany({
+        where: {
+          vehicleId: { in: vehicleIds },
+          removedAt: null,
+          rigId: { not: newRig.id },
+          rig: { endedAt: null },
+        },
+        select: { vehicleId: true },
+      })
+      if (vehicleConflicts.length > 0) {
+        throw Object.assign(new Error('VEHICLE_IN_USE'), {
+          vehicleIds: [...new Set(vehicleConflicts.map((c) => c.vehicleId))],
+        })
+      }
       await tx.rigVehicle.createMany({
         data: vehicleIds.map((vehicleId) => ({
           rigId: newRig.id,
@@ -135,15 +150,35 @@ export async function POST(req: NextRequest) {
           })
         } else {
           const quantity = (ki as { quantity: number }).quantity
+          const item = await tx.inventoryItem.findUnique({
+            where: { id: ki.inventoryItemId },
+            select: { itemType: true },
+          })
+          // SERIALIZED items checked out by quantity must reserve that many real
+          // AVAILABLE units. CONSUMABLE quantity is authoritative and may have no
+          // units, so it is allowed to proceed without reserving any.
+          const requireUnits = item?.itemType === 'SERIALIZED'
           const available = await tx.inventoryUnit.findMany({
             where: { inventoryItemId: ki.inventoryItemId, status: 'AVAILABLE', deletedAt: null },
             take: quantity,
           })
+          if (requireUnits && available.length < quantity) {
+            throw Object.assign(new Error('INSUFFICIENT_UNITS'), {
+              available: available.length,
+              requested: quantity,
+            })
+          }
           if (available.length > 0) {
-            await tx.inventoryUnit.updateMany({
-              where: { id: { in: available.map((u) => u.id) } },
+            // Status-guarded flip: only rows still AVAILABLE transition, so a unit
+            // grabbed by a concurrent checkout between the read above and this write
+            // is not double-allocated — the count reconciliation catches the shortfall.
+            const flipped = await tx.inventoryUnit.updateMany({
+              where: { id: { in: available.map((u) => u.id) }, status: 'AVAILABLE' },
               data: { status: 'CHECKED_OUT' },
             })
+            if (flipped.count < available.length) {
+              throw Object.assign(new Error('UNIT_CONFLICT'), {})
+            }
           }
           await tx.kitItem.create({
             data: { kitId: kit.id, inventoryItemId: ki.inventoryItemId, quantity, inventoryUnitId: null },
@@ -161,6 +196,19 @@ export async function POST(req: NextRequest) {
     if (err instanceof Error && err.message === 'UNIT_CONFLICT') {
       return NextResponse.json(
         { error: 'A selected unit was just checked out by someone else. Please select a different unit and try again.' },
+        { status: 409 }
+      )
+    }
+    if (err instanceof Error && err.message === 'INSUFFICIENT_UNITS') {
+      const e = err as Error & { available?: number; requested?: number }
+      return NextResponse.json(
+        { error: `Only ${e.available ?? 0} of ${e.requested ?? 0} units are available for one of the selected items.` },
+        { status: 409 }
+      )
+    }
+    if (err instanceof Error && err.message === 'VEHICLE_IN_USE') {
+      return NextResponse.json(
+        { error: 'One or more vehicles are already assigned to another active deployment. Remove them there first.' },
         { status: 409 }
       )
     }

@@ -61,6 +61,42 @@ export async function POST(req: NextRequest) {
 
   const { vehicleId, date, checklistJson, passFail, issues, odometer, site } = parsed.data
 
+  // An operator may only submit a daily check for a vehicle they actually operate:
+  // one assigned to them or in an active deployment they are on (primary or secondary).
+  // Without this, any operator could pollute another vehicle's check history and
+  // trigger admin "check failed" alerts for vehicles they have nothing to do with.
+  if (session.role === 'OPERATOR') {
+    const owns = await prisma.vehicle.findFirst({
+      where: {
+        id: vehicleId,
+        OR: [
+          { assignedOperatorId: session.userId },
+          {
+            rigVehicles: {
+              some: {
+                removedAt: null,
+                rig: {
+                  endedAt: null,
+                  OR: [
+                    { operatorId: session.userId },
+                    { secondaryOperators: { some: { operatorId: session.userId } } },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      },
+      select: { id: true },
+    })
+    if (!owns) {
+      return NextResponse.json(
+        { error: 'You can only submit a daily check for a vehicle in your active deployment.' },
+        { status: 403 }
+      )
+    }
+  }
+
   const check = await prisma.dailyCheck.upsert({
     where: {
       vehicleId_date_operatorId: {
@@ -90,18 +126,22 @@ export async function POST(req: NextRequest) {
     },
   })
 
-  // Fire-and-forget: alert if any kit items have been out > 90 days
+  // Alert if any kit items have been out > 90 days. Awaited (not fire-and-forget)
+  // so it runs reliably on serverless/Cloud Run, where a floating promise can be
+  // dropped when the instance freezes after the response. Wrapped so an alert
+  // failure is logged but never fails the check submission. createAlert dedupes on
+  // (type, sourceTable, sourceId, unresolved), so this does not spam on every check.
   if (session.userId) {
-    prisma.rig.findFirst({
-      where: { operatorId: session.userId, endedAt: null },
-      include: {
-        kits: { include: { items: { where: { removedAt: null }, include: { item: { select: { name: true } } } } } },
-      },
-    }).then(async (rig) => {
-      if (!rig) return
-      const kitItems = rig.kits.flatMap((k) => k.items)
+    try {
+      const rig = await prisma.rig.findFirst({
+        where: { operatorId: session.userId, endedAt: null },
+        include: {
+          kits: { include: { items: { where: { removedAt: null }, include: { item: { select: { name: true } } } } } },
+        },
+      })
       const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
-      if (rig.startedAt < cutoff) {
+      if (rig && rig.startedAt < cutoff) {
+        const kitItems = rig.kits.flatMap((k) => k.items)
         for (const ki of kitItems) {
           await createAlert('EQUIPMENT_NOT_RETURNED', 'kit_items', ki.id, {
             itemName: ki.item.name,
@@ -110,7 +150,9 @@ export async function POST(req: NextRequest) {
           })
         }
       }
-    }).catch(() => {})
+    } catch (err) {
+      console.error('[POST /api/daily-check] equipment-not-returned alert failed', err)
+    }
   }
 
   // Notify admin on fail

@@ -150,17 +150,34 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
             },
           })
         } else {
+          const invItem = await tx.inventoryItem.findUnique({
+            where: { id: entry.inventoryItemId },
+            select: { itemType: true },
+          })
+          // SERIALIZED items added by quantity must reserve that many real AVAILABLE
+          // units. CONSUMABLE quantity is authoritative and may have no units.
+          const requireUnits = invItem?.itemType === 'SERIALIZED'
           const availableUnits = await tx.inventoryUnit.findMany({
             where: { inventoryItemId: entry.inventoryItemId, status: 'AVAILABLE', deletedAt: null },
             take: entry.quantity,
           })
-          if (availableUnits.length < entry.quantity) {
-            throw new Error(`Only ${availableUnits.length} units available for this item`)
+          if (requireUnits && availableUnits.length < entry.quantity) {
+            throw Object.assign(new Error('INSUFFICIENT_UNITS'), {
+              available: availableUnits.length,
+              requested: entry.quantity,
+            })
           }
-          await tx.inventoryUnit.updateMany({
-            where: { id: { in: availableUnits.map((u) => u.id) } },
-            data: { status: 'CHECKED_OUT' },
-          })
+          if (availableUnits.length > 0) {
+            // Status-guarded flip + count reconciliation: a unit taken by a concurrent
+            // checkout between this read and write cannot be double-allocated.
+            const flipped = await tx.inventoryUnit.updateMany({
+              where: { id: { in: availableUnits.map((u) => u.id) }, status: 'AVAILABLE' },
+              data: { status: 'CHECKED_OUT' },
+            })
+            if (flipped.count < availableUnits.length) {
+              throw Object.assign(new Error('UNIT_CONFLICT'), {})
+            }
+          }
           await tx.kitItem.create({
             data: {
               kitId: kit.id,
@@ -196,6 +213,13 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     if (err instanceof Error && err.message === 'UNIT_CONFLICT') {
       return NextResponse.json(
         { error: 'This unit was just checked out by someone else. Please select a different unit and try again.' },
+        { status: 409 }
+      )
+    }
+    if (err instanceof Error && err.message === 'INSUFFICIENT_UNITS') {
+      const e = err as Error & { available?: number; requested?: number }
+      return NextResponse.json(
+        { error: `Only ${e.available ?? 0} of ${e.requested ?? 0} units available for this item.` },
         { status: 409 }
       )
     }

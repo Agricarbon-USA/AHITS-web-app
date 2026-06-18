@@ -64,6 +64,29 @@ export async function createInventoryUnit(
   })
 }
 
+export async function createVehicle(overrides?: {
+  name?: string
+  type?: string
+  assignedOperatorId?: string | null
+  status?: string
+}) {
+  return prisma.vehicle.create({
+    data: {
+      name: overrides?.name ?? `Vehicle-${uid()}`,
+      type: (overrides?.type ?? 'TRUCK') as never,
+      assignedOperatorId: overrides?.assignedOperatorId ?? null,
+      status: (overrides?.status ?? 'ACTIVE') as never,
+    },
+  })
+}
+
+/** Attach a vehicle to a rig via an open RigVehicle row. */
+export async function addVehicleToRig(rigId: string, vehicleId: string) {
+  return prisma.rigVehicle.create({
+    data: { rigId, vehicleId, addNote: 'fixture' },
+  })
+}
+
 export async function createRig(operatorId: string) {
   const rig = await prisma.rig.create({
     data: { operatorId },

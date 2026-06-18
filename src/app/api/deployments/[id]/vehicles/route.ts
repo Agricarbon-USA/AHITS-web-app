@@ -75,12 +75,31 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const { vehicleIds, note } = parsed.data
 
-  // Verify vehicles exist and aren't already in another active rig
+  // Verify vehicles exist
   const vehicles = await prisma.vehicle.findMany({
     where: { id: { in: vehicleIds } },
   })
   if (vehicles.length !== vehicleIds.length) {
     return NextResponse.json({ error: 'One or more vehicles not found' }, { status: 404 })
+  }
+
+  // Reject vehicles already held by a different active deployment (open RigVehicle).
+  // Without this, adding such a vehicle silently reassigns it and leaves it in two rigs.
+  const vehicleConflicts = await prisma.rigVehicle.findMany({
+    where: {
+      vehicleId: { in: vehicleIds },
+      removedAt: null,
+      rigId: { not: id },
+      rig: { endedAt: null },
+    },
+    include: { vehicle: { select: { name: true } } },
+  })
+  if (vehicleConflicts.length > 0) {
+    const names = [...new Set(vehicleConflicts.map((c) => c.vehicle.name))].join(', ')
+    return NextResponse.json(
+      { error: `Already assigned to another active deployment: ${names}. Remove it there first.` },
+      { status: 409 }
+    )
   }
 
   try {
