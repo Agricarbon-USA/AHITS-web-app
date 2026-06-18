@@ -331,7 +331,7 @@ export default function OperatorScanPage() {
               {vehicle.odometer != null && (
                 <Box>
                   <Typography variant="caption" color="text.secondary" fontWeight={600}>Odometer</Typography>
-                  <Typography variant="body2">{vehicle.odometer.toLocaleString()} km</Typography>
+                  <Typography variant="body2">{vehicle.odometer.toLocaleString()} mi</Typography>
                 </Box>
               )}
 

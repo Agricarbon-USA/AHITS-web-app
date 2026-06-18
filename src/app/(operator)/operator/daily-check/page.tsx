@@ -205,7 +205,7 @@ export default function OperatorDailyCheckPage() {
             InputLabelProps={{ shrink: true }}
           />
           <TextField
-            label="Odometer (km)"
+            label="Odometer (mi)"
             type="number"
             value={odometer}
             onChange={(e) => setOdometer(e.target.value)}

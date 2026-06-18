@@ -124,7 +124,7 @@ interface TransferRow {
   toOperator: { id: string; name: string }
   initiatedBy: { id: string; name: string }
   vehicles: { id: string; vehicle: { id: string; name: string; type: string } }[]
-  items: { id: string; kitItem: { id: string; quantity: number; item: { id: string; name: string } } }[]
+  items: { id: string; quantity: number | null; kitItem: { id: string; quantity: number; item: { id: string; name: string } } }[]
 }
 
 // ── Transfer Dialog ───────────────────────────────────────────────
@@ -905,7 +905,10 @@ export default function MyRigPage() {
       {/* Incoming transfer banners */}
       {incomingTransfers.map((tr) => {
         const vehicleNames = tr.vehicles.map((tv) => tv.vehicle.name).join(', ')
-        const itemNames = tr.items.map((ti) => `${ti.kitItem.item.name} ×${ti.kitItem.quantity}`).join(', ')
+        // Show the quantity being transferred (TransferItem.quantity), not the
+        // source kit item's total. Falls back to the kit-item total for whole/
+        // serialized transfers where no per-line quantity was set.
+        const itemNames = tr.items.map((ti) => `${ti.kitItem.item.name} ×${ti.quantity ?? ti.kitItem.quantity}`).join(', ')
         const summary = [vehicleNames, itemNames].filter(Boolean).join(', ')
         return (
           <Alert
@@ -1095,7 +1098,7 @@ export default function MyRigPage() {
       {/* Outgoing pending transfer notice */}
       {outgoingTransfers.map((tr) => {
         const vehicleNames = tr.vehicles.map((tv) => tv.vehicle.name).join(', ')
-        const itemNames = tr.items.map((ti) => ti.kitItem.item.name).join(', ')
+        const itemNames = tr.items.map((ti) => `${ti.kitItem.item.name} ×${ti.quantity ?? ti.kitItem.quantity}`).join(', ')
         const summary = [vehicleNames, itemNames].filter(Boolean).join(', ')
         return (
           <Alert key={tr.id} severity="warning" icon={false} sx={{ mb: 1.5 }}
