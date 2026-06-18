@@ -137,12 +137,12 @@ A second build session (independent code+staging review → fixes → security �
 
 **Documentation.** Folded the v2.1 Addendum (maintenance states, account management, Kit/Rig/Deployment, Deployment Requests) into this PRD; archived ~20 superseded docs to `docs/archive/`; consolidated all doc work onto a single `docs/` branch.
 
-### 3.3 Branch & integration state (snapshot)
+### 3.3 Branch & integration state (RECONCILED)
 
-A fast‑moving, multi‑branch session. Current observed state:
-- **Merged into the integration line:** Wave 1 (PR #18), the docs commit (assessment + addendum + corrections), **Wave 1.5** (PR #19), the docs archive (PR #20), and **Wave 2A** (PR #23, on `staging/20260618-wave2a`).
-- **Built, not yet merged:** **Wave 2A.5** (its own feature branch), the **Deployment Requests** scope (§F/§11.13, on the `docs/` branch), and the **forward‑ported gaps** (their own branch).
-- **Two staging branches exist** (`staging/20260618-post-merge` without Wave 2A, `staging/20260618-wave2a` with it) — these should be reconciled (see §21).
+The session's many branches have now been **reconciled into a single integration branch: `staging/20260618-reconciled`**, which contains everything:
+- Wave 1 (PR #18) + **Wave 1.5** (PR #19) + docs/archive (PR #20) + **Wave 2A** security (PR #23) + **Wave 2A.5** account management + the **four forward‑ported API gaps** + the **CI test‑gating** change + the canonical **v2.2 docs** (this PRD, the §F addendum, the assessment).
+- The reconciliation merge was **clean** — the two work lines were almost entirely disjoint (the only overlapping code file, `README.md`, auto‑merged). A **security‑regression check confirmed no regression**: the Wave‑2A validated `vehicles/maintenance/inventory [id]` PATCH routes, escaped email templates, session revocation, and the last‑admin guardrail are all present; the forward‑ported endpoints are in; the dead `[action]` route stayed removed; the schema carries both `AccountAuditLog` and the `linux-musl` binary target. `eslint` is clean.
+- **Remaining for the maintainer:** run `make db-migrate-dev` + a full `make verify` (the type‑check needs a freshly generated Prisma client — the build sandbox can't regenerate it; **CI is the validation source of truth**), then push `staging/20260618-reconciled`, let CI gate it, and **retire the superseded `staging/20260618-post-merge` and `staging/20260618-wave2a` branches**.
 
 ---
 
@@ -746,11 +746,11 @@ Two builders editing the **same repo folder** concurrently caused branch‑switc
 
 ## 22. Forward recommendations & concerns
 
-Ranked roughly by urgency. The first two are housekeeping that protects everything else; the rest is product/engineering sequencing.
+Ranked roughly by urgency. The rest is product/engineering sequencing.
 
-**22.1 Reconcile branches before any new feature work (highest priority).** The unmerged Wave 2A.5 / forward‑port / docs branches and the two staging branches must be integrated into one line first. Risk if not: divergence, double‑merges, and silently lost work. Do this before starting Wave 2B.
+**22.1 ✅ DONE — Branches reconciled.** All work lines were integrated into **`staging/20260618-reconciled`** (see §3.3). The maintainer still needs to `make verify` + push + let CI gate it, and retire the two superseded staging branches — but the divergence risk is resolved.
 
-**22.2 Guard against security regressions from forward‑porting.** Forward‑porting from superseded sprint branches reintroduced an **older, unvalidated** `inventory/[id]` / `vehicles/[id]` / `maintenance/[id]` PATCH on that baseline. When merging, **diff against the Wave‑2A (S2) hardened versions** and keep the validated ones. General rule: any forward‑port must be diffed against the latest hardened code, not just applied, or it can quietly revert security fixes.
+**22.2 ✅ VERIFIED — No security regression from the forward‑port.** The reconciliation merge was three‑way (common ancestor `3c7516c`), so the Wave‑2A (S2) validated PATCH routes — which only the Wave‑2A line modified — won automatically over the forward‑port baseline's untouched originals. Confirmed by direct check: `vehicles/maintenance/inventory [id]` PATCH all carry their zod whitelists, emails are escaped, and cost gating is intact. **General rule retained for future forward‑ports:** always merge three‑way (or diff against the latest hardened code) rather than cherry‑pick‑overwriting, so hardening can't be silently reverted.
 
 **22.3 Wave 2B is the keystone — do the model first.** The Kit ⊂ Rig ⊂ Deployment model (Addendum §C: `Deployment↔Project` M2M, `DeploymentAssignment`) is a prerequisite for (a) clean consumable accounting (#3), (b) the breakdown/resolution‑path state machine (§A / #6), and (c) Deployment Requests (§F). Sequence: **model → consumable accounting → breakdown flow → UI vocabulary rename ("My Rig"→"My Deployment")**.
 
