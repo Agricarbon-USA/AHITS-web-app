@@ -1,11 +1,15 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
+import { withIdempotency } from '@/lib/idempotency'
 
-export async function DELETE(
-  _req: Request,
-  { params }: { params: Promise<{ id: string }> },
-) {
+// Cancelling flips PENDING -> CANCELLED. Wrapped in withIdempotency so an offline
+// replay (the My Rig cancel now routes through the offline queue) applies once.
+export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  return withIdempotency(req, 'transfers.cancel.DELETE', () => _DELETE(req, ctx))
+}
+
+async function _DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
@@ -22,10 +26,15 @@ export async function DELETE(
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  await prisma.transferRequest.update({
-    where: { id },
+  // Atomic compare-and-set (DAT-3): only the request that flips PENDING wins;
+  // a concurrent accept/decline/cancel that already moved it gets a 409.
+  const claim = await prisma.transferRequest.updateMany({
+    where: { id, status: 'PENDING' },
     data: { status: 'CANCELLED' },
   })
+  if (claim.count === 0) {
+    return NextResponse.json({ error: 'Transfer is no longer pending' }, { status: 409 })
+  }
 
   return NextResponse.json({ ok: true })
 }

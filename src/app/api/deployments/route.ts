@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
 import { CONSUMABLE } from '@/lib/inventory'
 import { assertConsumableAvailable, InsufficientStockError } from '@/lib/consumables'
+import { withIdempotency } from '@/lib/idempotency'
 
 const RIG_INCLUDE = {
   operator: { select: { id: true, name: true } },
@@ -85,7 +86,13 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(rigs)
 }
 
+// Wrapped in withIdempotency (OFF-3): the My Rig "start deployment" now routes
+// through the offline queue, so a replay must not create a second deployment.
 export async function POST(req: NextRequest) {
+  return withIdempotency(req, 'deployments.create.POST', () => _POST(req))
+}
+
+async function _POST(req: NextRequest) {
   const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 

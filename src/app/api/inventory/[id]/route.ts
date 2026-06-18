@@ -126,6 +126,27 @@ export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id:
   const session = await requireAdmin()
   if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const { id } = await params
-  await prisma.inventoryItem.delete({ where: { id } })
+
+  // DAT-2: don't delete an item that's currently checked out in a deployment.
+  const openKitItems = await prisma.kitItem.count({ where: { inventoryItemId: id, removedAt: null } })
+  if (openKitItems > 0) {
+    return NextResponse.json(
+      { error: 'This item is currently in an active deployment and cannot be deleted.' },
+      { status: 409 },
+    )
+  }
+
+  // Soft-delete (DAT-2): set deletedAt rather than hard-deleting. A hard delete
+  // throws a RESTRICT-FK error (→ 500) once any CheckLog/KitItem references the
+  // item; soft-delete preserves history and the read paths already filter
+  // deletedAt: null. Tombstone the units too so they can't be resolved by QR.
+  try {
+    await prisma.$transaction([
+      prisma.inventoryUnit.updateMany({ where: { inventoryItemId: id }, data: { deletedAt: new Date() } }),
+      prisma.inventoryItem.update({ where: { id }, data: { deletedAt: new Date() } }),
+    ])
+  } catch {
+    return NextResponse.json({ error: 'Item not found' }, { status: 404 })
+  }
   return NextResponse.json({ ok: true })
 }

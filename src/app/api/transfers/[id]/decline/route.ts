@@ -52,11 +52,14 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
   const now = new Date()
 
-  await prisma.$transaction(async (tx) => {
-    await tx.transferRequest.update({
-      where: { id },
+  try {
+    await prisma.$transaction(async (tx) => {
+    // Atomic claim (DAT-3): only the request that flips PENDING -> DECLINED wins.
+    const claim = await tx.transferRequest.updateMany({
+      where: { id, status: 'PENDING' },
       data: { status: 'DECLINED', respondedAt: now, responseNote: responseNote ?? null },
     })
+    if (claim.count === 0) throw new Error('Transfer is no longer pending')
 
     // For end-of-deployment transfers (source rig ended), restore units and mark kit items removed.
     // For active-rig transfers, items stay in the source kit unchanged.
@@ -102,7 +105,11 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
         })
       }
     }
-  })
+    })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Decline failed'
+    return NextResponse.json({ error: msg }, { status: 409 })
+  }
 
   return NextResponse.json({ ok: true })
 }

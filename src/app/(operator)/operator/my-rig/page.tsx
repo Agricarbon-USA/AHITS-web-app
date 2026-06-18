@@ -158,40 +158,40 @@ function TransferDialog({
     new Map(kitItems.map((ki) => [ki.id, ki.quantity]))
   )
   const [loading, setLoading] = React.useState(false)
+  const { mutate } = useOfflineQueue()
 
   const doTransfer = async (note: string, photoUrls: string[]) => {
     setLoading(true)
-    try {
-      const res = await fetch(`/api/deployments/${rig.id}/transfer`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          toOperatorId,
-          note,
-          photoUrls,
-          vehicleIds: Array.from(selVehicles),
-          items: kitItems
-            .filter((ki) => selKitItems.has(ki.id))
-            .map((ki) => ({
-              kitItemId: ki.id,
-              quantity: transferQtys.get(ki.id) ?? ki.quantity,
-              inventoryUnitId: ki.inventoryUnit?.id ?? undefined,
-            })),
-        }),
-      })
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}))
-        showToast({ message: typeof d.error === 'string' ? d.error : 'Transfer failed. Please try again.', severity: 'error' })
-        return
-      }
-      const destName = operators.find((o) => o.id === toOperatorId)?.name ?? 'operator'
+    const result = await mutate({
+      endpoint: `/api/deployments/${rig.id}/transfer`,
+      method: 'POST',
+      body: {
+        toOperatorId,
+        note,
+        photoUrls,
+        vehicleIds: Array.from(selVehicles),
+        items: kitItems
+          .filter((ki) => selKitItems.has(ki.id))
+          .map((ki) => ({
+            kitItemId: ki.id,
+            quantity: transferQtys.get(ki.id) ?? ki.quantity,
+            inventoryUnitId: ki.inventoryUnit?.id ?? undefined,
+          })),
+      },
+      label: 'Transfer equipment',
+    })
+    setLoading(false)
+    const destName = operators.find((o) => o.id === toOperatorId)?.name ?? 'operator'
+    if (result.ok && result.queued) {
+      showToast({ message: 'Transfer queued — it will send when you are back online.', severity: 'info' })
+      onSuccess()
+      onClose()
+    } else if (result.ok) {
       showToast({ message: `Transfer request sent — waiting for ${destName} to accept.`, severity: 'success' })
       onSuccess()
       onClose()
-    } catch {
-      showToast({ message: 'Network error. Please try again.', severity: 'error' })
-    } finally {
-      setLoading(false)
+    } else {
+      showToast({ message: result.error || 'Transfer failed. Please try again.', severity: 'error' })
     }
   }
 
@@ -331,6 +331,7 @@ function NewDeploymentDialog({
   const [note, setNote] = React.useState('')
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState('')
+  const { mutate } = useOfflineQueue()
 
   const unassignedVehicles = vehicles.filter((v) => !v.assignedOperatorId && v.status === 'ACTIVE')
   const availableItems = inventoryItems.filter((i) =>
@@ -397,10 +398,10 @@ function NewDeploymentDialog({
     if (!note.trim()) { setError('Note is required'); return }
     setLoading(true)
     setError('')
-    const res = await fetch('/api/deployments', {
+    const result = await mutate({
+      endpoint: '/api/deployments',
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      body: {
         label: label || undefined,
         note,
         vehicleIds: Array.from(selVehicles),
@@ -409,10 +410,16 @@ function NewDeploymentDialog({
             ? { itemType: 'SERIALIZED', inventoryItemId, inventoryUnitId: entry.inventoryUnitId! }
             : { inventoryItemId, quantity: entry.quantity }
         ),
-      }),
+      },
+      label: 'Start deployment',
     })
-    if (res.status === 409) {
-      const d = await res.json()
+    setLoading(false)
+    // ok covers both an applied write and an offline-queued one — either way the
+    // deployment is safe (the POST is idempotency-wrapped, so a replay is deduped).
+    if (result.ok) { onSuccess(); onClose(); return }
+    // Server reached with an error. A 409 means a serialized unit was just taken —
+    // drop the picked units and send the operator back to reselect.
+    if (result.status === 409) {
       const m = new Map(kitItems)
       m.forEach((entry, itemId) => {
         if (entry.itemType === 'SERIALIZED') {
@@ -421,13 +428,10 @@ function NewDeploymentDialog({
       })
       setKitItems(m)
       setStep(2)
-      setError(d.error ?? 'A unit was just taken. Please reselect.')
-      setLoading(false)
+      setError(result.error || 'A unit was just taken. Please reselect.')
       return
     }
-    setLoading(false)
-    if (res.ok) { onSuccess(); onClose() }
-    else { const d = await res.json(); setError(d.error?.formErrors?.[0] ?? d.error ?? 'Failed') }
+    setError(result.error || 'Failed')
   }
 
   return (
@@ -701,45 +705,45 @@ export default function MyRigPage() {
     if (!respondDialog) return
     setRespondLoading(true)
     const { transfer, action } = respondDialog
-    try {
-      const res = await fetch(`/api/transfers/${transfer.id}/${action}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ responseNote: responseNote || undefined }),
-      })
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}))
-        showToast({ message: typeof d.error === 'string' ? d.error : `Could not ${action} the transfer.`, severity: 'error' })
-        return
-      }
+    const result = await mutate({
+      endpoint: `/api/transfers/${transfer.id}/${action}`,
+      method: 'POST',
+      body: { responseNote: responseNote || undefined },
+      label: action === 'accept' ? 'Accept transfer' : 'Decline transfer',
+    })
+    setRespondLoading(false)
+    if (result.ok && result.queued) {
+      showToast({ message: `Transfer ${action} queued — it will sync when you are back online.`, severity: 'info' })
+      setRespondDialog(null)
+      setResponseNote('')
+    } else if (result.ok) {
       showToast({ message: action === 'accept' ? 'Transfer accepted.' : 'Transfer declined.', severity: 'success' })
       setRespondDialog(null)
       setResponseNote('')
       await load()
-    } catch {
-      showToast({ message: 'Network error. Please try again.', severity: 'error' })
-    } finally {
-      setRespondLoading(false)
+    } else {
+      showToast({ message: result.error || `Could not ${action} the transfer.`, severity: 'error' })
     }
   }
 
   const handleCancelTransfer = async () => {
     if (!cancelTransferId) return
     setCancelLoading(true)
-    try {
-      const res = await fetch(`/api/transfers/${cancelTransferId}`, { method: 'DELETE' })
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}))
-        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not cancel the transfer.', severity: 'error' })
-        return
-      }
+    const result = await mutate({
+      endpoint: `/api/transfers/${cancelTransferId}`,
+      method: 'DELETE',
+      label: 'Cancel transfer',
+    })
+    setCancelLoading(false)
+    if (result.ok && result.queued) {
+      showToast({ message: 'Cancellation queued — it will sync when you are back online.', severity: 'info' })
+      setCancelTransferId(null)
+    } else if (result.ok) {
       showToast({ message: 'Transfer cancelled.', severity: 'success' })
       setCancelTransferId(null)
       await loadTransfers()
-    } catch {
-      showToast({ message: 'Network error. Please try again.', severity: 'error' })
-    } finally {
-      setCancelLoading(false)
+    } else {
+      showToast({ message: result.error || 'Could not cancel the transfer.', severity: 'error' })
     }
   }
 

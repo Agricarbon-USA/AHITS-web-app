@@ -78,6 +78,28 @@ export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id:
   const session = await requireAdmin()
   if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const { id } = await params
-  await prisma.vehicle.delete({ where: { id } })
+
+  // DAT-2: don't retire a vehicle that's in an active deployment.
+  const inUse = await prisma.rigVehicle.count({
+    where: { vehicleId: id, removedAt: null, rig: { endedAt: null } },
+  })
+  if (inUse > 0) {
+    return NextResponse.json(
+      { error: 'This vehicle is in an active deployment and cannot be retired.' },
+      { status: 409 },
+    )
+  }
+
+  // Soft-delete (DAT-2): vehicles have no deletedAt column — retirement is the
+  // soft-delete idiom (status RETIRED). A hard delete throws a RESTRICT-FK error
+  // (→ 500) once the vehicle has any daily check / deployment / transfer history.
+  try {
+    await prisma.vehicle.update({
+      where: { id },
+      data: { status: VehicleStatus.RETIRED, assignedOperatorId: null },
+    })
+  } catch {
+    return NextResponse.json({ error: 'Vehicle not found' }, { status: 404 })
+  }
   return NextResponse.json({ ok: true })
 }

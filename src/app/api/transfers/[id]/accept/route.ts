@@ -57,6 +57,15 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   let updatedTransfer
   try {
     updatedTransfer = await prisma.$transaction(async (tx) => {
+    // Atomic claim (DAT-3): flip PENDING -> ACCEPTED up front. If a concurrent
+    // accept/decline/cancel already moved it, count is 0 and we abort (rollback),
+    // so the vehicle/item moves below can't double-apply.
+    const claim = await tx.transferRequest.updateMany({
+      where: { id, status: 'PENDING' },
+      data: { status: 'ACCEPTED' },
+    })
+    if (claim.count === 0) throw new Error('Transfer is no longer pending')
+
     // NOTE: We intentionally do NOT block on sourceRig.endedAt — end-of-deployment
     // TRANSFER dispositions leave the source rig ended with items still pending transfer.
 
@@ -190,7 +199,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       return tx.transferRequest.update({
         where: { id },
         data: {
-          status: 'ACCEPTED',
+          // status already set to ACCEPTED by the atomic claim above.
           respondedAt: now,
           responseNote: isAdmin && !isDestination
             ? `Accepted by admin ${session.name}${responseNote ? `: ${responseNote}` : ''}`
