@@ -3,9 +3,9 @@
 **Folds three decided concept areas into the product spec and pipeline.**
 Prepared 2026-06-17 · merge target: `AHITS_PRD_v2.md` · companion: `AHITS_INDEPENDENT_ASSESSMENT_AND_ROADMAP.md`
 
-This addendum specifies three areas Max asked to formalize: (A) **equipment lifecycle & maintenance states**, (B) **account management**, and (C) **Kit / Rig / Deployment terminology** and its model implications. Each section ends with the **data-model deltas**, **API/UI deltas**, and **pipeline placement** so it can be picked up directly. Decisions already made are marked **[DECIDED]**; items still worth a quick confirmation are marked **[CONFIRM]**.
+This addendum specifies four areas Max asked to formalize: (A) **equipment lifecycle & maintenance states**, (B) **account management**, (C) **Kit / Rig / Deployment terminology** and its model implications, and (F) **Deployment Requests** (pre-deployment provisioning). Each section ends with the **data-model deltas**, **API/UI deltas**, and **pipeline placement** so it can be picked up directly. Decisions already made are marked **[DECIDED]** / **[ADOPTED]**; items still worth a quick confirmation are marked **[CONFIRM]**.
 
-The throughline: A, B, and C are really one model — *"who is responsible for which equipment, where is it, and what state is it in."* C gives us the nouns, A gives us the state machine, B gives us the controls over the people. Spec'ing them together avoids three half-aligned implementations.
+The throughline: A, B, C, and F are really one model — *"who is responsible for which equipment, where is it, and what state is it in."* C gives us the nouns, A gives us the state machine, B gives us the controls over the people, and F adds the *proactive* front end — planning and reserving a rig before it's picked up, where today equipment only moves reactively. Spec'ing them together avoids four half-aligned implementations.
 
 ---
 
@@ -200,8 +200,9 @@ How these fold into the existing wave plan (from `AHITS_INDEPENDENT_ASSESSMENT_A
 | **Wave 2C — Photos** | capture→compress→offline blob→private upload | **In-field & shop repair records attach photos here** |
 | **Wave 2D — Consistency** | one pipeline, one vocabulary, one primitive set, session-expiry UX | **Adopt Kit/Rig/Deployment nouns app-wide; "My Rig"→"My Deployment"; one disposition/status enum** |
 | **Wave 3 — Close Phase 2 + hardening** | maintenance recurrence loop + mileage trigger, notifications, admin completeness, sessions/devices (S3), tests | **Shop work-order/repair-request external email (Path C); full trusted-device mgmt + richer audit surfacing completes the Account Management story** |
+| **Wave 3 — Deployment Requests (NEW block, §F)** | — | **Request → stage (hard-reserve + quality check) → check-out; `HubAssignment`; `RESERVED` status; `DeploymentRequestLine`; request notifications (in-app first, then dispatcher). Depends on the Wave 2B Deployment model.** |
 
-**Net new model objects:** `DeploymentProject`, `DeploymentAssignment`, `Session`/`Device` (minimal), `AccountAuditLog`, plus enum/field additions on `MaintenanceTask`, `User`, `InviteToken`, and a promoted `Disposition` enum. None of these block each other if built in the order above (C-model → A-flow → B-accounts can proceed in parallel with A once the C-model lands).
+**Net new model objects:** `DeploymentProject`, `DeploymentAssignment`, `Session`/`Device` (minimal), `AccountAuditLog`, `DeploymentRequestLine`, `HubAssignment`, plus enum/field additions on `MaintenanceTask`, `User`, `InviteToken`, `Deployment` (lifecycle states + request fields), `InventoryUnit`/`Vehicle` (`RESERVED` + `reservedForDeploymentId`), and a promoted `Disposition` enum. None block each other if built in order (C-model → A-flow → B-accounts in parallel once C lands; F after 2B's C-model).
 
 ---
 
@@ -214,4 +215,97 @@ All four open confirmations are now decided (2026-06-17):
 3. **Handoff initiation (C.1): operator self-service.** An operator can initiate, confirm, and receive handoffs without admin help (transfer-accept pattern); an admin can initiate or confirm any portion. All handoffs are audit-logged.
 4. **Repair-return destination (A.4): no default.** The destination must be explicitly selected; the repair cannot be closed until one is chosen.
 
-No open product questions remain in this addendum. The next decisions are implementation-level and belong to the wave that builds each piece.
+The next decisions are implementation-level and belong to the wave that builds each piece. (See §F.9 for the open confirmations introduced by the Deployment Requests feature added below.)
+
+---
+
+## F. Deployment Requests (pre-deployment provisioning)
+
+**Added 2026-06-18.** Lets an Operator or Admin pre-specify the equipment a deployment needs, so a Hub fulfiller can prepare and reserve it *before* the operator arrives — turning provisioning from a reactive scramble into a planned hand-off. This is the proactive complement to the reactive transfer/disposition flows already built: today gear only moves once something breaks or a crew is already in the field; this adds the "stage it before pickup" front end.
+
+### F.0 Adopted decisions
+
+The four shaping decisions (recommended defaults, **[ADOPTED]** 2026-06-18 — flip any):
+
+1. **Hub fulfiller = per-hub assignee.** Each Hub has one or more assigned users (operators or admins) who receive and fulfill its requests. No new role (we keep Operator/Admin per §B.2) — just a `HubAssignment` join. Falls back to "any admin" if a hub has no assignee.
+2. **A request is a draft Deployment**, not a separate entity. The Deployment gains a lifecycle: `REQUESTED → STAGED → ACTIVE → COMPLETED` (plus `DRAFT`, `CANCELLED`). The rig/kit are built up as the request is prepared; check-out flips it to `ACTIVE`.
+3. **Hard reserve on staging.** Submission is a soft "ask." When the Hub assigns specific units/vehicles (staging), those are *reserved* and removed from the available pool so two crews can't plan around the same gear.
+4. **Quality check = per-item operable + presence.** At staging the fulfiller confirms each item is present and operable (vehicles get a quick condition check), then marks the rig `STAGED`/ready. A failed item routes straight into the breakdown/maintenance flow (§A) instead of being staged.
+
+### F.1 The three-step flow
+
+```
+ OPERATOR/ADMIN                 HUB FULFILLER                 OPERATOR (at hub)
+ ───────────────                ─────────────                ─────────────────
+ Build request:                 Notified of request.         Arrive; review staged rig.
+  • target Hub                  Resolve each line to a        Check out (scan/confirm):
+  • project(s)                  specific unit/vehicle;         • units → CHECKED_OUT
+  • kit lines (type × qty)      reserve them.                  • operator → PRIMARY
+  • vehicle lines (type × qty)  Per-item operable+presence     • status → ACTIVE
+  • optional specific items     quality check.                Make last-minute changes.
+        │                       Substitute as needed.                │
+        ▼                       Mark STAGED (ready).                 ▼
+   status REQUESTED  ───────▶   status STAGED  ───────────────▶  status ACTIVE
+   (notify hub assignees)       (notify requester: "ready")     (ownership transferred)
+```
+
+**Step 1 — Request (Operator or Admin).** The requester picks a **target Hub**, the intended **project(s)** and **operator(s)** (an **Admin** creating the request assigns the operator[s] who will run the deployment; an operator creating their own is the assignee), and lists needed equipment as **request lines** at the *type + quantity* level — e.g., "2× GPS unit, 1× Truck, 1× Christie drill, 500× sample bags" — with the option to request a **specific serialized asset** by name/QR ("Christie-Drill-1"). Submitting creates a Deployment in `REQUESTED` status and notifies the hub's fulfiller(s).
+
+**Step 2 — Stage / fulfill (Hub assignee or any admin).** The fulfiller resolves each request line to **specific** `InventoryUnit`s and `Vehicle`s, **reserving** them (F.3). They run the **per-item operable + presence quality check**; an item that fails is *not* staged — it's sent into the breakdown/maintenance flow (§A) and the fulfiller picks a substitute. They can **substitute** freely (swap a unit, add/drop a line). When the rig is complete and checked, they mark it `STAGED`, which notifies the requester that their gear is ready for pickup.
+
+**Step 3 — Check-out (Operator at the hub).** The operator reviews the staged rig and performs a **check-out** — scanning or confirming the staged items — which flips the reserved units to `CHECKED_OUT`, opens the operator's `PRIMARY` `DeploymentAssignment` (§C), and sets the Deployment `ACTIVE`. This *is* the existing check-out/transfer mechanic, now seeded from a staged request. The operator can make **last-minute changes** here (drop an item, add an available one), exactly as they can mid-deployment today.
+
+### F.2 Lifecycle states
+
+`Deployment.status`: **`DRAFT`** (requester still editing) → **`REQUESTED`** (submitted; lines are type+qty) → **`STAGED`** (Hub resolved to specific units, reserved, quality-checked) → **`ACTIVE`** (operator checked out; the existing live state) → **`COMPLETED`** (existing end-of-deployment). **`CANCELLED`** from any pre-`ACTIVE` state (releases reservations). This extends — does not replace — the current active/ended deployment model.
+
+### F.3 Reservation semantics [ADOPTED: hard reserve on staging]
+
+- A new equipment status **`RESERVED`** plus `InventoryUnit.reservedForDeploymentId` (and the `Vehicle` equivalent). Staging sets units `RESERVED`; check-out → `CHECKED_OUT`; cancel/unstage → `AVAILABLE`.
+- Reserved units are excluded from the "available" pool everywhere availability is computed (the same guard Wave 2B adds to kit/deployment creation), so a reserved Christie drill can't be double-booked.
+- If a request line **can't be fulfilled** (not enough available units), staging surfaces a **shortage** — exactly the signal the low-stock alert (§11.8) and the future reorder integration want. The fulfiller can partially stage and flag the gap.
+
+### F.4 Roles, permissions & notifications
+
+- **Create/submit a request:** an **Operator** (for a deployment they'll run) **or an Admin**. An Admin can create a request **on behalf of others and assign the operator(s)** who will run it — the assignee(s) become the `PRIMARY`/`SECONDARY` `DeploymentAssignment` (§C) at check-out and are notified when it's `STAGED`. Operators self-serve their own requests; admins can provision for anyone. Consistent with the self-service stance on handoffs (§C.1).
+- **Stage/fulfill:** the target hub's assignees (operators or admins in `HubAssignment`) or any admin.
+- **Check-out:** the assigned operator (or an admin on their behalf).
+- **Notifications** (through the §B / Wave-3 dispatcher; in-app first, push/email when the dispatcher lands): `DEPLOYMENT_REQUEST_SUBMITTED` → hub assignees; `DEPLOYMENT_REQUEST_STAGED` → requester ("ready for pickup"); `DEPLOYMENT_REQUEST_CHANGED` / `…_SHORTAGE` → requester/admin.
+
+### F.5 Data-model deltas (F)
+
+Builds on the Deployment model from §C (lifecycle, `DeploymentAssignment`, Deployment↔Project M2M).
+
+- `Deployment`: extend `status` enum with `DRAFT`, `REQUESTED`, `STAGED`, `CANCELLED` (alongside existing `ACTIVE`/`COMPLETED`); add `targetHubId`, `requestedById`, `requestedAt`, `stagedById`, `stagedAt`.
+- New **`DeploymentRequestLine`**: `deploymentId`, `lineType` (`KIT_ITEM` | `VEHICLE`), `category`/`itemType` or `vehicleType`, `requestedQty`, optional `specificInventoryItemId` / `specificVehicleId`, resolution fields `resolvedUnitId` / `resolvedVehicleId` (set at staging), `stagedCondition` (operable-check result + note). On check-out these resolve into the concrete `KitItem` / `RigVehicle` rows.
+- New **`HubAssignment`**: `hubId`, `userId` (the per-hub fulfiller pool).
+- `EquipmentStatus`: add **`RESERVED`**; `InventoryUnit.reservedForDeploymentId` (+ `Vehicle` equivalent).
+- New notification types (F.4), routed through the dispatcher.
+
+### F.6 Offline & cross-platform
+
+- **Operator creating a request** is offline-capable — a queued mutation through the unified `mutate()` pipeline (Wave 2D), so a crew can draft their pick list with no signal and it syncs on reconnect.
+- **Hub staging** is a desk/tablet (admin-dialect) task, assumed online.
+- **Operator check-out at the hub** reuses the existing durable-offline check-out path (base camps can have spotty signal); reservations reconcile on sync, with the conflict path (assessment O5) covering the rare double-claim.
+- Cross-platform: request on phone (operator), stage on desktop/iPad kiosk (fulfiller), check-out on phone or the base-camp iPad kiosk.
+
+### F.7 Synergies (why this fits the whole system)
+
+- **Maintenance/breakdown flow (§A):** a unit that fails the staging quality check drops into the *same* inoperable→resolution-path machine — no parallel logic.
+- **Transfers / check-out:** check-out from a staged request is the existing transfer/ownership mechanic, seeded earlier in the timeline. Handoffs (§C) work identically on a deployment that began as a request.
+- **Time-tracking clock-in (Phase 3, §11.12):** the clock-in flow already asks "are you working with a new deployment?" — a checked-out request *is* that new deployment, so clock-in links to it directly.
+- **Deployment Map (Phase 3, §11.11):** `REQUESTED` / `STAGED` deployments can appear as "pending pickup" pins before they go `ACTIVE`.
+- **Low-stock / reorder (§11.8, future):** an unfulfillable request line is a first-class shortage signal.
+- **QR scan (§11.7):** check-out is a scan-confirm of the staged rig, reusing context-aware scan routing.
+
+### F.8 Pipeline placement
+
+A substantial net-new workflow that **depends on the Wave 2B Deployment model** (lifecycle states, `DeploymentAssignment`, M2M projects) and reads best **with the Wave 3 notifications dispatcher**. Recommended slot: **Wave 3, as a dedicated "Deployment Requests" block**, after the Deployment model lands and alongside/after notifications. Ship in two increments: (1) request → stage → check-out with **in-app** notifications and reservations; (2) push/email once the dispatcher is built. It must **not** precede Wave 2B — it would have to invent the very Deployment model 2B introduces.
+
+### F.9 Confirmations — RESOLVED (2026-06-18)
+
+1. **Specific-asset requests: YES.** An operator (or admin) may request a *named* serialized asset ("Christie-Drill-1"), not just a type. Honored at staging where available; otherwise the fulfiller substitutes and flags it.
+2. **New Rig vs. template: BOTH.** A request can spin up a brand-new Rig at the hub *or* clone an existing parked Rig template (the fast path). New is the default.
+3. **Approval gate: NONE.** An operator-created request needs no separate admin approval — **hub fulfillment is the only gate**, matching the self-service handoff model. (Admins can of course create/assign/fulfill directly.)
+
+No open product questions remain for the Deployment Requests feature.

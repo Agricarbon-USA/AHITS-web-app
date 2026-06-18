@@ -1,11 +1,16 @@
 # AHITS — Product Requirements Document, v2 (Comprehensive)
 
 **Agricarbon Hardware Inventory & Tracking System**
-Version 2.0 · prepared 2026‑06‑18 · supersedes `AHITS_PRD_v1` and its June "Post Wave 0" status update
+Version 2.2 · prepared 2026‑06‑18 · supersedes `AHITS_PRD_v1`, the June "Post Wave 0" status update, and PRD v2.0/v2.1
 
 ---
 
 ## 0. Document control
+
+**Revision history.**
+- **v2.0** — comprehensive merge of v1 spec + the Wave 0/Wave 1 implementation-and-QA cycle (build-status matrix, changelog, QA results, punch list).
+- **v2.1** — companion `AHITS_PRD_v2.1_ADDENDUM.md` folded in: equipment lifecycle & maintenance states (§A), account management (§B), Kit/Rig/Deployment terminology (§C), and Deployment Requests (§F). Glossary, open-questions, and roadmap updated.
+- **v2.2 (this revision)** — brings the document current through a second build session that shipped **Wave 1.5 (hotfixes)**, **Wave 2A (security hardening)**, **Wave 2A.5 (account management)**, a **CI test-gating** change, and **four forward-ported API gaps** (deployment GET/PATCH, secondary-operator management, review-inoperable, and a Supabase Storage photo-upload endpoint). Adds **§21 Workflow recommendations** and **§22 Forward recommendations & concerns**. The freshest current-state material is now **§3.2** (session-2 changelog) and the updated **§2** matrix; read those first.
 
 **v2 is a superset of v1 — nothing has been dropped.** This document preserves every product specification from v1 in full (problem statement, goals, personas, platform, authentication, all feature specifications 7.1–7.12 including the Deployment Map and the Time‑Tracking/Invoicing/Availability module, the data model, non‑functional requirements, out‑of‑scope list, phases, open questions, and glossary). On top of that enduring spec, v2 folds in everything learned and shipped during the latest implementation‑and‑QA cycle: a build‑status matrix, a session changelog, the deploy/commit state and loose ends, hands‑on QA verification results, a **severity‑ranked operator defect punch list slotted into the wave/phase where each item should be fixed**, an updated forward work plan, and a sweep of gaps in the PRD, codebase, and workflow. **Where v2 differs from v1, v2 takes precedence.**
 
@@ -28,33 +33,43 @@ AHITS is a purpose‑built, full‑service application that gives every field op
 
 **Target outcome:** 95% of daily vehicle checks submitted on time, zero equipment "lost" for more than 24 hours, and a 25%+ reduction in equipment costs through preventative maintenance — within 6 months of full deployment.
 
-**Where the build stands now.** The product has moved from "broad but shallow" to a genuinely working core. Wave 0 (inventory source‑of‑truth, login hardening) was completed earlier; this cycle landed **Wave 1 in full** — the offline‑first promise that is the product's entire reason for existing — plus QR association/scan‑routing, a consolidation pass, and a string of correctness fixes surfaced by hands‑on QA of the live staging app as two real operators. The load‑bearing flows now work and were verified end‑to‑end on staging: daily checks (online and offline, with idempotent sync), kit assembly, equipment check‑in/out, transfers (create/accept/decline across two operators), damage/inoperable reporting, and context‑aware QR scanning. The remaining defects are all non‑architectural and are ranked and slotted in §5. The next move remains **consolidation before new features**: finish Wave 2 correctness, close Phase 2 (photos, maintenance loop, notifications), then build the Phase 3 capstones (Deployment Map; Time‑Tracking/Invoicing/Availability).
+**Where the build stands now (as of v2.2).** The product has moved from "broad but shallow" to a genuinely working, increasingly hardened core. Wave 0 (inventory source‑of‑truth, login hardening) and **Wave 1** (the offline‑first promise — durable queue, idempotent replay, QR scan‑routing) are done and verified. Since then, a second build session shipped:
+
+- **Wave 1.5 — hotfixes (merged, PR #19):** consumable‑transfer banner quantity (Punch #2); a `?direction=` filter so the pending‑transfer banner no longer leaks between sender and recipient (Punch #4); deleted the divergent dynamic transfer handler + added a guard test (C2); odometer units settled to miles (O7).
+- **Wave 2A — security hardening (merged, PR #23):** CSPRNG invite tokens + throttling + a TOCTOU fix (S1); zod field‑whitelists on the mass‑assignment PATCH routes (S2); cost/spend fields hidden from operators (S5); HTML‑escaped email templates (S7); seed hardened against production + randomized admin password (S4); transfer accept/decline wrapped in idempotency (C1).
+- **Wave 2A.5 — account management (built, branch pending merge):** revocable sessions (suspend / force‑logout / demote take effect immediately via a DB re‑check + `tokenVersion`); a full account‑lifecycle/roles/defaults API with a last‑active‑admin guardrail; invite revoke/resend + bulk onboarding; an `AccountAuditLog`; and the matching admin UI.
+- **CI hardening:** the vitest suite now runs on every PR against a Postgres service container (previously CI ran only lint + type‑check).
+- **Four forward‑ported API gaps:** `GET/PATCH /api/deployments/[id]`, `GET/POST/DELETE /api/deployments/[id]/operators` (secondary operators — closes Punch #8), `POST /api/inventory/[id]/review-inoperable` (admin RETIRE/REPAIR decision), and **`POST /api/uploads` — a Supabase Storage photo‑upload endpoint** (the first real piece of the long‑absent photo pipeline).
+
+The load‑bearing flows work and are verified on staging. The next move remains **consolidation before new features**: **Wave 2B correctness** (the Kit/Rig/Deployment model, consumable accounting, the maintenance/breakdown state machine), then close Phase 2 (finish photos end‑to‑end, the maintenance loop, notifications), then the Phase 3 capstones (Deployment Map; Time‑Tracking/Invoicing/Availability) — with **Deployment Requests** (Addendum §F / §11.13) slotted into Wave 3. A detailed forward plan and risk list is in §21–§22.
 
 ---
 
-## 2. Build status — phases × waves (current)
+## 2. Build status — phases × waves (current, v2.2)
 
-**Phase 1 — Foundation** (v1 target "50% by end of June") ≈ **85%**
-- ✅ PIN + admin login, with login rate limiting + admin lockout (Wave 0).
-- ✅ Inventory single source of truth (`InventoryUnit`‑derived counts); `availableUnits` restored this cycle.
-- 🟡 Vehicle CRUD — works; PATCH still unvalidated mass‑assignment (Wave 2).
-- ✅ Daily vehicle check — verified online **and** offline with idempotent sync.
-- ✅ Equipment check in/out — verified via scan and My‑Rig; now durable offline.
-- 🟡 Admin dashboard — stat cards + Active Deployments tile; §11.1 feeds/tables not built.
-- ✅ QR association/lookup — associate/read existing labels, no generation; association‑on‑create (vehicles + units) shipped.
+**Phase 1 — Foundation** (v1 target "50% by end of June") ≈ **92%**
+- ✅ PIN + admin login, with login rate limiting + admin lockout (Wave 0). **Sessions are now revocable** (Wave 2A.5) — suspend/force‑logout/demote take effect immediately.
+- ✅ Inventory single source of truth (`InventoryUnit`‑derived counts); `availableUnits` restored.
+- ✅ Vehicle CRUD — PATCH now zod‑validated/whitelisted (Wave 2A, S2). *(Note: the forward‑port baseline restored an unvalidated copy on one integration branch — see §3.2; confirm the S2 version is the one merged.)*
+- ✅ Daily vehicle check — verified online **and** offline with idempotent sync; odometer in miles.
+- ✅ Equipment check in/out — verified via scan and My‑Rig; durable offline.
+- 🟡 Admin dashboard — stat cards + Active Deployments tile; §11.1 operational feeds/tables still not built.
+- ✅ QR association/lookup — association‑on‑create (vehicles + units) shipped.
 - 🟡 Settings — categories + hubs management; alert‑threshold/cutoff config not wired.
-- ✅ Rigs/Kits/Deployments + transfers — verified end‑to‑end across two operators.
+- ✅ Rigs/Kits/Deployments + transfers — verified end‑to‑end; now with `GET/PATCH /api/deployments/[id]` + secondary‑operator management (forward‑port). Transfer banners fixed (Wave 1.5).
+- ✅ **Team / account management** — invite, lifecycle (reset PIN, suspend/reactivate, force‑logout), roles with last‑admin guardrail, per‑operator defaults, audit log (Wave 2A.5).
 
-**Phase 2 — Core Operations** (v1 target "95% by end of July") ≈ **35%**
-- ✅ **Offline + background sync — Wave 1, shipped and verified** (queue, honest indicators, idempotent replay, sync on reconnect and on mount).
-- 🟡 Maintenance scheduling/tracking — damage‑report tasks are created (verified); the "mark complete → recalc next due → spawn next task" loop and the mileage trigger are not built.
-- ⛔ Photo capture — no in‑app capture anywhere; no compression; no upload‑on‑sync.
-- 🟡 Notifications — daily‑check‑fail email is wired; `DAMAGE_REPORTED` alert rows are created; the other five alert types and any push are not.
-- ✅ Item disposition (INOPERABLE / damage) — verified (unit status + maintenance task + alert).
+**Phase 2 — Core Operations** (v1 target "95% by end of July") ≈ **45%**
+- ✅ **Offline + background sync — Wave 1** (queue, honest indicators, idempotent replay).
+- 🟡 Maintenance scheduling/tracking — damage‑report tasks created; **`review-inoperable` RETIRE/REPAIR decision now exists** (forward‑port). The mark‑complete recurrence loop, the mileage trigger, and the full breakdown/resolution‑path state machine (Addendum §A) are **Wave 2B/3**.
+- 🟡 Photo capture — **a `POST /api/uploads` Supabase Storage endpoint now exists** (forward‑port, 10 MB / images only, service‑role client). Still missing: in‑app capture UI, client‑side compression, offline blob queueing, and damage‑photo‑required enforcement (Wave 2C).
+- 🟡 Notifications — daily‑check‑fail email wired; `DAMAGE_REPORTED` alerts created; the other five alert types + push are **Wave 3**.
+- ✅ Item disposition (INOPERABLE / damage) — verified.
+- ✅ **Security hardening — Wave 2A** (invite tokens, mass‑assignment validation, cost‑field gating, email escaping, seed, transfer idempotency).
 
-**Phase 3 — Scale & Polish** (v1 target Q4 2026): ⛔ **not started.** Deployment Map, time/invoicing/availability, advanced reporting. None of the new models exist; GPS is currently on `Photo`, not `DailyCheck`.
+**Phase 3 — Scale & Polish** (v1 target Q4 2026): ⛔ **not started.** Deployment Map, time/invoicing/availability, advanced reporting, **Deployment Requests** (§11.13). None of the new Phase‑3 models exist; GPS is still on `Photo`, not `DailyCheck`.
 
-"95% by end of July" still requires descoping; Wave 2 is the prerequisite.
+"95% by end of July" still requires descoping; **Wave 2B** is the prerequisite.
 
 ---
 
@@ -87,6 +102,47 @@ All work is on branch `feature/20260617/maxwellslater-wave1-offline-real`. Stagi
 ✅ **RESOLVED — the two diagnosed fixes:**
 - **Operator vehicle remove** (Punch #1) — fixed in `0d5591c`; the UI now sends `{vehicles:[{vehicleId,dispositionType:'AVAILABLE'}],note}`.
 - **Consumable‑transfer banner quantity** (Punch #2) — fixed in **Wave 1.5**; the incoming/outgoing banners now render the transfer line's quantity (`TransferItem.quantity`), not the source total.
+
+### 3.2 Session‑2 changelog — Wave 1.5, 2A, 2A.5, CI, forward‑ports
+
+A second build session (independent code+staging review → fixes → security → account management) shipped the following. Items are grouped by the wave that produced them; each was eslint‑clean and (where the sandbox allowed) type‑checked, with the remainder type‑checked in CI.
+
+**Independent assessment (no code).** A fresh, code‑and‑staging review produced `AHITS_INDEPENDENT_ASSESSMENT_AND_ROADMAP.md` (severity‑ranked issue/risk register, per‑user analysis, consistency blueprint, cross‑platform/offline matrix). It corrected several stale claims in the docs (e.g., Punch #1/#5 and the "37 uncommitted auth transforms" were already merged in `0d5591c`) and caught a false positive in its own first pass — `src/proxy.ts` is **not** dead code; Next.js 16 renamed the middleware convention to `proxy`, verified live on staging.
+
+**Wave 1.5 — hotfixes (merged, PR #19).**
+- **C4 / Punch #2:** transfer banners render the per‑line quantity (`TransferItem.quantity`).
+- **Punch #4 (bonus):** `GET /api/transfers` now honors `?direction=incoming|outgoing`; the param was previously ignored, so the sender's "Waiting/Cancel" banner leaked to the recipient.
+- **C2:** deleted the divergent dynamic `transfers/[id]/[action]` handler (static `accept`/`decline` win by routing precedence) + a DB‑free guard test that prevents its reintroduction.
+- **O7:** odometer labeled in **miles** across daily‑check + scan, matching the PRD canonical unit.
+
+**Wave 2A — security hardening (merged, PR #23).**
+- **S1:** invite tokens use `crypto.randomBytes(32)` (not `cuid()`); `invite/validate` + `invite/complete` are rate‑limited; the account‑minting TOCTOU is closed with an atomic `updateMany(usedAt: null)` claim; a failed invite email rolls back the token.
+- **S2:** zod field‑whitelist + `.strict()` + try/catch on `PATCH vehicles/[id]`, `maintenance/[id]`, `inventory/[id]`; no more raw Prisma error leakage.
+- **S5:** `unitCost` (inventory) and `estimatedCost`/`actualCost` (maintenance) omitted from responses for operator sessions.
+- **S7:** all user‑supplied values HTML‑escaped in email templates.
+- **S4:** seed refuses `NODE_ENV=production` and generates/prints a random admin password instead of `Admin1234!`.
+- **C1:** `transfers/[id]/accept` + `decline` wrapped in `withIdempotency`.
+
+**Wave 2A.5 — account management (built; branch `feature/20260618/maxwellslater-wave2a5-account-mgmt`, pending merge).**
+- **Revocable sessions:** `getSession` re‑validates the JWT against the DB (`isActive` + `tokenVersion`) and returns fresh role/name/email; suspend, force‑logout (tokenVersion bump), and demotion are immediate. Login stamps `tokenVersion` + records `lastLoginAt`. *(Adds one DB read per authenticated request — a deliberate tradeoff; cacheable later.)*
+- **Lifecycle/roles/defaults API** (`users/[id]` PATCH): reset PIN (+`mustChangePin`), unlock, suspend/reactivate, force‑logout, role change **with a last‑active‑admin guardrail**, home‑hub + hourly‑rate defaults — all written to a new **`AccountAuditLog`**.
+- **Invites:** pending‑list GET, `invite/[id]` revoke (DELETE) + resend (POST), `validate`/`complete` reject revoked tokens, and a `users/bulk` onboarding endpoint.
+- **Schema:** `User.tokenVersion/mustChangePin/homeHubId`, `InviteToken.revokedAt`, `AccountAuditLog` model (migration `20260618180000_wave2a5_account_management` provided — verify with `make db-migrate-dev`).
+- **Admin UI:** the Team page Manage dialog (role, home hub, hourly rate, reset PIN, log‑out‑all‑devices), a home‑hub column, and an Account Activity dialog.
+- **Known follow‑up:** `mustChangePin` is set and returned at login, but the operator‑facing "change your PIN now" screen is not yet built.
+
+**CI hardening.** `ci.yml` gained a `test` job: a `postgres:16` service on `:5433`, `prisma generate` + `db push`, then `npm test`. The vitest suite now gates every PR (it previously ran only locally).
+
+**Forward‑ported API gaps (`032d1f7`).** Four endpoints recovered from superseded sprint branches: `GET/PATCH /api/deployments/[id]`; `GET/POST/DELETE /api/deployments/[id]/operators` (secondary operators — **closes Punch #8**); `POST /api/inventory/[id]/review-inoperable` (admin RETIRE/REPAIR on an INOPERABLE unit); and **`POST /api/uploads`** (Supabase Storage, 10 MB, images only, via a new `src/lib/supabase/admin.ts` service‑role client) — the first concrete step toward the photo pipeline (§11.10).
+
+**Documentation.** Folded the v2.1 Addendum (maintenance states, account management, Kit/Rig/Deployment, Deployment Requests) into this PRD; archived ~20 superseded docs to `docs/archive/`; consolidated all doc work onto a single `docs/` branch.
+
+### 3.3 Branch & integration state (snapshot)
+
+A fast‑moving, multi‑branch session. Current observed state:
+- **Merged into the integration line:** Wave 1 (PR #18), the docs commit (assessment + addendum + corrections), **Wave 1.5** (PR #19), the docs archive (PR #20), and **Wave 2A** (PR #23, on `staging/20260618-wave2a`).
+- **Built, not yet merged:** **Wave 2A.5** (its own feature branch), the **Deployment Requests** scope (§F/§11.13, on the `docs/` branch), and the **forward‑ported gaps** (their own branch).
+- **Two staging branches exist** (`staging/20260618-post-merge` without Wave 2A, `staging/20260618-wave2a` with it) — these should be reconciled (see §21).
 
 ---
 
@@ -219,7 +275,7 @@ Field operators authenticate with a simple numeric PIN (4–6 digits). PINs are 
 
 - **PIN length:** configurable by Admin, default 6 digits.
 - **Failed attempts:** lock account after 10 consecutive failed PIN attempts; Admin can unlock. *(Login rate‑limit + admin lockout shipped in Wave 0.)*
-- **Session:** persistent on trusted devices; expires after 30 days idle or explicit logout. *(Note — see §16: sessions are currently stateless 24h JWTs and can't be revoked; the trusted‑device model is not yet built.)*
+- **Session:** persistent on trusted devices; expires after 30 days idle or explicit logout. *(v2.2: sessions are now **revocable** — `getSession` re‑checks `isActive` + `tokenVersion` per request, so suspend/force‑logout/demote are immediate (Wave 2A.5). The current TTL is 24h; the full **trusted‑device / per‑device** model and the 30‑day idle policy are still Wave 3.)*
 - **Admin login:** email + password (or SSO if configured). PIN login is for operators only.
 - **Device trust:** a device is "trusted" after first successful PIN login. Up to 3 devices can be trusted per user.
 
@@ -368,7 +424,7 @@ The app must function identically offline as online for all operator workflows.
 
 **Technical handling:** photos compressed to max 1200px longest edge, JPEG 85% before upload; stored in cloud object storage (Supabase Storage); thumbnails generated server‑side; stored locally when offline and uploaded on next sync; damage photos cannot be deleted by operators (Admin only).
 
-**Build status:** ⛔ not built anywhere — no in‑app capture, compression, private storage, or upload‑on‑sync (Wave 2, Punch #7). Currently `Photo.url` is a free‑form string (a stored‑XSS/SSRF risk — §16).
+**Build status:** 🟡 **partial (v2.2).** A `POST /api/uploads` Supabase Storage endpoint now exists (forward‑port: 10 MB, images only, via a service‑role `src/lib/supabase/admin.ts` client) — the upload foundation. Still missing: **in‑app camera capture, 1200px/JPEG‑85 compression, offline blob queueing, signed‑download URLs, damage‑photo‑required enforcement, and `Photo.url` validation** (still a free‑form string → stored‑XSS/SSRF surface). Finish in **Wave 2C** (Punch #7).
 
 ### 11.11 Deployment map
 
@@ -419,6 +475,16 @@ Operators are contractors. This feature lets them track hours, log mileage and e
 **Out of scope (for now):** integration with external payroll (QuickBooks, Gusto); automatic overtime calculations; two‑way calendar sync (Google Calendar, Outlook); expense approval as a separate workflow (expenses are included in the invoice and approved at invoice level).
 
 **Build status:** ⛔ not started (Phase 3). None of the seven models exist yet.
+
+### 11.13 Deployment Requests (pre-deployment provisioning)
+
+Lets an Operator or Admin pre-specify the equipment a deployment needs — the **kit and rig, at the item-type + quantity level** ("2× GPS, 1× truck, 1× Christie drill, 500× bags"), with optional specific-asset requests — at a **target Hub**, *before* arriving to pick it up. This turns provisioning from a reactive scramble into a planned hand-off and is the proactive complement to the existing transfer/disposition flows.
+
+**Three-step flow.** (1) **Request** — operator/admin builds the pick list; submitting creates a Deployment in `REQUESTED` and notifies the hub's fulfiller(s). (2) **Stage** — a **per-hub fulfiller** (an operator or admin assigned to that Hub, or any admin) resolves each line to **specific** units/vehicles, **reserves** them, runs a **per-item operable + presence quality check** (a failed item routes into the breakdown/maintenance flow, §11.6), substitutes as needed, and marks the rig `STAGED` (notifying the requester it's ready). (3) **Check-out** — the operator arrives, scans/confirms the staged rig, which flips reserved units to `CHECKED_OUT`, opens their `PRIMARY` assignment, and sets the Deployment `ACTIVE`; last-minute changes allowed. This reuses the existing check-out/transfer mechanic, seeded earlier in the timeline.
+
+**Lifecycle:** `DRAFT → REQUESTED → STAGED → ACTIVE → COMPLETED` (`CANCELLED` releases reservations). **Reservation:** a new `RESERVED` equipment status removes staged gear from the available pool so it can't be double-booked; an unfulfillable line surfaces a **shortage** (feeds low-stock/reorder). **Roles:** request = operator (own) **or admin (who can create on anyone's behalf and assign the operator[s])**; stage = hub assignees or admin; check-out = the assigned operator (or admin on their behalf). Operators may request a **specific named serialized asset**, not just a type; a request can start a new Rig **or** clone a parked Rig template; **no separate approval gate** — hub fulfillment is the gate. New models: `DeploymentRequestLine`, `HubAssignment`, plus `Deployment` lifecycle/request fields and `RESERVED` on units/vehicles.
+
+**Build status:** ⛔ not started — **fully specified in PRD v2.1 Addendum §F**; slotted as a dedicated **Wave 3** block (depends on the Wave 2B Deployment model; reads best with the Wave 3 notifications dispatcher).
 
 ---
 
@@ -499,11 +565,19 @@ The original v1 **phases** define product scope; the **waves** are the consolida
 
 ### 15.2 Waves (execution increments)
 
+> **Status update (v2.2):** Waves **0, 1, 1.5, 2A** are ✅ **done/merged**; **2A.5** is ✅ **built (pending merge)**. The current next block is **Wave 2B (correctness)** — items 2, 2a, 2b, 3, 5, 6 below. Items 1, 4, and the Wave‑2A security carryovers are **done** (see §3.2). The wave list below is annotated accordingly.
+
 **Wave 0 — ✅ done.** Single source of truth for inventory; restored unit/QR sub‑system; corrected dashboard "checked out"; removed dead/mislabeled controls; success messages only on real success; login rate‑limit + admin lockout; automated linting.
 
 **Wave 1 — ✅ done & verified.** Durable offline queue + honest indicators + idempotent sync (on reconnect and on mount); QR association‑on‑create + context‑aware scan routing. *(Caveat: SW cold‑launch + conflict paths await a real‑device pass.)*
 
-**Wave 2 — Correctness & consolidation (immediate next block).** Fold the §5 punch list into the existing Wave‑2 scope:
+**Wave 1.5 — ✅ done (merged, PR #19).** Transfer banner qty (#2), direction‑filter banner leak (#4), dead `[action]` handler removed + guard test (C2), odometer units (O7).
+
+**Wave 2A — ✅ done (merged, PR #23).** Security hardening: S1 invite tokens, S2 mass‑assignment validation, S5 cost gating, S7 email escaping, S4 seed, C1 transfer idempotency.
+
+**Wave 2A.5 — ✅ built (pending merge).** Account management: revocable sessions, lifecycle/roles/defaults with last‑admin guardrail, invite revoke/resend/bulk, audit log, admin UI.
+
+**Wave 2B — Correctness & consolidation (CURRENT next block).** Fold the §5 punch list into the Wave‑2 scope. *(Items 1 and 4 below are ✅ done in Wave 1.5/2A.)*
 1. **Hotfix the blockers** (#1 vehicle remove, #2 consumable banner) and **commit/deploy the uncommitted auth‑route transforms** (§3.1).
 2. **Consumable accounting:** fix where consumable check‑in/disposition/transfer flips arbitrary `CHECKED_OUT` units; verify the transfer decrement; decide whether consumables are unit‑tracked or pure counts and apply everywhere (incl. #3 adding consumables to a kit); add an availability guard to deployment/kit creation.
 2a. **Deployment model (PRD v2.1 Addendum §C) — do first in 2B.** Adopt Kit ⊂ Rig ⊂ Deployment; make `Deployment ↔ Project` many‑to‑many (`DeploymentProject`); add `DeploymentAssignment` (operator handoff history, PRIMARY/SECONDARY) folding in `RigOperator`. Prerequisite for 2b below.
@@ -524,6 +598,7 @@ The original v1 **phases** define product scope; the **waves** are the consolida
 11. **Deployment hardening:** run `prisma migrate deploy` in the container entrypoint (Docker currently doesn't migrate — schema‑drift footgun); add `/api/health` + a Cloud Run startup probe; confirm CI gates prod PRs; tighten `serverActions.allowedOrigins`.
 12. **Sessions/devices:** add a trusted‑device/session model (§10.1 "up to 3 trusted devices"; 30‑day idle) so deactivate/demote takes effect and sessions can be revoked.
 13. **Tests:** expand coverage, **auth first** (PIN lockout, session expiry/revocation, invite flow), then transfer/consumable/idempotency integration tests, then a real‑device offline pass. *(A dedicated test database must be set up first — the current suite would otherwise run against, and erase, production data.)*
+14. **Deployment Requests (§11.13 / Addendum §F).** Request → stage (hard‑reserve + per‑item quality check) → check‑out; `HubAssignment` (per‑hub fulfiller), `RESERVED` status, `DeploymentRequestLine`, and request notifications (in‑app first, then via the item‑9 dispatcher). **Depends on the Wave 2B Deployment model** (lifecycle states, `DeploymentAssignment`, M2M projects); shippable in two increments (in‑app, then push/email).
 
 **Phase 3 capstones (after Wave 3):** Deployment Map (§11.11); Time Tracking/Invoicing/Availability (§11.12); advanced reporting; QR‑only web form; contractor self‑onboarding; admin mobile optimization.
 
@@ -539,15 +614,15 @@ The original v1 **phases** define product scope; the **waves** are the consolida
 - **Conflict resolution detail.** v1 says "last‑write‑wins + manual prompt for status conflicts"; this is unbuilt and under‑specified. Define the exact conflict UX.
 - **Rig vs. Deployment — RESOLVED (PRD v2.1 Addendum §C).** Three nested concepts: **Kit ⊂ Rig ⊂ Deployment** (Kit = tools/gear; Rig = Kit + vehicles; Deployment = operator(s) + Rig, spanning 1+ projects, movable between operators). Align labels, API, and data model accordingly: `Deployment ↔ Project` becomes many‑to‑many and operator assignment becomes a `DeploymentAssignment` history.
 
-**Gaps in the codebase (beyond the punch list):**
-- **Sessions can't be revoked** (stateless 24h JWT; no `isActive`/role re‑check); no trusted‑device model.
-- **Invite tokens use `cuid()` not a CSPRNG** on public, unthrottled endpoints — a guessable token could mint an **admin** account.
-- **Photos not wired to Supabase Storage** — `Photo.url` is a free‑form string (stored‑XSS/SSRF when rendered); no private bucket / signed URLs.
-- **Operators can read cost/spend fields** (violates the §10.2 role table).
-- **Mass‑assignment PATCH routes** (no zod/whitelist/try‑catch).
-- **Maintenance complete‑loop + mileage trigger** missing.
-- **Admin dashboard feeds/tables + four stub pages** not built.
-- **Zero auth tests**; integration suite needs a (now‑configured) isolated test DB.
+**Gaps in the codebase (beyond the punch list) — with v2.2 status:**
+- ✅ **Sessions can't be revoked** — **FIXED (Wave 2A.5):** `getSession` re‑checks `isActive` + `tokenVersion` and returns fresh role; suspend/force‑logout/demote are immediate. (Full trusted‑device/per‑device model still deferred to Wave 3.)
+- ✅ **Invite tokens use `cuid()` not a CSPRNG** — **FIXED (Wave 2A, S1):** CSPRNG tokens + throttling + TOCTOU fix.
+- 🟡 **Photos not wired to Supabase Storage** — **PARTIAL:** a `POST /api/uploads` service‑role Storage endpoint now exists (forward‑port). Still missing: in‑app capture, compression, offline blob queue, signed‑download URLs, and `Photo.url` validation. (Wave 2C.)
+- ✅ **Operators can read cost/spend fields** — **FIXED (Wave 2A, S5).**
+- ✅ **Mass‑assignment PATCH routes** — **FIXED (Wave 2A, S2)** for vehicles/maintenance/inventory. *(Confirm the validated version is what merged — the forward‑port baseline contains an older unvalidated copy on one branch; see §3.3.)*
+- 🟡 **Maintenance complete‑loop + mileage trigger** — still missing (Wave 3); `review-inoperable` decision endpoint now exists (forward‑port).
+- 🟡 **Admin dashboard feeds/tables + four stub pages** — still not built (Wave 3).
+- 🟡 **Zero auth tests** — the isolated test DB + **CI test gating** are now in place; auth‑specific tests still to be written (Wave 3, test expansion).
 
 **Gaps in the workflow / process:**
 - **Docker build doesn't run migrations.** The `CLAUDE.md` flow leans on a manual `make db-migrate` per PR — a schema‑drift footgun. Move migration into the deploy (entrypoint or a gated CI step).
@@ -620,5 +695,79 @@ The original v1 **phases** define product scope; the **waves** are the consolida
 | Secondary operator | An additional operator sharing one deployment (`role = SECONDARY` on `DeploymentAssignment`; formerly `RigOperator`). |
 | Resolution path | After an item is marked inoperable, how it is repaired: **In-field** (lightweight fix log), **Hub** (ship now or carry back at deployment end), or **Shop** (deliver or ship). On repair close, the return destination is chosen per-case. (PRD v2.1 Addendum §A.) |
 | Handoff | Transfer of an entire **Deployment** from one operator to another — closes the current PRIMARY `DeploymentAssignment` and opens a new one. **Operators can initiate, confirm, and receive handoffs without admin help** (transfer-accept pattern); admins can initiate/confirm any portion. All handoffs are audit-logged. Distinct from a per-item transfer. |
+| Deployment Request | A pre-deployment "pick list": an operator/admin specifies the equipment a deployment needs (kit + rig, by type × qty) at a target Hub *before* pickup. Modeled as a Deployment in a `REQUESTED → STAGED → ACTIVE` lifecycle. (PRD v2.1 Addendum §F.) |
+| Staging | The Hub fulfiller resolving a request's lines to specific units/vehicles, **reserving** them, running a per-item operable+presence quality check, and marking the rig ready for pickup. |
+| Reserved | An equipment status (`RESERVED`) for a unit/vehicle the Hub has staged for a specific Deployment — removed from the available pool until check-out (or released on cancel). |
 
-**Immediate next actions (recommended order):** (1) commit + deploy the auth‑route transforms and the two diagnosed fixes (#1, #2); (2) run the admin‑side walkthrough to close the open verifications (consumable decrement, damage alert) and exercise admin flows; (3) begin Wave 2 with consumable accounting + addability (#3) and the maintenance loop.
+**Immediate next actions (recommended order, v2.2):** (1) **Reconcile the branch/integration state** — merge Wave 2A.5 + the forward‑ported gaps + the docs branch, and collapse the two staging branches into one integration line (§21). (2) **Confirm no security regressions from the forward‑port** — the forward‑port baseline carries an older *unvalidated* `inventory/[id]`/`vehicles/[id]`/`maintenance/[id]` PATCH; ensure the Wave‑2A (S2) validated versions are what survive the merge. (3) **Begin Wave 2B** with the Deployment model (Addendum §C) → consumable accounting (#3) → the breakdown/resolution‑path state machine (Addendum §A / #6). (4) Run `make db-migrate-dev` to finalize the Wave 2A.5 migration; build the `mustChangePin` operator screen. (5) Schedule a real‑device offline pass before any field pilot.
+
+---
+
+## 21. Workflow recommendations (from the v2.2 build session)
+
+This session moved fast across many branches with two builders (an in‑session agent and the maintainer's local machine) committing to the same repo. That produced real velocity but also avoidable friction. These recommendations are concrete and grounded in what happened.
+
+**21.1 Branch & integration strategy — the top priority.**
+The session ended with **two parallel staging branches** (`staging/20260618-post-merge` *without* Wave 2A, `staging/20260618-wave2a` *with* it) plus several unmerged feature branches (Wave 2A.5, the `docs/` branch holding the §F/§11.13 spec, and the forward‑ported gaps). This is the single biggest source of risk right now. Recommended:
+- **Pick one integration branch** (e.g., `development` → deploys to staging; `main`/`production` → prod) and retire the duplicate staging branch by fast‑forwarding/merging so nothing is stranded.
+- **Short‑lived feature branches** off the integration branch; **squash‑merge** and **delete after merge**. Avoid long stacks of branches‑on‑branches (this session had 4‑deep stacks that were painful to reason about).
+- **One concern per PR.** Keep code, docs, and migrations in coherent PRs (this session initially mixed docs into the Wave 1.5 code branch, then had to consolidate onto a `docs/` branch — avoidable).
+- **Protect the integration branch:** require green CI + one review before merge.
+
+**21.2 Migrations discipline.**
+- The Docker build **does not run migrations** (already flagged in §16) — this remains a schema‑drift footgun. Move `prisma migrate deploy` into the container entrypoint or a gated CI/deploy step so the DB schema can never lag the deployed code.
+- **Generate migrations with `prisma migrate dev`, never hand‑edit.** Wave 2A.5 shipped with a hand‑authored migration (because the build sandbox couldn't run Prisma) — it must be verified with `make db-migrate-dev` before deploy; if Prisma reports drift, use its canonical SQL.
+- **Commit the migration in the same PR as the schema change**, per `CLAUDE.md`.
+- Add a **CI drift check** (`prisma migrate diff` between schema and migrations) so a schema edit without a migration fails the PR.
+
+**21.3 CI hardening (partly done this session).**
+- ✅ The vitest suite now runs on every PR (Postgres service container). Keep it.
+- **Add `next build` to CI** — type‑check + lint don't catch build‑only failures (e.g., server/client boundary, `useSearchParams` Suspense issues — one of which was hotfixed this session).
+- **Confirm CI trigger branches match reality.** `ci.yml` triggers on `pull_request: [production, develop]`, but the repo also uses `development`, `staging/*`, and `main`. This **branch‑name drift** means some PRs may not be gated — align the names.
+- Add the **drift check** (21.2) and consider a coverage floor once tests are expanded.
+
+**21.4 Local pre‑PR verification.**
+Adopt a single `make verify` target = `db-generate && type-check && lint && test`, run before every PR. Two lessons:
+- **`prisma generate` must precede `type-check`.** Schema‑dependent type errors (new models/fields) are invisible to `tsc` until the client is regenerated — this bit the session (the sandbox couldn't regenerate the client, so the new account‑management types could only be validated in CI).
+- **Treat CI as the source of truth** for schema/test‑dependent changes when local/sandbox tooling can't run Prisma engines or the DB.
+
+**21.5 Concurrent‑work coordination.**
+Two builders editing the **same repo folder** concurrently caused branch‑switch surprises (working‑tree files reverting under the other party's `git checkout`). Recommended:
+- **Use the branch as the ownership boundary** — agree who owns which branch for a given task; don't edit the same files on the same branch simultaneously.
+- **Communicate merges/branch switches** so the other party isn't surprised by a working‑tree change.
+- Prefer **read‑only inspection** (`git show`, `git log`) over checkouts when you only need to read another branch's content.
+
+**21.6 Deploy & observability.**
+- Add **`/api/health`** + a Cloud Run startup probe so deploys can be smoke‑verified without logging in (the auth proxy currently redirects everything).
+- Keep a **deploy marker commit** convention (the session used `chore: staging deploy marker …`) — useful, but pair it with the health endpoint for real verification.
+- Watch the **session‑revocation DB read** (Wave 2A.5) in Cloud Run latency dashboards; cache if needed (§22).
+
+---
+
+## 22. Forward recommendations & concerns
+
+Ranked roughly by urgency. The first two are housekeeping that protects everything else; the rest is product/engineering sequencing.
+
+**22.1 Reconcile branches before any new feature work (highest priority).** The unmerged Wave 2A.5 / forward‑port / docs branches and the two staging branches must be integrated into one line first. Risk if not: divergence, double‑merges, and silently lost work. Do this before starting Wave 2B.
+
+**22.2 Guard against security regressions from forward‑porting.** Forward‑porting from superseded sprint branches reintroduced an **older, unvalidated** `inventory/[id]` / `vehicles/[id]` / `maintenance/[id]` PATCH on that baseline. When merging, **diff against the Wave‑2A (S2) hardened versions** and keep the validated ones. General rule: any forward‑port must be diffed against the latest hardened code, not just applied, or it can quietly revert security fixes.
+
+**22.3 Wave 2B is the keystone — do the model first.** The Kit ⊂ Rig ⊂ Deployment model (Addendum §C: `Deployment↔Project` M2M, `DeploymentAssignment`) is a prerequisite for (a) clean consumable accounting (#3), (b) the breakdown/resolution‑path state machine (§A / #6), and (c) Deployment Requests (§F). Sequence: **model → consumable accounting → breakdown flow → UI vocabulary rename ("My Rig"→"My Deployment")**.
+
+**22.4 Finish the photo pipeline.** The `POST /api/uploads` endpoint is the foundation; now build **in‑app capture → 1200px/JPEG‑85 compression → offline blob queue → signed‑download URLs → damage‑photo‑required enforcement**, and **validate `Photo.url`** (currently a free string — stored‑XSS/SSRF surface). Until then, damage documentation — a core "faster than texting a photo" promise — is only half‑built.
+
+**22.5 Test the security‑critical new code.** Account management + session revocation are now the most powerful and least‑tested code in the app. With CI test‑gating in place, prioritize tests for: PIN lockout, session expiry/revocation (`tokenVersion`), the invite flow (CSPRNG + TOCTOU), the last‑admin guardrail, and consumable/transfer idempotency.
+
+**22.6 Build the operator `mustChangePin` screen.** Reset‑PIN sets the flag and login returns it, but nothing forces the change — so admin‑reset PINs aren't actually rotated by the operator. Small, security‑relevant follow‑up.
+
+**22.7 Session‑revocation performance.** The per‑request DB re‑check is correct and fine at current scale, but it's on every authenticated request. If p95 latency rises, cache the `{isActive, tokenVersion, role}` tuple per user with a short TTL (30–60s) — a bump still propagates within the TTL, preserving "near‑immediate" revocation.
+
+**22.8 Conflict resolution & a real‑device offline pass.** The offline failed‑queue is still bulk‑dismiss (lossy); the §11.9 manual conflict prompt is unbuilt. Before a field pilot, build a per‑item conflict/retry UI **and** run a real‑device pass (SW cold‑launch, two‑device conflict, terminal‑failure path) — these can only be confirmed on a phone in airplane mode.
+
+**22.9 Admin completeness.** Four admin pages (Vehicles, Maintenance, Projects, Reports) are still stubs but linked live, and the §11.1 dashboard feeds/tables are unbuilt — admins hit dead ends. Schedule for Wave 3 alongside the maintenance loop + notifications.
+
+**22.10 Build one notifications dispatcher.** Five missing alert types, maintenance‑shop work orders, Deployment‑Request notifications, and (Phase 3) invoice emails all want a single, escaped outbound channel. Build it once in Wave 3 rather than scattering `sendEmail` calls.
+
+**22.11 Settings & configurability.** Alert‑threshold/cutoff config, per‑item low‑stock thresholds, per‑operator rates/defaults, and (later) per‑project/per‑vehicle‑type checklists all converge on the Settings surface — plan it as a coherent admin config area rather than piecemeal.
+
+**Bottom line.** The foundation is now not just working but meaningfully hardened (offline engine, idempotency, revocable sessions, security pass, CI test‑gating). The two things that most protect momentum are **(1) reconciling the branch state** and **(2) doing the Wave 2B Deployment model before anything that depends on it.** Everything else is well‑sequenced in §15 and the Addendum.
