@@ -58,6 +58,14 @@ enum RepairType {
   SHIP_FOR_REPAIR
 }
 
+// Where an in-repair unit physically is right now (PRD v2.1 addendum A.3), so
+// "zero equipment lost > 24h" is answerable. Derived from RepairType on report.
+enum ResolutionPath {
+  IN_FIELD
+  HUB
+  SHOP
+}
+
 enum CheckAction {
   CHECK_OUT
   CHECK_IN
@@ -382,10 +390,11 @@ model InventoryUnit {
   createdAt              DateTime        @default(now())
   updatedAt              DateTime        @updatedAt
 
-  inventoryItem InventoryItem  @relation(fields: [inventoryItemId], references: [id])
-  kitItems      KitItem[]
-  transferItems TransferItem[]
-  checkLogs     CheckLog[]
+  inventoryItem    InventoryItem    @relation(fields: [inventoryItemId], references: [id])
+  kitItems         KitItem[]
+  transferItems    TransferItem[]
+  checkLogs        CheckLog[]
+  maintenanceTasks MaintenanceTask[]
 
   @@index([inventoryItemId])
   @@index([status])
@@ -497,6 +506,9 @@ model MaintenanceTask {
   completedAt    DateTime?
   isDamageReport Boolean           @default(false)
   repairType     RepairType?
+  resolutionPath ResolutionPath?
+  locationNote   String?
+  inventoryUnitId String?
   shopName       String?
   shopAddress    String?
   dateDelivered  DateTime?
@@ -507,10 +519,12 @@ model MaintenanceTask {
 
   vehicle   Vehicle?       @relation(fields: [vehicleId], references: [id])
   item      InventoryItem? @relation(fields: [itemId], references: [id])
+  unit      InventoryUnit? @relation(fields: [inventoryUnitId], references: [id])
   hub       Hub?           @relation("HubTasks", fields: [hubId], references: [id])
   repairHub Hub?           @relation("RepairHub", fields: [repairHubId], references: [id])
   photos    Photo[]
 
+  @@index([inventoryUnitId])
   @@map("maintenance_tasks")
 }
 

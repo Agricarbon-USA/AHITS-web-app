@@ -41,8 +41,32 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: parsed.error.flatten().fieldErrors }, { status: 400 })
   }
   try {
-    const task = await prisma.maintenanceTask.update({ where: { id }, data: parsed.data })
-    return NextResponse.json({ data: task })
+    const result = await prisma.$transaction(async (tx) => {
+      const data = { ...parsed.data }
+      // Auto-stamp completion time when marking a task COMPLETED.
+      if (parsed.data.status === 'COMPLETED' && parsed.data.completedAt == null) {
+        data.completedAt = new Date()
+      }
+      const task = await tx.maintenanceTask.update({ where: { id }, data })
+
+      // DAT-5: completing a repair returns the linked unit to service. Conditional
+      // on IN_MAINTENANCE so we never resurrect a written-off (INOPERABLE) or
+      // retired unit, and so a non-completing edit doesn't touch the unit.
+      const isComplete = parsed.data.status === 'COMPLETED' || parsed.data.completedAt != null
+      if (isComplete && task.inventoryUnitId) {
+        await tx.inventoryUnit.updateMany({
+          where: { id: task.inventoryUnitId, status: 'IN_MAINTENANCE' },
+          data: {
+            status: 'AVAILABLE',
+            inoperableNotes: null,
+            inoperableReportedAt: null,
+            inoperableReportedById: null,
+          },
+        })
+      }
+      return task
+    })
+    return NextResponse.json({ data: result })
   } catch {
     return NextResponse.json({ error: 'Task not found or update failed' }, { status: 404 })
   }

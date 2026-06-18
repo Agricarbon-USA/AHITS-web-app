@@ -5,6 +5,7 @@ import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition } from '@/lib/check-log-helpers'
 import { withIdempotency } from '@/lib/idempotency'
 import { consumeConsumableStock } from '@/lib/consumables'
+import { createDamageReport } from '@/lib/maintenance'
 
 const bodySchema = z.object({
   quantity: z.number().int().min(1).optional(),
@@ -43,7 +44,7 @@ async function _DELETE(
 
   const kitItem = await prisma.kitItem.findUnique({
     where: { id: kitItemId },
-    include: { item: { select: { itemType: true } }, kit: { select: { rigId: true } } },
+    include: { item: { select: { itemType: true, name: true } }, kit: { select: { rigId: true } } },
   })
   if (!kitItem || kitItem.removedAt) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (kitItem.kit.rigId !== rigId) return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -54,30 +55,51 @@ async function _DELETE(
   const returnCondition = body.data.returnCondition ?? 'GOOD'
   const mode = body.data.mode ?? 'RETURN'
   const isSerialized = kitItem.item.itemType === 'SERIALIZED'
-  const newUnitStatus =
-    returnCondition === 'IN_MAINTENANCE' ? 'IN_MAINTENANCE'
-    : returnCondition === 'INOPERABLE' ? 'INOPERABLE'
-    : 'AVAILABLE'
 
   await prisma.$transaction(async (tx) => {
     if (isSerialized) {
       await tx.kitItem.update({ where: { id: kitItemId }, data: { removedAt: new Date() } })
       if (kitItem.inventoryUnitId) {
-        await tx.inventoryUnit.update({
-          where: { id: kitItem.inventoryUnitId },
-          data: { status: newUnitStatus },
-        })
-        await tx.checkLog.create({
-          data: {
-            action: 'CHECK_IN',
-            itemId: kitItem.inventoryItemId,
+        if (returnCondition === 'GOOD') {
+          await tx.inventoryUnit.update({
+            where: { id: kitItem.inventoryUnitId },
+            data: { status: 'AVAILABLE' },
+          })
+          await tx.checkLog.create({
+            data: {
+              action: 'CHECK_IN',
+              itemId: kitItem.inventoryItemId,
+              inventoryUnitId: kitItem.inventoryUnitId,
+              operatorId: session.userId,
+              rigId,
+              notes: body.data.notes,
+              condition: 'GOOD',
+            },
+          })
+        } else {
+          // Needs-maintenance / inoperable quick return: log it AND open a damage
+          // report (DAT-5). This path previously flipped the unit silently with no
+          // task and no alert, so routine damage notified no one.
+          await tx.checkLog.create({
+            data: {
+              action: 'CHECK_IN',
+              itemId: kitItem.inventoryItemId,
+              inventoryUnitId: kitItem.inventoryUnitId,
+              operatorId: session.userId,
+              rigId,
+              notes: body.data.notes,
+              condition: returnConditionToLogCondition(returnCondition),
+            },
+          })
+          await createDamageReport(tx, {
+            inventoryItemId: kitItem.inventoryItemId,
             inventoryUnitId: kitItem.inventoryUnitId,
+            itemName: kitItem.item.name,
             operatorId: session.userId,
-            rigId,
-            notes: body.data.notes,
-            condition: returnConditionToLogCondition(returnCondition),
-          },
-        })
+            canBeFixed: returnCondition === 'IN_MAINTENANCE',
+            inoperableNotes: body.data.notes,
+          }, new Date())
+        }
       }
     } else {
       // CONSUMABLE kit item — no unit rows. Reduce or remove the reservation.

@@ -3,9 +3,9 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
-import { createAlert } from '@/lib/alerts'
 import { withIdempotency } from '@/lib/idempotency'
 import { assertConsumableAvailable, consumeConsumableStock } from '@/lib/consumables'
+import { createDamageReport } from '@/lib/maintenance'
 
 const RIG_INCLUDE = {
   operator: { select: { id: true, name: true } },
@@ -322,78 +322,28 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
               })),
             })
           }
-        } else if (disp.canBeFixed) {
+        } else {
+          // Serialized damage → unified helper (DAT-5): flips the unit, links +
+          // opens a MaintenanceTask (fixable), and raises one DAMAGE_REPORTED alert.
           const targetUnit = kitItem.inventoryUnit
             ? kitItem.inventoryUnit
             : (await tx.inventoryUnit.findFirst({ where: { inventoryItemId, status: 'CHECKED_OUT' } }))
-
-          if (targetUnit) {
-            await tx.inventoryUnit.update({
-              where: { id: targetUnit.id },
-              data: {
-                status: 'IN_MAINTENANCE',
-                inoperableNotes: disp.inoperableNotes ?? null,
-                inoperableReportedAt: now,
-                inoperableReportedById: session.userId,
-              },
-            })
-          }
-          const task = await tx.maintenanceTask.create({
-            data: {
-              itemId: inventoryItemId,
-              taskName: `Damage repair: ${kitItem.item.name}`,
-              isDamageReport: true,
-              repairType: disp.repairType ?? null,
-              shopName: disp.shopName ?? null,
-              shopAddress: disp.shopAddress ?? null,
-              dateDelivered: disp.dateDelivered ? new Date(disp.dateDelivered) : null,
-              purchaseOrder: disp.purchaseOrder ?? null,
-              invoiceNumber: disp.invoiceNumber ?? null,
-              repairHubId: disp.repairHubId ?? null,
-              status: 'IN_PROGRESS',
-            },
-          })
-          await createAlert('DAMAGE_REPORTED', 'maintenance_tasks', task.id, {
+          await createDamageReport(tx, {
+            inventoryItemId,
+            inventoryUnitId: targetUnit?.id ?? null,
             itemName: kitItem.item.name,
             operatorId: session.userId,
-          })
-          if (disp.photoUrls.length > 0) {
-            await tx.photo.createMany({
-              data: disp.photoUrls.map((url) => ({
-                url,
-                context: 'DAMAGE' as const,
-                inventoryItemId,
-                maintenanceId: task.id,
-                uploadedById: session.userId,
-              })),
-            })
-          }
-        } else {
-          const targetUnit = kitItem.inventoryUnit
-            ? kitItem.inventoryUnit
-            : (await tx.inventoryUnit.findFirst({ where: { inventoryItemId, status: 'CHECKED_OUT' } }))
-
-          if (targetUnit) {
-            await tx.inventoryUnit.update({
-              where: { id: targetUnit.id },
-              data: {
-                status: 'INOPERABLE',
-                inoperableNotes: disp.inoperableNotes ?? null,
-                inoperableReportedAt: now,
-                inoperableReportedById: session.userId,
-              },
-            })
-          }
-          if (disp.photoUrls.length > 0) {
-            await tx.photo.createMany({
-              data: disp.photoUrls.map((url) => ({
-                url,
-                context: 'DAMAGE' as const,
-                inventoryItemId,
-                uploadedById: session.userId,
-              })),
-            })
-          }
+            canBeFixed: !!disp.canBeFixed,
+            repairType: disp.repairType,
+            shopName: disp.shopName,
+            shopAddress: disp.shopAddress,
+            dateDelivered: disp.dateDelivered ? new Date(disp.dateDelivered) : null,
+            purchaseOrder: disp.purchaseOrder,
+            invoiceNumber: disp.invoiceNumber,
+            repairHubId: disp.repairHubId,
+            inoperableNotes: disp.inoperableNotes,
+            photoUrls: disp.photoUrls,
+          }, now)
         }
       }
     }
