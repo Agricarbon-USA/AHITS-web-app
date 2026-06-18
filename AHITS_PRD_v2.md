@@ -11,8 +11,10 @@ Version 2.0 · prepared 2026‑06‑18 · supersedes `AHITS_PRD_v1` and its June
 
 **How to read this document.** Sections 1–5 are the *current state* (status, changelog, QA, punch list) — the freshest material. Sections 6–20 are the *enduring product specification* carried forward from v1, annotated with a short **Build status** line per feature so the spec doubles as a live tracker. Status key used throughout: ✅ built & verified · 🟢 built, light verification · 🟡 partial / has defects · ⛔ not started.
 
-**Companion repo documents** (deeper engineering detail; remain valid):
-`AHITS_PRD_v2.1_ADDENDUM.md` (maintenance states · account management · Kit/Rig/Deployment — folds into this PRD) · `AHITS_INDEPENDENT_ASSESSMENT_AND_ROADMAP.md` (independent code+staging review, issue/risk register, wave roadmap) · `AHITS_WAVE1_ANALYSIS_AND_ROADMAP.md` · `AHITS_STATE_ANALYSIS.md` · `AHITS_SIMPLIFICATION_REVIEW.md` · `AHITS_QA_STAGING_ISSUES.md` · `AHITS_QA_RESUME_CHECKLIST.md` · `PRD_ADDITIONS_V2.md` · `CLAUDE_INVENTORY_FEATURE.md` · `CLAUDE_ITEM_DISPOSITION_FEATURE.md`.
+**Companion repo documents** (current; in the repo root):
+`AHITS_PRD_v2.1_ADDENDUM.md` (maintenance states · account management · Kit/Rig/Deployment — folds into this PRD) · `AHITS_INDEPENDENT_ASSESSMENT_AND_ROADMAP.md` (independent code+staging review, issue/risk register, wave roadmap) · `AHITS_QA_STAGING_ISSUES.md` (raw QA record).
+
+**Historical / superseded docs** have been moved to `docs/archive/` (see `docs/archive/README.md`): the earlier `AHITS_WAVE1_ANALYSIS_AND_ROADMAP.md`, `AHITS_STATE_ANALYSIS.md`, `AHITS_SIMPLIFICATION_REVIEW.md`, `AUDIT_REPORT.md`, `AHITS_REVIEW(_V2).md`, `PRD_ADDITIONS_V2.md`, `AHITS_QA_RESUME_CHECKLIST.md`, and the `CLAUDE_SPRINT_*` / `CLAUDE_*_FEATURE.md` build logs. They remain available for engineering detail but are pinned to older baselines.
 
 **Stack (all decisions RESOLVED).** Next.js 16 (App Router) · TypeScript · Prisma 5 · Supabase (Auth/Storage/Realtime) · Material UI · Serwist PWA · GCP Cloud Run (us‑central1) via GitHub Actions. Mobile is web‑first PWA; a React Native wrapper is deferred to Phase 3.
 
