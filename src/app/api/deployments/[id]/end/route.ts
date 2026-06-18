@@ -5,6 +5,7 @@ import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { createAlert } from '@/lib/alerts'
 import { withIdempotency } from '@/lib/idempotency'
+import { consumeConsumableStock } from '@/lib/consumables'
 
 const dispositionSchema = z.object({
   kitItemId: z.string(),
@@ -46,7 +47,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           items: {
             where: { removedAt: null },
             include: {
-              item: { select: { id: true, name: true } },
+              item: { select: { id: true, name: true, itemType: true } },
               inventoryUnit: true,
             },
           },
@@ -79,6 +80,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       const kitItem = allKitItems.find((ki) => ki.id === disp.kitItemId)
       if (!kitItem) continue
       const inventoryItemId = kitItem.inventoryItemId
+      const isSerialized = kitItem.item.itemType === 'SERIALIZED'
 
       // TRANSFER items keep removedAt: null until the transfer is accepted/declined
       if (disp.type !== 'TRANSFER') {
@@ -105,7 +107,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
             where: { id: kitItem.inventoryUnit.id },
             data: { status: 'AVAILABLE' },
           })
-        } else {
+        } else if (isSerialized) {
           const excludeUnitIds = await getUnitsInOtherRigs(tx, inventoryItemId, id)
           const units = await tx.inventoryUnit.findMany({
             where: {
@@ -122,6 +124,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
             })
           }
         }
+        // CONSUMABLE: hub return just releases the reservation (kit item marked
+        // removed above); owned stock is unchanged.
         if (disp.hubId) {
           await tx.inventoryItem.update({ where: { id: inventoryItemId }, data: { hubId: disp.hubId } })
         }
@@ -139,7 +143,20 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
             condition: logCondition,
           },
         })
-        if (disp.canBeFixed) {
+        if (!isSerialized) {
+          // Consumable reported damaged/lost on end: permanent loss of owned stock.
+          await consumeConsumableStock(tx, inventoryItemId, kitItem.quantity)
+          if (disp.photoUrls.length > 0) {
+            await tx.photo.createMany({
+              data: disp.photoUrls.map((url) => ({
+                url,
+                context: 'DAMAGE' as const,
+                inventoryItemId,
+                uploadedById: session.userId,
+              })),
+            })
+          }
+        } else if (disp.canBeFixed) {
           const targetUnit = kitItem.inventoryUnit
             ?? (await tx.inventoryUnit.findFirst({ where: { inventoryItemId, status: 'CHECKED_OUT' } }))
           if (targetUnit) {

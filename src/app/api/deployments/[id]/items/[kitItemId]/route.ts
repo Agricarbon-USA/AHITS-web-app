@@ -2,12 +2,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
-import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
+import { returnConditionToLogCondition } from '@/lib/check-log-helpers'
 import { withIdempotency } from '@/lib/idempotency'
+import { consumeConsumableStock } from '@/lib/consumables'
 
 const bodySchema = z.object({
   quantity: z.number().int().min(1).optional(),
   returnCondition: z.enum(['GOOD', 'IN_MAINTENANCE', 'INOPERABLE']).optional(),
+  // RETURN (default): the quantity goes back to stock (reservation released).
+  // CONSUME: the quantity was used/lost in the field — permanently reduce stock.
+  mode: z.enum(['RETURN', 'CONSUME']).optional(),
   notes: z.string().optional(),
 })
 
@@ -48,6 +52,7 @@ async function _DELETE(
   if (!body.success) return NextResponse.json({ error: body.error.flatten() }, { status: 400 })
 
   const returnCondition = body.data.returnCondition ?? 'GOOD'
+  const mode = body.data.mode ?? 'RETURN'
   const isSerialized = kitItem.item.itemType === 'SERIALIZED'
   const newUnitStatus =
     returnCondition === 'IN_MAINTENANCE' ? 'IN_MAINTENANCE'
@@ -75,6 +80,7 @@ async function _DELETE(
         })
       }
     } else {
+      // CONSUMABLE kit item — no unit rows. Reduce or remove the reservation.
       const removeQty = body.data.quantity ?? kitItem.quantity
       if (removeQty >= kitItem.quantity) {
         await tx.kitItem.update({ where: { id: kitItemId }, data: { removedAt: new Date() } })
@@ -84,21 +90,11 @@ async function _DELETE(
           data: { quantity: kitItem.quantity - removeQty },
         })
       }
-      const excludeUnitIds = await getUnitsInOtherRigs(tx, kitItem.inventoryItemId, rigId)
-      const units = await tx.inventoryUnit.findMany({
-        where: {
-          inventoryItemId: kitItem.inventoryItemId,
-          status: 'CHECKED_OUT',
-          ...(excludeUnitIds.length > 0 && { id: { notIn: excludeUnitIds } }),
-        },
-        take: removeQty,
-        orderBy: { createdAt: 'asc' },
-      })
-      if (units.length > 0) {
-        await tx.inventoryUnit.updateMany({
-          where: { id: { in: units.map((u) => u.id) } },
-          data: { status: newUnitStatus === 'AVAILABLE' ? 'AVAILABLE' : newUnitStatus },
-        })
+      // A plain RETURN just releases the reservation (raising derived
+      // availability). Field usage (CONSUME) or a damaged/inoperable return is a
+      // permanent loss, so decrement owned stock.
+      if (mode === 'CONSUME' || returnCondition !== 'GOOD') {
+        await consumeConsumableStock(tx, kitItem.inventoryItemId, removeQty)
       }
       await tx.checkLog.create({
         data: {

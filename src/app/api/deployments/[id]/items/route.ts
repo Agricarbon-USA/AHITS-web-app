@@ -5,6 +5,7 @@ import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { createAlert } from '@/lib/alerts'
 import { withIdempotency } from '@/lib/idempotency'
+import { assertConsumableAvailable, consumeConsumableStock } from '@/lib/consumables'
 
 const RIG_INCLUDE = {
   operator: { select: { id: true, name: true } },
@@ -150,17 +151,11 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
             },
           })
         } else {
-          const availableUnits = await tx.inventoryUnit.findMany({
-            where: { inventoryItemId: entry.inventoryItemId, status: 'AVAILABLE', deletedAt: null },
-            take: entry.quantity,
-          })
-          if (availableUnits.length < entry.quantity) {
-            throw new Error(`Only ${availableUnits.length} units available for this item`)
-          }
-          await tx.inventoryUnit.updateMany({
-            where: { id: { in: availableUnits.map((u) => u.id) } },
-            data: { status: 'CHECKED_OUT' },
-          })
+          // CONSUMABLE — reserve by quantity against derived availability.
+          // No unit rows are touched; owned stock is reduced only on consumption
+          // (log usage) or write-off, not at checkout. assertConsumableAvailable
+          // verifies itemType, locks the row, and checks quantity − reserved.
+          await assertConsumableAvailable(tx, entry.inventoryItemId, entry.quantity)
           await tx.kitItem.create({
             data: {
               kitId: kit.id,
@@ -273,7 +268,8 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
             where: { id: kitItem.inventoryUnit.id },
             data: { status: 'AVAILABLE' },
           })
-        } else {
+        } else if (isSerialized) {
+          // Serialized item checked out without a specific unit — release N units.
           const excludeUnitIds = await getUnitsInOtherRigs(tx, inventoryItemId, id)
           const units = await tx.inventoryUnit.findMany({
             where: {
@@ -290,6 +286,9 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
             })
           }
         }
+        // CONSUMABLE: returning to hub just releases the reservation (the kit
+        // item was reduced/removed above), which raises derived availability.
+        // Owned stock is unchanged — nothing was consumed.
         if (disp.hubId) {
           await tx.inventoryItem.update({ where: { id: inventoryItemId }, data: { hubId: disp.hubId } })
         }
@@ -308,7 +307,22 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
             condition: logCondition,
           },
         })
-        if (disp.canBeFixed) {
+        if (!isSerialized) {
+          // Consumable reported damaged/lost: a permanent loss of owned stock.
+          // No unit to repair; the kit reservation was released above, so we
+          // decrement owned quantity to keep derived availability honest.
+          await consumeConsumableStock(tx, inventoryItemId, removeQty)
+          if (disp.photoUrls.length > 0) {
+            await tx.photo.createMany({
+              data: disp.photoUrls.map((url) => ({
+                url,
+                context: 'DAMAGE' as const,
+                inventoryItemId,
+                uploadedById: session.userId,
+              })),
+            })
+          }
+        } else if (disp.canBeFixed) {
           const targetUnit = kitItem.inventoryUnit
             ? kitItem.inventoryUnit
             : (await tx.inventoryUnit.findFirst({ where: { inventoryItemId, status: 'CHECKED_OUT' } }))

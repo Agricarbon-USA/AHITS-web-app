@@ -3,7 +3,8 @@ import { z } from 'zod'
 import { EquipmentCategory, EquipmentStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
-import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions } from '@/lib/inventory'
+import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions, CONSUMABLE } from '@/lib/inventory'
+import { reservedConsumableQty } from '@/lib/consumables'
 
 // Whitelist of admin-editable fields. Excludes id/qrCodeId/deletedAt/timestamps
 // and the unitId helper to prevent mass-assignment. categoryId/hubId are kept
@@ -72,7 +73,8 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
   if (!item) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const unitCounts = computeUnitCounts(item.units)
-  const derived = deriveQuantities(item, unitCounts)
+  const reserved = item.itemType === CONSUMABLE ? await reservedConsumableQty(prisma, item.id) : 0
+  const derived = deriveQuantities(item, unitCounts, reserved)
 
   const activeKit = item.kitItems.find((ki) => ki.kit.rig !== null && ki.kit.rig.endedAt === null)
   const activeRig = activeKit?.kit.rig ?? null

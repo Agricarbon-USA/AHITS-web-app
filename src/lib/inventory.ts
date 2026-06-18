@@ -84,11 +84,15 @@ export type DerivedQuantities = {
 /**
  * Single source of truth for an item's effective quantity & availability.
  *   SERIALIZED → derived from unit rows (retired excluded).
- *   CONSUMABLE → the stored `quantity` field.
+ *   CONSUMABLE → `quantity` is TOTAL OWNED; availability is derived as
+ *                `quantity − reservedConsumableQty` (quantity currently out in
+ *                open kit items). See lib/consumables.ts. Pass the reserved sum;
+ *                it defaults to 0 (so serialized callers are unaffected).
  */
 export function deriveQuantities(
   item: { itemType: string; quantity: number },
   counts: UnitStatusCounts,
+  reservedConsumableQty = 0,
 ): DerivedQuantities {
   if (item.itemType === SERIALIZED) {
     return {
@@ -96,7 +100,10 @@ export function deriveQuantities(
       availableQuantity: counts.available,
     }
   }
-  return { effectiveQuantity: item.quantity, availableQuantity: item.quantity }
+  return {
+    effectiveQuantity: item.quantity,
+    availableQuantity: Math.max(0, item.quantity - reservedConsumableQty),
+  }
 }
 
 /**

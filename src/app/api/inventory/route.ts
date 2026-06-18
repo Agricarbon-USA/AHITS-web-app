@@ -3,7 +3,8 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import type { EquipmentCategory, EquipmentStatus } from '@prisma/client'
-import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions } from '@/lib/inventory'
+import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions, CONSUMABLE } from '@/lib/inventory'
+import { reservedConsumableMap } from '@/lib/consumables'
 
 export async function GET(req: NextRequest) {
   const session = await requireAuth()
@@ -89,9 +90,16 @@ export async function GET(req: NextRequest) {
     prisma.inventoryItem.count({ where }),
   ])
 
+  // Consumable availability = total owned − quantity currently reserved in open
+  // kit items. One grouped query for the whole page (see lib/consumables.ts).
+  const reservedMap = await reservedConsumableMap(
+    prisma,
+    items.filter((i) => i.itemType === CONSUMABLE).map((i) => i.id),
+  )
+
   const data = items.map((item) => {
     const unitCounts = computeUnitCounts(item.units)
-    const derived = deriveQuantities(item, unitCounts)
+    const derived = deriveQuantities(item, unitCounts, reservedMap.get(item.id) ?? 0)
 
     // Find active rig assignment via kit items
     const activeKit = item.kitItems.find((ki) => ki.kit.rig !== null && ki.kit.rig.endedAt === null)

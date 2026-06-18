@@ -81,6 +81,9 @@ interface InventoryOption {
   name: string
   itemType: string
   quantity: number
+  // Consumable availability is derived server-side (total owned − reserved).
+  // Use this, not unitCounts, to gate/limit consumable kit-adds.
+  availableQuantity: number
   lowStockThreshold: number | null
   // /api/inventory returns category as a {id,name} object (categoryDisplay),
   // matching the scan page and admin deployments builder — not a bare string.
@@ -330,7 +333,11 @@ function NewDeploymentDialog({
   const [error, setError] = React.useState('')
 
   const unassignedVehicles = vehicles.filter((v) => !v.assignedOperatorId && v.status === 'ACTIVE')
-  const availableItems = inventoryItems.filter((i) => (i.unitCounts?.available ?? 0) > 0)
+  const availableItems = inventoryItems.filter((i) =>
+    i.itemType === 'CONSUMABLE'
+      ? (i.availableQuantity ?? 0) > 0
+      : (i.unitCounts?.available ?? 0) > 0,
+  )
 
   const hasUnselectedSerialized = Array.from(kitItems.values()).some(
     (e) => e.itemType === 'SERIALIZED' && !e.inventoryUnitId,
@@ -505,12 +512,12 @@ function NewDeploymentDialog({
                             value={entry?.quantity ?? 1}
                             onChange={(e) => {
                               const m = new Map(kitItems)
-                              const v = Math.min(parseInt(e.target.value) || 1, item.unitCounts?.available ?? 1)
+                              const v = Math.min(parseInt(e.target.value) || 1, item.availableQuantity ?? 1)
                               m.set(item.id, { itemType: 'CONSUMABLE', quantity: v, inventoryUnitId: null, unitLabel: null })
                               setKitItems(m)
                             }}
-                            inputProps={{ min: 1, max: item.unitCounts?.available ?? 1, style: { MozAppearance: 'textfield', width: 60 } }}
-                            helperText={`${item.unitCounts?.available ?? 0} avail.`}
+                            inputProps={{ min: 1, max: item.availableQuantity ?? 1, style: { MozAppearance: 'textfield', width: 60 } }}
+                            helperText={`${item.availableQuantity ?? 0} avail.`}
                             sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }}
                           />
                         )}
@@ -765,6 +772,7 @@ export default function MyRigPage() {
       body: {
         quantity: logUsageQty,
         returnCondition: 'GOOD',
+        mode: 'CONSUME',
         notes: `Daily usage log — ${logUsageQty} used`,
       },
       label: 'Log usage',

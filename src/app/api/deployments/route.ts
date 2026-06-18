@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
+import { CONSUMABLE } from '@/lib/inventory'
+import { assertConsumableAvailable, InsufficientStockError } from '@/lib/consumables'
 
 const RIG_INCLUDE = {
   operator: { select: { id: true, name: true } },
@@ -118,8 +120,20 @@ export async function POST(req: NextRequest) {
     const kit = await tx.kit.create({ data: { rigId: newRig.id } })
 
     if (kitItems.length > 0) {
+      // Resolve each item's real type from the DB so consumables are never
+      // routed down the serialized-unit path (and vice versa).
+      const itemTypeById = new Map<string, string>(
+        (
+          await tx.inventoryItem.findMany({
+            where: { id: { in: [...new Set(kitItems.map((k) => k.inventoryItemId))] } },
+            select: { id: true, itemType: true },
+          })
+        ).map((r) => [r.id, r.itemType]),
+      )
+
       for (const ki of kitItems) {
         if ('inventoryUnitId' in ki && ki.inventoryUnitId) {
+          // SERIALIZED — a specific unit was picked. Atomic compare-and-set.
           const result = await tx.inventoryUnit.updateMany({
             where: { id: ki.inventoryUnitId, inventoryItemId: ki.inventoryItemId, status: 'AVAILABLE', deletedAt: null },
             data: { status: 'CHECKED_OUT' },
@@ -133,7 +147,20 @@ export async function POST(req: NextRequest) {
           await tx.checkLog.create({
             data: { action: 'CHECK_OUT', itemId: ki.inventoryItemId, inventoryUnitId: ki.inventoryUnitId, operatorId, rigId: newRig.id, projectId, notes: note },
           })
+        } else if (itemTypeById.get(ki.inventoryItemId) === CONSUMABLE) {
+          // CONSUMABLE — reserve by quantity against derived availability.
+          // No unit rows; owned stock is not decremented until the items are
+          // actually consumed (logged as usage), only when returned.
+          const quantity = (ki as { quantity: number }).quantity
+          await assertConsumableAvailable(tx, ki.inventoryItemId, quantity)
+          await tx.kitItem.create({
+            data: { kitId: kit.id, inventoryItemId: ki.inventoryItemId, quantity, inventoryUnitId: null },
+          })
+          await tx.checkLog.create({
+            data: { action: 'CHECK_OUT', itemId: ki.inventoryItemId, operatorId, rigId: newRig.id, projectId, notes: note },
+          })
         } else {
+          // SERIALIZED without a specific unit — auto-pick N available units.
           const quantity = (ki as { quantity: number }).quantity
           const available = await tx.inventoryUnit.findMany({
             where: { inventoryItemId: ki.inventoryItemId, status: 'AVAILABLE', deletedAt: null },
@@ -163,6 +190,9 @@ export async function POST(req: NextRequest) {
         { error: 'A selected unit was just checked out by someone else. Please select a different unit and try again.' },
         { status: 409 }
       )
+    }
+    if (err instanceof InsufficientStockError) {
+      return NextResponse.json({ error: err.message }, { status: 409 })
     }
     // Return the actual error as JSON instead of re-throwing (which produces non-JSON 500)
     const msg = err instanceof Error ? err.message : 'Failed to create deployment'

@@ -25,7 +25,10 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       items: {
         include: {
           kitItem: {
-            select: { id: true, inventoryItemId: true, inventoryUnitId: true, quantity: true, removedAt: true },
+            select: {
+              id: true, inventoryItemId: true, inventoryUnitId: true, quantity: true, removedAt: true,
+              item: { select: { itemType: true } },
+            },
           },
         },
       },
@@ -73,7 +76,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
             where: { id: kitItem.inventoryUnitId },
             data: { status: 'AVAILABLE' },
           })
-        } else {
+        } else if (kitItem.item.itemType === 'SERIALIZED') {
           const units = await tx.inventoryUnit.findMany({
             where: { inventoryItemId: kitItem.inventoryItemId, status: 'CHECKED_OUT' },
             take: kitItem.quantity,
@@ -85,6 +88,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
             })
           }
         }
+        // CONSUMABLE: marking the kit item removed (above) releases the
+        // reservation, returning the quantity to available stock. No unit rows.
         await tx.checkLog.create({
           data: {
             action: 'CHECK_IN',

@@ -84,6 +84,9 @@ interface InventoryOption {
   name: string
   itemType: 'CONSUMABLE' | 'SERIALIZED'
   quantity: number
+  // Derived availability (total owned − reserved) for consumables. Use this,
+  // not raw quantity, to gate/limit consumable kit-adds.
+  availableQuantity: number
   unitCounts: { available: number; checkedOut: number; inMaintenance: number; inoperable: number; retired: number; totalUnits: number }
   availableUnits: { id: string; serialNumber: string | null; position: number }[]
   category: { id: string; name: string }
@@ -296,7 +299,7 @@ function NewDeploymentDialog({
   const unassignedVehicles = vehicles.filter((v) => !v.assignedOperatorId && v.status !== 'RETIRED')
   // Consumables show when quantity > 0; serialized show when at least one unit is available
   const availableItems = inventoryItems.filter((i) =>
-    i.itemType === 'SERIALIZED' ? i.unitCounts.available > 0 : i.quantity > 0
+    i.itemType === 'SERIALIZED' ? i.unitCounts.available > 0 : (i.availableQuantity ?? 0) > 0
   )
   // No unresolved state possible — serialized units are added fully or not at all
   const hasUnresolved = false
@@ -579,7 +582,7 @@ function DeploymentDrawer({
   const kitItems = rig.kits.flatMap((k) => k.items)
   const unassignedVehicles = vehicles.filter((v) => !v.assignedOperatorId || v.assignedOperatorId === rig.operator.id)
   const availableItems = inventoryItems.filter((i) =>
-    i.itemType === 'SERIALIZED' ? i.unitCounts.available > 0 : i.quantity > 0
+    i.itemType === 'SERIALIZED' ? i.unitCounts.available > 0 : (i.availableQuantity ?? 0) > 0
   )
   const isActive = !rig.endedAt
 
