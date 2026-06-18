@@ -1,0 +1,79 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
+import { prisma } from '@/lib/prisma'
+import { requireAuth, requireAdmin } from '@/lib/auth/session'
+
+const RIG_INCLUDE = {
+  operator: { select: { id: true, name: true } },
+  project: { select: { id: true, name: true } },
+  vehicles: {
+    where: { removedAt: null },
+    include: { vehicle: { select: { id: true, name: true, type: true } } },
+  },
+  kits: {
+    include: {
+      items: {
+        where: { removedAt: null },
+        include: {
+          item: {
+            select: {
+              id: true,
+              name: true,
+              itemType: true,
+              categoryRef: { select: { name: true } },
+            },
+          },
+          inventoryUnit: {
+            select: { id: true, qrCodeId: true, serialNumber: true, status: true },
+          },
+        },
+      },
+    },
+  },
+  secondaryOperators: {
+    include: { operator: { select: { id: true, name: true, email: true } } },
+  },
+} as const
+
+const patchSchema = z.object({
+  label: z.string().optional(),
+  projectId: z.string().nullable().optional(),
+  notes: z.string().optional(),
+})
+
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const session = await requireAuth()
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const { id } = await params
+
+  const rig = await prisma.rig.findUnique({ where: { id }, include: RIG_INCLUDE })
+  if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  if (session.role !== 'ADMIN' && rig.operator.id !== session.userId) {
+    const isSecondary = await prisma.rigOperator.findUnique({
+      where: { rigId_operatorId: { rigId: id, operatorId: session.userId } },
+    })
+    if (!isSecondary) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  return NextResponse.json(rig)
+}
+
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const session = await requireAuth()
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const { id } = await params
+
+  const rig = await prisma.rig.findUnique({ where: { id } })
+  if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (session.role !== 'ADMIN' && rig.operatorId !== session.userId) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  const body = await req.json()
+  const parsed = patchSchema.safeParse(body)
+  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
+
+  const updated = await prisma.rig.update({ where: { id }, data: parsed.data, include: RIG_INCLUDE })
+  return NextResponse.json(updated)
+}
