@@ -149,6 +149,15 @@ model User {
 
   hourlyRate Decimal? @db.Decimal(10, 2)
 
+  // Account management (Wave 2A.5). tokenVersion is bumped to revoke all of a
+  // user's active sessions (suspend / force-logout); getSession compares the
+  // JWT's version against this. mustChangePin forces a credential reset on next
+  // login. homeHub is the operator's default hub.
+  tokenVersion  Int      @default(0)
+  mustChangePin Boolean  @default(false)
+  homeHubId     String?
+  homeHub       Hub?     @relation("HubOperators", fields: [homeHubId], references: [id])
+
   checkLogs          CheckLog[]
   dailyChecks        DailyCheck[]
   projectsLed        Project[]         @relation("ProjectLead")
@@ -158,7 +167,10 @@ model User {
   secondaryRigs      RigOperator[]     @relation("RigSecondaryOperators")
   transfersReceived  TransferRequest[] @relation("TransferTo")
   transfersInitiated TransferRequest[] @relation("TransferBy")
+  auditActions       AccountAuditLog[] @relation("AuditActor")
+  auditTargets       AccountAuditLog[] @relation("AuditTarget")
 
+  @@index([homeHubId])
   @@map("users")
 }
 
@@ -182,6 +194,7 @@ model Hub {
   items            InventoryItem[]
   maintenanceTasks MaintenanceTask[] @relation("HubTasks")
   repairTasks      MaintenanceTask[] @relation("RepairHub")
+  homeOperators    User[]            @relation("HubOperators")
 
   @@map("hubs")
 }
@@ -585,10 +598,30 @@ model InviteToken {
   token     String    @unique
   expiresAt DateTime
   usedAt    DateTime?
+  revokedAt DateTime? // set when an admin revokes an outstanding invite (Wave 2A.5)
   createdAt DateTime  @default(now())
   createdBy String // admin user id
 
   @@map("invite_tokens")
+}
+
+// Account management audit trail (Wave 2A.5): who did what to whose account.
+// Append-only; admin-visible. action is a stable string (RESET_PIN, SUSPEND,
+// REACTIVATE, FORCE_LOGOUT, ROLE_CHANGE, INVITE_SENT, INVITE_REVOKED,
+// SET_DEFAULTS, BULK_IMPORT, …); metadata holds action-specific detail.
+model AccountAuditLog {
+  id           String   @id @default(cuid())
+  actorId      String
+  actor        User     @relation("AuditActor", fields: [actorId], references: [id])
+  action       String
+  targetUserId String?
+  targetUser   User?    @relation("AuditTarget", fields: [targetUserId], references: [id])
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  @@index([targetUserId])
+  @@index([createdAt])
+  @@map("account_audit_log")
 }
 
 // Wave 1: dedup store for offline replay of non-idempotent writes.
