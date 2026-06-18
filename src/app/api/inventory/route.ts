@@ -97,7 +97,9 @@ export async function GET(req: NextRequest) {
     const activeKit = item.kitItems.find((ki) => ki.kit.rig !== null && ki.kit.rig.endedAt === null)
     const activeRig = activeKit?.kit.rig ?? null
 
-    const { kitItems, categoryRef, ...rest } = item
+    // Pull unitCost out of the spread — cost/spend data is admin-only (§10.2)
+    // and is re-added below only for admins.
+    const { kitItems, categoryRef, unitCost, ...rest } = item
     void kitItems
     void categoryRef
 
@@ -105,6 +107,7 @@ export async function GET(req: NextRequest) {
 
     return {
       ...rest,
+      ...(session.role === 'ADMIN' ? { unitCost } : {}),
       units: positionedUnits,
       // The deployment Build-Kit / Add-Items unit pickers select from this list
       // (documented contract in PRD_ADDITIONS_V2). Restored after the Wave-0
