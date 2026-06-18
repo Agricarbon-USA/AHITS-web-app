@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { getSession } from '@/lib/auth/session'
+import { requireAuth } from '@/lib/auth/session'
 import { parseScannedCode } from '@/lib/qr'
 
 // GET /api/vehicles/by-qr/[qrCodeId]
@@ -9,7 +9,7 @@ import { parseScannedCode } from '@/lib/qr'
 // to "Start Daily Check" (PRD §7.7 Scan Actions). Tolerates a full URL payload
 // by using its last path segment.
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ qrCodeId: string }> }) {
-  const session = await getSession()
+  const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { qrCodeId } = await params

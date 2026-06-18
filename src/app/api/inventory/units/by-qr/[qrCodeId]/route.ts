@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { getSession } from '@/lib/auth/session'
+import { requireAuth } from '@/lib/auth/session'
 import { categoryDisplay } from '@/lib/inventory'
 import { parseScannedCode } from '@/lib/qr'
 
@@ -11,7 +11,7 @@ import { parseScannedCode } from '@/lib/qr'
 // This endpoint was referenced by the operator Scan and My-Rig screens but
 // never existed, so every scan returned 404 ("QR code not recognised").
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ qrCodeId: string }> }) {
-  const session = await getSession()
+  const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { qrCodeId } = await params

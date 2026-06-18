@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
-import { getSession } from '@/lib/auth/session'
+import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { createAlert } from '@/lib/alerts'
 import { withIdempotency } from '@/lib/idempotency'
@@ -34,7 +34,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 }
 
 async function _POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await getSession()
+  const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { id } = await params
 
@@ -94,7 +94,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
             action: 'CHECK_IN',
             itemId: inventoryItemId,
             inventoryUnitId: kitItem.inventoryUnit?.id ?? undefined,
-            operatorId: rig.operatorId,
+            operatorId: session.userId,
             rigId: id,
             notes: note,
             condition: logCondition,
@@ -126,14 +126,14 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           await tx.inventoryItem.update({ where: { id: inventoryItemId }, data: { hubId: disp.hubId } })
         }
       } else if (disp.type === 'INOPERABLE') {
-        const logCondition = disp.canBeFixed ? 'NEEDS_REPAIR' : 'MISSING_PARTS'
+        const logCondition = disp.canBeFixed === true ? 'NEEDS_REPAIR' : 'MISSING_PARTS'
 
         await tx.checkLog.create({
           data: {
             action: 'CHECK_IN',
             itemId: inventoryItemId,
             inventoryUnitId: kitItem.inventoryUnit?.id ?? undefined,
-            operatorId: rig.operatorId,
+            operatorId: session.userId,
             rigId: id,
             notes: note,
             condition: logCondition,

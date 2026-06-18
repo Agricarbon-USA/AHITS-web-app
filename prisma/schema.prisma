@@ -593,7 +593,7 @@ model InviteToken {
 model IdempotencyKey {
   key          String   @id
   scope        String
-  statusCode   Int      @map("status_code")
+  statusCode   Int?     @map("status_code")
   responseBody Json?    @map("response_body")
   createdAt    DateTime @default(now()) @map("created_at")
 

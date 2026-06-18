@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
-import { getSession } from '@/lib/auth/session'
+import { requireAdmin } from '@/lib/auth/session'
 
 const patchSchema = z.object({
   status: z.enum(['AVAILABLE', 'CHECKED_OUT', 'IN_MAINTENANCE', 'INOPERABLE', 'RETIRED']).optional(),
@@ -10,8 +10,8 @@ const patchSchema = z.object({
 })
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ unitId: string }> }) {
-  const session = await getSession()
-  if (!session || session.role !== 'ADMIN') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const session = await requireAdmin()
+  if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const { unitId } = await params
 
   const parsed = patchSchema.safeParse(await req.json())

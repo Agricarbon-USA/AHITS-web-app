@@ -52,6 +52,6 @@ export function rateLimit(key: string, limit: number, windowMs: number): RateLim
 /** Best-effort extraction of the client IP from forwarding headers (Cloud Run sets x-forwarded-for). */
 export function clientIp(req: Request): string {
   const xff = req.headers.get('x-forwarded-for')
-  if (xff) return xff.split(',')[0]!.trim() || 'unknown'
+  if (xff) return xff.split(',').at(-1)!.trim() || 'unknown'
   return req.headers.get('x-real-ip')?.trim() || 'unknown'
 }

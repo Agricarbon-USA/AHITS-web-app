@@ -85,15 +85,19 @@ export function useOfflineQueue() {
 
   const enqueue = React.useCallback(
     async (item: Omit<OfflineQueueItem, 'id' | 'retries' | 'createdAt'>) => {
-      const db = await openDB()
-      await putItem(db, {
-        ...item,
-        idempotencyKey: item.idempotencyKey ?? newKey(),
-        retries: 0,
-        status: 'pending',
-        createdAt: Date.now(),
-      } as OfflineQueueItem)
-      await refresh()
+      try {
+        const db = await openDB()
+        await putItem(db, {
+          ...item,
+          idempotencyKey: item.idempotencyKey ?? newKey(),
+          retries: 0,
+          status: 'pending',
+          createdAt: Date.now(),
+        } as OfflineQueueItem)
+        await refresh()
+      } catch {
+        /* IDB unavailable (Safari private mode) — write silently dropped */
+      }
     },
     [refresh]
   )
@@ -107,31 +111,32 @@ export function useOfflineQueue() {
       const items = await getAllItems(db)
       for (const item of items) {
         if (item.status === 'failed' || item.id == null) continue
+        let res: Response
         try {
           const headers: Record<string, string> = { 'Content-Type': 'application/json' }
           if (item.idempotencyKey) headers['Idempotency-Key'] = item.idempotencyKey
-          const res = await fetch(item.endpoint, {
+          res = await fetch(item.endpoint, {
             method: item.method,
             headers,
-            body: JSON.stringify(item.body),
+            body: item.body !== undefined ? JSON.stringify(item.body) : undefined,
           })
-          if (res.ok) {
-            await deleteItem(db, item.id)
-          } else if (TERMINAL_STATUSES.has(res.status)) {
-            const errBody = await res.json().catch(() => ({}))
-            await putItem(db, { ...item, status: 'failed', lastError: extractError(errBody) })
-          } else {
-            // 5xx / 408 / 429 — transient; retry up to the cap.
-            const retries = (item.retries ?? 0) + 1
-            await putItem(db, {
-              ...item,
-              retries,
-              ...(retries >= MAX_RETRIES ? { status: 'failed' as const, lastError: `Failed after ${MAX_RETRIES} attempts` } : {}),
-            })
-          }
         } catch {
           // Network dropped mid-flush — stop; the rest stay pending for next time.
           break
+        }
+        if (res.ok) {
+          await deleteItem(db, item.id)
+        } else if (TERMINAL_STATUSES.has(res.status)) {
+          const errBody = await res.json().catch(() => ({}))
+          await putItem(db, { ...item, status: 'failed', lastError: extractError(errBody) })
+        } else {
+          // 5xx / 408 / 429 — transient; retry up to the cap.
+          const retries = (item.retries ?? 0) + 1
+          await putItem(db, {
+            ...item,
+            retries,
+            ...(retries >= MAX_RETRIES ? { status: 'failed' as const, lastError: `Failed after ${MAX_RETRIES} attempts` } : {}),
+          })
         }
       }
     } finally {

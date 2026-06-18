@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
-import { getSession } from '@/lib/auth/session'
+import { requireAuth } from '@/lib/auth/session'
 import { sendEmail } from '@/lib/email/resend'
 import { dailyCheckFailedEmail } from '@/lib/email/templates'
 import { createAlert } from '@/lib/alerts'
@@ -22,7 +22,7 @@ const schema = z.object({
 })
 
 export async function GET(req: NextRequest) {
-  const session = await getSession()
+  const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = req.nextUrl
@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const session = await getSession()
+  const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const parsed = schema.safeParse(await req.json())

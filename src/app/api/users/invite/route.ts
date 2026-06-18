@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
-import { getSession } from '@/lib/auth/session'
+import { requireAdmin } from '@/lib/auth/session'
 import { sendEmail } from '@/lib/email/resend'
 import { inviteEmail } from '@/lib/email/templates'
 
@@ -12,8 +12,8 @@ const schema = z.object({
 })
 
 export async function POST(req: NextRequest) {
-  const session = await getSession()
-  if (!session || session.role !== 'ADMIN') {
+  const session = await requireAdmin()
+  if (!session) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 

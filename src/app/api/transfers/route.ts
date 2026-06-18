@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { getSession } from '@/lib/auth/session'
+import { requireAuth } from '@/lib/auth/session'
 
 const TRANSFER_INCLUDE = {
   fromRig: { include: { operator: { select: { id: true, name: true } } } },
@@ -16,7 +16,7 @@ const TRANSFER_INCLUDE = {
 } as const
 
 export async function GET(req: NextRequest) {
-  const session = await getSession()
+  const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = new URL(req.url)

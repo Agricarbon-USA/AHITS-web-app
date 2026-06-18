@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
-import { getSession } from '@/lib/auth/session'
+import { requireAuth } from '@/lib/auth/session'
 
 const schema = z.object({
   action: z.enum(['CHECK_OUT', 'CHECK_IN']),
@@ -22,7 +22,7 @@ export async function POST() {
 }
 
 export async function GET(req: NextRequest) {
-  const session = await getSession()
+  const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = req.nextUrl

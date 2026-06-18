@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
-import { getSession } from '@/lib/auth/session'
+import { requireAuth } from '@/lib/auth/session'
+import { withIdempotency } from '@/lib/idempotency'
 
 const RIG_INCLUDE = {
   operator: { select: { id: true, name: true } },
@@ -62,7 +63,7 @@ async function getAuthorizedActiveRig(id: string, session: { userId: string; rol
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await getSession()
+  const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { id } = await params
   const rig = await getAuthorizedActiveRig(id, session)
@@ -107,8 +108,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   return NextResponse.json(updated)
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await getSession()
+export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  return withIdempotency(req, 'deployments.vehicles.DELETE', () => _DELETE(req, ctx))
+}
+
+async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { id } = await params
   const rig = await getAuthorizedActiveRig(id, session)
@@ -119,6 +124,16 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
   const { vehicles, note } = parsed.data
+
+  for (const disp of vehicles) {
+    if (disp.dispositionType === 'TRANSFER' && !disp.toOperatorId) {
+      return NextResponse.json(
+        { error: 'toOperatorId is required when dispositionType is TRANSFER' },
+        { status: 400 }
+      )
+    }
+  }
+
   const now = new Date()
 
   try {

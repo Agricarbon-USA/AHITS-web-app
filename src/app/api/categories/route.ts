@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { getSession } from '@/lib/auth/session'
+import { requireAuth, requireAdmin } from '@/lib/auth/session'
 
 export async function GET() {
-  const session = await getSession()
+  const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const categories = await prisma.category.findMany({
@@ -13,8 +13,8 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const session = await getSession()
-  if (!session || session.role !== 'ADMIN') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const session = await requireAdmin()
+  if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const { name } = await req.json()
   if (!name?.trim()) return NextResponse.json({ error: 'Name is required' }, { status: 400 })

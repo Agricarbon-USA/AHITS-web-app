@@ -804,7 +804,13 @@ export default function MyRigPage() {
         result = await mutate({
           endpoint: `/api/deployments/${rig.id}/vehicles`,
           method: 'DELETE',
-          body: { vehicleIds: Array.from(selVehicles), note, photoUrls },
+          body: {
+            vehicles: Array.from(selVehicles).map((vehicleId) => ({
+              vehicleId,
+              dispositionType: 'AVAILABLE',
+            })),
+            note,
+          },
           label: 'Remove vehicles',
         })
         setSelVehicles(new Set())
@@ -1198,11 +1204,16 @@ export default function MyRigPage() {
                   const vJson = await vRes.json()
                   if (!vRes.ok) { setRentalError(vJson.error?.formErrors?.[0] ?? vJson.error ?? 'Failed to create vehicle'); return }
                   const vehicleId: string = vJson.data.id
-                  await fetch(`/api/deployments/${rig.id}/vehicles`, {
+                  const addRes = await fetch(`/api/deployments/${rig.id}/vehicles`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ vehicleIds: [vehicleId], note: 'Added rental vehicle', photoUrls: [] }),
                   })
+                  if (!addRes.ok) {
+                    const addJson = await addRes.json().catch(() => ({}))
+                    setRentalError(addJson.error?.formErrors?.[0] ?? addJson.error ?? 'Failed to add vehicle to deployment')
+                    return
+                  }
                   setAddVehicleOpen(false)
                   setIsRentalToggle(false)
                   setRentalFields({})

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
-import { getSession } from '@/lib/auth/session'
+import { requireAdmin } from '@/lib/auth/session'
 import { computeUnitCounts, withPositions } from '@/lib/inventory'
 
 const bodySchema = z.object({
@@ -17,8 +17,8 @@ const bodySchema = z.object({
 // Create one or more InventoryUnit rows for a serialized item. This is the
 // endpoint behind the admin "Add Unit" button (previously missing → silent 404).
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await getSession()
-  if (!session || session.role !== 'ADMIN') {
+  const session = await requireAdmin()
+  if (!session) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
   const { id } = await params

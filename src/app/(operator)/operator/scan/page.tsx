@@ -118,8 +118,8 @@ export default function OperatorScanPage() {
   }
 
   const kitItemForUnit = unit ? activeKitItems.find((ki) => ki.inventoryUnitId === unit.id) : undefined
-  const canReturn = !!kitItemForUnit && unit?.status === 'CHECKED_OUT'
-  const canAdd = unit?.status === 'AVAILABLE' && !!activeRigId
+  const canReturn = !!kitItemForUnit && unit?.status === 'CHECKED_OUT' && !String(kitItemForUnit.id).startsWith('pending-')
+  const canAdd = unit?.status === 'AVAILABLE' && !!activeRigId && !kitItemForUnit
 
   const refetchActive = async () => {
     const updated = await fetch('/api/deployments').then((r) => r.json())
