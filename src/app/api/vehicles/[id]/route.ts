@@ -33,7 +33,14 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
   const vehicle = await prisma.vehicle.findUnique({
     where: { id },
     include: {
-      dailyChecks: { orderBy: { date: 'desc' }, take: 10, include: { operator: true } },
+      dailyChecks: {
+        orderBy: { date: 'desc' },
+        take: 10,
+        // Only expose non-sensitive operator identity. NEVER `include: { operator: true }`
+        // here — the User row carries pinHash/email/hourlyRate and would leak to any
+        // authenticated caller (SEC-1).
+        include: { operator: { select: { id: true, name: true } } },
+      },
       maintenanceTasks: { orderBy: { nextDue: 'asc' } },
       photos: { orderBy: { takenAt: 'desc' }, take: 6 },
     },
