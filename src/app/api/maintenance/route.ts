@@ -36,7 +36,16 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ data: tasks })
+  // Cost/spend data is admin-only (§10.2). Strip cost fields for operators.
+  const data = session.role === 'ADMIN'
+    ? tasks
+    : tasks.map(({ estimatedCost, actualCost, ...rest }) => {
+        void estimatedCost
+        void actualCost
+        return rest
+      })
+
+  return NextResponse.json({ data })
 }
 
 const createSchema = z.object({

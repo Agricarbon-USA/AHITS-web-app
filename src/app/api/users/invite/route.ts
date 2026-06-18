@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { randomBytes } from 'crypto'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
 import { sendEmail } from '@/lib/email/resend'
 import { inviteEmail } from '@/lib/email/templates'
+
+/** Cryptographically-random, URL-safe invite token (256 bits of entropy). */
+function generateInviteToken(): string {
+  return randomBytes(32).toString('base64url')
+}
 
 const schema = z.object({
   name: z.string().min(1, 'Name is required'),
@@ -35,25 +41,37 @@ export async function POST(req: NextRequest) {
     where: { email, usedAt: null },
   })
 
-  // Create 48-hour invite token
+  // Create 48-hour invite token with a CSPRNG token (not cuid()).
   const invite = await prisma.inviteToken.create({
     data: {
       email,
       name,
       role,
+      token: generateInviteToken(),
       createdBy: session.userId,
       expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
     },
   })
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
-  const setupUrl = `${appUrl}/setup-account?token=${invite.token}`
+  const setupUrl = `${appUrl}/setup-account?token=${encodeURIComponent(invite.token)}`
 
-  await sendEmail({
-    to: email,
-    subject: `You've been invited to AHITS — Agricarbon`,
-    html: inviteEmail(name, role, setupUrl),
-  })
+  // If the email fails to send, don't leave a dangling invite the admin thinks
+  // went out — clean it up and surface the failure.
+  try {
+    await sendEmail({
+      to: email,
+      subject: `You've been invited to AHITS — Agricarbon`,
+      html: inviteEmail(name, role, setupUrl),
+    })
+  } catch (err) {
+    await prisma.inviteToken.delete({ where: { id: invite.id } }).catch(() => {})
+    console.error('invite email failed', err)
+    return NextResponse.json(
+      { error: 'Could not send the invite email. Please try again.' },
+      { status: 502 },
+    )
+  }
 
   return NextResponse.json({ ok: true, message: `Invite sent to ${email}` }, { status: 201 })
 }

@@ -1,13 +1,25 @@
 import { PrismaClient, UserRole, VehicleType, VehicleStatus, EquipmentStatus, EquipmentCategory, ProjectStatus, ProjectType } from '@prisma/client'
+import { randomBytes } from 'crypto'
 import bcrypt from 'bcryptjs'
 
 const prisma = new PrismaClient()
 
 async function main() {
+  // Safety: this seed creates sample data and well-known accounts. Refuse to
+  // run against a production environment unless explicitly overridden.
+  if (process.env.NODE_ENV === 'production' && process.env.ALLOW_PROD_SEED !== '1') {
+    throw new Error(
+      '✋ Refusing to seed: NODE_ENV=production. The seed creates sample data and ' +
+        'default accounts. If you really intend to seed production, set ALLOW_PROD_SEED=1.',
+    )
+  }
+
   console.log('🌱 Seeding database...')
 
-  // Admin user
-  const adminPw = await bcrypt.hash('Admin1234!', 12)
+  // Admin user. Password comes from SEED_ADMIN_PASSWORD if set, otherwise a
+  // random one is generated and printed ONCE (no hard-coded credential in repo).
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD ?? randomBytes(12).toString('base64url')
+  const adminPw = await bcrypt.hash(adminPassword, 12)
   const admin = await prisma.user.upsert({
     where: { email: 'ops@agricarbon.com' },
     update: {},
@@ -20,6 +32,10 @@ async function main() {
     },
   })
   console.log(`  ✓ Admin: ${admin.email}`)
+  if (!process.env.SEED_ADMIN_PASSWORD) {
+    console.log(`  🔑 Generated admin password (shown once — save it now): ${adminPassword}`)
+    console.log('     (applies only when the admin is first created; change it after first login.)')
+  }
 
   // Operator users with PINs
   const pin = await bcrypt.hash('123456', 12)

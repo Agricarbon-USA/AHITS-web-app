@@ -1,7 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { rateLimit, clientIp } from '@/lib/rate-limit'
 
 export async function GET(req: NextRequest) {
+  // Throttle token-guessing on this public endpoint (20 / 10 min / IP).
+  const rl = rateLimit(`invite-validate:${clientIp(req)}`, 20, 10 * 60 * 1000)
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: 'Too many attempts. Please try again later.' },
+      { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) } },
+    )
+  }
+
   const token = req.nextUrl.searchParams.get('token')
   if (!token) return NextResponse.json({ error: 'Token required' }, { status: 400 })
 

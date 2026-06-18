@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { hashPin } from '@/lib/auth/pin'
+import { rateLimit, clientIp } from '@/lib/rate-limit'
 import bcrypt from 'bcryptjs'
 
 const schema = z.object({
@@ -10,6 +11,15 @@ const schema = z.object({
 })
 
 export async function POST(req: NextRequest) {
+  // Throttle this public account-minting endpoint (10 / 10 min / IP).
+  const rl = rateLimit(`invite-complete:${clientIp(req)}`, 10, 10 * 60 * 1000)
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: 'Too many attempts. Please try again later.' },
+      { status: 429, headers: { 'Retry-After': String(rl.retryAfterSec) } },
+    )
+  }
+
   const parsed = schema.safeParse(await req.json())
   if (!parsed.success) return NextResponse.json({ error: 'Invalid input' }, { status: 400 })
 
@@ -32,21 +42,41 @@ export async function POST(req: NextRequest) {
     ? await hashPin(credential)
     : await bcrypt.hash(credential, 12)
 
-  await prisma.$transaction([
-    prisma.user.create({
-      data: {
-        name: invite.name,
-        email: invite.email,
-        role: invite.role,
-        pinHash: hash,
-        isActive: true,
-      },
-    }),
-    prisma.inviteToken.update({
-      where: { token },
-      data: { usedAt: new Date() },
-    }),
-  ])
+  try {
+    const completed = await prisma.$transaction(async (tx) => {
+      // Atomically claim the invite: only the request that flips usedAt from
+      // null wins. This closes the TOCTOU where two concurrent submissions both
+      // pass the check above and both try to create the account.
+      const claim = await tx.inviteToken.updateMany({
+        where: { token, usedAt: null, expiresAt: { gt: new Date() } },
+        data: { usedAt: new Date() },
+      })
+      if (claim.count === 0) return false
+
+      await tx.user.create({
+        data: {
+          name: invite.name,
+          email: invite.email,
+          role: invite.role,
+          pinHash: hash,
+          isActive: true,
+        },
+      })
+      return true
+    })
+
+    if (!completed) {
+      return NextResponse.json({ error: 'Invalid or expired invite' }, { status: 410 })
+    }
+  } catch (err) {
+    // Most likely a unique-email collision (account already exists). The invite
+    // is rolled back with the transaction, so it remains usable.
+    console.error('invite complete failed', err)
+    return NextResponse.json(
+      { error: 'Could not complete signup. An account with this email may already exist.' },
+      { status: 409 },
+    )
+  }
 
   return NextResponse.json({ ok: true })
 }

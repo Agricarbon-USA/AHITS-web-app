@@ -1,7 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
+import { EquipmentCategory, EquipmentStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions } from '@/lib/inventory'
+
+// Whitelist of admin-editable fields. Excludes id/qrCodeId/deletedAt/timestamps
+// and the unitId helper to prevent mass-assignment. categoryId/hubId are kept
+// but pass through the enum-fallback guard below.
+const inventoryUpdateSchema = z
+  .object({
+    name: z.string().min(1),
+    category: z.nativeEnum(EquipmentCategory),
+    itemType: z.enum(['SERIALIZED', 'CONSUMABLE']),
+    sku: z.string().nullable(),
+    quantity: z.number().int(),
+    expectedQuantity: z.number().int().nullable(),
+    unitCost: z.number().nullable(),
+    reorderUrl: z.string().nullable(),
+    supplier: z.string().nullable(),
+    status: z.nativeEnum(EquipmentStatus),
+    location: z.string().nullable(),
+    notes: z.string().nullable(),
+    lowStockThreshold: z.number().int().nullable(),
+    categoryId: z.string().nullable(),
+    hubId: z.string().nullable(),
+  })
+  .partial()
+  .strict()
 
 export async function GET(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAuth()
@@ -55,42 +81,42 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
   void kitItems
   void categoryRef
 
-  return NextResponse.json({
-    data: {
-      ...rest,
-      units: withPositions(item.units),
-      category: categoryDisplay(item),
-      unitCounts,
-      // Derived single-source-of-truth quantities (units for serialized, stored count for consumables)
-      derivedQuantity: derived.effectiveQuantity,
-      availableQuantity: derived.availableQuantity,
-      currentOperator: activeRig?.operator ?? null,
-      currentProject: activeRig?.project ?? null,
-    },
-  })
+  const data: Record<string, unknown> = {
+    ...rest,
+    units: withPositions(item.units),
+    category: categoryDisplay(item),
+    unitCounts,
+    // Derived single-source-of-truth quantities (units for serialized, stored count for consumables)
+    derivedQuantity: derived.effectiveQuantity,
+    availableQuantity: derived.availableQuantity,
+    currentOperator: activeRig?.operator ?? null,
+    currentProject: activeRig?.project ?? null,
+  }
+  // Cost/spend data is admin-only (§10.2). Strip it for operators.
+  if (session.role !== 'ADMIN') delete data.unitCost
+
+  return NextResponse.json({ data })
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAdmin()
   if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const { id } = await params
+  const parsed = inventoryUpdateSchema.safeParse(await req.json())
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten().fieldErrors }, { status: 400 })
+  }
+  const { categoryId, hubId, ...rest } = parsed.data
+  const updateData: Record<string, unknown> = { ...rest }
+  // Skip categoryId/hubId if falsy or if they look like enum values (e.g. 'SAMPLING_EQUIPMENT')
+  // rather than real CUIDs — avoids a Prisma FK error when items have enum-fallback categories
+  if (categoryId && !/^[A-Z_]+$/.test(categoryId)) updateData.categoryId = categoryId
+  if (hubId && !/^[A-Z_]+$/.test(hubId)) updateData.hubId = hubId
   try {
-    const body = await req.json()
-    const { categoryId, hubId, ...rest } = body
-    const updateData: Record<string, unknown> = { ...rest }
-    // Skip categoryId/hubId if falsy or if they look like enum values (e.g. 'SAMPLING_EQUIPMENT')
-    // rather than real CUIDs — avoids a Prisma FK error when items have enum-fallback categories
-    if (categoryId && typeof categoryId === 'string' && !/^[A-Z_]+$/.test(categoryId)) {
-      updateData.categoryId = categoryId
-    }
-    if (hubId && typeof hubId === 'string' && !/^[A-Z_]+$/.test(hubId)) {
-      updateData.hubId = hubId
-    }
     const item = await prisma.inventoryItem.update({ where: { id }, data: updateData as never })
     return NextResponse.json({ data: item })
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : 'Update failed'
-    return NextResponse.json({ error: msg }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Item not found or update failed' }, { status: 400 })
   }
 }
 

@@ -579,7 +579,10 @@ model InviteToken {
   email     String
   role      UserRole
   name      String
-  token     String    @unique @default(cuid())
+  // Security: token is generated with a CSPRNG (crypto.randomBytes) in the
+  // invite-create route — NOT cuid(), which is not cryptographically random
+  // and is guessable on a public, throttled endpoint that can mint accounts.
+  token     String    @unique
   expiresAt DateTime
   usedAt    DateTime?
   createdAt DateTime  @default(now())
