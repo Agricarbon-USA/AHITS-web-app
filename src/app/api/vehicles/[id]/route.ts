@@ -46,6 +46,15 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
     },
   })
   if (!vehicle) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  // SEC-2: operators don't receive VIN / plate / insurance / registration / notes.
+  if (session.role !== 'ADMIN') {
+    const data: Record<string, unknown> = { ...vehicle }
+    for (const k of ['vin', 'licensePlate', 'insuranceExpires', 'registrationExpires', 'notes']) {
+      delete data[k]
+    }
+    return NextResponse.json({ data })
+  }
   return NextResponse.json({ data: vehicle })
 }
 

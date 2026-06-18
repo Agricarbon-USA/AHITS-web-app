@@ -3,6 +3,24 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 
+// Fields an OPERATOR may see (SEC-2). Excludes VIN, license plate, insurance /
+// registration expiry, and free-form notes — PII/admin data operators don't
+// need for field work. Admins receive the full row.
+const OPERATOR_VEHICLE_SELECT = {
+  id: true,
+  name: true,
+  type: true,
+  status: true,
+  makeModel: true,
+  year: true,
+  odometer: true,
+  location: true,
+  qrCodeId: true,
+  assignedOperatorId: true,
+  createdAt: true,
+  updatedAt: true,
+} as const
+
 export async function GET(req: NextRequest) {
   const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -10,15 +28,23 @@ export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const status = searchParams.get('status')
   const type = searchParams.get('type')
+  const isAdmin = session.role === 'ADMIN'
 
-  const vehicles = await prisma.vehicle.findMany({
-    where: {
-      ...(status && { status: status as never }),
-      ...(type && { type: type as never }),
-    },
-    orderBy: { name: 'asc' },
-    include: { _count: { select: { dailyChecks: true, maintenanceTasks: true } } },
-  })
+  const where = {
+    ...(status && { status: status as never }),
+    ...(type && { type: type as never }),
+  }
+  const _count = { select: { dailyChecks: true, maintenanceTasks: true } }
+
+  // Separate calls so each gets a concrete arg type (TS can't infer a unified
+  // include-vs-select shape from a conditional spread).
+  const vehicles = isAdmin
+    ? await prisma.vehicle.findMany({ where, orderBy: { name: 'asc' }, include: { _count } })
+    : await prisma.vehicle.findMany({
+        where,
+        orderBy: { name: 'asc' },
+        select: { ...OPERATOR_VEHICLE_SELECT, _count },
+      })
   return NextResponse.json({ data: vehicles })
 }
 
