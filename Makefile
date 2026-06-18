@@ -16,7 +16,7 @@ TAG           ?= $(shell git rev-parse --short HEAD)
 SERVICE       ?= $(APP_NAME)-staging
 MIN_INSTANCES ?= 0
 
-.PHONY: help dev build start lint typecheck \
+.PHONY: help dev build start lint typecheck verify \
         db-generate db-migrate db-migrate-dev db-studio db-seed db-reset \
         test test-db-up test-db-down test-prepare \
         docker-build docker-push docker-run \
@@ -43,6 +43,8 @@ lint: ## Run ESLint
 
 typecheck: ## Run TypeScript compiler check
 	npm run type-check
+
+verify: db-generate typecheck lint test ## Regenerate client, type-check, lint, and run tests
 
 # ── Database ──────────────────────────────────────────────────────
 db-generate: ## Generate Prisma client

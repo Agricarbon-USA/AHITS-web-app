@@ -5,10 +5,23 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
 import { sendEmail } from '@/lib/email/resend'
 import { inviteEmail } from '@/lib/email/templates'
+import { writeAudit } from '@/lib/audit'
 
 /** Cryptographically-random, URL-safe invite token (256 bits of entropy). */
 function generateInviteToken(): string {
   return randomBytes(32).toString('base64url')
+}
+
+// List outstanding (pending) invites for the admin Team Management view.
+export async function GET() {
+  const session = await requireAdmin()
+  if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const invites = await prisma.inviteToken.findMany({
+    where: { usedAt: null, revokedAt: null, expiresAt: { gt: new Date() } },
+    select: { id: true, email: true, name: true, role: true, expiresAt: true, createdAt: true },
+    orderBy: { createdAt: 'desc' },
+  })
+  return NextResponse.json({ data: invites })
 }
 
 const schema = z.object({
@@ -73,5 +86,6 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  await writeAudit(session.userId, 'INVITE_SENT', null, { email, role, inviteId: invite.id })
   return NextResponse.json({ ok: true, message: `Invite sent to ${email}` }, { status: 201 })
 }

@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   const { token, credential } = parsed.data
 
   const invite = await prisma.inviteToken.findUnique({ where: { token } })
-  if (!invite || invite.usedAt || invite.expiresAt < new Date()) {
+  if (!invite || invite.usedAt || invite.revokedAt || invite.expiresAt < new Date()) {
     return NextResponse.json({ error: 'Invalid or expired invite' }, { status: 410 })
   }
 
@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
       // null wins. This closes the TOCTOU where two concurrent submissions both
       // pass the check above and both try to create the account.
       const claim = await tx.inviteToken.updateMany({
-        where: { token, usedAt: null, expiresAt: { gt: new Date() } },
+        where: { token, usedAt: null, revokedAt: null, expiresAt: { gt: new Date() } },
         data: { usedAt: new Date() },
       })
       if (claim.count === 0) return false
