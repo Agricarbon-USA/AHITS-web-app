@@ -3,6 +3,8 @@
 # Usage: make <target>
 # ============================================================
 
+export PATH := /opt/homebrew/bin:/usr/local/bin:$(PATH)
+
 APP_NAME      := ahits-web-app
 GCP_PROJECT   ?= $(shell grep GCP_PROJECT_ID .env | cut -d= -f2)
 GCP_REGION    ?= us-central1
@@ -16,6 +18,7 @@ MIN_INSTANCES ?= 0
 
 .PHONY: help dev build start lint typecheck \
         db-generate db-migrate db-migrate-dev db-studio db-seed db-reset \
+        test test-db-up test-db-down test-prepare \
         docker-build docker-push docker-run \
         cloud-run-deploy cloud-run-url \
         deploy-staging deploy-prod logs \
@@ -60,10 +63,37 @@ db-seed: ## Seed the database with sample data
 db-reset: ## Reset DB and re-seed (DEV ONLY)
 	npx prisma migrate reset
 
+# ── Testing (safe: isolated local DB, NEVER production) ───────────
+# The suite wipes tables between cases, so it only ever runs against the
+# throwaway Postgres in docker-compose.test.yml. vitest.config.ts and
+# tests/setup.ts both refuse to run against a non-test database.
+TEST_DB_URL := postgresql://test:test@localhost:5433/ahits_test
+
+test-db-up: ## Start the local Postgres test DB (Docker) on :5433
+	docker compose -f docker-compose.test.yml up -d
+	@echo "Waiting for test database to accept connections..."
+	@for i in $$(seq 1 30); do \
+	  docker compose -f docker-compose.test.yml exec -T postgres-test pg_isready -U test -d ahits_test >/dev/null 2>&1 && break; \
+	  sleep 1; \
+	done
+	@echo "Test database ready on localhost:5433"
+
+test-db-down: ## Stop and remove the local test DB (and its data)
+	docker compose -f docker-compose.test.yml down -v
+
+test-prepare: test-db-up ## Start test DB and apply the current Prisma schema to it
+	DATABASE_URL="$(TEST_DB_URL)" DIRECT_URL="$(TEST_DB_URL)" npx prisma db push --skip-generate --accept-data-loss
+
+test: test-prepare ## Run the full test suite against the safe local test DB
+	DATABASE_URL_TEST="$(TEST_DB_URL)" DIRECT_URL_TEST="$(TEST_DB_URL)" npm test
+
 # ── Docker ────────────────────────────────────────────────────────
+DISABLE_SW ?= false
+
 docker-build: ## Build Docker image for linux/amd64. Override TAG as needed.
 	docker build \
 	  --platform linux/amd64 \
+	  --build-arg DISABLE_SW=$(DISABLE_SW) \
 	  -t $(IMAGE):$(TAG) \
 	  .
 

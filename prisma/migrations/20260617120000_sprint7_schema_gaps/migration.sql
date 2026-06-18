@@ -1,0 +1,2 @@
+-- Schema is fully in sync after db push aligned the DB with schema.prisma.
+-- This migration is empty; it closes the gap between migrate dev history and the current schema state.

@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
-import { getSession } from '@/lib/auth/session'
+import { requireAuth, requireAdmin } from '@/lib/auth/session'
+import { createAlert } from '@/lib/alerts'
 
 export async function GET(req: NextRequest) {
-  const session = await getSession()
+  const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = req.nextUrl
@@ -22,6 +23,19 @@ export async function GET(req: NextRequest) {
       item: { select: { id: true, name: true } },
     },
   })
+
+  // Fire-and-forget: create alerts for overdue tasks
+  const now = new Date()
+  for (const task of tasks) {
+    if (task.status === 'OVERDUE' && task.nextDue && task.nextDue < now) {
+      createAlert('MAINTENANCE_OVERDUE', 'maintenance_tasks', task.id, {
+        taskName: task.taskName,
+        itemId: task.itemId ?? null,
+        daysPastDue: Math.floor((now.getTime() - task.nextDue.getTime()) / 86400000),
+      }).catch(() => {})
+    }
+  }
+
   return NextResponse.json({ data: tasks })
 }
 
@@ -39,8 +53,8 @@ const createSchema = z.object({
 })
 
 export async function POST(req: NextRequest) {
-  const session = await getSession()
-  if (!session || session.role !== 'ADMIN') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const session = await requireAdmin()
+  if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const parsed = createSchema.safeParse(await req.json())
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })

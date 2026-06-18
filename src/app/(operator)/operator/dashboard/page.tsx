@@ -11,7 +11,7 @@ import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 
 export default function OperatorDashboardPage() {
   const { user } = useAuth()
-  const { queueSize, isOffline } = useOfflineQueue()
+  const { pending, isOffline } = useOfflineQueue()
   const router = useRouter()
 
   return (
@@ -21,7 +21,7 @@ export default function OperatorDashboardPage() {
 
       {isOffline && (
         <Alert severity="warning" sx={{ mb: 2 }}>
-          You're offline. {queueSize > 0 ? `${queueSize} submission(s) will sync when reconnected.` : 'Submissions will queue until reconnected.'}
+          You're offline. {pending > 0 ? `${pending} submission(s) will sync when reconnected.` : 'Submissions will queue until reconnected.'}
         </Alert>
       )}
 

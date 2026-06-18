@@ -13,6 +13,9 @@ on:
   pull_request:
     types: [labeled]
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   deploy:
     name: Build & Deploy PR to Staging
@@ -57,7 +60,7 @@ jobs:
 
       - name: Build & push image
         run: |
-          make docker-build TAG=pr-${{ steps.pr.outputs.sha }} GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }}
+          make docker-build TAG=pr-${{ steps.pr.outputs.sha }} GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }} DISABLE_SW=true
           make docker-push  TAG=pr-${{ steps.pr.outputs.sha }} GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }}
 
       - name: Deploy to staging

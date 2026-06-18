@@ -38,6 +38,26 @@ export async function getSession(): Promise<SessionPayload | null> {
   }
 }
 
+/**
+ * The current session, or null if unauthenticated. A named alias of
+ * `getSession()` for route handlers whose only gate is "must be logged in" —
+ * callers return 401 on null.
+ */
+export async function requireAuth(): Promise<SessionPayload | null> {
+  return getSession()
+}
+
+/**
+ * The current session if it belongs to an ADMIN, otherwise null. The single
+ * definition of "who is an admin" — callers return 403 on null. Replaces the
+ * `!session || session.role !== 'ADMIN'` check that was copy-pasted across the
+ * API routes.
+ */
+export async function requireAdmin(): Promise<SessionPayload | null> {
+  const session = await getSession()
+  return session && session.role === 'ADMIN' ? session : null
+}
+
 export async function setSessionCookie(token: string) {
   const cookieStore = await cookies()
   cookieStore.set(SESSION_COOKIE, token, {
