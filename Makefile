@@ -20,7 +20,7 @@ MIN_INSTANCES ?= 0
         db-generate db-migrate db-migrate-dev db-studio db-seed db-reset \
         test test-db-up test-db-down test-prepare \
         docker-build docker-push docker-run \
-        cloud-run-deploy cloud-run-url \
+        cloud-run-deploy cloud-run-url cloud-run-migrate \
         deploy-staging deploy-prod logs \
         env-check setup
 
@@ -131,6 +131,17 @@ cloud-run-url: ## Print URL of a Cloud Run service. Set SERVICE.
 	  --region $(GCP_REGION) \
 	  --project $(GCP_PROJECT) \
 	  --format="value(status.url)"
+
+# Apply pending Prisma migrations to the deployed database BEFORE the new
+# revision serves traffic. Reads the same AHITS_DIRECT_URL secret the Cloud Run
+# service uses, so it always migrates exactly the DB the app will connect to.
+# Requires the deployer service account to have roles/secretmanager.secretAccessor.
+# `@` suppresses command echo so the connection string is never printed.
+cloud-run-migrate: ## Apply pending migrations to the deployed DB. Set GCP_PROJECT.
+	@DB_URL="$$(gcloud secrets versions access latest --secret=AHITS_DIRECT_URL --project=$(GCP_PROJECT))"; \
+	  if [ -z "$$DB_URL" ]; then echo "❌ Could not read AHITS_DIRECT_URL from Secret Manager"; exit 1; fi; \
+	  echo "Applying migrations to the deployed database..."; \
+	  DATABASE_URL="$$DB_URL" DIRECT_URL="$$DB_URL" npx prisma migrate deploy
 
 # ── High-level deploy targets ──────────────────────────────────────
 deploy-staging: ## Build, push, and deploy to staging. Override TAG as needed.

@@ -1,0 +1,97 @@
+name: Verify
+
+# Single source of truth for pre-merge / pre-deploy checks.
+# Called by ci.yml (on every PR) and by deploy.yml (before any deploy), so the
+# exact commit that ships has been linted, type-checked, built, and tested.
+on:
+  workflow_call:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  lint-typecheck-build:
+    name: Lint, type-check & build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+        env:
+          DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
+          DIRECT_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
+
+      - name: Type check
+        run: npm run type-check
+
+      - name: Lint
+        run: npm run lint
+
+      # Exercise the real production build (Serwist + webpack) so build-only
+      # failures are caught on the PR, not at deploy time inside Docker.
+      - name: Build
+        run: npm run build
+        env:
+          DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
+          DIRECT_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: ahits_test
+        ports:
+          # Map to 5433 to match .env.test / the local `make test` workflow.
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U test -d ahits_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DB_URL: postgresql://test:test@localhost:5433/ahits_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+        env:
+          DATABASE_URL: ${{ env.TEST_DB_URL }}
+          DIRECT_URL: ${{ env.TEST_DB_URL }}
+
+      - name: Apply Prisma schema to the test database
+        run: npx prisma db push --skip-generate --accept-data-loss
+        env:
+          DATABASE_URL: ${{ env.TEST_DB_URL }}
+          DIRECT_URL: ${{ env.TEST_DB_URL }}
+
+      - name: Run tests
+        run: npm test
+        env:
+          DATABASE_URL_TEST: ${{ env.TEST_DB_URL }}
+          DIRECT_URL_TEST: ${{ env.TEST_DB_URL }}

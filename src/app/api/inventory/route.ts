@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
-import type { EquipmentCategory, EquipmentStatus } from '@prisma/client'
+import type { EquipmentCategory, EquipmentStatus, ItemType } from '@prisma/client'
 import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions } from '@/lib/inventory'
 
 export async function GET(req: NextRequest) {
@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
     ...(status && { status }),
     ...(category && { category }),
     ...(categoryId && { categoryId }),
-    ...(itemType && { itemType }),
+    ...(itemType && { itemType: itemType as ItemType }),
     ...(hubId && { hubId }),
     ...(q && { name: { contains: q, mode: 'insensitive' as const } }),
     // Filter by active operator/project via kit items → kit → rig

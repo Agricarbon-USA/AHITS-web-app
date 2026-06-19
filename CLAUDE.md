@@ -49,10 +49,14 @@ If you created a new migration during this change, also commit the generated fil
 gh pr create \
   --title "<Short description>" \
   --body "<What changed and why>" \
-  --base main
+  --base development
 ```
 
-Capture the PR number from the output.
+Capture the PR number from the output. Opening the PR runs the `CI` workflow
+(lint, type-check, build, tests via the shared `verify` workflow); it must pass
+before the PR is merged. There is **no `main` branch** — the integration branch
+is `development` (deploys to staging) and `production` is the release branch
+(deploys to prod).
 
 ## 5. Trigger the staging deploy
 
@@ -76,6 +80,7 @@ gh pr view --comments
 ## Notes
 
 - The staging service is `ahits-web-app-staging` on Cloud Run in `us-central1`.
-- You can also trigger a staging deploy by adding the `deploy-staging` label to any open PR: `gh pr edit $PR_NUMBER --add-label deploy-staging`
-- Production deploys happen automatically when a PR merges to `main` via the existing `deploy.yml` workflow.
+- You can also trigger an on-demand staging preview by adding the `deploy-staging` label to any open PR: `gh pr edit $PR_NUMBER --add-label deploy-staging` (runs `pr-staging-deploy.yml`).
+- **Auto-deploys (`deploy.yml`):** landing changes on `development` deploys to **staging**; landing changes on `production` deploys to **prod**. Both first run the shared `verify` workflow (lint, type-check, build, tests) and will not deploy if it fails. Promote staging → prod by merging `development` into `production` (e.g. a PR with `--base production`).
+- Migrations are **not** applied by `deploy.yml` or the Docker image. Apply them with `make db-migrate` against the target database **before** the code that needs them lands (see step 3). Automating this in the release path is a tracked Wave A item.
 - Do **not** deploy directly from a local machine to production; always go through the PR + GitHub Actions flow.
