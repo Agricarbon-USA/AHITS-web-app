@@ -6,12 +6,24 @@ on:
       - production # → production
       - development # → staging
 
+# Never run two deploys to the same target at once; queue the newest instead of
+# racing them onto the same Cloud Run service.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  # Gate the deploy on the same checks PRs run, against the exact commit being
+  # shipped. `deploy` will not start unless this passes.
+  verify:
+    uses: ./.github/workflows/verify.yml
+
   deploy:
     name: Build & Deploy
+    needs: verify
     runs-on: ubuntu-latest
 
     steps:
