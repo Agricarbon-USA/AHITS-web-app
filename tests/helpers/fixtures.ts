@@ -34,7 +34,7 @@ export async function createCategory(overrides?: { name?: string }) {
 export async function createInventoryItem(
   categoryId: string,
   overrides?: {
-    itemType?: string
+    itemType?: 'SERIALIZED' | 'CONSUMABLE'
     quantity?: number
     name?: string
     status?: string
