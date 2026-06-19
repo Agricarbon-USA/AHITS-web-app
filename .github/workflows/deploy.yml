@@ -21,38 +21,14 @@ jobs:
   verify:
     uses: ./.github/workflows/verify.yml
 
-  # Apply pending Prisma migrations to the target database BEFORE the new code
-  # deploys. Runs only after verify passes; deploy runs only after this passes,
-  # so code never ships against an unmigrated schema. Migrations must be
-  # backward-compatible (expand/contract) since old code is still serving while
-  # this runs. If the migration history is out of sync with the DB, this step
-  # fails and blocks the deploy — by design.
-  migrate:
-    name: Apply DB migrations
-    needs: verify
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install deps
-        run: npm ci
-
-      - name: GCP Auth
-        uses: ./.github/actions/gcp-auth
-        with:
-          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
-
-      - name: Apply pending migrations to the target database
-        run: make cloud-run-migrate GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }}
+  # NOTE: Auto-migration from GitHub Actions is not possible because GHA runners
+  # cannot reach the Supabase direct connection (IPv6-only on this plan). Apply
+  # migrations manually with `make db-migrate` before merging any PR that adds
+  # a new migration. See CLAUDE.md §"Run Prisma locally before opening the PR".
 
   deploy:
     name: Build & Deploy
-    needs: migrate
+    needs: verify
     runs-on: ubuntu-latest
 
     steps:
