@@ -46,7 +46,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           items: {
             where: { removedAt: null },
             include: {
-              item: { select: { id: true, name: true } },
+              item: { select: { id: true, name: true, itemType: true } },
               inventoryUnit: true,
             },
           },
@@ -86,6 +86,14 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       }
 
       if (disp.type === 'HUB') {
+        if (kitItem.item.itemType === 'CONSUMABLE' && (disp.returnCondition ?? 'GOOD') === 'GOOD') {
+          // Restore authoritative consumable stock drawn down at check-out when
+          // it comes back to the hub usable (full removal at end-of-deployment).
+          await tx.inventoryItem.update({
+            where: { id: inventoryItemId },
+            data: { quantity: { increment: kitItem.quantity } },
+          })
+        }
         const logCondition =
           disp.type === 'HUB' ? returnConditionToLogCondition(disp.returnCondition) : null
 
