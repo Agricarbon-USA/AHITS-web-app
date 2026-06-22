@@ -9,6 +9,10 @@ const bodySchema = z.object({
   quantity: z.number().int().min(1).optional(),
   returnCondition: z.enum(['GOOD', 'IN_MAINTENANCE', 'INOPERABLE']).optional(),
   notes: z.string().optional(),
+  // Daily-usage logging reuses this return endpoint but means "consumed in the
+  // field," not "returned to the hub." When true, consumable stock is NOT
+  // restored (the item was used up). Genuine returns omit it / pass false.
+  consumed: z.boolean().optional(),
 })
 
 export async function DELETE(
@@ -82,6 +86,16 @@ async function _DELETE(
         await tx.kitItem.update({
           where: { id: kitItemId },
           data: { quantity: kitItem.quantity - removeQty },
+        })
+      }
+      if (returnCondition === 'GOOD' && !body.data.consumed) {
+        // Genuine return of a usable consumable → restore the authoritative
+        // on-hand count drawn down at check-out. Daily-usage logging passes
+        // consumed:true (item used up, not returned) and is NOT restored; a
+        // damaged/maintenance return (returnCondition !== GOOD) isn't either.
+        await tx.inventoryItem.update({
+          where: { id: kitItem.inventoryItemId },
+          data: { quantity: { increment: removeQty } },
         })
       }
       const excludeUnitIds = await getUnitsInOtherRigs(tx, kitItem.inventoryItemId, rigId)

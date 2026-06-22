@@ -157,6 +157,14 @@ function TransferDialog({
   const [loading, setLoading] = React.useState(false)
 
   const doTransfer = async (note: string, photoUrls: string[]) => {
+    // Transfers are a stateful, conflict-prone handshake between two operators,
+    // so unlike returns/end-deployment they are NOT safe to queue offline and
+    // replay later. Block clearly when offline instead of firing a raw fetch
+    // that surfaces a confusing generic "Network error".
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      showToast({ message: 'Transfers need an internet connection. Try again once you’re back online.', severity: 'warning' })
+      return
+    }
     setLoading(true)
     try {
       const res = await fetch(`/api/deployments/${rig.id}/transfer`, {
@@ -692,6 +700,10 @@ export default function MyRigPage() {
 
   const handleRespond = async () => {
     if (!respondDialog) return
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      showToast({ message: 'Responding to a transfer needs an internet connection. Try again once you’re back online.', severity: 'warning' })
+      return
+    }
     setRespondLoading(true)
     const { transfer, action } = respondDialog
     try {
@@ -718,6 +730,10 @@ export default function MyRigPage() {
 
   const handleCancelTransfer = async () => {
     if (!cancelTransferId) return
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      showToast({ message: 'Cancelling a transfer needs an internet connection. Try again once you’re back online.', severity: 'warning' })
+      return
+    }
     setCancelLoading(true)
     try {
       const res = await fetch(`/api/transfers/${cancelTransferId}`, { method: 'DELETE' })
@@ -765,6 +781,7 @@ export default function MyRigPage() {
       body: {
         quantity: logUsageQty,
         returnCondition: 'GOOD',
+        consumed: true, // used in the field, not returned — do not restore stock
         notes: `Daily usage log — ${logUsageQty} used`,
       },
       label: 'Log usage',

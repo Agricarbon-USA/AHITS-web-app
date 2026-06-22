@@ -183,6 +183,21 @@ export async function POST(req: NextRequest) {
           await tx.kitItem.create({
             data: { kitId: kit.id, inventoryItemId: ki.inventoryItemId, quantity, inventoryUnitId: null },
           })
+          if (item?.itemType === 'CONSUMABLE') {
+            // CONSUMABLE stock is authoritative as InventoryItem.quantity, so a
+            // checkout must draw it down (otherwise on-hand never reflects field
+            // usage and LOW_INVENTORY/reorder signals are wrong). Guarded so it
+            // can't go negative; if the stored count is stale/low we floor at 0
+            // rather than blocking the checkout — consumables are intentionally
+            // allowed to check out without reserving units.
+            const drawn = await tx.inventoryItem.updateMany({
+              where: { id: ki.inventoryItemId, quantity: { gte: quantity } },
+              data: { quantity: { decrement: quantity } },
+            })
+            if (drawn.count === 0) {
+              await tx.inventoryItem.update({ where: { id: ki.inventoryItemId }, data: { quantity: 0 } })
+            }
+          }
           await tx.checkLog.create({
             data: { action: 'CHECK_OUT', itemId: ki.inventoryItemId, operatorId, rigId: newRig.id, projectId, notes: note },
           })

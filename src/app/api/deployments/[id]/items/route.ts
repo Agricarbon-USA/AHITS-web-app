@@ -186,6 +186,18 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
               inventoryUnitId: null,
             },
           })
+          if (invItem?.itemType === 'CONSUMABLE') {
+            // Draw down authoritative consumable stock on check-out (see the
+            // matching restore on HUB return below). Guarded against going
+            // negative; floor at 0 on a stale/low count rather than blocking.
+            const drawn = await tx.inventoryItem.updateMany({
+              where: { id: entry.inventoryItemId, quantity: { gte: entry.quantity } },
+              data: { quantity: { decrement: entry.quantity } },
+            })
+            if (drawn.count === 0) {
+              await tx.inventoryItem.update({ where: { id: entry.inventoryItemId }, data: { quantity: 0 } })
+            }
+          }
           await tx.checkLog.create({
             data: {
               action: 'CHECK_OUT',
@@ -280,6 +292,17 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
       }
 
       if (disp.type === 'HUB') {
+        if (kitItem.item.itemType === 'CONSUMABLE' && (disp.returnCondition ?? 'GOOD') === 'GOOD') {
+          // Consumable returned to the hub in usable condition → restore the
+          // authoritative on-hand count drawn down at check-out. Damaged/
+          // maintenance returns are not restored (the stock isn't usable).
+          // (Explicit CONSUMABLE check, matching end/route.ts, rather than
+          // !isSerialized — safe against any future third ItemType.)
+          await tx.inventoryItem.update({
+            where: { id: inventoryItemId },
+            data: { quantity: { increment: removeQty } },
+          })
+        }
         await tx.checkLog.create({
           data: {
             action: 'CHECK_IN',
