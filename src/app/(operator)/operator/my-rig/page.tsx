@@ -22,6 +22,7 @@ import { DispositionDialog, KitItemSummary } from '@/components/shared/Dispositi
 import { RentalVehicleForm, RentalVehicleFields } from '@/components/shared/RentalVehicleForm'
 import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
+import { resolvePhotoRefs } from '@/lib/photoStore'
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -167,22 +168,24 @@ function TransferDialog({
     }
     setLoading(true)
     try {
+      // Upload any captured photos and swap in real URLs (transfers run online).
+      const payload = await resolvePhotoRefs({
+        toOperatorId,
+        note,
+        photoUrls,
+        vehicleIds: Array.from(selVehicles),
+        items: kitItems
+          .filter((ki) => selKitItems.has(ki.id))
+          .map((ki) => ({
+            kitItemId: ki.id,
+            quantity: transferQtys.get(ki.id) ?? ki.quantity,
+            inventoryUnitId: ki.inventoryUnit?.id ?? undefined,
+          })),
+      })
       const res = await fetch(`/api/deployments/${rig.id}/transfer`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          toOperatorId,
-          note,
-          photoUrls,
-          vehicleIds: Array.from(selVehicles),
-          items: kitItems
-            .filter((ki) => selKitItems.has(ki.id))
-            .map((ki) => ({
-              kitItemId: ki.id,
-              quantity: transferQtys.get(ki.id) ?? ki.quantity,
-              inventoryUnitId: ki.inventoryUnit?.id ?? undefined,
-            })),
-        }),
+        body: JSON.stringify(payload),
       })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
