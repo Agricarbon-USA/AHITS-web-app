@@ -253,6 +253,7 @@ Deployment Map (GPS on `DailyCheck`, Mapbox, recency pins) first; then Time-trac
 
 - **A3** — `feature/20260618/maxwellslater-wave-a3-health` (`c14a9c3`, pushed). Open a PR → `development`.
 - **A2 redo** — `feature/20260618/maxwellslater-a2-session-pooler` (`6583aaf`, pushed). Open a PR → `development`, **after** the `AHITS_MIGRATE_URL` secret + SA grant exist.
+- **A5 — first auth tests** — `tests/auth-pin-session.test.ts` (real PIN lockout + `getSession` revocation/expiry; only `next/headers` faked) and `tests/auth-invite-rbac.test.ts` (invite single-use minting, last-admin guardrail, RBAC, tokenVersion-bump-on-suspend). Type/lint clean; runs via `make test`. Branch `feature/20260619/maxwellslater-a5-auth-tests`, PR pending.
 - *Working-tree note:* the A2 branch's checkout carries a stray, uncommitted A3 `proxy.ts` edit + untracked `src/app/api/health/` (leakage from branch-switching in a shared checkout). The **committed** A2 branch is clean. When committing on the A2 branch, stage explicitly (`git add .github/workflows/deploy.yml Makefile`) — **never `git add -A`**, or you'll bundle the A3 change into the A2 PR.
 
 **Newly tracked items (carry forward):**
@@ -260,13 +261,45 @@ Deployment Map (GPS on `DailyCheck`, Mapbox, recency pins) first; then Time-trac
 - **🔴 Rotate the exposed DB password** — the Supabase `postgres` superuser connection string was exposed in plaintext during diagnosis. Now that Max has Owner access, rotate it in the dashboard, update `AHITS_DATABASE_URL` / `AHITS_DIRECT_URL`, and **redeploy staging** (Cloud Run resolves secrets at deploy time — running instances hold the old password until redeployed). Confirm via `curl …/api/health` → 200. *(In progress.)*
 - **🟠 Create `AHITS_MIGRATE_URL` secret + grant SA** — the session-pooler string (5432, session mode, rotated password) as a new Secret Manager secret, with `roles/secretmanager.secretAccessor` for the deployer SA. **Gates the A2-redo merge** — the migrate job reads it on the first post-merge deploy.
 - **🟠 Update CLAUDE.md after A2 redo merges** — the §Notes line still says migrations are manual / automation is "a tracked item"; once A2 redo lands, migrations auto-apply via the session pooler (manual `make db-migrate` becomes the fallback).
-- **🟠 Regain full ownership of the stack** — Supabase Owner access is granted, but the project still lives in the **contractor's org (Orobo Consulting)** with `alsigman@gmail.com` as a co-Owner. Transfer the project to Max's own Supabase org and remove contractor access. Confirm/transfer Owner on the rest of the stack too: **GCP project + billing, domain/DNS, GitHub repo/org, Resend** (email).
+- **🟢 Supabase ownership transferred** (Session 4) — the production project is now under Max's control. Still confirm/transfer Owner on the rest of the stack: **GCP project + billing, domain/DNS, GitHub repo/org, Resend** (email).
 - **🟠 Stand prod up with its own database** — prod (`ahits-web-app`) is **not deployed yet**; only staging exists. The deploy config injects the same `AHITS_*` secrets regardless of service, so a first prod deploy would share staging's DB. Fix at creation: give prod its own Supabase project + secret set, and apply the `/api/health` startup probe to the prod service then.
 - **🟡 Root-cause process fix** — `db push` to shared databases + unmerged feature branches caused the drift. Stop `db push` against shared DBs; everything goes through migrations. Until the A2 redo merges, apply `make db-migrate` manually before merging any schema PR — the only safeguard against another drift incident.
 - **⚪ Residual cosmetic drift** — a few `check_logs`/`inventory_units` indexes exist on the DB but not in migrations (no runtime impact); capture in one follow-up migration if a perfectly clean `migrate diff` is wanted.
 
-**Wave A scorecard:** A1 ✅ merged · A4 (C1/H1/H4/H5) ✅ merged+verified · DAT-5/DAT-7 drift ✅ resolved · A3 ✅ built (PR pending) · A2 redo ✅ built (PR pending, gated on secret) · **A5 (first auth tests) ⬜ not started** · **A6 (real-device offline pass) ⬜ not started (needs a physical device).**
+**Wave A scorecard:** A1 ✅ merged · A4 (C1/H1/H4/H5) ✅ merged+verified · DAT-5/DAT-7 drift ✅ resolved · A3 ✅ built (PR pending) · A2 redo ✅ built (PR pending, gated on secret) · A5 ✅ built (PR pending) · **A6 (real-device offline pass) ⬜ the one outstanding item — needs a physical phone toggling connectivity.** Wave A is functionally complete; what remains is merge mechanics, the `AHITS_MIGRATE_URL` secret, and the manual A6 device pass.
 
 ---
 
-*This document is a snapshot for Session 4 planning. Findings were produced by independent audits and the highest-stakes items (CI/deploy wiring, photo capture, consumable race) were verified directly against source. File paths reference the repo root.*
+## 10. Session 4 summary & forward roadmap
+
+**What this session set out to do.** Start from a full independent audit of the app, then execute the highest-priority hardening (Wave A) and set a clean path forward. The plan called Wave A "pre-pilot hardening" and gated everything behind it.
+
+**What actually happened — the ledger.** Wave A was taken from plan to functionally complete, and two unplanned, high-severity problems surfaced and were resolved along the way.
+
+Shipped and merged to `development` (verified on staging):
+- **Correctness cluster (A4):** C1 consumable/serialized check-out race + silent over-promise, H1 vehicle double-assignment across rigs, H4 daily-check ownership, H5 floating/unreliable alert — with the first deployment-route regression tests. Behaviors confirmed live.
+- **CI/deploy gating (A1):** a shared reusable `verify` workflow (lint / type-check / build / tests) now gates every PR and every deploy; `concurrency` guards; the `develop`→`development` trigger fix; CLAUDE.md branch model corrected.
+- **DAT-5/DAT-7 drift reconciliation:** resolved a production-blocking staging outage and made schema ↔ migrations ↔ generated client ↔ live DB agree (11 migrations, clean `migrate diff`).
+
+Built, validated, PR-pending:
+- **A3** `/api/health` + Cloud Run startup probe (probe live on staging).
+- **A2 redo** automated migrate-on-deploy via the Supabase IPv4 session pooler (after the first attempt was blocked by IPv6-only direct connections).
+- **A5** the first auth tests over PIN lockout, session revocation/expiry, invite single-use minting, the last-admin guardrail, and RBAC.
+
+**Two discoveries worth remembering.**
+1. **The staging outage was self-inflicted drift.** `itemType`/`ResolutionPath` enums and `Alert.activeKey` had been `db push`ed onto the shared database and deployed, but never captured in a migration or merged into `development`. The generated client (built from the deployed schema) couldn't deserialize the live enum columns, so every query touching `inventory_items` 500'd. Fixed by restoring the real migration files, `migrate resolve --applied`, and forward-porting the canonical schema. **Lesson:** never `db push` a shared DB; this is exactly what the A1 gate + A2 migrate-on-deploy exist to prevent.
+2. **The production database wasn't Max's.** It lived in the contractor's Supabase org. Max now has ownership (transferred this session). **Lesson:** take ownership of every tier of the stack early — the rest (GCP, domain, GitHub, Resend) still needs the same confirmation.
+
+**Current state of the system.** Operator core loop works and is now regression-tested at the highest-risk points; CI is a real gate; the staging database is healthy and schema-consistent; deploys are health-probed; auth is, for the first time, covered by tests. The app is materially closer to "safe to pilot" than at session start — pending the merge tail and the one manual device test (A6).
+
+**Immediate tail before Wave A is 100% closed:**
+- Land the open PRs: **#37 (docs)**, **A3**, **A2 redo** (after the `AHITS_MIGRATE_URL` secret + SA grant), **A5**.
+- Update CLAUDE.md's migration note when A2 redo merges.
+- Confirm the password rotation fully propagated (secrets + staging redeploy + `/api/health` 200).
+- **A6:** the real-device offline pass — submit each converted write offline → reconnect → confirm a single clean sync with no duplicates, on iOS and Android. This is the last thing standing between Wave A and a pilot.
+
+**Forward roadmap (re-examined; unchanged in shape, sharpened by this session).** The §7 sequence still holds. The next build wave is **Wave B — Photos end-to-end**, which unblocks the damage/inoperable/hand-off flows that are currently plumbed but empty. Two notes from this session's experience feed forward: (a) **Wave D's "migration-history baseline/reconcile (R11)" is now partly done** — the itemType/ResolutionPath/activeKey drift is reconciled, but the residual `check_logs`/`inventory_units` indexes remain, so R11 shrinks rather than disappears; and (b) the **A2 session-pooler pattern** is the template for any future migration automation, including the eventual separate prod database. After Wave B: Wave C (sync integrity + consistency unification), Wave D (security/data-hygiene tail), Wave E (admin completeness), Wave F (notification dispatcher + hub receive view), Wave G (scheduled maintenance loop), Wave H (deployment model + requests + hub fulfillment), then Phase 3 capstones.
+
+---
+
+*Session 4 record. Wave A taken from independent audit to functional completion; findings and the highest-stakes items (CI/deploy wiring, the staging drift, the consumable race) were verified directly against source and on staging. File paths and commit/branch references are accurate as of the session close; see §9 for the branch/PR/migration map.*
