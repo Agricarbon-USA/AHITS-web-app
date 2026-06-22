@@ -21,14 +21,40 @@ jobs:
   verify:
     uses: ./.github/workflows/verify.yml
 
-  # NOTE: Auto-migration from GitHub Actions is not possible because GHA runners
-  # cannot reach the Supabase direct connection (IPv6-only on this plan). Apply
-  # migrations manually with `make db-migrate` before merging any PR that adds
-  # a new migration. See CLAUDE.md §"Run Prisma locally before opening the PR".
+  # Apply pending Prisma migrations to the target database BEFORE deploying.
+  # The Supabase *direct* connection is IPv6-only (unreachable from IPv4-only GHA
+  # runners), so this reads AHITS_MIGRATE_URL — the Supabase *session pooler*
+  # (IPv4, port 5432, session mode), which is reachable from GHA and supports the
+  # session semantics `prisma migrate deploy` requires (the 6543 transaction
+  # pooler does NOT). Runs only after verify; deploy runs only after this — so
+  # code never ships against an unmigrated schema. Migrations must be
+  # backward-compatible (old code is still serving while this runs).
+  migrate:
+    name: Apply DB migrations
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: GCP Auth
+        uses: ./.github/actions/gcp-auth
+        with:
+          credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+
+      - name: Apply pending migrations to the target database
+        run: make cloud-run-migrate GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }}
 
   deploy:
     name: Build & Deploy
-    needs: verify
+    needs: migrate
     runs-on: ubuntu-latest
 
     steps:

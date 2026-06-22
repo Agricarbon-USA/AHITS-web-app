@@ -133,13 +133,16 @@ cloud-run-url: ## Print URL of a Cloud Run service. Set SERVICE.
 	  --format="value(status.url)"
 
 # Apply pending Prisma migrations to the deployed database BEFORE the new
-# revision serves traffic. Reads the same AHITS_DIRECT_URL secret the Cloud Run
-# service uses, so it always migrates exactly the DB the app will connect to.
-# Requires the deployer service account to have roles/secretmanager.secretAccessor.
+# revision serves traffic. Reads AHITS_MIGRATE_URL — the Supabase SESSION pooler
+# (IPv4, port 5432, session mode), which is reachable from GitHub Actions runners
+# and supports the session semantics `prisma migrate deploy` needs. Do NOT point
+# this at AHITS_DATABASE_URL (the 6543 transaction pooler) — pgBouncer transaction
+# mode breaks migration advisory locks. Requires the deployer service account to
+# have roles/secretmanager.secretAccessor on AHITS_MIGRATE_URL.
 # `@` suppresses command echo so the connection string is never printed.
 cloud-run-migrate: ## Apply pending migrations to the deployed DB. Set GCP_PROJECT.
-	@DB_URL="$$(gcloud secrets versions access latest --secret=AHITS_DIRECT_URL --project=$(GCP_PROJECT))"; \
-	  if [ -z "$$DB_URL" ]; then echo "❌ Could not read AHITS_DIRECT_URL from Secret Manager"; exit 1; fi; \
+	@DB_URL="$$(gcloud secrets versions access latest --secret=AHITS_MIGRATE_URL --project=$(GCP_PROJECT))"; \
+	  if [ -z "$$DB_URL" ]; then echo "❌ Could not read AHITS_MIGRATE_URL from Secret Manager"; exit 1; fi; \
 	  echo "Applying migrations to the deployed database..."; \
 	  DATABASE_URL="$$DB_URL" DIRECT_URL="$$DB_URL" npx prisma migrate deploy
 
