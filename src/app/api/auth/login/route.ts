@@ -4,9 +4,10 @@ import { prisma } from '@/lib/prisma'
 import { verifyPin } from '@/lib/auth/pin'
 import { createSession, setSessionCookie } from '@/lib/auth/session'
 import { rateLimit, clientIp } from '@/lib/rate-limit'
+import { pinSchema } from '@/lib/validation'
 
 const schema = z.discriminatedUnion('mode', [
-  z.object({ mode: z.literal('pin'), email: z.string().email(), pin: z.string().length(6) }),
+  z.object({ mode: z.literal('pin'), email: z.string().email(), pin: pinSchema }),
   z.object({ mode: z.literal('admin'), email: z.string().email(), password: z.string().min(8) }),
 ])
 

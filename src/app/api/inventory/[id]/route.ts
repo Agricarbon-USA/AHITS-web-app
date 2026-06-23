@@ -4,6 +4,7 @@ import { EquipmentCategory, EquipmentStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions } from '@/lib/inventory'
+import { money } from '@/lib/validation'
 
 // Whitelist of admin-editable fields. Excludes id/qrCodeId/deletedAt/timestamps
 // and the unitId helper to prevent mass-assignment. categoryId/hubId are kept
@@ -16,7 +17,7 @@ const inventoryUpdateSchema = z
     sku: z.string().nullable(),
     quantity: z.number().int(),
     expectedQuantity: z.number().int().nullable(),
-    unitCost: z.number().nullable(),
+    unitCost: money().nullable(),
     reorderUrl: z.string().nullable(),
     supplier: z.string().nullable(),
     status: z.nativeEnum(EquipmentStatus),

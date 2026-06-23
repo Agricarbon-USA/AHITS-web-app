@@ -60,7 +60,13 @@ async function _DELETE(
 
   await prisma.$transaction(async (tx) => {
     if (isSerialized) {
-      await tx.kitItem.update({ where: { id: kitItemId }, data: { removedAt: new Date() } })
+      // Claim the removal conditionally (CR-17): if a concurrent return already
+      // flipped removedAt, this matches 0 rows and we skip — no double unit flip.
+      const claimed = await tx.kitItem.updateMany({
+        where: { id: kitItemId, removedAt: null },
+        data: { removedAt: new Date() },
+      })
+      if (claimed.count === 0) return
       if (kitItem.inventoryUnitId) {
         await tx.inventoryUnit.update({
           where: { id: kitItem.inventoryUnitId },
@@ -80,13 +86,21 @@ async function _DELETE(
       }
     } else {
       const removeQty = body.data.quantity ?? kitItem.quantity
+      // Claim the removal/decrement conditionally (CR-17): two concurrent returns
+      // of the same consumable kit item must not BOTH restore stock. The loser
+      // matches 0 rows and bails before the increment below.
       if (removeQty >= kitItem.quantity) {
-        await tx.kitItem.update({ where: { id: kitItemId }, data: { removedAt: new Date() } })
-      } else {
-        await tx.kitItem.update({
-          where: { id: kitItemId },
-          data: { quantity: kitItem.quantity - removeQty },
+        const claimed = await tx.kitItem.updateMany({
+          where: { id: kitItemId, removedAt: null },
+          data: { removedAt: new Date() },
         })
+        if (claimed.count === 0) return
+      } else {
+        const claimed = await tx.kitItem.updateMany({
+          where: { id: kitItemId, removedAt: null, quantity: { gte: removeQty } },
+          data: { quantity: { decrement: removeQty } },
+        })
+        if (claimed.count === 0) return
       }
       if (returnCondition === 'GOOD' && !body.data.consumed) {
         // Genuine return of a usable consumable → restore the authoritative
