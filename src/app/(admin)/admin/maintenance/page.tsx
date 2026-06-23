@@ -133,6 +133,10 @@ export default function AdminMaintenancePage() {
   const [draft, setDraft] = React.useState<Draft | null>(null)
   const [saving, setSaving] = React.useState(false)
   const [completionOdo, setCompletionOdo] = React.useState('')
+  // A.4: close-repair return-destination picker (damage reports only).
+  const [closeOpen, setCloseOpen] = React.useState(false)
+  const [closeHubId, setCloseHubId] = React.useState('')
+  const [closeMethod, setCloseMethod] = React.useState<'' | 'DELIVER' | 'SHIP'>('')
   const [shopEmail, setShopEmail] = React.useState('')
   // maintenanceTaskId → most-recent WORK_ORDER link state (the shop scoreboard).
   const [woLinks, setWoLinks] = React.useState<Map<string, string>>(new Map())
@@ -334,7 +338,10 @@ export default function AdminMaintenancePage() {
     }, 'Repair details saved.')
   }
 
-  async function completeTask(t: MaintenanceTask) {
+  async function completeTask(
+    t: MaintenanceTask,
+    closeData?: { returnDestinationType: string; returnDestinationId: string; repairMethod?: string },
+  ) {
     setSaving(true)
     try {
       const res = await fetch(`/api/maintenance/${t.id}/complete`, {
@@ -343,6 +350,7 @@ export default function AdminMaintenancePage() {
         body: JSON.stringify({
           actualCost: draft && draft.actualCost !== '' ? Number(draft.actualCost) : undefined,
           actualOdometer: completionOdo !== '' ? Number(completionOdo) : undefined,
+          ...(closeData ?? {}),
         }),
       })
       if (!res.ok) {
@@ -556,8 +564,17 @@ export default function AdminMaintenancePage() {
                   <Button variant="outlined" fullWidth disabled={saving} onClick={() => setStatus(selected, 'IN_PROGRESS')}>Start repair</Button>
                 )}
                 {selected.status !== 'COMPLETED' ? (
-                  <Button variant="outlined" color="success" fullWidth disabled={saving} onClick={() => completeTask(selected)}>
-                    {selected.isDamageReport ? 'Mark complete' : 'Complete & reschedule'}
+                  <Button
+                    variant="outlined"
+                    color="success"
+                    fullWidth
+                    disabled={saving}
+                    onClick={() => {
+                      if (selected.isDamageReport) { setCloseHubId(''); setCloseMethod(''); setCloseOpen(true) }
+                      else completeTask(selected)
+                    }}
+                  >
+                    {selected.isDamageReport ? 'Close repair…' : 'Complete & reschedule'}
                   </Button>
                 ) : (
                   <Button variant="outlined" fullWidth disabled={saving} onClick={() => setStatus(selected, 'IN_PROGRESS')}>Reopen</Button>
@@ -621,6 +638,47 @@ export default function AdminMaintenancePage() {
           <Button onClick={() => setRetireUnit(null)} disabled={retiring}>Cancel</Button>
           <Button color="error" variant="contained" onClick={submitRetire} disabled={retiring || !retireNote.trim()}>
             {retiring ? 'Retiring…' : 'Retire'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* A.4: close repair — choose return destination (no default) */}
+      <Dialog open={closeOpen} onClose={() => setCloseOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Close repair</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} pt={0.5}>
+            <Typography variant="body2" color="text.secondary">
+              Choose where this unit returns. There is no default — the repair can&rsquo;t be closed until a destination is selected.
+            </Typography>
+            <TextField select label="Return to hub" value={closeHubId} onChange={(e) => setCloseHubId(e.target.value)} fullWidth required>
+              {hubs.length === 0
+                ? <MenuItem value="" disabled>No hubs configured</MenuItem>
+                : hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.name} — {h.city}, {h.state}</MenuItem>)}
+            </TextField>
+            <TextField select label="How it gets there (optional)" value={closeMethod} onChange={(e) => setCloseMethod(e.target.value as '' | 'DELIVER' | 'SHIP')} fullWidth>
+              <MenuItem value="">Not specified</MenuItem>
+              <MenuItem value="DELIVER">Deliver</MenuItem>
+              <MenuItem value="SHIP">Ship</MenuItem>
+            </TextField>
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setCloseOpen(false)} disabled={saving}>Cancel</Button>
+          <Button
+            color="success"
+            variant="contained"
+            disabled={saving || !closeHubId}
+            onClick={async () => {
+              if (!selected) return
+              await completeTask(selected, {
+                returnDestinationType: 'HUB',
+                returnDestinationId: closeHubId,
+                repairMethod: closeMethod || undefined,
+              })
+              setCloseOpen(false)
+            }}
+          >
+            {saving ? 'Closing…' : 'Complete repair'}
           </Button>
         </DialogActions>
       </Dialog>
