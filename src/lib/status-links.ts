@@ -76,6 +76,34 @@ export async function issueStatusLink(
   return { statusLink, rawToken, url: statusLinkUrl(rawToken) }
 }
 
+/**
+ * Wave F-R soft-gate: for each "Return to Hub" disposition of a SERIALIZED unit,
+ * issue a HUB_RETURN status link so the hub can confirm receipt. Best-effort and
+ * non-blocking — the unit stays AVAILABLE (re-deployable); this only records a
+ * pending receipt. Shared by every return path that carries a hub target
+ * (end-of-deployment and bulk item returns) so coverage is consistent.
+ */
+export async function issueHubReturnLinks(
+  createdById: string,
+  hubDispositions: { kitItemId: string; hubId: string }[],
+): Promise<void> {
+  if (hubDispositions.length === 0) return
+  const hubByKitItem = new Map(hubDispositions.map((d) => [d.kitItemId, d.hubId]))
+  const serialized = await prisma.kitItem.findMany({
+    where: { id: { in: hubDispositions.map((d) => d.kitItemId) }, inventoryUnitId: { not: null } },
+    select: { id: true, inventoryUnitId: true },
+  })
+  for (const ki of serialized) {
+    if (!ki.inventoryUnitId) continue
+    await issueStatusLink({
+      type: 'HUB_RETURN',
+      createdById,
+      inventoryUnitId: ki.inventoryUnitId,
+      hubId: hubByKitItem.get(ki.id),
+    })
+  }
+}
+
 const RESOLVE_INCLUDE = {
   maintenanceTask: {
     include: {

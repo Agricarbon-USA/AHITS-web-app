@@ -15,6 +15,11 @@ TAG           ?= $(shell git rev-parse --short HEAD)
 # Cloud Run deploy parameters — overridable per target
 SERVICE       ?= $(APP_NAME)-staging
 MIN_INSTANCES ?= 0
+# Secret namespace (PIPE-2): staging uses AHITS_*, prod uses AHITS_PROD_* so the
+# two environments NEVER share a database, app URL, or any secret. The prod
+# secrets must exist in Secret Manager BEFORE the first prod deploy — Cloud Run
+# validates --set-secrets references at deploy time.
+SECRET_NS     ?= AHITS
 
 .PHONY: help dev build start lint typecheck verify \
         db-generate db-migrate db-migrate-dev db-studio db-seed db-reset \
@@ -124,7 +129,7 @@ cloud-run-deploy: ## Deploy image to Cloud Run. Set SERVICE, TAG, MIN_INSTANCES.
 	  --allow-unauthenticated \
 	  --min-instances=$(MIN_INSTANCES) \
 	  --set-env-vars="NODE_ENV=production" \
-	  --set-secrets="DATABASE_URL=AHITS_DATABASE_URL:latest,DIRECT_URL=AHITS_DIRECT_URL:latest,NEXT_PUBLIC_SUPABASE_URL=AHITS_NEXT_PUBLIC_SUPABASE_URL:latest,NEXT_PUBLIC_SUPABASE_ANON_KEY=AHITS_NEXT_PUBLIC_SUPABASE_ANON_KEY:latest,SUPABASE_SERVICE_ROLE_KEY=AHITS_SUPABASE_SERVICE_ROLE_KEY:latest,PIN_SESSION_SECRET=AHITS_PIN_SESSION_SECRET:latest,RESEND_API_KEY=AHITS_RESEND_API_KEY:latest,EMAIL_FROM=AHITS_EMAIL_FROM:latest,ADMIN_EMAIL=AHITS_ADMIN_EMAIL:latest,NEXT_PUBLIC_APP_URL=AHITS_NEXT_PUBLIC_APP_URL:latest,CRON_SECRET=AHITS_CRON_SECRET:latest"
+	  --set-secrets="DATABASE_URL=$(SECRET_NS)_DATABASE_URL:latest,DIRECT_URL=$(SECRET_NS)_DIRECT_URL:latest,NEXT_PUBLIC_SUPABASE_URL=$(SECRET_NS)_NEXT_PUBLIC_SUPABASE_URL:latest,NEXT_PUBLIC_SUPABASE_ANON_KEY=$(SECRET_NS)_NEXT_PUBLIC_SUPABASE_ANON_KEY:latest,SUPABASE_SERVICE_ROLE_KEY=$(SECRET_NS)_SUPABASE_SERVICE_ROLE_KEY:latest,PIN_SESSION_SECRET=$(SECRET_NS)_PIN_SESSION_SECRET:latest,RESEND_API_KEY=$(SECRET_NS)_RESEND_API_KEY:latest,EMAIL_FROM=$(SECRET_NS)_EMAIL_FROM:latest,ADMIN_EMAIL=$(SECRET_NS)_ADMIN_EMAIL:latest,NEXT_PUBLIC_APP_URL=$(SECRET_NS)_NEXT_PUBLIC_APP_URL:latest,CRON_SECRET=$(SECRET_NS)_CRON_SECRET:latest"
 
 cloud-run-url: ## Print URL of a Cloud Run service. Set SERVICE.
 	@gcloud run services describe $(SERVICE) \
@@ -137,9 +142,9 @@ cloud-run-url: ## Print URL of a Cloud Run service. Set SERVICE.
 # service uses, so it always migrates exactly the DB the app will connect to.
 # Requires the deployer service account to have roles/secretmanager.secretAccessor.
 # `@` suppresses command echo so the connection string is never printed.
-cloud-run-migrate: ## Apply pending migrations to the deployed DB. Set GCP_PROJECT.
-	@DB_URL="$$(gcloud secrets versions access latest --secret=AHITS_DIRECT_URL --project=$(GCP_PROJECT))"; \
-	  if [ -z "$$DB_URL" ]; then echo "❌ Could not read AHITS_DIRECT_URL from Secret Manager"; exit 1; fi; \
+cloud-run-migrate: ## Apply pending migrations to the deployed DB. Set GCP_PROJECT (and SECRET_NS=AHITS_PROD for prod).
+	@DB_URL="$$(gcloud secrets versions access latest --secret=$(SECRET_NS)_DIRECT_URL --project=$(GCP_PROJECT))"; \
+	  if [ -z "$$DB_URL" ]; then echo "❌ Could not read $(SECRET_NS)_DIRECT_URL from Secret Manager"; exit 1; fi; \
 	  echo "Applying migrations to the deployed database..."; \
 	  DATABASE_URL="$$DB_URL" DIRECT_URL="$$DB_URL" npx prisma migrate deploy
 
@@ -147,12 +152,12 @@ cloud-run-migrate: ## Apply pending migrations to the deployed DB. Set GCP_PROJE
 deploy-staging: ## Build, push, and deploy to staging. Override TAG as needed.
 	$(MAKE) docker-build
 	$(MAKE) docker-push
-	$(MAKE) cloud-run-deploy SERVICE=$(APP_NAME)-staging MIN_INSTANCES=0
+	$(MAKE) cloud-run-deploy SERVICE=$(APP_NAME)-staging MIN_INSTANCES=0 SECRET_NS=AHITS
 
-deploy-prod: ## Build, push, and deploy to production.
+deploy-prod: ## Build, push, and deploy to production (uses AHITS_PROD_* secrets).
 	$(MAKE) docker-build
 	$(MAKE) docker-push
-	$(MAKE) cloud-run-deploy SERVICE=$(APP_NAME) MIN_INSTANCES=1
+	$(MAKE) cloud-run-deploy SERVICE=$(APP_NAME) MIN_INSTANCES=1 SECRET_NS=AHITS_PROD
 
 logs: ## Tail Cloud Run logs (staging by default; override SERVICE for prod)
 	gcloud run services logs tail $(SERVICE) \

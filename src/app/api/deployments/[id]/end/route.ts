@@ -5,6 +5,7 @@ import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { createAlert } from '@/lib/alerts'
 import { withIdempotency } from '@/lib/idempotency'
+import { issueHubReturnLinks } from '@/lib/status-links'
 
 const dispositionSchema = z.object({
   kitItemId: z.string(),
@@ -87,11 +88,12 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
       if (disp.type === 'HUB') {
         if (kitItem.item.itemType === 'CONSUMABLE' && (disp.returnCondition ?? 'GOOD') === 'GOOD') {
-          // Restore authoritative consumable stock drawn down at check-out when
-          // it comes back to the hub usable (full removal at end-of-deployment).
+          // Restore exactly the stock drawn at check-out (not the held quantity)
+          // when it comes back to the hub usable — full removal at end-of-
+          // deployment, so all remaining drawn stock is restored (CR-1a / N-2).
           await tx.inventoryItem.update({
             where: { id: inventoryItemId },
-            data: { quantity: { increment: kitItem.quantity } },
+            data: { quantity: { increment: kitItem.drawnQuantity } },
           })
         }
         const logCondition =
@@ -248,6 +250,18 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       })
     }
   })
+
+  // Wave F-R (soft-gate, best-effort): issue HUB_RETURN confirmation links for
+  // serialized units sent back to a hub at end-of-deployment — the most common
+  // hub-return moment. Non-blocking; failures never affect the ended deployment.
+  try {
+    const hubDisps = itemDispositions
+      .filter((d) => d.type === 'HUB' && d.hubId)
+      .map((d) => ({ kitItemId: d.kitItemId, hubId: d.hubId as string }))
+    await issueHubReturnLinks(session.userId, hubDisps)
+  } catch (e) {
+    console.error('[end hub-return link issue]', e)
+  }
 
   return NextResponse.json({ ok: true })
 }

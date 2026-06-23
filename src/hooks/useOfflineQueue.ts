@@ -58,8 +58,16 @@ function extractError(body: unknown): string {
   if (!body || typeof body !== 'object') return 'Request failed'
   const b = body as Record<string, unknown>
   if (typeof b.error === 'string') return b.error
-  const fe = (b.error as { formErrors?: string[] } | undefined)?.formErrors
-  if (fe?.[0]) return fe[0]
+  // zod flatten() shape: surface a top-level formError, else the first
+  // field-level message (e.g. "Note is required") so validation failures aren't
+  // swallowed into a generic "Request failed".
+  const err = b.error as { formErrors?: string[]; fieldErrors?: Record<string, string[] | undefined> } | undefined
+  if (err?.formErrors?.[0]) return err.formErrors[0]
+  if (err?.fieldErrors) {
+    for (const msgs of Object.values(err.fieldErrors)) {
+      if (msgs?.[0]) return msgs[0]
+    }
+  }
   return 'Request failed'
 }
 

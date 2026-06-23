@@ -86,6 +86,11 @@ async function _DELETE(
       }
     } else {
       const removeQty = body.data.quantity ?? kitItem.quantity
+      const drawn = kitItem.drawnQuantity ?? 0
+      // Restore exactly what was drawn at check-out, never more (CR-1a / N-2):
+      // a full return gives back all remaining drawn stock; a partial return
+      // gives back its proportional share, capped at what's left to restore.
+      let restoreQty = 0
       // Claim the removal/decrement conditionally (CR-17): two concurrent returns
       // of the same consumable kit item must not BOTH restore stock. The loser
       // matches 0 rows and bails before the increment below.
@@ -95,21 +100,22 @@ async function _DELETE(
           data: { removedAt: new Date() },
         })
         if (claimed.count === 0) return
+        restoreQty = drawn
       } else {
+        restoreQty = Math.min(removeQty, drawn)
         const claimed = await tx.kitItem.updateMany({
           where: { id: kitItemId, removedAt: null, quantity: { gte: removeQty } },
-          data: { quantity: { decrement: removeQty } },
+          data: { quantity: { decrement: removeQty }, drawnQuantity: { decrement: restoreQty } },
         })
         if (claimed.count === 0) return
       }
-      if (returnCondition === 'GOOD' && !body.data.consumed) {
-        // Genuine return of a usable consumable → restore the authoritative
-        // on-hand count drawn down at check-out. Daily-usage logging passes
-        // consumed:true (item used up, not returned) and is NOT restored; a
-        // damaged/maintenance return (returnCondition !== GOOD) isn't either.
+      if (returnCondition === 'GOOD' && !body.data.consumed && restoreQty > 0) {
+        // Genuine return of a usable consumable → restore exactly the stock drawn
+        // for this return. Daily-usage logging passes consumed:true (used up, not
+        // returned) and is NOT restored; a damaged/maintenance return isn't either.
         await tx.inventoryItem.update({
           where: { id: kitItem.inventoryItemId },
-          data: { quantity: { increment: removeQty } },
+          data: { quantity: { increment: restoreQty } },
         })
       }
       const excludeUnitIds = await getUnitsInOtherRigs(tx, kitItem.inventoryItemId, rigId)

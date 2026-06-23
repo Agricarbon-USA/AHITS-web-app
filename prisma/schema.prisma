@@ -285,6 +285,11 @@ model KitItem {
   kitId           String
   inventoryItemId String
   quantity        Int            @default(1)
+  // Actual CONSUMABLE stock drawn from InventoryItem.quantity at check-out
+  // (may be less than `quantity` when stock was stale/low). Returns restore
+  // exactly this — never more — so on-hand can't ratchet above the true total
+  // (CR-1a / N-2). 0 for serialized items (tracked by unit status instead).
+  drawnQuantity   Int            @default(0)
   inventoryUnitId String?
   kit             Kit            @relation(fields: [kitId], references: [id])
   item            InventoryItem  @relation(fields: [inventoryItemId], references: [id])

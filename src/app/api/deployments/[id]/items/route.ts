@@ -5,7 +5,7 @@ import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { createAlert } from '@/lib/alerts'
 import { withIdempotency } from '@/lib/idempotency'
-import { issueStatusLink } from '@/lib/status-links'
+import { issueHubReturnLinks } from '@/lib/status-links'
 
 const RIG_INCLUDE = {
   operator: { select: { id: true, name: true } },
@@ -49,7 +49,9 @@ const addSchema = z.object({
       inventoryUnitId: z.string(),
     }),
   ])).min(1),
-  note: z.string().min(1, 'Note is required'),
+  // Optional: adding a tool mid-deployment shouldn't require typing a note
+  // (low-friction field use). A note still flows to the check-out log when given.
+  note: z.string().optional(),
   photoUrls: z.array(z.string()).default([]),
 })
 
@@ -179,26 +181,41 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
               throw Object.assign(new Error('UNIT_CONFLICT'), {})
             }
           }
+          // Draw down authoritative consumable stock on check-out and record the
+          // ACTUAL amount drawn (drawnQuantity) so the HUB-return restore gives
+          // back exactly that — never more (CR-1a / N-2). Full atomic draw, else
+          // draw exactly what remains (down to 0).
+          let drawnQuantity = 0
+          if (invItem?.itemType === 'CONSUMABLE') {
+            const fullDraw = await tx.inventoryItem.updateMany({
+              where: { id: entry.inventoryItemId, quantity: { gte: entry.quantity } },
+              data: { quantity: { decrement: entry.quantity } },
+            })
+            if (fullDraw.count > 0) {
+              drawnQuantity = entry.quantity
+            } else {
+              const cur = await tx.inventoryItem.findUnique({
+                where: { id: entry.inventoryItemId },
+                select: { quantity: true },
+              })
+              drawnQuantity = cur?.quantity ?? 0
+              if (drawnQuantity > 0) {
+                await tx.inventoryItem.update({
+                  where: { id: entry.inventoryItemId },
+                  data: { quantity: { decrement: drawnQuantity } },
+                })
+              }
+            }
+          }
           await tx.kitItem.create({
             data: {
               kitId: kit.id,
               inventoryItemId: entry.inventoryItemId,
               quantity: entry.quantity,
               inventoryUnitId: null,
+              drawnQuantity,
             },
           })
-          if (invItem?.itemType === 'CONSUMABLE') {
-            // Draw down authoritative consumable stock on check-out (see the
-            // matching restore on HUB return below). Guarded against going
-            // negative; floor at 0 on a stale/low count rather than blocking.
-            const drawn = await tx.inventoryItem.updateMany({
-              where: { id: entry.inventoryItemId, quantity: { gte: entry.quantity } },
-              data: { quantity: { decrement: entry.quantity } },
-            })
-            if (drawn.count === 0) {
-              await tx.inventoryItem.update({ where: { id: entry.inventoryItemId }, data: { quantity: 0 } })
-            }
-          }
           await tx.checkLog.create({
             data: {
               action: 'CHECK_OUT',
@@ -303,14 +320,13 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
 
       if (disp.type === 'HUB') {
         if (kitItem.item.itemType === 'CONSUMABLE' && (disp.returnCondition ?? 'GOOD') === 'GOOD') {
-          // Consumable returned to the hub in usable condition → restore the
-          // authoritative on-hand count drawn down at check-out. Damaged/
+          // Consumable returned to the hub in usable condition → restore exactly
+          // the stock drawn at check-out, capped at what's left to restore, so
+          // on-hand can't overshoot the true total (CR-1a / N-2). Damaged/
           // maintenance returns are not restored (the stock isn't usable).
-          // (Explicit CONSUMABLE check, matching end/route.ts, rather than
-          // !isSerialized — safe against any future third ItemType.)
           await tx.inventoryItem.update({
             where: { id: inventoryItemId },
-            data: { quantity: { increment: removeQty } },
+            data: { quantity: { increment: Math.min(removeQty, kitItem.drawnQuantity) } },
           })
         }
         await tx.checkLog.create({
@@ -472,23 +488,10 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
   // receipt. The unit stays AVAILABLE (still re-deployable) — this only records a
   // pending receipt; any failure here never affects the return that committed.
   try {
-    const hubDisps = itemDispositions.filter((d) => d.type === 'HUB' && d.hubId)
-    if (hubDisps.length > 0) {
-      const hubByKitItem = new Map(hubDisps.map((d) => [d.kitItemId, d.hubId as string]))
-      const serializedKitItems = await prisma.kitItem.findMany({
-        where: { id: { in: hubDisps.map((d) => d.kitItemId) }, inventoryUnitId: { not: null } },
-        select: { id: true, inventoryUnitId: true },
-      })
-      for (const ki of serializedKitItems) {
-        if (!ki.inventoryUnitId) continue
-        await issueStatusLink({
-          type: 'HUB_RETURN',
-          createdById: session.userId,
-          inventoryUnitId: ki.inventoryUnitId,
-          hubId: hubByKitItem.get(ki.id),
-        })
-      }
-    }
+    const hubDisps = itemDispositions
+      .filter((d) => d.type === 'HUB' && d.hubId)
+      .map((d) => ({ kitItemId: d.kitItemId, hubId: d.hubId as string }))
+    await issueHubReturnLinks(session.userId, hubDisps)
   } catch (e) {
     console.error('[items hub-return link issue]', e)
   }
