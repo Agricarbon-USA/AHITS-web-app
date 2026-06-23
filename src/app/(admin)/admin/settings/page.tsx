@@ -9,6 +9,7 @@ import {
   Paper, Card, CardContent, Switch, FormControlLabel,
 } from '@mui/material'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { ChecklistTemplatesSection } from '@/components/admin/ChecklistTemplatesSection'
 import { ALERT_LABELS } from '@/lib/alert-display'
 import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
@@ -270,6 +271,9 @@ export default function SettingsPage() {
           </Stack>
         </CardContent>
       </Card>
+
+      {/* Daily-Check Checklists (M5-25) */}
+      <ChecklistTemplatesSection onToast={showToast} onError={showError} />
 
       {/* Equipment Categories */}
       <Card sx={{ mb: 3 }}>

@@ -24,7 +24,7 @@ interface ChecklistRow {
 
 interface RigVehicle {
   id: string
-  vehicle: { id: string; name: string }
+  vehicle: { id: string; name: string; type?: string }
 }
 
 interface ActiveRig {
@@ -67,6 +67,25 @@ export default function OperatorDailyCheckPage() {
       })
       .catch(() => {})
   }, [])
+
+  // M5-25: resolve the admin-configured checklist for the selected vehicle's
+  // type, falling back to the built-in ~16-item default. Re-runs when the
+  // operator switches vehicles. Offline / no template → keep the default list.
+  React.useEffect(() => {
+    if (!vehicleId) return
+    const vt = rig?.vehicles?.find((rv) => rv.vehicle.id === vehicleId)?.vehicle.type ?? ''
+    let active = true
+    fetch(`/api/checklist-templates?vehicleType=${encodeURIComponent(vt)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!active) return
+        const items: { key: string; label: string }[] =
+          Array.isArray(d?.items) && d.items.length ? d.items : DEFAULT_CHECKLIST
+        setChecklist(items.map((it) => ({ key: it.key, label: it.label, value: 'yes', note: '' })))
+      })
+      .catch(() => { /* offline — keep the current (default) list */ })
+    return () => { active = false }
+  }, [vehicleId, rig])
 
   const passFail = checklist.every((item) => item.value !== 'no')
   const failingItems = checklist.filter((item) => item.value === 'no')
