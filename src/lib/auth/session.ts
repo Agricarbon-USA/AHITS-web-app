@@ -11,12 +11,22 @@ export interface SessionPayload {
   role: UserRole
   name: string
   email: string
+  // Read fresh from the DB on every request (like role/name): true when an admin
+  // reset this operator's PIN and they must set a new one before continuing.
+  mustChangePin: boolean
 }
 
-// The JWT additionally carries a tokenVersion; getSession re-checks it (and the
-// user's isActive/role) against the DB so suspend / force-logout / demote take
-// effect immediately instead of waiting up to 24h for the token to expire.
-type SignedPayload = SessionPayload & { tokenVersion: number }
+// The JWT carries identity + a tokenVersion (getSession re-checks the version,
+// isActive, role, and mustChangePin against the DB so suspend / force-logout /
+// demote / forced-PIN-reset all take effect immediately). mustChangePin is NOT
+// signed into the token — it's authoritative from the DB only.
+type SignedClaims = {
+  userId: string
+  role: UserRole
+  name: string
+  email: string
+  tokenVersion: number
+}
 
 function getSecret() {
   const secret = process.env.PIN_SESSION_SECRET
@@ -24,7 +34,7 @@ function getSecret() {
   return new TextEncoder().encode(secret)
 }
 
-export async function createSession(payload: SignedPayload): Promise<string> {
+export async function createSession(payload: SignedClaims): Promise<string> {
   return new SignJWT({ ...payload })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
@@ -37,10 +47,10 @@ export async function getSession(): Promise<SessionPayload | null> {
   const token = cookieStore.get(SESSION_COOKIE)?.value
   if (!token) return null
 
-  let claims: SignedPayload
+  let claims: SignedClaims
   try {
     const { payload } = await jwtVerify(token, getSecret())
-    claims = payload as unknown as SignedPayload
+    claims = payload as unknown as SignedClaims
   } catch {
     return null
   }
@@ -51,11 +61,11 @@ export async function getSession(): Promise<SessionPayload | null> {
   try {
     const user = await prisma.user.findUnique({
       where: { id: claims.userId },
-      select: { isActive: true, tokenVersion: true, role: true, name: true, email: true },
+      select: { isActive: true, tokenVersion: true, role: true, name: true, email: true, mustChangePin: true },
     })
     if (!user || !user.isActive) return null
     if ((claims.tokenVersion ?? 0) !== user.tokenVersion) return null
-    return { userId: claims.userId, role: user.role, name: user.name, email: user.email }
+    return { userId: claims.userId, role: user.role, name: user.name, email: user.email, mustChangePin: user.mustChangePin }
   } catch {
     // If the DB is unreachable, fail closed (treat as unauthenticated).
     return null
