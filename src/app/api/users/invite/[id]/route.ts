@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { randomBytes } from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
 import { sendEmail } from '@/lib/email/resend'
 import { inviteEmail } from '@/lib/email/templates'
 import { writeAudit } from '@/lib/audit'
+import { generateInviteToken, hashInviteToken } from '@/lib/invite-token'
 
 // Revoke an outstanding invite (Wave 2A.5 §B.3).
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -31,14 +31,14 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   if (!invite) return NextResponse.json({ error: 'Invite not found' }, { status: 404 })
   if (invite.usedAt) return NextResponse.json({ error: 'Invite already used' }, { status: 409 })
 
-  const token = randomBytes(32).toString('base64url')
+  const rawToken = generateInviteToken()
   const updated = await prisma.inviteToken.update({
     where: { id },
-    data: { token, revokedAt: null, expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000) },
+    data: { token: hashInviteToken(rawToken), revokedAt: null, expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000) },
   })
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
-  const setupUrl = `${appUrl}/setup-account?token=${encodeURIComponent(updated.token)}`
+  const setupUrl = `${appUrl}/setup-account?token=${encodeURIComponent(rawToken)}`
   try {
     await sendEmail({
       to: updated.email,
