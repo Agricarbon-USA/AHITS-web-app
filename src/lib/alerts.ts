@@ -32,3 +32,17 @@ export async function createAlert(
     update: {},
   })
 }
+
+/**
+ * Auto-resolve the active (unresolved) alert for a source, if any. Mirrors the
+ * manual resolve route: nulls `activeKey` so a later recurrence can raise a
+ * fresh alert. Used by self-clearing scans (e.g. LOW_INVENTORY when stock
+ * recovers above threshold). No-op when there's no active alert.
+ */
+export async function resolveActiveAlert(type: string, sourceTable: string, sourceId: string) {
+  const activeKey = `${type}:${sourceTable}:${sourceId}`
+  await prisma.alert.updateMany({
+    where: { activeKey, resolved: false },
+    data: { resolved: true, resolvedAt: new Date(), activeKey: null },
+  })
+}
