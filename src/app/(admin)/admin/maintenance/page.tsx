@@ -5,12 +5,23 @@ import {
   Box, Typography, Stack, Chip, Drawer, Divider, Button, TextField, MenuItem,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper,
   Skeleton, Tabs, Tab, IconButton, Link, CircularProgress,
+  Dialog, DialogTitle, DialogContent, DialogActions,
 } from '@mui/material'
 import BuildIcon from '@mui/icons-material/Build'
 import CloseIcon from '@mui/icons-material/Close'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import { useToast } from '@/components/shared/useToast'
 import { StatusChip } from '@/components/shared/StatusChip'
+import { RepairReviewDialog } from '@/components/shared/RepairReviewDialog'
+
+interface InoperableUnit {
+  id: string
+  itemId: string
+  itemName: string
+  label: string
+  inoperableNotes: string | null
+  reportedAt: string | null
+}
 
 // ── Types ─────────────────────────────────────────────────────────
 interface Ref { id: string; name: string }
@@ -128,6 +139,45 @@ export default function AdminMaintenancePage() {
   // the token is never stored), shown so the admin can copy it manually.
   const [lastLink, setLastLink] = React.useState<string | null>(null)
   const autoOpenedRef = React.useRef(false)
+  const [inoperable, setInoperable] = React.useState<InoperableUnit[]>([])
+  const [repairUnit, setRepairUnit] = React.useState<InoperableUnit | null>(null)
+  const [retireUnit, setRetireUnit] = React.useState<InoperableUnit | null>(null)
+  const [retireNote, setRetireNote] = React.useState('')
+  const [retiring, setRetiring] = React.useState(false)
+
+  const loadInoperable = React.useCallback(async () => {
+    try {
+      const res = await fetch('/api/inventory/inoperable-units')
+      const json = await res.json()
+      setInoperable(json.data ?? [])
+    } catch {
+      /* non-fatal — the review panel simply stays empty */
+    }
+  }, [])
+
+  const submitRetire = async () => {
+    if (!retireUnit || !retireNote.trim()) return
+    setRetiring(true)
+    try {
+      const res = await fetch(`/api/inventory/${retireUnit.itemId}/review-inoperable`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ unitId: retireUnit.id, decision: 'RETIRE', note: retireNote }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        showToast({ message: typeof d.error === 'string' ? d.error : 'Retire failed', severity: 'error' })
+        return
+      }
+      showToast({ message: `${retireUnit.label} retired`, severity: 'success' })
+      setRetireUnit(null); setRetireNote('')
+      loadInoperable()
+    } catch {
+      showToast({ message: 'Retire failed', severity: 'error' })
+    } finally {
+      setRetiring(false)
+    }
+  }
 
   const load = React.useCallback(async () => {
     setLoading(true)
@@ -160,8 +210,9 @@ export default function AdminMaintenancePage() {
   React.useEffect(() => {
     load()
     loadLinks()
+    loadInoperable()
     fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(d ?? [])).catch(() => {})
-  }, [load, loadLinks])
+  }, [load, loadLinks, loadInoperable])
 
   // Deep link from a dashboard alert (?task=<id>) auto-opens that task once.
   React.useEffect(() => {
@@ -332,6 +383,29 @@ export default function AdminMaintenancePage() {
       <Typography color="text.secondary" mb={2} variant="body2">
         Damage reports from the field and scheduled vehicle/equipment service. Assign a shop or hub, track the repair, and close it out.
       </Typography>
+
+      {inoperable.length > 0 && (
+        <Paper variant="outlined" sx={{ p: 2, mb: 2, borderColor: 'error.main' }}>
+          <Stack direction="row" alignItems="center" spacing={1} mb={1}>
+            <WarningAmberIcon color="error" fontSize="small" />
+            <Typography variant="subtitle2">Inoperable units — needs review ({inoperable.length})</Typography>
+          </Stack>
+          <Stack divider={<Divider />}>
+            {inoperable.map((u) => (
+              <Stack key={u.id} direction="row" alignItems="center" spacing={1} py={0.75} flexWrap="wrap">
+                <Box flexGrow={1} minWidth={180}>
+                  <Typography variant="body2" fontWeight={500}>{u.itemName} · {u.label}</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {u.inoperableNotes ? u.inoperableNotes : 'Reported inoperable'}{u.reportedAt ? ` · ${fmtDate(u.reportedAt)}` : ''}
+                  </Typography>
+                </Box>
+                <Button size="small" variant="outlined" onClick={() => setRepairUnit(u)}>Send for repair</Button>
+                <Button size="small" variant="outlined" color="error" onClick={() => { setRetireUnit(u); setRetireNote('') }}>Retire</Button>
+              </Stack>
+            ))}
+          </Stack>
+        </Paper>
+      )}
 
       <Tabs value={filter} onChange={(_, v) => setFilter(v)} sx={{ mb: 2 }} variant="scrollable" allowScrollButtonsMobile>
         <Tab value="damage" label={<Stack direction="row" spacing={1} alignItems="center"><span>Damage reports</span>{counts.damage > 0 && <Chip size="small" color="error" label={counts.damage} />}</Stack>} />
@@ -520,6 +594,37 @@ export default function AdminMaintenancePage() {
           </Box>
         )}
       </Drawer>
+
+      {/* Inoperable review — send for repair (shared dialog) */}
+      {repairUnit && (
+        <RepairReviewDialog
+          open
+          itemId={repairUnit.itemId}
+          unitId={repairUnit.id}
+          hubs={hubs}
+          onClose={() => setRepairUnit(null)}
+          onSuccess={() => { setRepairUnit(null); loadInoperable(); load() }}
+        />
+      )}
+
+      {/* Inoperable review — retire */}
+      <Dialog open={!!retireUnit} onClose={() => setRetireUnit(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>Retire unit</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} pt={0.5}>
+            <Typography variant="body2">
+              Retire <strong>{retireUnit?.itemName} · {retireUnit?.label}</strong>? It will be marked RETIRED and removed from service. History is preserved.
+            </Typography>
+            <TextField label="Reason (required)" value={retireNote} onChange={(e) => setRetireNote(e.target.value)} multiline rows={2} fullWidth required />
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setRetireUnit(null)} disabled={retiring}>Cancel</Button>
+          <Button color="error" variant="contained" onClick={submitRetire} disabled={retiring || !retireNote.trim()}>
+            {retiring ? 'Retiring…' : 'Retire'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }
