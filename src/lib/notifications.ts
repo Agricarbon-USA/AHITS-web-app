@@ -26,7 +26,6 @@ export function presentAlert(alert: {
   switch (alert.type) {
     case 'DAMAGE_REPORTED': message = `${subject ?? 'An item'} was reported damaged in the field.`; break
     case 'MAINTENANCE_OVERDUE': message = `${str(meta.taskName) ?? 'A maintenance task'} is overdue${meta.daysPastDue ? ` by ${meta.daysPastDue} day(s)` : ''}.`; break
-    case 'REPAIR_NEEDED': message = `${subject ?? 'An item'} needs repair.`; break
     case 'EQUIPMENT_NOT_RETURNED': message = `${subject ?? 'Equipment'} has not been returned on time.`; break
     case 'LOW_INVENTORY': message = `${subject ?? 'An item'} is running low on stock${meta.quantity != null && meta.threshold != null ? ` (${meta.quantity} left, threshold ${meta.threshold})` : ''}.`; break
     case 'INSURANCE_EXPIRING': message = `${subject ?? 'A vehicle'}'s insurance is expiring soon.`; break
