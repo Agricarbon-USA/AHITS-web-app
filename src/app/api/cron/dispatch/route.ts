@@ -42,7 +42,19 @@ async function run() {
     })
   }
 
-  // 2) Scan: low consumable stock → raise/clear LOW_INVENTORY alerts. Only
+  // 2) Reap idempotency keys older than 48h so the dedup table doesn't grow
+  // unbounded. The offline queue only replays within minutes of reconnecting,
+  // so a 48h window is far longer than any legitimate replay needs.
+  let idempotencyReaped = 0
+  try {
+    idempotencyReaped = Number(
+      await prisma.$executeRaw`DELETE FROM idempotency_key WHERE created_at < NOW() - INTERVAL '48 hours'`,
+    )
+  } catch {
+    /* table missing / transient — non-fatal */
+  }
+
+  // 3) Scan: low consumable stock → raise/clear LOW_INVENTORY alerts. Only
   // consumables with a configured threshold participate; the alert self-clears
   // once stock recovers above the threshold (resolveActiveAlert nulls activeKey).
   const consumables = await prisma.inventoryItem.findMany({
@@ -64,7 +76,7 @@ async function run() {
     }
   }
 
-  // 3) Scan: vehicle insurance/registration expiring within 30 days (or already
+  // 4) Scan: vehicle insurance/registration expiring within 30 days (or already
   // expired) → raise/clear the matching alerts. Self-clears once the document is
   // renewed past the window (or the date is cleared / vehicle retired).
   const EXPIRY_WINDOW_DAYS = 30
@@ -89,9 +101,9 @@ async function run() {
     }
   }
 
-  // 4) Dispatch: email admins + create in-app notifications for un-notified alerts.
+  // 5) Dispatch: email admins + create in-app notifications for un-notified alerts.
   const dispatch = await dispatchPendingAlerts()
-  return { overdueFlagged: due.length, lowInventoryFlagged: lowFlagged, expiryFlagged, ...dispatch }
+  return { overdueFlagged: due.length, idempotencyReaped, lowInventoryFlagged: lowFlagged, expiryFlagged, ...dispatch }
 }
 
 export async function POST(req: NextRequest) {
