@@ -29,6 +29,7 @@ async function run() {
       isDamageReport: false,
       status: { in: ['UPCOMING', 'DUE_SOON'] },
       nextDue: { lt: now },
+      deletedAt: null,
     },
     include: { vehicle: { select: { name: true } }, item: { select: { name: true } } },
   })

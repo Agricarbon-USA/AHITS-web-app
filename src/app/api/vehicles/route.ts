@@ -13,6 +13,7 @@ export async function GET(req: NextRequest) {
 
   const vehicles = await prisma.vehicle.findMany({
     where: {
+      deletedAt: null,
       ...(status && { status: status as never }),
       ...(type && { type: type as never }),
     },
