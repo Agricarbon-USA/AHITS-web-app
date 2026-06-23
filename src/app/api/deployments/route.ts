@@ -97,6 +97,17 @@ export async function POST(req: NextRequest) {
   let rig
   try {
   rig = await prisma.$transaction(async (tx) => {
+    // CR-14: an operator may hold at most one active (un-ended) deployment.
+    // Two active rigs make "my active rig" lookups ambiguous (findFirst silently
+    // picks one) and strand items in the other. Reject up front.
+    const existingActive = await tx.rig.findFirst({
+      where: { operatorId, endedAt: null },
+      select: { id: true },
+    })
+    if (existingActive) {
+      throw new Error('OPERATOR_HAS_ACTIVE_RIG')
+    }
+
     const newRig = await tx.rig.create({
       data: { operatorId, projectId, label },
     })
@@ -180,24 +191,36 @@ export async function POST(req: NextRequest) {
               throw Object.assign(new Error('UNIT_CONFLICT'), {})
             }
           }
-          await tx.kitItem.create({
-            data: { kitId: kit.id, inventoryItemId: ki.inventoryItemId, quantity, inventoryUnitId: null },
-          })
+          // CONSUMABLE stock is authoritative as InventoryItem.quantity, so a
+          // checkout must draw it down. Record the ACTUAL amount drawn on the kit
+          // item (drawnQuantity) so the return restores exactly that and on-hand
+          // can't overshoot the true total (CR-1a / N-2). Try the full atomic
+          // draw; if stock is stale/low, draw exactly what remains (down to 0).
+          let drawnQuantity = 0
           if (item?.itemType === 'CONSUMABLE') {
-            // CONSUMABLE stock is authoritative as InventoryItem.quantity, so a
-            // checkout must draw it down (otherwise on-hand never reflects field
-            // usage and LOW_INVENTORY/reorder signals are wrong). Guarded so it
-            // can't go negative; if the stored count is stale/low we floor at 0
-            // rather than blocking the checkout — consumables are intentionally
-            // allowed to check out without reserving units.
-            const drawn = await tx.inventoryItem.updateMany({
+            const fullDraw = await tx.inventoryItem.updateMany({
               where: { id: ki.inventoryItemId, quantity: { gte: quantity } },
               data: { quantity: { decrement: quantity } },
             })
-            if (drawn.count === 0) {
-              await tx.inventoryItem.update({ where: { id: ki.inventoryItemId }, data: { quantity: 0 } })
+            if (fullDraw.count > 0) {
+              drawnQuantity = quantity
+            } else {
+              const cur = await tx.inventoryItem.findUnique({
+                where: { id: ki.inventoryItemId },
+                select: { quantity: true },
+              })
+              drawnQuantity = cur?.quantity ?? 0
+              if (drawnQuantity > 0) {
+                await tx.inventoryItem.update({
+                  where: { id: ki.inventoryItemId },
+                  data: { quantity: { decrement: drawnQuantity } },
+                })
+              }
             }
           }
+          await tx.kitItem.create({
+            data: { kitId: kit.id, inventoryItemId: ki.inventoryItemId, quantity, inventoryUnitId: null, drawnQuantity },
+          })
           await tx.checkLog.create({
             data: { action: 'CHECK_OUT', itemId: ki.inventoryItemId, operatorId, rigId: newRig.id, projectId, notes: note },
           })
@@ -224,6 +247,12 @@ export async function POST(req: NextRequest) {
     if (err instanceof Error && err.message === 'VEHICLE_IN_USE') {
       return NextResponse.json(
         { error: 'One or more vehicles are already assigned to another active deployment. Remove them there first.' },
+        { status: 409 }
+      )
+    }
+    if (err instanceof Error && err.message === 'OPERATOR_HAS_ACTIVE_RIG') {
+      return NextResponse.json(
+        { error: 'This operator already has an active deployment. End it before starting a new one.' },
         { status: 409 }
       )
     }
