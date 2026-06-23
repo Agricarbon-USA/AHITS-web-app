@@ -8,18 +8,12 @@ import {
 } from '@mui/material'
 import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
+import { DEFAULT_DAILY_CHECKLIST } from '@/types'
 
-const DEFAULT_CHECKLIST = [
-  { key: 'tires', label: 'Tires / inflation' },
-  { key: 'lights', label: 'Lights / signals' },
-  { key: 'fluids', label: 'Fluid levels (oil, coolant, brake)' },
-  { key: 'brakes', label: 'Brakes' },
-  { key: 'wipers', label: 'Windshield / wipers' },
-  { key: 'mirrors', label: 'Mirrors' },
-  { key: 'safety_kit', label: 'Safety kit present (first aid, fire ext.)' },
-  { key: 'damage', label: 'No new visible damage' },
-  { key: 'cleanliness', label: 'Vehicle is clean and secured' },
-]
+// The full ~16-item inspection (PRD §11.4) is the single source of truth, shared
+// with the rest of the app via @/types. Items 15–16 (trailer hitch / load) are
+// conditional — operators mark them N/A when not towing / hauling.
+const DEFAULT_CHECKLIST = DEFAULT_DAILY_CHECKLIST
 
 interface ChecklistRow {
   key: string
@@ -75,6 +69,12 @@ export default function OperatorDailyCheckPage() {
   }, [])
 
   const passFail = checklist.every((item) => item.value !== 'no')
+  const failingItems = checklist.filter((item) => item.value === 'no')
+  // PRD §11.4 / §7.4: a reason is required on every failed item, not just an
+  // overall summary. Enforced client-side here and again server-side.
+  const missingItemNote = failingItems.some((item) => !item.note.trim())
+  const selectedVehicleName =
+    rig?.vehicles?.find((rv) => rv.vehicle.id === vehicleId)?.vehicle.name ?? ''
 
   const buildPayload = () => ({
     vehicleId,
@@ -88,6 +88,7 @@ export default function OperatorDailyCheckPage() {
 
   const handleSubmit = async () => {
     if (!vehicleId) { setError('Select a vehicle'); return }
+    if (missingItemNote) { setError('Add a note for each item marked “No”.'); setStep(1); return }
     if (!passFail && !issues.trim()) { setError('Describe the issue(s) that caused a fail'); return }
     setSubmitting(true)
     setError('')
@@ -101,8 +102,15 @@ export default function OperatorDailyCheckPage() {
         setSubmitted(true)
         showToast({ message: `Daily check submitted — ${passFail ? 'Pass ✓' : 'Fail ✗ — admin notified'}`, severity: passFail ? 'success' : 'warning' })
       } else {
-        const d = await res.json()
-        setError(d.error?.formErrors?.[0] ?? d.error ?? 'Submission failed')
+        const d = await res.json().catch(() => ({}))
+        const fieldErr = d.error?.fieldErrors
+          ? Object.values(d.error.fieldErrors).flat()[0] as string | undefined
+          : undefined
+        setError(
+          d.error?.formErrors?.[0] ??
+          fieldErr ??
+          (typeof d.error === 'string' ? d.error : 'Submission failed')
+        )
       }
     } catch {
       await enqueue({ endpoint: '/api/daily-check', method: 'POST', body: buildPayload() })
@@ -136,6 +144,9 @@ export default function OperatorDailyCheckPage() {
               <Typography variant="h6">{passFail ? 'Pass' : 'Fail'}</Typography>
               <Chip label={passFail ? 'Pass ✓' : 'Fail ✗'} color={passFail ? 'success' : 'error'} />
             </Stack>
+            <Typography variant="body2" color="text.secondary">
+              {selectedVehicleName || 'Vehicle'} · {date}{odometer ? ` · ${odometer} mi` : ''}{site ? ` · ${site}` : ''}
+            </Typography>
             {failItems.length > 0 && (
               <Box>
                 <Typography variant="body2" fontWeight={600} mb={0.5}>Issues found:</Typography>
@@ -281,6 +292,16 @@ export default function OperatorDailyCheckPage() {
 
       {step === 2 && (
         <Stack spacing={2}>
+          <Paper variant="outlined" sx={{ p: 2 }}>
+            <Stack spacing={0.5}>
+              <Stack direction="row" justifyContent="space-between"><Typography variant="body2" color="text.secondary">Vehicle</Typography><Typography variant="body2" fontWeight={600}>{selectedVehicleName || '—'}</Typography></Stack>
+              <Stack direction="row" justifyContent="space-between"><Typography variant="body2" color="text.secondary">Date</Typography><Typography variant="body2">{date}</Typography></Stack>
+              <Stack direction="row" justifyContent="space-between"><Typography variant="body2" color="text.secondary">Odometer</Typography><Typography variant="body2">{odometer ? `${odometer} mi` : '—'}</Typography></Stack>
+              <Stack direction="row" justifyContent="space-between"><Typography variant="body2" color="text.secondary">Site</Typography><Typography variant="body2">{site || '—'}</Typography></Stack>
+              <Divider sx={{ my: 0.5 }} />
+              <Stack direction="row" justifyContent="space-between"><Typography variant="body2" color="text.secondary">Items checked</Typography><Typography variant="body2">{checklist.length} ({checklist.filter((r) => r.value === 'yes').length} OK · {failingItems.length} fail · {checklist.filter((r) => r.value === 'na').length} N/A)</Typography></Stack>
+            </Stack>
+          </Paper>
           <Stack direction="row" spacing={1} alignItems="center">
             <Typography variant="body1">Result:</Typography>
             <Chip label={passFail ? 'Pass ✓' : 'Fail ✗'} color={passFail ? 'success' : 'error'} />
@@ -324,6 +345,7 @@ export default function OperatorDailyCheckPage() {
             variant="contained"
             onClick={() => {
               if (step === 0 && !vehicleId) { setError('Select a vehicle'); return }
+              if (step === 1 && missingItemNote) { setError('Add a note for each item marked “No”.'); return }
               setError('')
               setStep((s) => s + 1)
             }}

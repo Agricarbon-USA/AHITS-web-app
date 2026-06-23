@@ -20,6 +20,17 @@ const schema = z.object({
   })),
   issues: z.string().optional(),
   passFail: z.boolean(),
+}).superRefine((data, ctx) => {
+  // PRD §11.4 / §7.4: every failed item needs a reason, and a failing check
+  // needs an overall summary. Enforced server-side so the rule holds for queued
+  // offline replays and any direct API call, not just the happy-path UI.
+  const failing = data.checklistJson.filter((i) => i.value === 'no')
+  if (failing.some((i) => !i.note || !i.note.trim())) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['checklistJson'], message: 'Each item marked “No” must include a note describing the issue.' })
+  }
+  if (!data.passFail && !data.issues?.trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['issues'], message: 'A failing check requires an issue summary.' })
+  }
 })
 
 export async function GET(req: NextRequest) {
