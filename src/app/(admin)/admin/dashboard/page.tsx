@@ -27,11 +27,12 @@ interface AlertRow {
 }
 
 interface Feeds {
-  counts: { missedChecks: number; maintenanceDueSoon: number; longRunning: number }
+  counts: { missedChecks: number; maintenanceDueSoon: number; longRunning: number; maintenanceWatch?: number }
   missedChecks: { rigId: string; operator: string; label: string | null; startedAt: string }[]
   maintenanceDueSoon: { id: string; taskName: string; target: string; nextDue: string | null; status: string; overdue: boolean }[]
   longRunning: { rigId: string; operator: string; label: string | null; startedAt: string; daysOut: number }[]
   recentActivity: { id: string; action: string; item: string; unit: string | null; operator: string | null; at: string }[]
+  maintenanceWatch?: { name: string; href: string; spend: number; events: number; windowDays: number }[]
 }
 
 function relativeTime(iso: string) {
@@ -162,6 +163,19 @@ export default function AdminDashboardPage() {
           <FeedPanel title="Long-running deployments (30d+)" count={feeds?.longRunning.length} emptyText="No deployments older than 30 days.">
             {feeds?.longRunning.map((r) => (
               <FeedItem key={r.rigId} primary={r.operator} secondary={`${r.label ? r.label + ' · ' : ''}${r.daysOut} days out`} chip={{ label: `${r.daysOut}d`, color: 'warning' }} onClick={() => router.push('/admin/deployments')} />
+            ))}
+          </FeedPanel>
+        </Grid>
+        <Grid item xs={12} md={6}>
+          <FeedPanel title="Maintenance watch (90-day spend)" count={feeds?.maintenanceWatch?.length} emptyText="No maintenance spend recorded in the last 90 days.">
+            {feeds?.maintenanceWatch?.map((m) => (
+              <FeedItem
+                key={m.href + m.name}
+                primary={m.name}
+                secondary={`${m.events} event${m.events !== 1 ? 's' : ''} · last ${m.windowDays} days`}
+                chip={{ label: `$${m.spend.toLocaleString(undefined, { maximumFractionDigits: 0 })}`, color: 'warning' }}
+                onClick={() => router.push(m.href)}
+              />
             ))}
           </FeedPanel>
         </Grid>
