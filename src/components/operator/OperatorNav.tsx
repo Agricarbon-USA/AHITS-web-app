@@ -6,6 +6,7 @@ import DashboardIcon from '@mui/icons-material/Dashboard'
 import ChecklistIcon from '@mui/icons-material/Checklist'
 import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner'
+import LockResetIcon from '@mui/icons-material/LockReset'
 import LogoutIcon from '@mui/icons-material/Logout'
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuth } from '@/hooks/useAuth'
@@ -70,7 +71,17 @@ export function OperatorNav() {
       <Divider />
       <Box sx={{ p: 2 }}>
         <Typography variant="caption" color="text.secondary" display="block" mb={1}>{user?.name}</Typography>
-        <Button startIcon={<LogoutIcon />} onClick={logout} fullWidth size="small" color="inherit">Sign out</Button>
+        <Button
+          startIcon={<LockResetIcon />}
+          onClick={() => router.push('/operator/change-pin')}
+          fullWidth
+          size="small"
+          color="inherit"
+          sx={{ justifyContent: 'flex-start', mb: 0.5 }}
+        >
+          Change PIN
+        </Button>
+        <Button startIcon={<LogoutIcon />} onClick={logout} fullWidth size="small" color="inherit" sx={{ justifyContent: 'flex-start' }}>Sign out</Button>
       </Box>
     </Box>
   )
