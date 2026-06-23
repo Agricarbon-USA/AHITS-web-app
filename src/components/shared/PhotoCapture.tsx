@@ -89,6 +89,16 @@ export function PhotoCapture({
 
   async function remove(ref: string) {
     if (isLocalPhotoRef(ref)) await deleteLocalPhoto(ref)
+    const url = previews[ref]
+    if (url && url.startsWith('blob:')) {
+      URL.revokeObjectURL(url)
+      objectUrls.current = objectUrls.current.filter((u) => u !== url)
+    }
+    setPreviews((p) => {
+      const next = { ...p }
+      delete next[ref]
+      return next
+    })
     onChange(value.filter((r) => r !== ref))
   }
 

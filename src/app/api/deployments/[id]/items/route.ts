@@ -235,8 +235,11 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
         { status: 409 }
       )
     }
+    // Unexpected error (e.g. transient DB failure) → 500 so the offline queue
+    // RETRIES it. Returning 409 here would make the queue treat it as a
+    // terminal client error and silently drop the write.
     const msg = err instanceof Error ? err.message : 'Checkout failed'
-    return NextResponse.json({ error: msg }, { status: 409 })
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 
   const updated = await prisma.rig.findUniqueOrThrow({ where: { id }, include: RIG_INCLUDE })
@@ -282,13 +285,19 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
       const removeQty = isSerialized ? 1 : Math.min(disp.quantity ?? kitItem.quantity, kitItem.quantity)
       const fullRemoval = isSerialized || removeQty >= kitItem.quantity
 
-      if (fullRemoval) {
-        await tx.kitItem.update({ where: { id: disp.kitItemId }, data: { removedAt: now } })
-      } else {
-        await tx.kitItem.update({
-          where: { id: disp.kitItemId },
-          data: { quantity: kitItem.quantity - removeQty },
-        })
+      // TRANSFER removal is finalized only when the recipient ACCEPTS (the
+      // transfer/accept route decrements the source kit item then). Removing it
+      // here too would double-decrement the source quantity — so, exactly like
+      // end/route.ts, skip the kit-item mutation for TRANSFER dispositions.
+      if (disp.type !== 'TRANSFER') {
+        if (fullRemoval) {
+          await tx.kitItem.update({ where: { id: disp.kitItemId }, data: { removedAt: now } })
+        } else {
+          await tx.kitItem.update({
+            where: { id: disp.kitItemId },
+            data: { quantity: kitItem.quantity - removeQty },
+          })
+        }
       }
 
       if (disp.type === 'HUB') {

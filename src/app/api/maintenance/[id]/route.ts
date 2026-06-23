@@ -10,7 +10,7 @@ const maintenanceUpdateSchema = z
   .object({
     taskName: z.string().min(1),
     intervalType: z.nativeEnum(IntervalType),
-    intervalValue: z.number().int(),
+    intervalValue: z.number().int().min(1),
     priority: z.nativeEnum(Priority),
     lastCompleted: z.coerce.date().nullable(),
     lastOdometer: z.number().int().nullable(),

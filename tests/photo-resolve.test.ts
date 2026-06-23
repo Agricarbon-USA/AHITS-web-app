@@ -61,4 +61,24 @@ describe('resolvePhotoRefs', () => {
     const body = { photoUrls: [`${LOCAL_PHOTO_PREFIX}x`] }
     await expect(resolvePhotoRefs(body, deps)).rejects.toThrow()
   })
+
+  it('deletes NO blobs when a later upload in the batch fails (no partial-batch photo loss)', async () => {
+    const deleted: string[] = []
+    let calls = 0
+    const deps = makeDeps({
+      upload: async () => {
+        calls += 1
+        if (calls === 2) throw new Error('connection dropped')
+        return `https://cdn/u${calls}.jpg`
+      },
+      deleteBlob: async (ref) => {
+        deleted.push(ref)
+      },
+    })
+    const body = { photoUrls: [`${LOCAL_PHOTO_PREFIX}a`, `${LOCAL_PHOTO_PREFIX}b`] }
+    await expect(resolvePhotoRefs(body, deps)).rejects.toThrow()
+    // The first photo uploaded, but its blob must NOT be deleted — otherwise the
+    // retry (which re-walks the original body) would lose it.
+    expect(deleted).toEqual([])
+  })
 })

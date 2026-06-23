@@ -608,6 +608,11 @@ model Notification {
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  // At most one in-app notification per alert per user — makes dispatch
+  // idempotent (with createMany skipDuplicates) even if a run is retried.
+  // alertId is nullable; Postgres treats NULLs as distinct, so non-alert
+  // notifications are unconstrained.
+  @@unique([alertId, userId])
   @@index([userId, readAt])
   @@map("notifications")
 }
