@@ -18,6 +18,7 @@ import StopCircleIcon from '@mui/icons-material/StopCircle'
 import CloseIcon from '@mui/icons-material/Close'
 import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline'
 import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
+import { TransferDialog } from '@/components/shared/TransferDialog'
 import { DispositionDialog } from '@/components/shared/DispositionDialog'
 import type { HubOption, UserOption } from '@/components/shared/DispositionDialog'
 
@@ -118,160 +119,7 @@ function relativeDate(iso: string) {
   return `${days} days ago`
 }
 
-// ── Transfer Dialog ───────────────────────────────────────────────
-
-function TransferDialog({
-  rig, operators, onClose, onSuccess, showToast,
-}: {
-  rig: Rig
-  operators: UserOption[]
-  onClose: () => void
-  onSuccess: () => void
-  showToast: (msg: string, severity?: 'success' | 'error') => void
-}) {
-  const [step, setStep] = React.useState(0)
-  const [toOperatorId, setToOperatorId] = React.useState('')
-  const [selVehicles, setSelVehicles] = React.useState<Set<string>>(new Set(rig.vehicles.map((rv) => rv.vehicle.id)))
-  const [selKitItems, setSelKitItems] = React.useState<Set<string>>(new Set(rig.kits.flatMap((k) => k.items.map((ki) => ki.id))))
-  const kitItems = rig.kits.flatMap((k) => k.items)
-  const [transferQtys, setTransferQtys] = React.useState<Map<string, number>>(
-    new Map(kitItems.map((ki) => [ki.id, ki.quantity]))
-  )
-  const [loading, setLoading] = React.useState(false)
-
-  const doTransfer = async (note: string, photoUrls: string[]) => {
-    setLoading(true)
-    try {
-      const res = await fetch(`/api/deployments/${rig.id}/transfer`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          toOperatorId,
-          note,
-          photoUrls,
-          vehicleIds: Array.from(selVehicles),
-          items: kitItems
-            .filter((ki) => selKitItems.has(ki.id))
-            .map((ki) => ({
-              kitItemId: ki.id,
-              quantity: transferQtys.get(ki.id) ?? ki.quantity,
-              inventoryUnitId: ki.inventoryUnit?.id ?? undefined,
-            })),
-        }),
-      })
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}))
-        showToast(typeof d.error === 'string' ? d.error : 'Transfer failed. Please try again.', 'error')
-        return
-      }
-      showToast(`Transfer request sent — waiting for ${operators.find((o) => o.id === toOperatorId)?.name ?? 'operator'} to accept.`)
-      onSuccess()
-      onClose()
-    } catch {
-      showToast('Network error. Please try again.', 'error')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  if (step === 2) {
-    return (
-      <NotePhotoDialog
-        title="Transfer equipment"
-        description={`Transferring to ${operators.find((o) => o.id === toOperatorId)?.name ?? 'operator'}`}
-        open={true} loading={loading} onClose={onClose} onConfirm={doTransfer} confirmLabel="Transfer"
-      />
-    )
-  }
-
-  return (
-    <Dialog open={true} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Transfer Equipment</DialogTitle>
-      <DialogContent>
-        <Stepper activeStep={step} sx={{ mb: 3, mt: 1 }}>
-          <Step><StepLabel>Destination</StepLabel></Step>
-          <Step><StepLabel>Select Items</StepLabel></Step>
-          <Step><StepLabel>Note</StepLabel></Step>
-        </Stepper>
-        {step === 0 && (
-          <TextField select label="Destination Operator" value={toOperatorId} onChange={(e) => setToOperatorId(e.target.value)} fullWidth>
-            {operators.filter((o) => o.id !== rig.operator.id).map((o) => (
-              <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>
-            ))}
-          </TextField>
-        )}
-        {step === 1 && (
-          <Stack spacing={2}>
-            {rig.vehicles.length > 0 && (
-              <Box>
-                <Typography variant="subtitle2" fontWeight={600} mb={1}>Vehicles</Typography>
-                <Stack spacing={0.5}>
-                  {rig.vehicles.map((rv) => {
-                    const Icon = VEHICLE_ICON[rv.vehicle.type] ?? LocalShippingIcon
-                    return (
-                      <Stack key={rv.vehicle.id} direction="row" alignItems="center" spacing={1}>
-                        <Checkbox size="small" checked={selVehicles.has(rv.vehicle.id)}
-                          onChange={(e) => { const s = new Set(selVehicles); e.target.checked ? s.add(rv.vehicle.id) : s.delete(rv.vehicle.id); setSelVehicles(s) }} />
-                        <Icon fontSize="small" color="action" />
-                        <Typography variant="body2">{rv.vehicle.name}</Typography>
-                      </Stack>
-                    )
-                  })}
-                </Stack>
-              </Box>
-            )}
-            {kitItems.length > 0 && (
-              <Box>
-                <Typography variant="subtitle2" fontWeight={600} mb={1}>Kit Items</Typography>
-                <Stack spacing={0.5}>
-                  {kitItems.map((ki) => (
-                    <Stack key={ki.id} direction="row" alignItems="center" spacing={1}>
-                      <Checkbox size="small" checked={selKitItems.has(ki.id)}
-                        onChange={(e) => { const s = new Set(selKitItems); e.target.checked ? s.add(ki.id) : s.delete(ki.id); setSelKitItems(s) }} />
-                      <Box flexGrow={1}>
-                        <Typography variant="body2">{ki.item.name}</Typography>
-                        {ki.inventoryUnit && (
-                          <Typography variant="caption" color="text.secondary">
-                            {ki.inventoryUnit.serialNumber ?? ki.inventoryUnit.qrCodeId.slice(0, 8)}
-                          </Typography>
-                        )}
-                      </Box>
-                      {ki.item.itemType === 'CONSUMABLE' && selKitItems.has(ki.id) ? (
-                        <TextField
-                          type="number"
-                          size="small"
-                          value={transferQtys.get(ki.id) ?? ki.quantity}
-                          onChange={(e) => {
-                            const qty = Math.max(1, Math.min(parseInt(e.target.value) || 1, ki.quantity))
-                            const m = new Map(transferQtys)
-                            m.set(ki.id, qty)
-                            setTransferQtys(m)
-                          }}
-                          inputProps={{ min: 1, max: ki.quantity }}
-                          sx={{ width: 70 }}
-                        />
-                      ) : (
-                        <Typography variant="caption" color="text.secondary">×{ki.quantity}</Typography>
-                      )}
-                    </Stack>
-                  ))}
-                </Stack>
-              </Box>
-            )}
-          </Stack>
-        )}
-      </DialogContent>
-      <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button onClick={onClose}>Cancel</Button>
-        {step > 0 && <Button onClick={() => setStep((s) => s - 1)}>Back</Button>}
-        <Button variant="contained" onClick={() => setStep((s) => s + 1)} disabled={step === 0 && !toOperatorId}>
-          {step < 1 ? 'Next' : 'Continue to Note'}
-        </Button>
-      </DialogActions>
-    </Dialog>
-  )
-}
-
+// Transfer Dialog now lives in components/shared/TransferDialog.tsx (UX-5).
 // ── New Deployment Dialog ─────────────────────────────────────────
 
 function NewDeploymentDialog({
@@ -1277,7 +1125,7 @@ function DeploymentDrawer({
       )}
 
       {transferOpen && (
-        <TransferDialog rig={rig} operators={operators} onClose={() => setTransferOpen(false)} onSuccess={refresh} showToast={showToast} />
+        <TransferDialog rig={rig} operators={operators} excludeOperatorId={rig.operator.id} onClose={() => setTransferOpen(false)} onSuccess={refresh} showToast={(t) => showToast(t.message, t.severity === 'error' ? 'error' : 'success')} />
       )}
 
       {/* Cancel transfer confirm */}
