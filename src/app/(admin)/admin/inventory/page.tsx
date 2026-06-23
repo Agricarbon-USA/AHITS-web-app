@@ -22,6 +22,7 @@ import QRCode from 'qrcode'
 import { useToast } from '@/components/shared/useToast'
 import { QrScanField } from '@/components/shared/QrScanField'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { PhotoGallery } from '@/components/shared/PhotoGallery'
 import { RepairReviewDialog } from '@/components/shared/RepairReviewDialog'
 import { EQUIPMENT_STATUS } from '@/lib/status'
 
@@ -406,12 +407,9 @@ function DetailDrawer({
                   </Alert>
                 )}
                 {damagePhotos.length > 0 && (
-                  <Stack direction="row" spacing={1} flexWrap="wrap" mb={2}>
-                    {damagePhotos.map((p) => (
-                      <Box key={p.id} component="img" src={p.url} alt="damage"
-                        sx={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 1, border: '1px solid', borderColor: 'divider' }} />
-                    ))}
-                  </Stack>
+                  <Box mb={2}>
+                    <PhotoGallery photos={damagePhotos.map((p) => ({ id: p.id, url: p.url, context: p.context }))} />
+                  </Box>
                 )}
 
                 <Box display="grid" gridTemplateColumns="1fr 1fr" gap={1.5} mb={3}>
