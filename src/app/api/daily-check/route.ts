@@ -5,6 +5,7 @@ import { requireAuth } from '@/lib/auth/session'
 import { sendEmail } from '@/lib/email/resend'
 import { dailyCheckFailedEmail } from '@/lib/email/templates'
 import { createAlert } from '@/lib/alerts'
+import { applyOdometerReading } from '@/lib/maintenance'
 
 const schema = z.object({
   vehicleId: z.string(),
@@ -125,6 +126,12 @@ export async function POST(req: NextRequest) {
       syncedAt: new Date(),
     },
   })
+
+  // Mileage trigger (Wave G): advance the vehicle odometer and flag any
+  // mileage-based maintenance that's now due. Best-effort, never blocks the check.
+  if (odometer != null) {
+    await applyOdometerReading(vehicleId, odometer)
+  }
 
   // Alert if any kit items have been out > 90 days. Awaited (not fire-and-forget)
   // so it runs reliably on serverless/Cloud Run, where a floating promise can be

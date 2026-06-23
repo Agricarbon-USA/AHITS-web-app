@@ -105,6 +105,7 @@ export default function AdminMaintenancePage() {
   const [selected, setSelected] = React.useState<MaintenanceTask | null>(null)
   const [draft, setDraft] = React.useState<Draft | null>(null)
   const [saving, setSaving] = React.useState(false)
+  const [completionOdo, setCompletionOdo] = React.useState('')
   const autoOpenedRef = React.useRef(false)
 
   const load = React.useCallback(async () => {
@@ -201,6 +202,37 @@ export default function AdminMaintenancePage() {
       locationNote: draft.locationNote || null,
       notes: draft.notes || null,
     }, 'Repair details saved.')
+  }
+
+  async function completeTask(t: MaintenanceTask) {
+    setSaving(true)
+    try {
+      const res = await fetch(`/api/maintenance/${t.id}/complete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          actualCost: draft && draft.actualCost !== '' ? Number(draft.actualCost) : undefined,
+          actualOdometer: completionOdo !== '' ? Number(completionOdo) : undefined,
+        }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not complete.', severity: 'error' })
+        return
+      }
+      const d = await res.json()
+      setTasks((prev) => prev.map((x) => (x.id === t.id ? { ...x, ...d.data } : x)))
+      setSelected((s) => (s && s.id === t.id ? { ...s, ...d.data } : s))
+      setCompletionOdo('')
+      showToast({
+        message: t.isDamageReport ? 'Repair completed — unit returned to service.' : 'Completed — next service scheduled.',
+        severity: 'success',
+      })
+    } catch {
+      showToast({ message: 'Network error. Please try again.', severity: 'error' })
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function setStatus(t: MaintenanceTask, status: string) {
@@ -357,12 +389,23 @@ export default function AdminMaintenancePage() {
 
             <Divider />
             <Stack spacing={1} sx={{ p: 2 }}>
+              {!selected.isDamageReport && selected.intervalType === 'MILEAGE' && selected.status !== 'COMPLETED' && (
+                <TextField
+                  size="small"
+                  label="Odometer at completion (optional)"
+                  value={completionOdo}
+                  onChange={(e) => setCompletionOdo(e.target.value.replace(/[^0-9]/g, ''))}
+                  helperText="Next service is set to this + the interval. Defaults to the vehicle's latest reading."
+                />
+              )}
               <Stack direction="row" spacing={1}>
                 {selected.status !== 'IN_PROGRESS' && selected.status !== 'COMPLETED' && (
                   <Button variant="outlined" fullWidth disabled={saving} onClick={() => setStatus(selected, 'IN_PROGRESS')}>Start repair</Button>
                 )}
                 {selected.status !== 'COMPLETED' ? (
-                  <Button variant="outlined" color="success" fullWidth disabled={saving} onClick={() => setStatus(selected, 'COMPLETED')}>Mark complete</Button>
+                  <Button variant="outlined" color="success" fullWidth disabled={saving} onClick={() => completeTask(selected)}>
+                    {selected.isDamageReport ? 'Mark complete' : 'Complete & reschedule'}
+                  </Button>
                 ) : (
                   <Button variant="outlined" fullWidth disabled={saving} onClick={() => setStatus(selected, 'IN_PROGRESS')}>Reopen</Button>
                 )}
