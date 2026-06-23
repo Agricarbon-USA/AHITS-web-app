@@ -12,7 +12,7 @@ const schema = z.object({
 
 export async function POST(req: NextRequest) {
   // Throttle this public account-minting endpoint (10 / 10 min / IP).
-  const rl = rateLimit(`invite-complete:${clientIp(req)}`, 10, 10 * 60 * 1000)
+  const rl = await rateLimit(`invite-complete:${clientIp(req)}`, 10, 10 * 60 * 1000)
   if (!rl.allowed) {
     return NextResponse.json(
       { error: 'Too many attempts. Please try again later.' },
