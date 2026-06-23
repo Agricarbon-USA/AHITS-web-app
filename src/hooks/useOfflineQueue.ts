@@ -3,6 +3,7 @@
 import * as React from 'react'
 import type { OfflineQueueItem, MutateResult } from '@/types'
 import { resolvePhotoRefs } from '@/lib/photoStore'
+import { extractCreatedId, itemReferencesPlaceholder, remapPlaceholderId } from '@/lib/offline-remap'
 
 const DB_NAME = 'ahits_offline'
 const STORE = 'queue'
@@ -147,6 +148,23 @@ export function useOfflineQueue() {
           break
         }
         if (res.ok) {
+          // M1-9: if this was a queued create with a placeholder id, read the
+          // real server id from the response and rewrite every later queued
+          // item that referenced the placeholder, so dependent offline writes
+          // (e.g. add-items to a just-created deployment) target the real id.
+          if (work.placeholderId) {
+            const created = await res.json().catch(() => null)
+            const realId = extractCreatedId(created)
+            if (realId) {
+              const all = await getAllItems(db)
+              for (const other of all) {
+                if (other.id == null || other.id === item.id) continue
+                if (itemReferencesPlaceholder(other, work.placeholderId)) {
+                  await putItem(db, remapPlaceholderId(other, work.placeholderId, realId))
+                }
+              }
+            }
+          }
           await deleteItem(db, item.id)
         } else if (TERMINAL_STATUSES.has(res.status)) {
           const errBody = await res.json().catch(() => ({}))
@@ -199,6 +217,12 @@ export function useOfflineQueue() {
       method?: OfflineQueueItem['method']
       body?: unknown
       label?: string
+      /**
+       * M1-9: when this write CREATES a resource other queued writes depend on,
+       * pass the client-generated placeholder id used in their endpoints/bodies.
+       * On offline replay the real id is read from the response and remapped.
+       */
+      placeholderId?: string
     }): Promise<MutateResult<T>> => {
       const method = args.method ?? 'POST'
       const idempotencyKey = newKey()
@@ -225,7 +249,7 @@ export function useOfflineQueue() {
         const errBody = await res.json().catch(() => ({}))
         return { ok: false, queued: false, error: extractError(errBody), status: res.status }
       } catch {
-        await enqueue({ endpoint: args.endpoint, method, body, idempotencyKey, label: args.label })
+        await enqueue({ endpoint: args.endpoint, method, body, idempotencyKey, label: args.label, placeholderId: args.placeholderId })
         return { ok: true, queued: true, data: null }
       }
     },
