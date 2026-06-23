@@ -7,6 +7,7 @@ import {
   CircularProgress, Chip,
 } from '@mui/material'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
+import { PhotoCapture } from './PhotoCapture'
 
 export interface HubOption {
   id: string
@@ -238,6 +239,14 @@ export function DispositionDialog({
                       onChange={(e) => setDisp(item.kitItemId, { inoperableNotes: e.target.value })}
                       multiline
                       rows={2}
+                    />
+                    <Typography variant="caption" color="text.secondary">
+                      Damage photos (recommended)
+                    </Typography>
+                    <PhotoCapture
+                      value={disp.photoUrls}
+                      onChange={(photoUrls) => setDisp(item.kitItemId, { photoUrls })}
+                      disabled={loading}
                     />
                   </Stack>
                 )}

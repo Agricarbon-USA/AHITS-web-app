@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import type { OfflineQueueItem, MutateResult } from '@/types'
+import { resolvePhotoRefs } from '@/lib/photoStore'
 
 const DB_NAME = 'ahits_offline'
 const STORE = 'queue'
@@ -111,14 +112,27 @@ export function useOfflineQueue() {
       const items = await getAllItems(db)
       for (const item of items) {
         if (item.status === 'failed' || item.id == null) continue
+        // Upload any pending local photos and swap their `localphoto:` refs for
+        // real URLs before sending. No-op for writes without photos.
+        let work = item
+        try {
+          const body = await resolvePhotoRefs(item.body)
+          if (body !== item.body) {
+            work = { ...item, body }
+            await putItem(db, work) // persist so a later retry doesn't re-upload
+          }
+        } catch {
+          // Photos can't upload yet (still offline) — stop; retry next cycle.
+          break
+        }
         let res: Response
         try {
           const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-          if (item.idempotencyKey) headers['Idempotency-Key'] = item.idempotencyKey
-          res = await fetch(item.endpoint, {
-            method: item.method,
+          if (work.idempotencyKey) headers['Idempotency-Key'] = work.idempotencyKey
+          res = await fetch(work.endpoint, {
+            method: work.method,
             headers,
-            body: item.body !== undefined ? JSON.stringify(item.body) : undefined,
+            body: work.body !== undefined ? JSON.stringify(work.body) : undefined,
           })
         } catch {
           // Network dropped mid-flush — stop; the rest stay pending for next time.
@@ -128,12 +142,12 @@ export function useOfflineQueue() {
           await deleteItem(db, item.id)
         } else if (TERMINAL_STATUSES.has(res.status)) {
           const errBody = await res.json().catch(() => ({}))
-          await putItem(db, { ...item, status: 'failed', lastError: extractError(errBody) })
+          await putItem(db, { ...work, status: 'failed', lastError: extractError(errBody) })
         } else {
           // 5xx / 408 / 429 — transient; retry up to the cap.
-          const retries = (item.retries ?? 0) + 1
+          const retries = (work.retries ?? 0) + 1
           await putItem(db, {
-            ...item,
+            ...work,
             retries,
             ...(retries >= MAX_RETRIES ? { status: 'failed' as const, lastError: `Failed after ${MAX_RETRIES} attempts` } : {}),
           })
@@ -180,11 +194,21 @@ export function useOfflineQueue() {
     }): Promise<MutateResult<T>> => {
       const method = args.method ?? 'POST'
       const idempotencyKey = newKey()
+      // Upload any locally-stored photos now (online) and swap their
+      // `localphoto:` refs for real URLs. If this throws (offline / upload
+      // failed) we keep the original body — its local refs and stored blobs are
+      // preserved, and flush() resolves them on reconnect.
+      let body = args.body
+      try {
+        body = await resolvePhotoRefs(args.body)
+      } catch {
+        body = args.body
+      }
       try {
         const res = await fetch(args.endpoint, {
           method,
           headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
-          body: args.body === undefined ? undefined : JSON.stringify(args.body),
+          body: body === undefined ? undefined : JSON.stringify(body),
         })
         if (res.ok) {
           const data = (await res.json().catch(() => null)) as T
@@ -193,7 +217,7 @@ export function useOfflineQueue() {
         const errBody = await res.json().catch(() => ({}))
         return { ok: false, queued: false, error: extractError(errBody), status: res.status }
       } catch {
-        await enqueue({ endpoint: args.endpoint, method, body: args.body, idempotencyKey, label: args.label })
+        await enqueue({ endpoint: args.endpoint, method, body, idempotencyKey, label: args.label })
         return { ok: true, queued: true, data: null }
       }
     },
