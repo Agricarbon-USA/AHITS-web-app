@@ -6,6 +6,7 @@ import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-
 import { createAlert } from '@/lib/alerts'
 import { withIdempotency } from '@/lib/idempotency'
 import { issueHubReturnLinks } from '@/lib/status-links'
+import { filterAllowedPhotoUrls } from '@/lib/photo-security'
 
 const RIG_INCLUDE = {
   operator: { select: { id: true, name: true } },
@@ -231,7 +232,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
       if (photoUrls.length > 0) {
         await tx.photo.createMany({
-          data: photoUrls.map((url) => ({
+          data: filterAllowedPhotoUrls(photoUrls).map((url) => ({
             url,
             context: 'INVENTORY_REFERENCE' as const,
             uploadedById: session.userId,
@@ -418,7 +419,7 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
           })
           if (disp.photoUrls.length > 0) {
             await tx.photo.createMany({
-              data: disp.photoUrls.map((url) => ({
+              data: filterAllowedPhotoUrls(disp.photoUrls).map((url) => ({
                 url,
                 context: 'DAMAGE' as const,
                 inventoryItemId,
@@ -445,7 +446,7 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
           }
           if (disp.photoUrls.length > 0) {
             await tx.photo.createMany({
-              data: disp.photoUrls.map((url) => ({
+              data: filterAllowedPhotoUrls(disp.photoUrls).map((url) => ({
                 url,
                 context: 'DAMAGE' as const,
                 inventoryItemId,

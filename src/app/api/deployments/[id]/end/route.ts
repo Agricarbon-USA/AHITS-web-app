@@ -6,6 +6,7 @@ import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-
 import { createAlert } from '@/lib/alerts'
 import { withIdempotency } from '@/lib/idempotency'
 import { issueHubReturnLinks } from '@/lib/status-links'
+import { filterAllowedPhotoUrls } from '@/lib/photo-security'
 
 const dispositionSchema = z.object({
   kitItemId: z.string(),
@@ -184,7 +185,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           })
           if (disp.photoUrls.length > 0) {
             await tx.photo.createMany({
-              data: disp.photoUrls.map((url) => ({
+              data: filterAllowedPhotoUrls(disp.photoUrls).map((url) => ({
                 url,
                 context: 'DAMAGE' as const,
                 inventoryItemId,
@@ -209,7 +210,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           }
           if (disp.photoUrls.length > 0) {
             await tx.photo.createMany({
-              data: disp.photoUrls.map((url) => ({
+              data: filterAllowedPhotoUrls(disp.photoUrls).map((url) => ({
                 url,
                 context: 'DAMAGE' as const,
                 inventoryItemId,
