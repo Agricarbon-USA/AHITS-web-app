@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { List, ListItemButton, ListItemIcon, ListItemText, Divider, Box, Typography, Button } from '@mui/material'
+import { List, ListItemButton, ListItemIcon, ListItemText, Divider, Box, Typography, Button, Badge } from '@mui/material'
 import DashboardIcon from '@mui/icons-material/Dashboard'
 import ChecklistIcon from '@mui/icons-material/Checklist'
 import LocalShippingIcon from '@mui/icons-material/LocalShipping'
@@ -21,6 +21,28 @@ export function OperatorNav() {
   const pathname = usePathname()
   const router = useRouter()
   const { logout, user } = useAuth()
+  const [pendingTransfers, setPendingTransfers] = React.useState(0)
+
+  // Poll incoming pending transfers so the My Rig item carries a live badge —
+  // operators previously only learned of transfers by opening My Rig.
+  React.useEffect(() => {
+    let active = true
+    const load = async () => {
+      try {
+        const res = await fetch('/api/transfers?status=PENDING&direction=incoming')
+        if (!res.ok) return
+        const d = await res.json()
+        if (active) setPendingTransfers(Array.isArray(d) ? d.length : 0)
+      } catch {
+        /* offline / transient — keep last known count */
+      }
+    }
+    load()
+    const t = window.setInterval(load, 45_000)
+    const onVis = () => { if (document.visibilityState === 'visible') load() }
+    document.addEventListener('visibilitychange', onVis)
+    return () => { active = false; window.clearInterval(t); document.removeEventListener('visibilitychange', onVis) }
+  }, [])
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -32,7 +54,15 @@ export function OperatorNav() {
             onClick={() => router.push(href)}
             sx={{ borderRadius: 2, mx: 1, mb: 0.5 }}
           >
-            <ListItemIcon sx={{ minWidth: 36 }}><Icon fontSize="small" /></ListItemIcon>
+            <ListItemIcon sx={{ minWidth: 36 }}>
+              {href === '/operator/my-rig' ? (
+                <Badge badgeContent={pendingTransfers || undefined} color="error">
+                  <Icon fontSize="small" />
+                </Badge>
+              ) : (
+                <Icon fontSize="small" />
+              )}
+            </ListItemIcon>
             <ListItemText primary={label} primaryTypographyProps={{ fontSize: 14, fontWeight: pathname.startsWith(href) ? 600 : 400 }} />
           </ListItemButton>
         ))}
