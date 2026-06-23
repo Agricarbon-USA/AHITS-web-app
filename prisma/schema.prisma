@@ -812,3 +812,22 @@ model StatusLinkEvent {
   @@index([statusLinkId])
   @@map("status_link_events")
 }
+
+// M5 item 25: admin-configurable daily-check checklists. A template's items
+// (itemsJson = [{key,label}]) override the built-in DEFAULT_DAILY_CHECKLIST for
+// vehicles of a given type. `vehicleType` null = a general override for all
+// types. Read/written via raw SQL (lib/checklist-templates.ts) so it needs no
+// generated-client coupling; this model documents the shape and lets a future
+// `prisma generate` produce the typed client.
+model ChecklistTemplate {
+  id          String       @id @default(cuid())
+  name        String
+  vehicleType VehicleType?
+  itemsJson   Json         @default("[]")
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @default(now())
+
+  @@index([vehicleType, isActive])
+  @@map("checklist_templates")
+}
