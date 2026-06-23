@@ -70,6 +70,7 @@ export async function POST(req: NextRequest) {
     const owns = await prisma.vehicle.findFirst({
       where: {
         id: vehicleId,
+        deletedAt: null,
         OR: [
           { assignedOperatorId: session.userId },
           {
@@ -164,7 +165,7 @@ export async function POST(req: NextRequest) {
 
   // Notify admin on fail
   if (!passFail && process.env.ADMIN_EMAIL) {
-    const vehicle = await prisma.vehicle.findUnique({ where: { id: vehicleId } })
+    const vehicle = await prisma.vehicle.findFirst({ where: { id: vehicleId, deletedAt: null } })
     await sendEmail({
       to: process.env.ADMIN_EMAIL,
       subject: `Daily Check Failed — ${vehicle?.name}`,
