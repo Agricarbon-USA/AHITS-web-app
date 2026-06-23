@@ -122,7 +122,6 @@ enum AlertType {
   MAINTENANCE_OVERDUE
   EQUIPMENT_NOT_RETURNED
   DAMAGE_REPORTED
-  REPAIR_NEEDED
   LOW_INVENTORY
   INSURANCE_EXPIRING
   REGISTRATION_EXPIRING
@@ -703,6 +702,21 @@ model IdempotencyKey {
 
   @@index([createdAt])
   @@map("idempotency_key")
+}
+
+// CR-3/CR-4: shared-store rate limiter. A fixed-window counter keyed by
+// "<scope:ip>|<windowStartEpochMs>" so each window is its own row and the
+// ceiling holds across all Cloud Run instances (the in-memory limiter in
+// lib/rate-limit.ts is retained only as a fallback when the DB is unreachable).
+// Rows expire by resetAt and are reaped opportunistically.
+model RateLimitHit {
+  bucketKey String   @id @map("bucket_key")
+  count     Int      @default(0)
+  resetAt   DateTime @map("reset_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([resetAt])
+  @@map("rate_limit_hit")
 }
 
 // M3: single-row global notification configuration (id is always "global").

@@ -9,7 +9,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
   const { token } = await params
 
   const ip = clientIp(_req)
-  const rl = rateLimit(`statuslink:${ip}`, 60, 5 * 60 * 1000)
+  const rl = await rateLimit(`statuslink:${ip}`, 60, 5 * 60 * 1000)
   if (!rl.allowed) {
     return NextResponse.json({ error: 'Too many requests.' }, { status: 429 })
   }

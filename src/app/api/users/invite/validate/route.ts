@@ -4,7 +4,7 @@ import { rateLimit, clientIp } from '@/lib/rate-limit'
 
 export async function GET(req: NextRequest) {
   // Throttle token-guessing on this public endpoint (20 / 10 min / IP).
-  const rl = rateLimit(`invite-validate:${clientIp(req)}`, 20, 10 * 60 * 1000)
+  const rl = await rateLimit(`invite-validate:${clientIp(req)}`, 20, 10 * 60 * 1000)
   if (!rl.allowed) {
     return NextResponse.json(
       { error: 'Too many attempts. Please try again later.' },
