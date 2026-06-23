@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { hashPin } from '@/lib/auth/pin'
 import { rateLimit, clientIp } from '@/lib/rate-limit'
+import { hashInviteToken } from '@/lib/invite-token'
 import bcrypt from 'bcryptjs'
 
 const schema = z.object({
@@ -24,8 +25,9 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) return NextResponse.json({ error: 'Invalid input' }, { status: 400 })
 
   const { token, credential } = parsed.data
+  const tokenHash = hashInviteToken(token) // tokens are stored hashed (H2)
 
-  const invite = await prisma.inviteToken.findUnique({ where: { token } })
+  const invite = await prisma.inviteToken.findUnique({ where: { token: tokenHash } })
   if (!invite || invite.usedAt || invite.revokedAt || invite.expiresAt < new Date()) {
     return NextResponse.json({ error: 'Invalid or expired invite' }, { status: 410 })
   }
@@ -48,7 +50,7 @@ export async function POST(req: NextRequest) {
       // null wins. This closes the TOCTOU where two concurrent submissions both
       // pass the check above and both try to create the account.
       const claim = await tx.inviteToken.updateMany({
-        where: { token, usedAt: null, revokedAt: null, expiresAt: { gt: new Date() } },
+        where: { token: tokenHash, usedAt: null, revokedAt: null, expiresAt: { gt: new Date() } },
         data: { usedAt: new Date() },
       })
       if (claim.count === 0) return false
