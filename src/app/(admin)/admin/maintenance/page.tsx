@@ -4,7 +4,7 @@ import * as React from 'react'
 import {
   Box, Typography, Stack, Chip, Drawer, Divider, Button, TextField, MenuItem,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper,
-  Skeleton, Tabs, Tab, IconButton, Link, CircularProgress,
+  Skeleton, Tabs, Tab, IconButton, CircularProgress,
   Dialog, DialogTitle, DialogContent, DialogActions,
 } from '@mui/material'
 import BuildIcon from '@mui/icons-material/Build'
@@ -13,6 +13,7 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import { useToast } from '@/components/shared/useToast'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { RepairReviewDialog } from '@/components/shared/RepairReviewDialog'
+import { PhotoGallery } from '@/components/shared/PhotoGallery'
 
 interface InoperableUnit {
   id: string
@@ -498,13 +499,11 @@ export default function AdminMaintenancePage() {
               {selected.photos.length > 0 && (
                 <Box mt={2}>
                   <Typography variant="caption" color="text.secondary">Photos</Typography>
-                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap mt={0.5}>
-                    {selected.photos.map((p) => (
-                      <Link key={p.id} href={p.url} target="_blank" rel="noopener noreferrer">
-                        <Box component="img" src={p.url} alt="" sx={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 1, border: '1px solid', borderColor: 'divider' }} />
-                      </Link>
-                    ))}
-                  </Stack>
+                  <Box mt={0.5}>
+                    <PhotoGallery
+                      photos={selected.photos.map((p) => ({ id: p.id, url: p.url, takenAt: p.takenAt, damage: selected.isDamageReport }))}
+                    />
+                  </Box>
                 </Box>
               )}
 
