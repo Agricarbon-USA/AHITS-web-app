@@ -21,6 +21,10 @@ export async function GET(req: NextRequest) {
     include: {
       vehicle: { select: { id: true, name: true } },
       item: { select: { id: true, name: true } },
+      unit: { select: { id: true, qrCodeId: true, serialNumber: true, status: true } },
+      repairHub: { select: { id: true, name: true } },
+      hub: { select: { id: true, name: true } },
+      photos: { select: { id: true, url: true, takenAt: true }, orderBy: { takenAt: 'desc' } },
     },
   })
 

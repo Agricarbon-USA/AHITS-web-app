@@ -28,6 +28,9 @@ const maintenanceUpdateSchema = z
     shopName: z.string().nullable(),
     shopAddress: z.string().nullable(),
     dateDelivered: z.coerce.date().nullable(),
+    purchaseOrder: z.string().nullable(),
+    invoiceNumber: z.string().nullable(),
+    locationNote: z.string().nullable(),
   })
   .partial()
   .strict()
