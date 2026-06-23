@@ -171,6 +171,7 @@ model User {
   projectsLed        Project[]         @relation("ProjectLead")
   photos             Photo[]
   alerts             Alert[]
+  notifications      Notification[]
   rigs               Rig[]             @relation("OperatorRigs")
   secondaryRigs      RigOperator[]     @relation("RigSecondaryOperators")
   transfersReceived  TransferRequest[] @relation("TransferTo")
@@ -574,6 +575,9 @@ model Alert {
   triggeredAt DateTime  @default(now())
   resolved    Boolean   @default(false)
   resolvedAt  DateTime?
+  // Set once the notification dispatcher has emailed admins and created the
+  // in-app notification rows for this alert, so the cron never double-sends.
+  notifiedAt  DateTime?
   adminId     String?
   sourceTable String?
   sourceId    String?
@@ -587,6 +591,25 @@ model Alert {
   admin User? @relation(fields: [adminId], references: [id])
 
   @@map("alerts")
+}
+
+// Per-user in-app notification (the bell). Created by the dispatcher alongside
+// the outbound email so an admin sees the same alerts in-app and over email.
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  type      String // mirrors AlertType
+  title     String
+  body      String?
+  link      String? // in-app deep link to the underlying record
+  alertId   String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@map("notifications")
 }
 
 model Photo {

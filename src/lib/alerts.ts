@@ -2,18 +2,33 @@ import { prisma } from '@/lib/prisma'
 
 type AlertMeta = Record<string, string | number | boolean | null>
 
+/**
+ * Create (or reuse) an unresolved alert for a given source. (CR-5)
+ *
+ * Uses the `activeKey` unique constraint (DAT-7) as the dedup mechanism instead
+ * of the old race-prone findFirst-then-create: `activeKey` is set while the
+ * alert is unresolved and nulled on resolve, so the DB enforces "at most one
+ * unresolved alert per source." Two concurrent reports collapse to one row via
+ * the upsert rather than racing into duplicates.
+ */
 export async function createAlert(
   type: string,
   sourceTable: string,
   sourceId: string,
   metadata?: AlertMeta,
 ) {
-  const existing = await prisma.alert.findFirst({
-    where: { type: type as never, sourceTable, sourceId, resolved: false },
-  })
-  if (existing) return existing
-
-  return prisma.alert.create({
-    data: { type: type as never, sourceTable, sourceId, metadata: metadata ?? {} },
+  const activeKey = `${type}:${sourceTable}:${sourceId}`
+  return prisma.alert.upsert({
+    where: { activeKey },
+    create: {
+      type: type as never,
+      sourceTable,
+      sourceId,
+      metadata: metadata ?? {},
+      activeKey,
+    },
+    // An unresolved alert for this source already exists — leave it untouched
+    // (don't reset notifiedAt / triggeredAt) so it isn't re-notified.
+    update: {},
   })
 }

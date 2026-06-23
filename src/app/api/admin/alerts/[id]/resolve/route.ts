@@ -11,7 +11,9 @@ export async function POST(
   const { id } = await params
   await prisma.alert.update({
     where: { id },
-    data: { resolved: true, resolvedAt: new Date() },
+    // Null activeKey on resolve so the partial-unique dedup frees up: a later
+    // recurrence of the same issue can create a fresh unresolved alert. (CR-5)
+    data: { resolved: true, resolvedAt: new Date(), activeKey: null },
   })
   return NextResponse.json({ ok: true })
 }

@@ -17,9 +17,11 @@ interface AppShellProps {
   nav: React.ReactNode
   children: React.ReactNode
   title?: string
+  /** Optional header controls (e.g. the admin notification bell), shown left of the sync indicator. */
+  headerActions?: React.ReactNode
 }
 
-export function AppShell({ nav, children, title = 'AHITS' }: AppShellProps) {
+export function AppShell({ nav, children, title = 'AHITS', headerActions }: AppShellProps) {
   const theme = useTheme()
   const isMobile = useMediaQuery(theme.breakpoints.down('md'))
   const [drawerOpen, setDrawerOpen] = React.useState(false)
@@ -45,6 +47,7 @@ export function AppShell({ nav, children, title = 'AHITS' }: AppShellProps) {
             </IconButton>
           )}
           <Typography variant="h6" noWrap sx={{ flexGrow: 1 }}>{title}</Typography>
+          {headerActions}
           {isOffline ? (
             <Tooltip title={`Offline — ${pending} action(s) queued`}>
               <Badge badgeContent={pending || undefined} color="warning">
