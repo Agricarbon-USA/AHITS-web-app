@@ -41,9 +41,21 @@ async function run() {
     })
   }
 
-  // 2) Dispatch: email admins + create in-app notifications for un-notified alerts.
+  // 2) Reap idempotency keys older than 48h so the dedup table doesn't grow
+  // unbounded. The offline queue only replays within minutes of reconnecting,
+  // so a 48h window is far longer than any legitimate replay needs.
+  let idempotencyReaped = 0
+  try {
+    idempotencyReaped = Number(
+      await prisma.$executeRaw`DELETE FROM idempotency_key WHERE created_at < NOW() - INTERVAL '48 hours'`,
+    )
+  } catch {
+    /* table missing / transient — non-fatal */
+  }
+
+  // 3) Dispatch: email admins + create in-app notifications for un-notified alerts.
   const dispatch = await dispatchPendingAlerts()
-  return { overdueFlagged: due.length, ...dispatch }
+  return { overdueFlagged: due.length, idempotencyReaped, ...dispatch }
 }
 
 export async function POST(req: NextRequest) {

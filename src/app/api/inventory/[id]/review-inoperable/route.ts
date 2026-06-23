@@ -35,7 +35,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   if (decision === 'RETIRE') {
-    await prisma.inventoryUnit.update({ where: { id: unitId }, data: { status: 'RETIRED' } })
+    // Free the physical QR label for reuse on a replacement unit: the retired
+    // row keeps its history but releases its unique code so the same label can
+    // be re-registered (QR-reuse-on-retire). The `::retired::` suffix can't
+    // collide with a real scanned code.
+    await prisma.inventoryUnit.update({
+      where: { id: unitId },
+      data: { status: 'RETIRED', qrCodeId: `${unit.qrCodeId}::retired::${Date.now()}` },
+    })
   } else {
     await prisma.$transaction(async (tx) => {
       await tx.inventoryUnit.update({
