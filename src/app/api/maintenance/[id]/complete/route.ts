@@ -25,7 +25,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { id } = await params
 
   const parsed = schema.safeParse(await req.json().catch(() => ({})))
-  if (!parsed.success) return NextResponse.json({ error: 'Invalid body' }, { status: 400 })
+  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
   const { actualOdometer, actualCost, notes } = parsed.data
 
   const task = await prisma.maintenanceTask.findUnique({
@@ -78,9 +78,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       data.nextDue = null
     } else if (task.intervalType === 'DAYS' || task.intervalType === 'MONTHS') {
       data.nextDue = nextDueFromInterval(task.intervalType, task.intervalValue, now)
+    } else {
+      // PER_DEPLOYMENT: no time/mileage schedule. Clear nextDue so the date-based
+      // overdue scan can't immediately re-flag the just-completed task into a
+      // permanent alert loop; it re-arms on deployment events (a future enhancement).
+      data.nextDue = null
     }
-    // PER_DEPLOYMENT: nextDue / nextOdometer unchanged — rolls forward on
-    // deployment events (a future enhancement); completing just re-arms it.
 
     return tx.maintenanceTask.update({ where: { id }, data })
   })

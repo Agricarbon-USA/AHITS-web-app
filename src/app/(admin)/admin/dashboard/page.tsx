@@ -13,6 +13,8 @@ import InventoryIcon from '@mui/icons-material/Inventory'
 import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import { useRouter } from 'next/navigation'
+import { useToast } from '@/components/shared/useToast'
+import { alertLabel, alertLink } from '@/lib/alert-display'
 import type { DashboardStats } from '@/types'
 
 interface AlertRow {
@@ -22,25 +24,6 @@ interface AlertRow {
   sourceTable: string | null
   sourceId: string | null
   metadata: Record<string, string | number | boolean | null> | null
-}
-
-/** Deep-link target for an alert's underlying record, or null if none. */
-function alertHref(a: AlertRow): string | null {
-  if (a.sourceTable === 'maintenance_tasks' && a.sourceId) {
-    return `/admin/maintenance?task=${a.sourceId}`
-  }
-  return null
-}
-
-const ALERT_LABELS: Record<string, string> = {
-  DAMAGE_REPORTED: 'Damage Reported',
-  EQUIPMENT_NOT_RETURNED: 'Equipment Not Returned',
-  MAINTENANCE_OVERDUE: 'Maintenance Overdue',
-  REPAIR_NEEDED: 'Repair Needed',
-  LOW_INVENTORY: 'Low Inventory',
-  INSURANCE_EXPIRING: 'Insurance Expiring',
-  REGISTRATION_EXPIRING: 'Registration Expiring',
-  PIN_LOCKED: 'PIN Locked',
 }
 
 function relativeTime(iso: string) {
@@ -59,28 +42,37 @@ export default function AdminDashboardPage() {
   const [alertsLoading, setAlertsLoading] = React.useState(true)
   const [resolving, setResolving] = React.useState<string | null>(null)
   const router = useRouter()
+  const showToast = useToast()
 
   const loadAlerts = React.useCallback(() => {
     setAlertsLoading(true)
     fetch('/api/admin/alerts')
       .then((r) => r.json())
       .then((d) => setAlerts(d.data ?? []))
+      .catch(() => showToast({ message: 'Could not load alerts.', severity: 'error' }))
       .finally(() => setAlertsLoading(false))
-  }, [])
+  }, [showToast])
 
   React.useEffect(() => {
     fetch('/api/dashboard')
       .then((r) => r.json())
       .then((d) => setStats(d.data))
+      .catch(() => showToast({ message: 'Could not load dashboard stats.', severity: 'error' }))
       .finally(() => setStatsLoading(false))
     loadAlerts()
-  }, [loadAlerts])
+  }, [loadAlerts, showToast])
 
   const handleResolve = async (alertId: string) => {
     setResolving(alertId)
-    await fetch(`/api/admin/alerts/${alertId}/resolve`, { method: 'POST' })
-    setResolving(null)
-    loadAlerts()
+    try {
+      const res = await fetch(`/api/admin/alerts/${alertId}/resolve`, { method: 'POST' })
+      if (!res.ok) throw new Error()
+      loadAlerts()
+    } catch {
+      showToast({ message: 'Could not resolve the alert. Please try again.', severity: 'error' })
+    } finally {
+      setResolving(null)
+    }
   }
 
   return (
@@ -131,8 +123,8 @@ export default function AdminDashboardPage() {
                   <ListItem
                     secondaryAction={
                       <Box sx={{ display: 'flex', gap: 0.5 }}>
-                        {alertHref(alert) && (
-                          <Button size="small" onClick={() => router.push(alertHref(alert)!)}>
+                        {alertLink(alert.sourceTable, alert.sourceId, alert.type) && (
+                          <Button size="small" onClick={() => router.push(alertLink(alert.sourceTable, alert.sourceId, alert.type)!)}>
                             View
                           </Button>
                         )}
@@ -151,7 +143,7 @@ export default function AdminDashboardPage() {
                       primary={
                         <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                           <Chip
-                            label={ALERT_LABELS[alert.type] ?? alert.type}
+                            label={alertLabel(alert.type)}
                             size="small"
                             color="error"
                             variant="outlined"

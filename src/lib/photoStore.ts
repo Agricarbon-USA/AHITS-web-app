@@ -133,20 +133,23 @@ function hasLocalRefs(body: unknown): boolean {
   }
 }
 
-async function walk(value: unknown, deps: ResolveDeps): Promise<unknown | typeof DROP> {
+async function walk(value: unknown, deps: ResolveDeps, consumed: string[]): Promise<unknown | typeof DROP> {
   if (isLocalPhotoRef(value)) {
     const blob = await deps.getBlob(value)
     // Blob already uploaded or evicted — drop the now-meaningless local ref
     // rather than sending it to the server.
     if (!blob) return DROP
     const url = await deps.upload(blob) // throws on offline/failure → propagates so the caller can retry
-    await deps.deleteBlob(value)
+    // Defer deletion: only record this ref as consumed. Blobs are deleted by
+    // resolvePhotoRefs *after* the entire body resolves, so a failure on a
+    // later photo can't strand an earlier, already-uploaded one.
+    consumed.push(value)
     return url
   }
   if (Array.isArray(value)) {
     const out: unknown[] = []
     for (const el of value) {
-      const w = await walk(el, deps)
+      const w = await walk(el, deps, consumed)
       if (w !== DROP) out.push(w)
     }
     return out
@@ -154,7 +157,7 @@ async function walk(value: unknown, deps: ResolveDeps): Promise<unknown | typeof
   if (value && typeof value === 'object') {
     const out: Record<string, unknown> = {}
     for (const k of Object.keys(value as Record<string, unknown>)) {
-      const w = await walk((value as Record<string, unknown>)[k], deps)
+      const w = await walk((value as Record<string, unknown>)[k], deps, consumed)
       out[k] = w === DROP ? null : w
     }
     return out
@@ -166,9 +169,15 @@ async function walk(value: unknown, deps: ResolveDeps): Promise<unknown | typeof
  * Walk a request body and replace every `localphoto:` reference with the real
  * URL produced by uploading its stored blob. Returns the SAME body reference
  * when there are no local refs (fast path — non-photo writes are untouched).
- * Throws if an upload fails (e.g. still offline) so the queue retries later.
+ * Throws if an upload fails (e.g. still offline) so the queue retries later —
+ * and in that case NO blobs are deleted, so the retry re-uploads from the
+ * intact blobs (a partial-batch failure can't lose already-uploaded photos).
  */
 export async function resolvePhotoRefs<T>(body: T, deps: ResolveDeps = defaultDeps): Promise<T> {
   if (!hasLocalRefs(body)) return body
-  return (await walk(body, deps)) as T
+  const consumed: string[] = []
+  const resolved = (await walk(body, deps, consumed)) as T
+  // Reached only when every upload succeeded — safe to delete the uploaded blobs.
+  await Promise.all(consumed.map((ref) => deps.deleteBlob(ref).catch(() => {})))
+  return resolved
 }

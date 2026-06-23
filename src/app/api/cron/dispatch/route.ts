@@ -1,25 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { timingSafeEqual } from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { createAlert } from '@/lib/alerts'
 import { dispatchPendingAlerts } from '@/lib/notifications'
 
 // Notification dispatcher, hit on a schedule by an external scheduler (e.g.
 // GCP Cloud Scheduler). It is NOT behind the session auth — it is gated by a
-// shared secret instead. Provide it as `Authorization: Bearer <CRON_SECRET>`
-// or `?key=<CRON_SECRET>`.
+// shared secret instead. Provide it as `Authorization: Bearer <CRON_SECRET>`.
 function authorized(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET
   if (!secret) return false // refuse if unconfigured rather than running open
-  if (req.headers.get('authorization') === `Bearer ${secret}`) return true
-  if (req.nextUrl.searchParams.get('key') === secret) return true
-  return false
+  // Header-only (never a query param, which would leak the secret into access
+  // logs / URLs), compared in constant time.
+  const provided = Buffer.from(req.headers.get('authorization') ?? '')
+  const expected = Buffer.from(`Bearer ${secret}`)
+  return provided.length === expected.length && timingSafeEqual(provided, expected)
 }
 
 async function run() {
   // 1) Scan: flag maintenance tasks past their due date and raise (deduped) alerts.
   const now = new Date()
   const due = await prisma.maintenanceTask.findMany({
-    where: { status: { in: ['UPCOMING', 'DUE_SOON'] }, nextDue: { lt: now } },
+    where: {
+      // Date-based intervals only: MILEAGE is driven by the daily-check odometer
+      // trigger, and PER_DEPLOYMENT by deployment events — neither should be
+      // flagged overdue by a calendar scan.
+      intervalType: { in: ['DAYS', 'MONTHS'] },
+      isDamageReport: false,
+      status: { in: ['UPCOMING', 'DUE_SOON'] },
+      nextDue: { lt: now },
+    },
     include: { vehicle: { select: { name: true } }, item: { select: { name: true } } },
   })
   for (const t of due) {

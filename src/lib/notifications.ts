@@ -1,30 +1,10 @@
 import { prisma } from '@/lib/prisma'
 import { sendEmail } from '@/lib/email/resend'
 import { genericAlertEmail } from '@/lib/email/templates'
-
-const ALERT_TITLES: Record<string, string> = {
-  DAMAGE_REPORTED: 'Damage reported',
-  EQUIPMENT_NOT_RETURNED: 'Equipment not returned',
-  MAINTENANCE_OVERDUE: 'Maintenance overdue',
-  REPAIR_NEEDED: 'Repair needed',
-  LOW_INVENTORY: 'Low inventory',
-  INSURANCE_EXPIRING: 'Insurance expiring',
-  REGISTRATION_EXPIRING: 'Registration expiring',
-  PIN_LOCKED: 'Operator PIN locked',
-}
+import { ALERT_LABELS, alertLink } from '@/lib/alert-display'
 
 type Meta = Record<string, unknown>
 const str = (v: unknown): string | null => (v == null ? null : String(v))
-
-/** In-app deep link to an alert's underlying record, mirroring the dashboard. */
-function linkFor(sourceTable: string | null, sourceId: string | null, type: string): string | null {
-  if (sourceTable === 'maintenance_tasks' && sourceId) return `/admin/maintenance?task=${sourceId}`
-  if (type === 'LOW_INVENTORY') return '/admin/inventory'
-  if (type === 'EQUIPMENT_NOT_RETURNED') return '/admin/deployments'
-  if (type === 'INSURANCE_EXPIRING' || type === 'REGISTRATION_EXPIRING') return '/admin/vehicles'
-  if (type === 'PIN_LOCKED') return '/admin/users'
-  return null
-}
 
 export interface AlertPresentation {
   title: string
@@ -40,7 +20,7 @@ export function presentAlert(alert: {
   metadata: unknown
 }): AlertPresentation {
   const meta = (alert.metadata ?? {}) as Meta
-  const title = ALERT_TITLES[alert.type] ?? alert.type
+  const title = ALERT_LABELS[alert.type] ?? alert.type
   const subject = str(meta.itemName) ?? str(meta.taskName) ?? str(meta.name)
   let message: string
   switch (alert.type) {
@@ -54,7 +34,7 @@ export function presentAlert(alert: {
     case 'PIN_LOCKED': message = `${str(meta.name) ?? 'An operator'}'s PIN was locked after too many failed attempts.`; break
     default: message = title
   }
-  return { title, message, link: linkFor(alert.sourceTable, alert.sourceId, alert.type) }
+  return { title, message, link: alertLink(alert.sourceTable, alert.sourceId, alert.type) }
 }
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? ''
@@ -84,8 +64,16 @@ export async function dispatchPendingAlerts(): Promise<{ alerts: number; notific
   let emailed = false
 
   for (const alert of pending) {
-    const p = presentAlert(alert)
+    // Atomically CLAIM the alert by flipping notifiedAt null→now. Only the run
+    // that wins the flip (count === 1) proceeds, so overlapping cron runs (or a
+    // retried slow run) can never double-create notifications or double-email.
+    const claim = await prisma.alert.updateMany({
+      where: { id: alert.id, notifiedAt: null, resolved: false },
+      data: { notifiedAt: new Date() },
+    })
+    if (claim.count === 0) continue // already claimed/resolved by a concurrent run
 
+    const p = presentAlert(alert)
     await prisma.notification.createMany({
       data: admins.map((a) => ({
         userId: a.id,
@@ -95,6 +83,7 @@ export async function dispatchPendingAlerts(): Promise<{ alerts: number; notific
         link: p.link,
         alertId: alert.id,
       })),
+      skipDuplicates: true, // idempotent with the @@unique([alertId, userId]) index
     })
     notifications += admins.length
 
@@ -109,8 +98,6 @@ export async function dispatchPendingAlerts(): Promise<{ alerts: number; notific
     } catch {
       /* email misconfigured / transient — in-app notification still delivered */
     }
-
-    await prisma.alert.update({ where: { id: alert.id }, data: { notifiedAt: new Date() } })
   }
 
   return { alerts: pending.length, notifications, emailed }
