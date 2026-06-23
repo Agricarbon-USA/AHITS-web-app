@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import type { EquipmentCategory, EquipmentStatus, ItemType } from '@prisma/client'
 import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions } from '@/lib/inventory'
+import { money } from '@/lib/validation'
 
 export async function GET(req: NextRequest) {
   const session = await requireAuth()
@@ -136,7 +137,7 @@ const createSchema = z.object({
   unitId: z.string().optional(),
   quantity: z.number().int().min(0).default(1),
   expectedQuantity: z.number().int().optional(),
-  unitCost: z.number().optional(),
+  unitCost: money().optional(),
   supplier: z.string().optional(),
   reorderUrl: z.string().url().optional(),
   location: z.string().optional(),

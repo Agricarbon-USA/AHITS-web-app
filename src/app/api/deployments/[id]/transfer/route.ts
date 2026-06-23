@@ -69,6 +69,21 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     return NextResponse.json({ error: 'Cannot transfer to the same operator' }, { status: 400 })
   }
 
+  // Validate the destination operator exists and is active. Without this a
+  // transfer to a nonexistent id throws an FK error (unhandled 500) and a
+  // transfer to a deactivated user strands the items in a ghost rig that user
+  // can never log in to end.
+  const toOperator = await prisma.user.findUnique({
+    where: { id: toOperatorId },
+    select: { id: true, isActive: true, role: true },
+  })
+  if (!toOperator || !toOperator.isActive) {
+    return NextResponse.json({ error: 'Destination operator not found or inactive' }, { status: 400 })
+  }
+  if (toOperator.role !== 'OPERATOR') {
+    return NextResponse.json({ error: 'Transfers can only be sent to an operator' }, { status: 400 })
+  }
+
   // Verify all vehicleIds belong to this rig's active vehicles
   if (vehicleIds.length > 0) {
     const activeVehicleIds = new Set(rig.vehicles.map((rv) => rv.vehicleId))

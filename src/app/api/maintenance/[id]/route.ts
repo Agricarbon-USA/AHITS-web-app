@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { IntervalType, Priority, MaintenanceStatus, RepairType } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
+import { money } from '@/lib/validation'
 
 // Whitelist of admin-editable fields. Excludes id/vehicleId/itemId (the task's
 // subject) and isDamageReport (system-set) to prevent mass-assignment.
@@ -17,8 +18,8 @@ const maintenanceUpdateSchema = z
     nextDue: z.coerce.date().nullable(),
     nextOdometer: z.number().int().nullable(),
     status: z.nativeEnum(MaintenanceStatus),
-    estimatedCost: z.number().nullable(),
-    actualCost: z.number().nullable(),
+    estimatedCost: money().nullable(),
+    actualCost: money().nullable(),
     assigneeId: z.string().nullable(),
     hubId: z.string().nullable(),
     repairHubId: z.string().nullable(),

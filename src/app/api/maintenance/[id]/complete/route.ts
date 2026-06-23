@@ -4,10 +4,11 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
 import { nextDueFromInterval } from '@/lib/maintenance'
+import { money } from '@/lib/validation'
 
 const schema = z.object({
   actualOdometer: z.number().int().optional(),
-  actualCost: z.number().optional(),
+  actualCost: money().optional(),
   notes: z.string().optional(),
 })
 
