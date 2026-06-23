@@ -15,6 +15,7 @@ export async function GET(req: NextRequest) {
 
   const tasks = await prisma.maintenanceTask.findMany({
     where: {
+      deletedAt: null,
       ...(status && { status: status as never }),
       ...(vehicleId && { vehicleId }),
     },

@@ -56,6 +56,7 @@ export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id:
   const session = await requireAdmin()
   if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const { id } = await params
-  await prisma.maintenanceTask.delete({ where: { id } })
+  // Soft-delete (CR-8): preserve the repair/damage record rather than hard-delete.
+  await prisma.maintenanceTask.update({ where: { id }, data: { deletedAt: new Date() } })
   return NextResponse.json({ ok: true })
 }

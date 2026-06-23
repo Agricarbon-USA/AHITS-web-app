@@ -16,7 +16,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ qrC
   const key = parseScannedCode(decodeURIComponent(qrCodeId))
 
   const vehicle = await prisma.vehicle.findFirst({
-    where: { qrCodeId: key },
+    where: { qrCodeId: key, deletedAt: null },
     select: {
       id: true,
       name: true,

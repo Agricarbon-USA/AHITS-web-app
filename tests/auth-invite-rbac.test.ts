@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs'
 import { POST as completeInvite } from '../src/app/api/users/invite/complete/route'
 import { PATCH as patchUser } from '../src/app/api/users/[id]/route'
 import { prisma } from '../src/lib/prisma'
+import { hashInviteToken } from '../src/lib/invite-token'
 import { createOperator, createAdminUser } from './helpers/fixtures'
 
 // requireAdmin is mocked for the user-management route (RBAC + last-admin guard).
@@ -41,16 +42,18 @@ async function createInvite(overrides?: {
   expiresAt?: Date
 }) {
   inviteN++
-  return prisma.inviteToken.create({
+  const rawToken = `tok-${Date.now()}-${inviteN}`
+  const record = await prisma.inviteToken.create({
     data: {
       email: overrides?.email ?? `invitee-${Date.now()}-${inviteN}@test.example`,
       role: (overrides?.role ?? 'OPERATOR') as never,
       name: `Invitee ${inviteN}`,
-      token: `tok-${Date.now()}-${inviteN}`,
+      token: hashInviteToken(rawToken), // stored as hash; route looks up by hash
       expiresAt: overrides?.expiresAt ?? new Date(Date.now() + 24 * 60 * 60 * 1000),
       createdBy: 'admin-fixture',
     },
   })
+  return { ...record, token: rawToken } // expose plaintext for request bodies
 }
 
 beforeEach(() => {

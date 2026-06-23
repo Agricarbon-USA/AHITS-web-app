@@ -42,6 +42,29 @@ export const PRIORITY_STATUS: Record<string, StatusMeta> = {
   LOW: { label: 'Low', color: 'default' },
 }
 
+// Operator-declared equipment condition on return/scan. One vocabulary so the
+// scan flow and the disposition dialog present identical wording (M1-8). The
+// `<ConditionSelect/>` control renders these options; submit payloads stay
+// per-endpoint.
+export type ReturnCondition = 'GOOD' | 'IN_MAINTENANCE' | 'INOPERABLE'
+
+export const RETURN_CONDITION: Record<ReturnCondition, StatusMeta> = {
+  GOOD: { label: 'Good', color: 'success' },
+  IN_MAINTENANCE: { label: 'Needs maintenance', color: 'warning' },
+  INOPERABLE: { label: 'Inoperable', color: 'error' },
+}
+
+// Ordered options for a condition <Select>.
+export const RETURN_CONDITION_OPTIONS = (Object.keys(RETURN_CONDITION) as ReturnCondition[])
+  .map((value) => ({ value, label: RETURN_CONDITION[value].label }))
+
+// The damaged-item "can it be fixed?" question, shared by every screen that
+// marks an item inoperable so the wording never drifts.
+export const FIXABLE_OPTIONS = [
+  { value: 'yes', label: 'Yes — send for repair' },
+  { value: 'no', label: 'No — write off' },
+] as const
+
 export function equipmentStatusMeta(status: string): StatusMeta {
   return EQUIPMENT_STATUS[status] ?? { label: status, color: 'default' }
 }

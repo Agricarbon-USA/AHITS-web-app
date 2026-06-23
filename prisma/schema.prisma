@@ -122,7 +122,6 @@ enum AlertType {
   MAINTENANCE_OVERDUE
   EQUIPMENT_NOT_RETURNED
   DAMAGE_REPORTED
-  REPAIR_NEEDED
   LOW_INVENTORY
   INSURANCE_EXPIRING
   REGISTRATION_EXPIRING
@@ -439,6 +438,7 @@ model Vehicle {
   registrationExpires DateTime?
   qrCodeId            String        @unique @default(cuid())
   notes               String?
+  deletedAt           DateTime? // CR-8: soft-delete so history isn't orphaned
   createdAt           DateTime      @default(now())
   updatedAt           DateTime      @updatedAt
 
@@ -448,6 +448,7 @@ model Vehicle {
   rigVehicles      RigVehicle[]
   transferVehicles TransferVehicle[]
 
+  @@index([deletedAt])
   @@map("vehicles")
 }
 
@@ -535,6 +536,7 @@ model MaintenanceTask {
   dateDelivered  DateTime?
   purchaseOrder  String?
   invoiceNumber  String?
+  deletedAt      DateTime? // CR-8: soft-delete so history isn't orphaned
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
 
@@ -547,6 +549,7 @@ model MaintenanceTask {
   statusLinks StatusLink[]
 
   @@index([inventoryUnitId])
+  @@index([deletedAt])
   @@map("maintenance_tasks")
 }
 
@@ -699,10 +702,43 @@ model IdempotencyKey {
   scope        String
   statusCode   Int?     @map("status_code")
   responseBody Json?    @map("response_body")
+  // CR-2: sha256 of the request body, bound at claim time. A replay of the same
+  // key with a DIFFERENT body is rejected (422) instead of silently returning
+  // the first response. Nullable for legacy rows written before this column.
+  bodyHash     String?  @map("body_hash")
   createdAt    DateTime @default(now()) @map("created_at")
 
   @@index([createdAt])
   @@map("idempotency_key")
+}
+
+// CR-3/CR-4: shared-store rate limiter. A fixed-window counter keyed by
+// "<scope:ip>|<windowStartEpochMs>" so each window is its own row and the
+// ceiling holds across all Cloud Run instances (the in-memory limiter in
+// lib/rate-limit.ts is retained only as a fallback when the DB is unreachable).
+// Rows expire by resetAt and are reaped opportunistically.
+model RateLimitHit {
+  bucketKey String   @id @map("bucket_key")
+  count     Int      @default(0)
+  resetAt   DateTime @map("reset_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([resetAt])
+  @@map("rate_limit_hit")
+}
+
+// M3: single-row global notification configuration (id is always "global").
+// Read/written via raw SQL in src/lib/notification-config.ts (no client coupling).
+// `disabledAlertTypes` is a comma-separated list of AlertType values the
+// dispatcher should NOT notify on; empty = all enabled.
+model NotificationConfig {
+  id                 String   @id @default("global")
+  dailyCheckCutoff   String   @default("18:00")
+  disabledAlertTypes String   @default("")
+  updatedAt          DateTime @default(now())
+  createdAt          DateTime @default(now())
+
+  @@map("notification_config")
 }
 
 // ── Wave F: external delivery (tokenized status links) ──────────────────────

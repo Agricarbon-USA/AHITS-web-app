@@ -38,7 +38,7 @@ export const DUE_SOON_MILES = 500
 export async function applyOdometerReading(vehicleId: string, odometer: number): Promise<void> {
   try {
     // Only advance the recorded odometer (never roll it backwards on a typo).
-    const vehicle = await prisma.vehicle.findUnique({ where: { id: vehicleId }, select: { odometer: true, name: true } })
+    const vehicle = await prisma.vehicle.findFirst({ where: { id: vehicleId, deletedAt: null }, select: { odometer: true, name: true } })
     if (!vehicle) return
     if (vehicle.odometer == null || odometer > vehicle.odometer) {
       await prisma.vehicle.update({ where: { id: vehicleId }, data: { odometer } })
@@ -47,6 +47,7 @@ export async function applyOdometerReading(vehicleId: string, odometer: number):
     const tasks = await prisma.maintenanceTask.findMany({
       where: {
         vehicleId,
+        deletedAt: null,
         intervalType: 'MILEAGE',
         isDamageReport: false,
         status: { in: ['UPCOMING', 'DUE_SOON'] },

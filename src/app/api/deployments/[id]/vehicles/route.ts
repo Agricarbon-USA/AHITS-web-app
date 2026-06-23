@@ -77,7 +77,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // Verify vehicles exist
   const vehicles = await prisma.vehicle.findMany({
-    where: { id: { in: vehicleIds } },
+    where: { id: { in: vehicleIds }, deletedAt: null },
   })
   if (vehicles.length !== vehicleIds.length) {
     return NextResponse.json({ error: 'One or more vehicles not found' }, { status: 404 })

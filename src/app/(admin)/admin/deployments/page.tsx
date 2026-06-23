@@ -18,6 +18,8 @@ import StopCircleIcon from '@mui/icons-material/StopCircle'
 import CloseIcon from '@mui/icons-material/Close'
 import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline'
 import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
+import { TransferDialog } from '@/components/shared/TransferDialog'
+import { KitItemSelectRow } from '@/components/admin/KitItemSelectRow'
 import { DispositionDialog } from '@/components/shared/DispositionDialog'
 import type { HubOption, UserOption } from '@/components/shared/DispositionDialog'
 
@@ -118,160 +120,7 @@ function relativeDate(iso: string) {
   return `${days} days ago`
 }
 
-// ── Transfer Dialog ───────────────────────────────────────────────
-
-function TransferDialog({
-  rig, operators, onClose, onSuccess, showToast,
-}: {
-  rig: Rig
-  operators: UserOption[]
-  onClose: () => void
-  onSuccess: () => void
-  showToast: (msg: string, severity?: 'success' | 'error') => void
-}) {
-  const [step, setStep] = React.useState(0)
-  const [toOperatorId, setToOperatorId] = React.useState('')
-  const [selVehicles, setSelVehicles] = React.useState<Set<string>>(new Set(rig.vehicles.map((rv) => rv.vehicle.id)))
-  const [selKitItems, setSelKitItems] = React.useState<Set<string>>(new Set(rig.kits.flatMap((k) => k.items.map((ki) => ki.id))))
-  const kitItems = rig.kits.flatMap((k) => k.items)
-  const [transferQtys, setTransferQtys] = React.useState<Map<string, number>>(
-    new Map(kitItems.map((ki) => [ki.id, ki.quantity]))
-  )
-  const [loading, setLoading] = React.useState(false)
-
-  const doTransfer = async (note: string, photoUrls: string[]) => {
-    setLoading(true)
-    try {
-      const res = await fetch(`/api/deployments/${rig.id}/transfer`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          toOperatorId,
-          note,
-          photoUrls,
-          vehicleIds: Array.from(selVehicles),
-          items: kitItems
-            .filter((ki) => selKitItems.has(ki.id))
-            .map((ki) => ({
-              kitItemId: ki.id,
-              quantity: transferQtys.get(ki.id) ?? ki.quantity,
-              inventoryUnitId: ki.inventoryUnit?.id ?? undefined,
-            })),
-        }),
-      })
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}))
-        showToast(typeof d.error === 'string' ? d.error : 'Transfer failed. Please try again.', 'error')
-        return
-      }
-      showToast(`Transfer request sent — waiting for ${operators.find((o) => o.id === toOperatorId)?.name ?? 'operator'} to accept.`)
-      onSuccess()
-      onClose()
-    } catch {
-      showToast('Network error. Please try again.', 'error')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  if (step === 2) {
-    return (
-      <NotePhotoDialog
-        title="Transfer equipment"
-        description={`Transferring to ${operators.find((o) => o.id === toOperatorId)?.name ?? 'operator'}`}
-        open={true} loading={loading} onClose={onClose} onConfirm={doTransfer} confirmLabel="Transfer"
-      />
-    )
-  }
-
-  return (
-    <Dialog open={true} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Transfer Equipment</DialogTitle>
-      <DialogContent>
-        <Stepper activeStep={step} sx={{ mb: 3, mt: 1 }}>
-          <Step><StepLabel>Destination</StepLabel></Step>
-          <Step><StepLabel>Select Items</StepLabel></Step>
-          <Step><StepLabel>Note</StepLabel></Step>
-        </Stepper>
-        {step === 0 && (
-          <TextField select label="Destination Operator" value={toOperatorId} onChange={(e) => setToOperatorId(e.target.value)} fullWidth>
-            {operators.filter((o) => o.id !== rig.operator.id).map((o) => (
-              <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>
-            ))}
-          </TextField>
-        )}
-        {step === 1 && (
-          <Stack spacing={2}>
-            {rig.vehicles.length > 0 && (
-              <Box>
-                <Typography variant="subtitle2" fontWeight={600} mb={1}>Vehicles</Typography>
-                <Stack spacing={0.5}>
-                  {rig.vehicles.map((rv) => {
-                    const Icon = VEHICLE_ICON[rv.vehicle.type] ?? LocalShippingIcon
-                    return (
-                      <Stack key={rv.vehicle.id} direction="row" alignItems="center" spacing={1}>
-                        <Checkbox size="small" checked={selVehicles.has(rv.vehicle.id)}
-                          onChange={(e) => { const s = new Set(selVehicles); e.target.checked ? s.add(rv.vehicle.id) : s.delete(rv.vehicle.id); setSelVehicles(s) }} />
-                        <Icon fontSize="small" color="action" />
-                        <Typography variant="body2">{rv.vehicle.name}</Typography>
-                      </Stack>
-                    )
-                  })}
-                </Stack>
-              </Box>
-            )}
-            {kitItems.length > 0 && (
-              <Box>
-                <Typography variant="subtitle2" fontWeight={600} mb={1}>Kit Items</Typography>
-                <Stack spacing={0.5}>
-                  {kitItems.map((ki) => (
-                    <Stack key={ki.id} direction="row" alignItems="center" spacing={1}>
-                      <Checkbox size="small" checked={selKitItems.has(ki.id)}
-                        onChange={(e) => { const s = new Set(selKitItems); e.target.checked ? s.add(ki.id) : s.delete(ki.id); setSelKitItems(s) }} />
-                      <Box flexGrow={1}>
-                        <Typography variant="body2">{ki.item.name}</Typography>
-                        {ki.inventoryUnit && (
-                          <Typography variant="caption" color="text.secondary">
-                            {ki.inventoryUnit.serialNumber ?? ki.inventoryUnit.qrCodeId.slice(0, 8)}
-                          </Typography>
-                        )}
-                      </Box>
-                      {ki.item.itemType === 'CONSUMABLE' && selKitItems.has(ki.id) ? (
-                        <TextField
-                          type="number"
-                          size="small"
-                          value={transferQtys.get(ki.id) ?? ki.quantity}
-                          onChange={(e) => {
-                            const qty = Math.max(1, Math.min(parseInt(e.target.value) || 1, ki.quantity))
-                            const m = new Map(transferQtys)
-                            m.set(ki.id, qty)
-                            setTransferQtys(m)
-                          }}
-                          inputProps={{ min: 1, max: ki.quantity }}
-                          sx={{ width: 70 }}
-                        />
-                      ) : (
-                        <Typography variant="caption" color="text.secondary">×{ki.quantity}</Typography>
-                      )}
-                    </Stack>
-                  ))}
-                </Stack>
-              </Box>
-            )}
-          </Stack>
-        )}
-      </DialogContent>
-      <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button onClick={onClose}>Cancel</Button>
-        {step > 0 && <Button onClick={() => setStep((s) => s - 1)}>Back</Button>}
-        <Button variant="contained" onClick={() => setStep((s) => s + 1)} disabled={step === 0 && !toOperatorId}>
-          {step < 1 ? 'Next' : 'Continue to Note'}
-        </Button>
-      </DialogActions>
-    </Dialog>
-  )
-}
-
+// Transfer Dialog now lives in components/shared/TransferDialog.tsx (UX-5).
 // ── New Deployment Dialog ─────────────────────────────────────────
 
 function NewDeploymentDialog({
@@ -417,63 +266,9 @@ function NewDeploymentDialog({
                       {catName}
                     </Typography>
                     <Stack spacing={1}>
-                      {catItems.map((item) => {
-                        const isSerialized = item.itemType === 'SERIALIZED'
-
-                        if (isSerialized) {
-                          return (
-                            <Stack key={item.id} spacing={0.25}>
-                              <Stack direction="row" alignItems="center" spacing={1}>
-                                <Box flexGrow={1}>
-                                  <Typography variant="body2" fontWeight={500}>{item.name}</Typography>
-                                  <Chip size="small" label="Serialized" variant="outlined" color="primary" sx={{ height: 16, fontSize: 10, mt: 0.25 }} />
-                                </Box>
-                              </Stack>
-                              <Stack spacing={0} pl={1}>
-                                {item.availableUnits.map((u) => (
-                                  <Stack key={u.id} direction="row" alignItems="center" spacing={1}>
-                                    <Checkbox size="small" checked={kitItems.has(u.id)}
-                                      onChange={(e) => {
-                                        const m = new Map(kitItems)
-                                        if (e.target.checked) {
-                                          m.set(u.id, { inventoryItemId: item.id, itemType: 'SERIALIZED', inventoryUnitId: u.id, unitLabel: u.serialNumber ?? `Unit ${u.position}` })
-                                        } else {
-                                          m.delete(u.id)
-                                        }
-                                        setKitItems(m)
-                                      }} />
-                                    <Typography variant="body2">{u.serialNumber ?? `Unit ${u.position}`}</Typography>
-                                  </Stack>
-                                ))}
-                              </Stack>
-                            </Stack>
-                          )
-                        }
-
-                        const entry = kitItems.get(item.id)
-                        const checked = !!entry
-                        return (
-                          <Stack key={item.id} direction="row" alignItems="center" spacing={1}>
-                            <Checkbox size="small" checked={checked}
-                              onChange={(e) => {
-                                const m = new Map(kitItems)
-                                if (e.target.checked) {
-                                  m.set(item.id, { inventoryItemId: item.id, itemType: 'CONSUMABLE', quantity: 1 })
-                                } else {
-                                  m.delete(item.id)
-                                }
-                                setKitItems(m)
-                              }} />
-                            <Typography variant="body2" flexGrow={1}>{item.name}</Typography>
-                            {checked && (
-                              <TextField type="number" size="small" value={(entry as { itemType: 'CONSUMABLE'; quantity: number }).quantity}
-                                onChange={(e) => { const m = new Map(kitItems); m.set(item.id, { inventoryItemId: item.id, itemType: 'CONSUMABLE', quantity: parseInt(e.target.value) || 1 }); setKitItems(m) }}
-                                inputProps={{ min: 1, style: { MozAppearance: 'textfield', width: 60 } }}
-                                sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }} />
-                            )}
-                          </Stack>
-                        )
-                      })}
+                      {catItems.map((item) => (
+                        <KitItemSelectRow key={item.id} item={item} selected={kitItems} onChange={setKitItems} />
+                      ))}
                     </Stack>
                   </Box>
                 ))}
@@ -1044,71 +839,9 @@ function DeploymentDrawer({
             <Typography variant="body2" color="text.secondary">No available items.</Typography>
           ) : (
             <Stack spacing={1} mt={1}>
-              {availableItems.map((item) => {
-                const isSerialized = item.itemType === 'SERIALIZED'
-
-                if (isSerialized) {
-                  return (
-                    <Stack key={item.id} spacing={0.25}>
-                      <Stack direction="row" alignItems="center" spacing={1}>
-                        <Box flexGrow={1}>
-                          <Typography variant="body2" fontWeight={500}>{item.name}</Typography>
-                          <Stack direction="row" spacing={0.5}>
-                            <Chip size="small" label={item.category?.name ?? ''} sx={{ height: 16, fontSize: 10 }} />
-                            <Chip size="small" label="Serialized" variant="outlined" color="primary" sx={{ height: 16, fontSize: 10 }} />
-                          </Stack>
-                        </Box>
-                      </Stack>
-                      <Stack spacing={0} pl={1}>
-                        {item.availableUnits.map((u) => (
-                          <Stack key={u.id} direction="row" alignItems="center" spacing={1}>
-                            <Checkbox size="small" checked={pendingItems.has(u.id)}
-                              onChange={(e) => {
-                                const m = new Map(pendingItems)
-                                if (e.target.checked) {
-                                  m.set(u.id, { inventoryItemId: item.id, itemType: 'SERIALIZED', inventoryUnitId: u.id, unitLabel: u.serialNumber ?? `Unit ${u.position}` })
-                                } else {
-                                  m.delete(u.id)
-                                }
-                                setPendingItems(m)
-                              }} />
-                            <Typography variant="body2">{u.serialNumber ?? `Unit ${u.position}`}</Typography>
-                          </Stack>
-                        ))}
-                      </Stack>
-                    </Stack>
-                  )
-                }
-
-                const entry = pendingItems.get(item.id)
-                const checked = !!entry
-                return (
-                  <Stack key={item.id} spacing={0.5}>
-                    <Stack direction="row" alignItems="center" spacing={1}>
-                      <Checkbox size="small" checked={checked}
-                        onChange={(e) => {
-                          const m = new Map(pendingItems)
-                          if (e.target.checked) {
-                            m.set(item.id, { inventoryItemId: item.id, itemType: 'CONSUMABLE', quantity: 1 })
-                          } else {
-                            m.delete(item.id)
-                          }
-                          setPendingItems(m)
-                        }} />
-                      <Box flexGrow={1}>
-                        <Typography variant="body2">{item.name}</Typography>
-                        <Chip size="small" label={item.category?.name ?? ''} sx={{ height: 16, fontSize: 10 }} />
-                      </Box>
-                      {checked && (
-                        <TextField type="number" size="small" value={(entry as { itemType: 'CONSUMABLE'; quantity: number }).quantity}
-                          onChange={(e) => { const m = new Map(pendingItems); m.set(item.id, { inventoryItemId: item.id, itemType: 'CONSUMABLE', quantity: parseInt(e.target.value) || 1 }); setPendingItems(m) }}
-                          inputProps={{ min: 1, style: { MozAppearance: 'textfield', width: 60 } }}
-                          sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }} />
-                      )}
-                    </Stack>
-                  </Stack>
-                )
-              })}
+              {availableItems.map((item) => (
+                <KitItemSelectRow key={item.id} item={item} selected={pendingItems} onChange={setPendingItems} showCategoryChip />
+              ))}
             </Stack>
           )}
         </DialogContent>
@@ -1277,7 +1010,7 @@ function DeploymentDrawer({
       )}
 
       {transferOpen && (
-        <TransferDialog rig={rig} operators={operators} onClose={() => setTransferOpen(false)} onSuccess={refresh} showToast={showToast} />
+        <TransferDialog rig={rig} operators={operators} excludeOperatorId={rig.operator.id} onClose={() => setTransferOpen(false)} onSuccess={refresh} showToast={(t) => showToast(t.message, t.severity === 'error' ? 'error' : 'success')} />
       )}
 
       {/* Cancel transfer confirm */}

@@ -90,6 +90,14 @@ export interface OfflineQueueItem {
   lastError?: string
   /** Human label for the action, shown in the pending/failed list. */
   label?: string
+  /**
+   * M1-9: client-generated placeholder id ("pending-…") for a create whose
+   * server id isn't known yet. On successful replay the real id is read from
+   * the response and every later queued item referencing this placeholder is
+   * remapped to it (see lib/offline-remap.ts), so dependent offline writes
+   * (e.g. create deployment → add items) survive sync.
+   */
+  placeholderId?: string
 }
 
 // Snapshot of the offline queue for honest UI indicators.

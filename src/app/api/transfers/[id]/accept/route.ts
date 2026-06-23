@@ -215,5 +215,18 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     return NextResponse.json({ error: msg }, { status: 409 })
   }
 
+  // Notify the initiator their transfer was accepted (best-effort, non-fatal).
+  if (transfer.initiatedById && transfer.initiatedById !== session.userId) {
+    await prisma.notification.create({
+      data: {
+        userId: transfer.initiatedById,
+        type: 'TRANSFER_ACCEPTED',
+        title: 'Transfer accepted',
+        body: `${session.name} accepted the equipment transfer.`,
+        link: '/operator/my-rig',
+      },
+    }).catch(() => {})
+  }
+
   return NextResponse.json({ ok: true, transferRequest: updatedTransfer })
 }
