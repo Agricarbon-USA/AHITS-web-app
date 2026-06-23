@@ -1,16 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { randomBytes } from 'crypto'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
 import { sendEmail } from '@/lib/email/resend'
 import { inviteEmail } from '@/lib/email/templates'
 import { writeAudit } from '@/lib/audit'
-
-/** Cryptographically-random, URL-safe invite token (256 bits of entropy). */
-function generateInviteToken(): string {
-  return randomBytes(32).toString('base64url')
-}
+import { generateInviteToken, hashInviteToken } from '@/lib/invite-token'
 
 // List outstanding (pending) invites for the admin Team Management view.
 export async function GET() {
@@ -54,20 +49,22 @@ export async function POST(req: NextRequest) {
     where: { email, usedAt: null },
   })
 
-  // Create 48-hour invite token with a CSPRNG token (not cuid()).
+  // Create 48-hour invite. The raw CSPRNG token goes in the email; only its
+  // sha256 hash is persisted (H2).
+  const rawToken = generateInviteToken()
   const invite = await prisma.inviteToken.create({
     data: {
       email,
       name,
       role,
-      token: generateInviteToken(),
+      token: hashInviteToken(rawToken),
       createdBy: session.userId,
       expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
     },
   })
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
-  const setupUrl = `${appUrl}/setup-account?token=${encodeURIComponent(invite.token)}`
+  const setupUrl = `${appUrl}/setup-account?token=${encodeURIComponent(rawToken)}`
 
   // If the email fails to send, don't leave a dangling invite the admin thinks
   // went out — clean it up and surface the failure.

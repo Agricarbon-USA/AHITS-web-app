@@ -22,8 +22,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
   const { recipientEmail, recipientName, expiresInDays } = parsed.data
 
-  const task = await prisma.maintenanceTask.findUnique({
-    where: { id },
+  const task = await prisma.maintenanceTask.findFirst({
+    where: { id, deletedAt: null },
     include: {
       vehicle: { select: { name: true } },
       item: { select: { name: true } },

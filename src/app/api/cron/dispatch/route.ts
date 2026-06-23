@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { prisma } from '@/lib/prisma'
-import { createAlert } from '@/lib/alerts'
+import { createAlert, resolveActiveAlert } from '@/lib/alerts'
 import { dispatchPendingAlerts } from '@/lib/notifications'
 
 // Notification dispatcher, hit on a schedule by an external scheduler (e.g.
@@ -29,6 +29,7 @@ async function run() {
       isDamageReport: false,
       status: { in: ['UPCOMING', 'DUE_SOON'] },
       nextDue: { lt: now },
+      deletedAt: null,
     },
     include: { vehicle: { select: { name: true } }, item: { select: { name: true } } },
   })
@@ -53,9 +54,56 @@ async function run() {
     /* table missing / transient — non-fatal */
   }
 
-  // 3) Dispatch: email admins + create in-app notifications for un-notified alerts.
+  // 3) Scan: low consumable stock → raise/clear LOW_INVENTORY alerts. Only
+  // consumables with a configured threshold participate; the alert self-clears
+  // once stock recovers above the threshold (resolveActiveAlert nulls activeKey).
+  const consumables = await prisma.inventoryItem.findMany({
+    where: { itemType: 'CONSUMABLE', deletedAt: null, lowStockThreshold: { not: null } },
+    select: { id: true, name: true, quantity: true, lowStockThreshold: true },
+  })
+  let lowFlagged = 0
+  for (const it of consumables) {
+    const threshold = it.lowStockThreshold as number
+    if (it.quantity <= threshold) {
+      await createAlert('LOW_INVENTORY', 'inventory_items', it.id, {
+        itemName: it.name,
+        quantity: it.quantity,
+        threshold,
+      })
+      lowFlagged++
+    } else {
+      await resolveActiveAlert('LOW_INVENTORY', 'inventory_items', it.id)
+    }
+  }
+
+  // 4) Scan: vehicle insurance/registration expiring within 30 days (or already
+  // expired) → raise/clear the matching alerts. Self-clears once the document is
+  // renewed past the window (or the date is cleared / vehicle retired).
+  const EXPIRY_WINDOW_DAYS = 30
+  const expiryCutoff = new Date(now.getTime() + EXPIRY_WINDOW_DAYS * 86_400_000)
+  const vehicles = await prisma.vehicle.findMany({
+    where: { status: { not: 'RETIRED' } },
+    select: { id: true, name: true, insuranceExpires: true, registrationExpires: true },
+  })
+  let expiryFlagged = 0
+  for (const v of vehicles) {
+    if (v.insuranceExpires && v.insuranceExpires <= expiryCutoff) {
+      await createAlert('INSURANCE_EXPIRING', 'vehicles', v.id, { itemName: v.name, expiresAt: v.insuranceExpires.toISOString() })
+      expiryFlagged++
+    } else {
+      await resolveActiveAlert('INSURANCE_EXPIRING', 'vehicles', v.id)
+    }
+    if (v.registrationExpires && v.registrationExpires <= expiryCutoff) {
+      await createAlert('REGISTRATION_EXPIRING', 'vehicles', v.id, { itemName: v.name, expiresAt: v.registrationExpires.toISOString() })
+      expiryFlagged++
+    } else {
+      await resolveActiveAlert('REGISTRATION_EXPIRING', 'vehicles', v.id)
+    }
+  }
+
+  // 5) Dispatch: email admins + create in-app notifications for un-notified alerts.
   const dispatch = await dispatchPendingAlerts()
-  return { overdueFlagged: due.length, idempotencyReaped, ...dispatch }
+  return { overdueFlagged: due.length, idempotencyReaped, lowInventoryFlagged: lowFlagged, expiryFlagged, ...dispatch }
 }
 
 export async function POST(req: NextRequest) {

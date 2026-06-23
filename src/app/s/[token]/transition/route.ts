@@ -20,7 +20,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ token: st
   const { token } = await params
 
   const ip = clientIp(req)
-  const rl = rateLimit(`statuslink:${ip}`, 60, 5 * 60 * 1000)
+  const rl = await rateLimit(`statuslink:${ip}`, 60, 5 * 60 * 1000)
   if (!rl.allowed) return NextResponse.json({ error: 'Too many requests.' }, { status: 429 })
 
   const parsed = schema.safeParse(await req.json().catch(() => ({})))

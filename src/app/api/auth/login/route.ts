@@ -20,7 +20,7 @@ const LOGIN_WINDOW_MS = 5 * 60 * 1000 // 5 minutes
 export async function POST(req: NextRequest) {
   try {
     const ip = clientIp(req)
-    const rl = rateLimit(`login:${ip}`, MAX_LOGINS_PER_IP, LOGIN_WINDOW_MS)
+    const rl = await rateLimit(`login:${ip}`, MAX_LOGINS_PER_IP, LOGIN_WINDOW_MS)
     if (!rl.allowed) {
       return NextResponse.json(
         { error: 'Too many attempts. Please wait a few minutes and try again.' },

@@ -103,7 +103,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   }
 
   const transferRequest = await prisma.$transaction(async (tx) => {
-    return tx.transferRequest.create({
+    const created = await tx.transferRequest.create({
       data: {
         fromRigId: id,
         toOperatorId,
@@ -124,6 +124,24 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       },
       include: TRANSFER_INCLUDE,
     })
+
+    // Notify the destination operator so they learn of the incoming transfer
+    // via the bell + My-Rig badge, instead of only by polling My Rig (UX-2).
+    // Created in-transaction so a transfer always has its notification.
+    const counts: string[] = []
+    if (vehicleIds.length > 0) counts.push(`${vehicleIds.length} vehicle${vehicleIds.length > 1 ? 's' : ''}`)
+    if (items.length > 0) counts.push(`${items.length} item${items.length > 1 ? 's' : ''}`)
+    await tx.notification.create({
+      data: {
+        userId: toOperatorId,
+        type: 'TRANSFER_REQUESTED',
+        title: 'Incoming equipment transfer',
+        body: `${session.name} wants to transfer ${counts.join(' and ')} to you. Tap to review.`,
+        link: '/operator/my-rig',
+      },
+    })
+
+    return created
   })
 
   return NextResponse.json(transferRequest, { status: 201 })

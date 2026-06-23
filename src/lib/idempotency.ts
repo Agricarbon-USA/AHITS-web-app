@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { createHash } from 'crypto'
 import { prisma } from '@/lib/prisma'
 
 /**
@@ -8,6 +9,11 @@ import { prisma } from '@/lib/prisma'
  * `Idempotency-Key`. On replay this wrapper returns the first response rather
  * than re-executing the handler, preventing duplicate deployments, kit-items,
  * CheckLogs, and double-moved units.
+ *
+ * Body binding (CR-2): the request body is hashed and bound to the key. A
+ * replay of the same key carrying a DIFFERENT payload is a client/key-collision
+ * bug, so it's rejected (422) rather than silently returning the first
+ * response for an unrelated request.
  *
  * TOCTOU protection: the key is claimed with an INSERT (NULL status_code as
  * an in-flight placeholder) before the handler runs. Concurrent replays that
@@ -24,28 +30,35 @@ export function getIdempotencyKey(req: Request): string | null {
   return req.headers.get('Idempotency-Key') ?? req.headers.get('idempotency-key')
 }
 
-async function getCached(
-  key: string,
-  scope: string
-): Promise<{ status: number; body: unknown } | null> {
+function hashBody(text: string): string {
+  return createHash('sha256').update(text).digest('hex')
+}
+
+interface CachedRow {
+  status: number
+  body: unknown
+  bodyHash: string | null
+}
+
+async function getCached(key: string, scope: string): Promise<CachedRow | null> {
   try {
-    const rows = await prisma.$queryRaw<{ status_code: number; response_body: unknown }[]>`
-      SELECT status_code, response_body FROM idempotency_key
+    const rows = await prisma.$queryRaw<{ status_code: number; response_body: unknown; body_hash: string | null }[]>`
+      SELECT status_code, response_body, body_hash FROM idempotency_key
       WHERE key = ${key} AND scope = ${scope} AND status_code IS NOT NULL
       LIMIT 1`
     if (!rows || rows.length === 0) return null
-    return { status: rows[0].status_code, body: rows[0].response_body }
+    return { status: rows[0].status_code, body: rows[0].response_body, bodyHash: rows[0].body_hash }
   } catch {
     return null
   }
 }
 
-/** INSERT a placeholder (status_code NULL) to claim the key exclusively. */
-async function claimKey(key: string, scope: string): Promise<boolean> {
+/** INSERT a placeholder (status_code NULL) to claim the key exclusively, binding the body hash. */
+async function claimKey(key: string, scope: string, bodyHash: string): Promise<boolean> {
   try {
     const rows = await prisma.$queryRaw<{ key: string }[]>`
-      INSERT INTO idempotency_key (key, scope, status_code, created_at)
-      VALUES (${key}, ${scope}, NULL, NOW())
+      INSERT INTO idempotency_key (key, scope, status_code, body_hash, created_at)
+      VALUES (${key}, ${scope}, NULL, ${bodyHash}, NOW())
       ON CONFLICT (key) DO NOTHING
       RETURNING key`
     return rows.length > 0
@@ -77,6 +90,12 @@ async function releaseKey(key: string): Promise<void> {
   }
 }
 
+const mismatchResponse = () =>
+  NextResponse.json(
+    { error: 'This Idempotency-Key was already used with a different request.' },
+    { status: 422 },
+  )
+
 /**
  * Wrap a route handler so repeated requests carrying the same Idempotency-Key
  * return the first response instead of re-running. Requests without a key pass
@@ -92,20 +111,35 @@ export async function withIdempotency(
   const key = getIdempotencyKey(req)
   if (!key) return handler()
 
+  // Hash the body off a clone so the original stream is still readable by the
+  // handler (a request body can only be consumed once).
+  let bodyHash = ''
+  try {
+    bodyHash = hashBody(await req.clone().text())
+  } catch {
+    bodyHash = ''
+  }
+
   // Fast path: a committed response already exists for this key+scope.
   const cached = await getCached(key, scope)
   if (cached) {
+    // CR-2: same key, different payload → reject rather than return the wrong
+    // (first) response. Legacy rows with a null hash are treated as matching.
+    if (cached.bodyHash && cached.bodyHash !== bodyHash) return mismatchResponse()
     return NextResponse.json(cached.body as Record<string, unknown>, { status: cached.status })
   }
 
   // Try to claim the key before running the handler.
-  const claimed = await claimKey(key, scope)
+  const claimed = await claimKey(key, scope, bodyHash)
   if (!claimed) {
     // Another request won the claim; poll briefly for its committed result.
     for (let i = 0; i < 4; i++) {
       await new Promise<void>((r) => setTimeout(r, 50))
       const retry = await getCached(key, scope)
-      if (retry) return NextResponse.json(retry.body as Record<string, unknown>, { status: retry.status })
+      if (retry) {
+        if (retry.bodyHash && retry.bodyHash !== bodyHash) return mismatchResponse()
+        return NextResponse.json(retry.body as Record<string, unknown>, { status: retry.status })
+      }
     }
     // Still in-flight after ~200 ms — fall through and run the handler anyway.
     // This is a very narrow race; in the worst case one extra write occurs.
