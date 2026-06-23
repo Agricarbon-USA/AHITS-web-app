@@ -3,8 +3,7 @@
 import * as React from 'react'
 import {
   Box, Typography, Button, Stack, Alert, CircularProgress, Paper,
-  Select, MenuItem, FormControl, InputLabel, Dialog, DialogTitle,
-  DialogContent, DialogActions,
+  Dialog, DialogTitle, DialogContent, DialogActions,
 } from '@mui/material'
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner'
 import DirectionsCarIcon from '@mui/icons-material/DirectionsCar'
@@ -12,6 +11,8 @@ import { useRouter } from 'next/navigation'
 import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 import { StatusChip } from '@/components/shared/StatusChip'
+import { ConditionSelect } from '@/components/shared/ConditionSelect'
+import type { ReturnCondition } from '@/lib/status'
 
 interface UnitInfo {
   id: string
@@ -53,7 +54,7 @@ export default function OperatorScanPage() {
   const [error, setError] = React.useState('')
   const [activeRigId, setActiveRigId] = React.useState<string | null>(null)
   const [activeKitItems, setActiveKitItems] = React.useState<KitItemStub[]>([])
-  const [returnCondition, setReturnCondition] = React.useState<'GOOD' | 'IN_MAINTENANCE' | 'INOPERABLE'>('GOOD')
+  const [returnCondition, setReturnCondition] = React.useState<ReturnCondition>('GOOD')
   const [actionLoading, setActionLoading] = React.useState(false)
   const [addDialogOpen, setAddDialogOpen] = React.useState(false)
 
@@ -271,18 +272,7 @@ export default function OperatorScanPage() {
                 <Stack spacing={1} mt={1}>
                   {canReturn && (
                     <>
-                      <FormControl size="small" fullWidth>
-                        <InputLabel>Return condition</InputLabel>
-                        <Select
-                          value={returnCondition}
-                          label="Return condition"
-                          onChange={(e) => setReturnCondition(e.target.value as typeof returnCondition)}
-                        >
-                          <MenuItem value="GOOD">Good</MenuItem>
-                          <MenuItem value="IN_MAINTENANCE">Needs maintenance</MenuItem>
-                          <MenuItem value="INOPERABLE">Inoperable</MenuItem>
-                        </Select>
-                      </FormControl>
+                      <ConditionSelect value={returnCondition} onChange={setReturnCondition} />
                       <Button
                         variant="contained"
                         color="success"

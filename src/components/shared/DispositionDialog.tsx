@@ -8,6 +8,7 @@ import {
 } from '@mui/material'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 import { PhotoCapture } from './PhotoCapture'
+import { FIXABLE_OPTIONS, type ReturnCondition } from '@/lib/status'
 
 export interface HubOption {
   id: string
@@ -32,7 +33,6 @@ export interface KitItemSummary {
 }
 
 type DispositionType = 'HUB' | 'TRANSFER' | 'INOPERABLE'
-type ReturnCondition = 'GOOD' | 'IN_MAINTENANCE' | 'INOPERABLE'
 
 interface ItemDisposition {
   kitItemId: string
@@ -229,8 +229,9 @@ export function DispositionDialog({
                       value={disp.canBeFixed === true ? 'yes' : disp.canBeFixed === false ? 'no' : ''}
                       onChange={(e) => setDisp(item.kitItemId, { canBeFixed: e.target.value === 'yes' })}
                     >
-                      <MenuItem value="yes">Yes — send for repair</MenuItem>
-                      <MenuItem value="no">No — write off</MenuItem>
+                      {FIXABLE_OPTIONS.map((o) => (
+                        <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>
+                      ))}
                     </TextField>
                     <TextField
                       label="Notes"
