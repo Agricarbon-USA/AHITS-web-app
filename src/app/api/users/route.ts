@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
 import { hashPin } from '@/lib/auth/pin'
 import { writeAudit } from '@/lib/audit'
+import { pinSchema, money } from '@/lib/validation'
 
 export async function GET() {
   const session = await requireAdmin()
@@ -24,9 +25,9 @@ const createSchema = z.object({
   name: z.string().min(1),
   email: z.string().email(),
   role: z.enum(['ADMIN', 'OPERATOR']),
-  pin: z.string().length(6).regex(/^\d{6}$/),
+  pin: pinSchema,
   homeHubId: z.string().nullable().optional(),
-  hourlyRate: z.number().nullable().optional(),
+  hourlyRate: money().nullable().optional(),
 })
 
 export async function POST(req: NextRequest) {

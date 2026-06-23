@@ -119,9 +119,17 @@ export async function withIdempotency(
     throw e
   }
 
-  // Cache 2xx–4xx responses, but never auth errors (session may be
-  // re-established on retry) and never server errors (they must be retried).
-  if (res.status < 500 && res.status !== 401 && res.status !== 403) {
+  // Only cache responses that are DETERMINISTIC for a given (key, body):
+  //   • 2xx  — the write succeeded; replays must return the same result.
+  //   • 400  — schema/validation rejection; the same payload will always fail,
+  //            so caching stops a doomed write from re-running forever.
+  // Everything else is left retryable by releasing the placeholder. This is
+  // critical for 409 (conflict): a transient conflict on replay (e.g. a unit
+  // momentarily taken by a concurrent checkout) must NOT be frozen into a
+  // permanent cached failure — once the conflict clears, the write can succeed.
+  // 401/403 (auth) and 5xx (server) likewise must always be retryable.
+  const cacheable = (res.status >= 200 && res.status < 300) || res.status === 400
+  if (cacheable) {
     try {
       const body = await res.clone().json().catch(() => null)
       await commitKey(key, res.status, body)

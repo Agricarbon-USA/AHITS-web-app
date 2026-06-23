@@ -22,10 +22,15 @@ export async function DELETE(
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  await prisma.transferRequest.update({
-    where: { id },
+  // Conditional flip so a cancel racing an accept/decline can't override a
+  // already-resolved transfer.
+  const cancelled = await prisma.transferRequest.updateMany({
+    where: { id, status: 'PENDING' },
     data: { status: 'CANCELLED' },
   })
+  if (cancelled.count === 0) {
+    return NextResponse.json({ error: 'Transfer is no longer pending' }, { status: 409 })
+  }
 
   return NextResponse.json({ ok: true })
 }

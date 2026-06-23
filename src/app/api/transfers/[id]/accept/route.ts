@@ -57,6 +57,26 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   let updatedTransfer
   try {
     updatedTransfer = await prisma.$transaction(async (tx) => {
+    // Claim-first: atomically flip PENDING → ACCEPTED before doing any moves.
+    // Two concurrent accepts (e.g. the destination operator and an admin) both
+    // pass the pre-transaction status check at line 38; this conditional UPDATE
+    // serializes them on the row lock and the loser matches 0 rows, so only one
+    // transaction performs the vehicle/unit moves and CheckLog writes. If any
+    // later guard throws, the whole transaction rolls back and status reverts.
+    const claim = await tx.transferRequest.updateMany({
+      where: { id, status: 'PENDING' },
+      data: {
+        status: 'ACCEPTED',
+        respondedAt: now,
+        responseNote: isAdmin && !isDestination
+          ? `Accepted by admin ${session.name}${responseNote ? `: ${responseNote}` : ''}`
+          : responseNote ?? null,
+      },
+    })
+    if (claim.count === 0) {
+      throw new Error('Transfer is no longer pending')
+    }
+
     // NOTE: We intentionally do NOT block on sourceRig.endedAt — end-of-deployment
     // TRANSFER dispositions leave the source rig ended with items still pending transfer.
 
@@ -187,16 +207,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       await tx.rig.update({ where: { id: transfer.fromRig.id }, data: { endedAt: now } })
     }
 
-      return tx.transferRequest.update({
-        where: { id },
-        data: {
-          status: 'ACCEPTED',
-          respondedAt: now,
-          responseNote: isAdmin && !isDestination
-            ? `Accepted by admin ${session.name}${responseNote ? `: ${responseNote}` : ''}`
-            : responseNote ?? null,
-        },
-      })
+      // Status/respondedAt/responseNote were already written by the claim above.
+      return tx.transferRequest.findUnique({ where: { id } })
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Transfer failed'

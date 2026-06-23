@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import { createAlert } from '@/lib/alerts'
+import { money } from '@/lib/validation'
 
 export async function GET(req: NextRequest) {
   const session = await requireAuth()
@@ -61,7 +62,7 @@ const createSchema = z.object({
   priority: z.enum(['HIGH', 'MEDIUM', 'LOW']).default('MEDIUM'),
   nextDue: z.string().datetime().optional(),
   nextOdometer: z.number().int().optional(),
-  estimatedCost: z.number().optional(),
+  estimatedCost: money().optional(),
   notes: z.string().optional(),
 })
 
