@@ -70,6 +70,20 @@ enum ResolutionPath {
   SHOP
 }
 
+// PRD v2.1 addendum A.6: how a repaired unit gets back to its return destination.
+enum RepairMethod {
+  DELIVER
+  SHIP
+}
+
+// PRD v2.1 addendum A.4: where a repaired unit returns, chosen per-case on close
+// (no default). DEPLOYMENT records the target rig; HUB / OTHER_HUB record a hub.
+enum ReturnDestinationType {
+  HUB
+  DEPLOYMENT
+  OTHER_HUB
+}
+
 enum CheckAction {
   CHECK_OUT
   CHECK_IN
@@ -530,6 +544,10 @@ model MaintenanceTask {
   repairType      RepairType?
   resolutionPath  ResolutionPath?
   locationNote    String?
+  // A.4: per-case return destination, set when a repair is closed (no default).
+  repairMethod          RepairMethod?
+  returnDestinationType ReturnDestinationType?
+  returnDestinationId   String?
   inventoryUnitId String?
   shopName        String?
   shopAddress    String?

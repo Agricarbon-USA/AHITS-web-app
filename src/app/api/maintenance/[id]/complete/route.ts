@@ -10,6 +10,11 @@ const schema = z.object({
   actualOdometer: z.number().int().optional(),
   actualCost: money().optional(),
   notes: z.string().optional(),
+  // A.4: where the repaired unit returns, chosen per-case on close. Required for a
+  // damage-report close (enforced below); ignored for recurring scheduled tasks.
+  returnDestinationType: z.enum(['HUB', 'DEPLOYMENT', 'OTHER_HUB']).optional(),
+  returnDestinationId: z.string().min(1).optional(),
+  repairMethod: z.enum(['DELIVER', 'SHIP']).optional(),
 })
 
 /**
@@ -27,13 +32,29 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const parsed = schema.safeParse(await req.json().catch(() => ({})))
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
-  const { actualOdometer, actualCost, notes } = parsed.data
+  const { actualOdometer, actualCost, notes, returnDestinationType, returnDestinationId, repairMethod } = parsed.data
 
   const task = await prisma.maintenanceTask.findFirst({
     where: { id, deletedAt: null },
     include: { vehicle: { select: { odometer: true } }, unit: { select: { id: true, status: true } } },
   })
   if (!task) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  // A.4: closing a damage-report repair requires an explicit return destination —
+  // no default. The "Complete repair" UI is disabled until one is chosen; this is
+  // the server-side backstop for direct/queued calls.
+  if (task.isDamageReport) {
+    if (!returnDestinationType || !returnDestinationId) {
+      return NextResponse.json({ error: 'Choose where the unit returns before closing the repair.' }, { status: 400 })
+    }
+    if (returnDestinationType === 'HUB' || returnDestinationType === 'OTHER_HUB') {
+      const hub = await prisma.hub.findFirst({ where: { id: returnDestinationId, isActive: true }, select: { id: true } })
+      if (!hub) return NextResponse.json({ error: 'Return hub not found or inactive.' }, { status: 400 })
+    } else if (returnDestinationType === 'DEPLOYMENT') {
+      const rig = await prisma.rig.findFirst({ where: { id: returnDestinationId, endedAt: null }, select: { id: true } })
+      if (!rig) return NextResponse.json({ error: 'Return deployment not found or already ended.' }, { status: 400 })
+    }
+  }
 
   const now = new Date()
 
@@ -56,7 +77,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
       if (actualCost != null) data.actualCost = actualCost
       if (notes) data.notes = notes
-      return tx.maintenanceTask.update({ where: { id }, data })
+      const updated = await tx.maintenanceTask.update({ where: { id }, data })
+      // Persist the per-case return destination (A.4). Raw SQL because the
+      // columns are newer than the generated client; cast the enum literals.
+      await tx.$executeRaw`
+        UPDATE "maintenance_tasks"
+        SET "returnDestinationType" = ${returnDestinationType}::"ReturnDestinationType",
+            "returnDestinationId" = ${returnDestinationId},
+            "repairMethod" = ${repairMethod ?? null}::"RepairMethod"
+        WHERE "id" = ${id}
+      `
+      return updated
     }
 
     // Recurring scheduled task → roll forward.
