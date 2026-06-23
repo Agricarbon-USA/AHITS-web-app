@@ -105,6 +105,7 @@ export default function AdminMaintenancePage() {
   const [selected, setSelected] = React.useState<MaintenanceTask | null>(null)
   const [draft, setDraft] = React.useState<Draft | null>(null)
   const [saving, setSaving] = React.useState(false)
+  const autoOpenedRef = React.useRef(false)
 
   const load = React.useCallback(async () => {
     setLoading(true)
@@ -123,6 +124,15 @@ export default function AdminMaintenancePage() {
     load()
     fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(d ?? [])).catch(() => {})
   }, [load])
+
+  // Deep link from a dashboard alert (?task=<id>) auto-opens that task once.
+  React.useEffect(() => {
+    if (autoOpenedRef.current || tasks.length === 0) return
+    const taskId = new URLSearchParams(window.location.search).get('task')
+    if (!taskId) { autoOpenedRef.current = true; return }
+    const t = tasks.find((x) => x.id === taskId)
+    if (t) { openTask(t); autoOpenedRef.current = true }
+  }, [tasks])
 
   const counts = React.useMemo(() => ({
     damage: tasks.filter((t) => t.isDamageReport && t.status !== 'COMPLETED').length,

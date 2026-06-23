@@ -12,6 +12,7 @@ import BuildIcon from '@mui/icons-material/Build'
 import InventoryIcon from '@mui/icons-material/Inventory'
 import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
+import { useRouter } from 'next/navigation'
 import type { DashboardStats } from '@/types'
 
 interface AlertRow {
@@ -21,6 +22,14 @@ interface AlertRow {
   sourceTable: string | null
   sourceId: string | null
   metadata: Record<string, string | number | boolean | null> | null
+}
+
+/** Deep-link target for an alert's underlying record, or null if none. */
+function alertHref(a: AlertRow): string | null {
+  if (a.sourceTable === 'maintenance_tasks' && a.sourceId) {
+    return `/admin/maintenance?task=${a.sourceId}`
+  }
+  return null
 }
 
 const ALERT_LABELS: Record<string, string> = {
@@ -49,6 +58,7 @@ export default function AdminDashboardPage() {
   const [alerts, setAlerts] = React.useState<AlertRow[]>([])
   const [alertsLoading, setAlertsLoading] = React.useState(true)
   const [resolving, setResolving] = React.useState<string | null>(null)
+  const router = useRouter()
 
   const loadAlerts = React.useCallback(() => {
     setAlertsLoading(true)
@@ -120,14 +130,21 @@ export default function AdminDashboardPage() {
                   {idx > 0 && <Divider />}
                   <ListItem
                     secondaryAction={
-                      <Button
-                        size="small"
-                        onClick={() => handleResolve(alert.id)}
-                        disabled={resolving === alert.id}
-                        startIcon={resolving === alert.id ? <CircularProgress size={12} /> : null}
-                      >
-                        Resolve
-                      </Button>
+                      <Box sx={{ display: 'flex', gap: 0.5 }}>
+                        {alertHref(alert) && (
+                          <Button size="small" onClick={() => router.push(alertHref(alert)!)}>
+                            View
+                          </Button>
+                        )}
+                        <Button
+                          size="small"
+                          onClick={() => handleResolve(alert.id)}
+                          disabled={resolving === alert.id}
+                          startIcon={resolving === alert.id ? <CircularProgress size={12} /> : null}
+                        >
+                          Resolve
+                        </Button>
+                      </Box>
                     }
                   >
                     <ListItemText
