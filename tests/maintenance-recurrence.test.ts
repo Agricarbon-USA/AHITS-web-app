@@ -77,11 +77,12 @@ describe('maintenance complete (Wave G)', () => {
     const cat = await createCategory()
     const item = await createInventoryItem(cat.id, { itemType: 'SERIALIZED' })
     const unit = await createInventoryUnit(item.id, { status: 'IN_MAINTENANCE' })
+    const hub = await prisma.hub.create({ data: { name: 'Test Hub', city: 'Austin', state: 'TX' } })
     const task = await prisma.maintenanceTask.create({
       data: { itemId: item.id, inventoryUnitId: unit.id, taskName: 'Damage repair', intervalType: 'DAYS', intervalValue: 0, status: 'IN_PROGRESS', isDamageReport: true },
     })
 
-    const res = await completeTask(completeReq(task.id, { actualCost: 250 }), { params: Promise.resolve({ id: task.id }) })
+    const res = await completeTask(completeReq(task.id, { actualCost: 250, returnDestinationType: 'HUB', returnDestinationId: hub.id }), { params: Promise.resolve({ id: task.id }) })
     expect(res.status).toBe(200)
 
     const after = await prisma.maintenanceTask.findUnique({ where: { id: task.id } })
