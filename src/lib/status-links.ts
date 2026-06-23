@@ -205,7 +205,7 @@ export async function applyTransition(link: ResolvedStatusLink, input: Transitio
         })
         await tx.statusLink.update({ where: { id: link.id }, data: { state: 'ACTED', actedAt: now } })
         await notifyAdmins(tx, {
-          type: 'REPAIR_NEEDED',
+          type: 'WORK_ORDER_UPDATE',
           title: `Shop update — ${taskName}`,
           body: `${actorLabel} marked the work order ${action === 'RECEIVED' ? 'received' : 'in progress'}.`,
           link: adminLink,
@@ -217,7 +217,7 @@ export async function applyTransition(link: ResolvedStatusLink, input: Transitio
         })
         await tx.statusLink.update({ where: { id: link.id }, data: { state: 'ACTED', actedAt: now } })
         await notifyAdmins(tx, {
-          type: 'REPAIR_NEEDED',
+          type: 'WORK_ORDER_UPDATE',
           title: `Shop invoiced — ${taskName}`,
           body: `${actorLabel} submitted an invoice${note ? ` (#${note})` : ''}.`,
           link: adminLink,
@@ -225,7 +225,7 @@ export async function applyTransition(link: ResolvedStatusLink, input: Transitio
       } else if (action === 'COMPLETED') {
         await tx.statusLink.update({ where: { id: link.id }, data: { state: 'COMPLETED', completedAt: now, actedAt: now } })
         await notifyAdmins(tx, {
-          type: 'REPAIR_NEEDED',
+          type: 'WORK_ORDER_UPDATE',
           title: `Repair completed — finalize ${taskName}`,
           body: `${actorLabel} marked the repair complete. Review and finalize in Maintenance to return the unit to service.`,
           link: adminLink,
