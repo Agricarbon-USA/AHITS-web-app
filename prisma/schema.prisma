@@ -719,6 +719,20 @@ model RateLimitHit {
   @@map("rate_limit_hit")
 }
 
+// M3: single-row global notification configuration (id is always "global").
+// Read/written via raw SQL in src/lib/notification-config.ts (no client coupling).
+// `disabledAlertTypes` is a comma-separated list of AlertType values the
+// dispatcher should NOT notify on; empty = all enabled.
+model NotificationConfig {
+  id                 String   @id @default("global")
+  dailyCheckCutoff   String   @default("18:00")
+  disabledAlertTypes String   @default("")
+  updatedAt          DateTime @default(now())
+  createdAt          DateTime @default(now())
+
+  @@map("notification_config")
+}
+
 // ── Wave F: external delivery (tokenized status links) ──────────────────────
 // A StatusLink is a capability URL granting one external party (a maintenance
 // shop, a hub, later an invoice processor) scoped, time-bounded, login-less

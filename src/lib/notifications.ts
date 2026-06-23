@@ -2,6 +2,7 @@ import { prisma } from '@/lib/prisma'
 import { sendEmail } from '@/lib/email/resend'
 import { genericAlertEmail } from '@/lib/email/templates'
 import { ALERT_LABELS, alertLink } from '@/lib/alert-display'
+import { getNotificationConfig } from '@/lib/notification-config'
 
 type Meta = Record<string, unknown>
 const str = (v: unknown): string | null => (v == null ? null : String(v))
@@ -46,11 +47,18 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? ''
  * still set, so a misconfigured mailer doesn't cause per-minute retry spam.
  */
 export async function dispatchPendingAlerts(): Promise<{ alerts: number; notifications: number; emailed: boolean }> {
-  const pending = await prisma.alert.findMany({
+  // Respect the admin alert-config: types the admin has disabled are left
+  // un-notified (still recorded + shown on the dashboard; if re-enabled later
+  // they notify on the next run since notifiedAt is still null).
+  const { disabledAlertTypes } = await getNotificationConfig()
+  const pendingAll = await prisma.alert.findMany({
     where: { resolved: false, notifiedAt: null },
     orderBy: { triggeredAt: 'asc' },
     take: 100,
   })
+  const pending = disabledAlertTypes.length
+    ? pendingAll.filter((a) => !disabledAlertTypes.includes(a.type))
+    : pendingAll
   if (pending.length === 0) return { alerts: 0, notifications: 0, emailed: false }
 
   const admins = await prisma.user.findMany({
