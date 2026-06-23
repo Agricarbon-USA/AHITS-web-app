@@ -702,6 +702,10 @@ model IdempotencyKey {
   scope        String
   statusCode   Int?     @map("status_code")
   responseBody Json?    @map("response_body")
+  // CR-2: sha256 of the request body, bound at claim time. A replay of the same
+  // key with a DIFFERENT body is rejected (422) instead of silently returning
+  // the first response. Nullable for legacy rows written before this column.
+  bodyHash     String?  @map("body_hash")
   createdAt    DateTime @default(now()) @map("created_at")
 
   @@index([createdAt])
