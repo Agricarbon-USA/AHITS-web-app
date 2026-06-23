@@ -96,6 +96,21 @@ function draftFrom(t: MaintenanceTask): Draft {
   }
 }
 
+// Compact chip for a task's most-recent work-order link state (shop scoreboard).
+const WO_CHIP: Record<string, { label: string; color: 'default' | 'info' | 'warning' | 'success' }> = {
+  ISSUED: { label: 'Sent', color: 'info' },
+  VIEWED: { label: 'Viewed', color: 'info' },
+  ACTED: { label: 'In progress', color: 'warning' },
+  COMPLETED: { label: 'Completed', color: 'success' },
+  REVOKED: { label: 'Revoked', color: 'default' },
+  EXPIRED: { label: 'Expired', color: 'default' },
+}
+function woChip(state?: string) {
+  if (!state) return <Typography variant="body2" color="text.secondary">—</Typography>
+  const c = WO_CHIP[state] ?? { label: state, color: 'default' as const }
+  return <Chip size="small" variant="outlined" color={c.color} label={c.label} />
+}
+
 export default function AdminMaintenancePage() {
   const showToast = useToast()
   const [tasks, setTasks] = React.useState<MaintenanceTask[]>([])
@@ -106,6 +121,12 @@ export default function AdminMaintenancePage() {
   const [draft, setDraft] = React.useState<Draft | null>(null)
   const [saving, setSaving] = React.useState(false)
   const [completionOdo, setCompletionOdo] = React.useState('')
+  const [shopEmail, setShopEmail] = React.useState('')
+  // maintenanceTaskId → most-recent WORK_ORDER link state (the shop scoreboard).
+  const [woLinks, setWoLinks] = React.useState<Map<string, string>>(new Map())
+  // The raw URL of the link just issued (only available right after sending —
+  // the token is never stored), shown so the admin can copy it manually.
+  const [lastLink, setLastLink] = React.useState<string | null>(null)
   const autoOpenedRef = React.useRef(false)
 
   const load = React.useCallback(async () => {
@@ -121,10 +142,26 @@ export default function AdminMaintenancePage() {
     }
   }, [showToast])
 
+  const loadLinks = React.useCallback(async () => {
+    try {
+      const res = await fetch('/api/status-links?type=WORK_ORDER')
+      const json = await res.json()
+      // Rows come newest-first, so the first link seen per task is the latest.
+      const map = new Map<string, string>()
+      for (const l of (json.data ?? []) as { maintenanceTaskId: string | null; state: string }[]) {
+        if (l.maintenanceTaskId && !map.has(l.maintenanceTaskId)) map.set(l.maintenanceTaskId, l.state)
+      }
+      setWoLinks(map)
+    } catch {
+      /* non-fatal — the column simply shows no link state */
+    }
+  }, [])
+
   React.useEffect(() => {
     load()
+    loadLinks()
     fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(d ?? [])).catch(() => {})
-  }, [load])
+  }, [load, loadLinks])
 
   // Deep link from a dashboard alert (?task=<id>) auto-opens that task once.
   React.useEffect(() => {
@@ -154,10 +191,22 @@ export default function AdminMaintenancePage() {
   function openTask(t: MaintenanceTask) {
     setSelected(t)
     setDraft(draftFrom(t))
+    setLastLink(null)
+    setShopEmail('')
   }
   function closeDrawer() {
     setSelected(null)
     setDraft(null)
+    setLastLink(null)
+  }
+
+  async function copyLink(url: string) {
+    try {
+      await navigator.clipboard.writeText(url)
+      showToast({ message: 'Link copied to clipboard.', severity: 'success' })
+    } catch {
+      showToast({ message: 'Could not copy automatically — select the link and copy it.', severity: 'error' })
+    }
   }
 
   async function patch(id: string, body: Record<string, unknown>, successMsg: string) {
@@ -182,6 +231,35 @@ export default function AdminMaintenancePage() {
     } catch {
       showToast({ message: 'Network error. Please try again.', severity: 'error' })
       return false
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function sendToShop() {
+    if (!selected) return
+    if (!shopEmail.trim()) { showToast({ message: 'Enter the shop email first.', severity: 'error' }); return }
+    setSaving(true)
+    try {
+      const res = await fetch(`/api/maintenance/${selected.id}/send-to-shop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recipientEmail: shopEmail.trim(), recipientName: draft?.shopName || undefined }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not send work order.', severity: 'error' })
+        return
+      }
+      showToast({
+        message: d.emailed ? 'Work order emailed to the shop.' : 'Work order link created — copy the link below.',
+        severity: 'success',
+      })
+      setLastLink(typeof d.url === 'string' ? d.url : null)
+      setShopEmail('')
+      loadLinks()
+    } catch {
+      showToast({ message: 'Network error. Please try again.', severity: 'error' })
     } finally {
       setSaving(false)
     }
@@ -274,16 +352,17 @@ export default function AdminMaintenancePage() {
               <TableCell>Priority</TableCell>
               <TableCell>Reported / Due</TableCell>
               <TableCell>Shop / Hub</TableCell>
+              <TableCell>Work order</TableCell>
               <TableCell align="right">Cost</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {loading && Array.from({ length: 4 }).map((_, i) => (
-              <TableRow key={i}><TableCell colSpan={8}><Skeleton height={28} /></TableCell></TableRow>
+              <TableRow key={i}><TableCell colSpan={9}><Skeleton height={28} /></TableCell></TableRow>
             ))}
             {!loading && visible.length === 0 && (
               <TableRow>
-                <TableCell colSpan={8}>
+                <TableCell colSpan={9}>
                   <Typography color="text.secondary" align="center" py={4}>
                     {filter === 'damage' ? 'No open damage reports. Field-reported damage will appear here.' : 'Nothing here right now.'}
                   </Typography>
@@ -306,6 +385,7 @@ export default function AdminMaintenancePage() {
                 <TableCell><StatusChip status={t.priority} kind="priority" variant="outlined" /></TableCell>
                 <TableCell><Typography variant="body2">{t.isDamageReport ? fmtDate(t.createdAt) : fmtDate(t.nextDue)}</Typography></TableCell>
                 <TableCell><Typography variant="body2">{t.shopName ?? t.repairHub?.name ?? '—'}</Typography></TableCell>
+                <TableCell>{woChip(woLinks.get(t.id))}</TableCell>
                 <TableCell align="right"><Typography variant="body2">{fmtMoney(t.actualCost ?? t.estimatedCost)}</Typography></TableCell>
               </TableRow>
             ))}
@@ -414,6 +494,28 @@ export default function AdminMaintenancePage() {
                 startIcon={saving ? <CircularProgress size={16} /> : undefined}>
                 {saving ? 'Saving…' : 'Save repair details'}
               </Button>
+
+              <Divider textAlign="left" sx={{ fontSize: 12, color: 'text.secondary', pt: 1 }}>Send to shop</Divider>
+              <Typography variant="caption" color="text.secondary">
+                Email the shop a private work-order link (problem, asset, photos, ship-to hub). They update status without logging in.
+                {woLinks.has(selected.id) && ' Resending supersedes the previous link.'}
+              </Typography>
+              <Stack direction="row" spacing={1}>
+                <TextField size="small" type="email" label="Shop email" value={shopEmail} fullWidth
+                  onChange={(e) => setShopEmail(e.target.value)} placeholder="repairs@shop.com" />
+                <Button variant="outlined" disabled={saving || !shopEmail.trim()} onClick={sendToShop} sx={{ whiteSpace: 'nowrap' }}>
+                  {woLinks.has(selected.id) ? 'Resend' : 'Send WO'}
+                </Button>
+              </Stack>
+              {lastLink && (
+                <Box sx={{ bgcolor: 'action.hover', borderRadius: 1, p: 1 }}>
+                  <Typography variant="caption" color="text.secondary">Private link (copy if email isn’t configured):</Typography>
+                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.5 }}>
+                    <Typography variant="caption" sx={{ flex: 1, wordBreak: 'break-all', fontFamily: 'monospace' }}>{lastLink}</Typography>
+                    <Button size="small" variant="text" onClick={() => copyLink(lastLink)} sx={{ whiteSpace: 'nowrap' }}>Copy link</Button>
+                  </Stack>
+                </Box>
+              )}
             </Stack>
           </Box>
         )}

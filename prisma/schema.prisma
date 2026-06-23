@@ -49,6 +49,10 @@ enum EquipmentStatus {
   IN_MAINTENANCE
   INOPERABLE
   RETIRED
+  // Wave F-R: an item an operator marked "Return to Hub" whose physical receipt
+  // the hub has not yet confirmed. Soft-gate — flagged, not blocked (a unit
+  // IN_TRANSIT can still be re-deployed; the dashboard simply surfaces it).
+  IN_TRANSIT
 }
 
 enum RepairType {
@@ -172,6 +176,7 @@ model User {
   photos             Photo[]
   alerts             Alert[]
   notifications      Notification[]
+  statusLinks        StatusLink[]
   rigs               Rig[]             @relation("OperatorRigs")
   secondaryRigs      RigOperator[]     @relation("RigSecondaryOperators")
   transfersReceived  TransferRequest[] @relation("TransferTo")
@@ -204,6 +209,7 @@ model Hub {
   maintenanceTasks MaintenanceTask[] @relation("HubTasks")
   repairTasks      MaintenanceTask[] @relation("RepairHub")
   homeOperators    User[]            @relation("HubOperators")
+  statusLinks      StatusLink[]
 
   @@map("hubs")
 }
@@ -401,6 +407,7 @@ model InventoryUnit {
   transferItems    TransferItem[]
   checkLogs        CheckLog[]
   maintenanceTasks MaintenanceTask[]
+  statusLinks      StatusLink[]
 
   @@index([inventoryItemId])
   @@index([status])
@@ -532,6 +539,7 @@ model MaintenanceTask {
   hub       Hub?           @relation("HubTasks", fields: [hubId], references: [id])
   repairHub Hub?           @relation("RepairHub", fields: [repairHubId], references: [id])
   photos    Photo[]
+  statusLinks StatusLink[]
 
   @@index([inventoryUnitId])
   @@map("maintenance_tasks")
@@ -690,4 +698,76 @@ model IdempotencyKey {
 
   @@index([createdAt])
   @@map("idempotency_key")
+}
+
+// ── Wave F: external delivery (tokenized status links) ──────────────────────
+// A StatusLink is a capability URL granting one external party (a maintenance
+// shop, a hub, later an invoice processor) scoped, time-bounded, login-less
+// access to ONE record, plus a fixed set of allowed transitions that write back
+// into AHITS. The raw token is emailed; only its sha256 hash is stored.
+
+enum StatusLinkType {
+  WORK_ORDER // → maintenance shop
+  HUB_RETURN // → hub operator (F-R)
+  INVOICE    // → processor (Phase 3)
+}
+
+enum StatusLinkState {
+  ISSUED    // created, not yet opened
+  VIEWED    // recipient opened it at least once
+  ACTED     // recipient performed a non-terminal transition
+  COMPLETED // terminal success (repair done / receipt confirmed / invoice paid)
+  EXPIRED   // past expiresAt with no completion
+  REVOKED   // admin killed it
+}
+
+model StatusLink {
+  id        String          @id @default(cuid())
+  type      StatusLinkType
+  state     StatusLinkState @default(ISSUED)
+  // Store ONLY sha256(token) — the raw token lives only in the emailed URL.
+  tokenHash String          @unique
+  expiresAt DateTime
+
+  // Polymorphic subject — exactly one primary subject set per type
+  // (WORK_ORDER → maintenanceTask, HUB_RETURN → inventoryUnit + hub).
+  maintenanceTaskId String?
+  maintenanceTask   MaintenanceTask? @relation(fields: [maintenanceTaskId], references: [id])
+  inventoryUnitId   String?
+  inventoryUnit     InventoryUnit?   @relation(fields: [inventoryUnitId], references: [id])
+  hubId             String?
+  hub               Hub?             @relation(fields: [hubId], references: [id])
+
+  recipientEmail String?
+  recipientName  String?
+
+  createdById String
+  createdBy   User   @relation(fields: [createdById], references: [id])
+
+  viewedAt    DateTime?
+  actedAt     DateTime?
+  completedAt DateTime?
+  revokedAt   DateTime?
+
+  events    StatusLinkEvent[]
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  @@index([type, state])
+  @@index([maintenanceTaskId])
+  @@index([inventoryUnitId])
+  @@map("status_links")
+}
+
+model StatusLinkEvent {
+  id           String     @id @default(cuid())
+  statusLinkId String
+  statusLink   StatusLink @relation(fields: [statusLinkId], references: [id], onDelete: Cascade)
+  action       String // 'VIEWED' | 'RECEIVED' | 'IN_PROGRESS' | 'COMPLETED' | 'DISCREPANCY' | ...
+  note         String?
+  actorLabel   String // free-text identity the external party supplies (no account)
+  createdAt    DateTime   @default(now())
+
+  @@index([statusLinkId])
+  @@map("status_link_events")
 }
