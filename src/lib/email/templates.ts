@@ -100,6 +100,22 @@ export function registrationExpiringEmail(vehicleName: string, expiryDate: strin
   )
 }
 
+// Generic alert email used by the notification dispatcher for any alert type.
+// `linkUrl` is server-constructed (app URL + path), never user input, so it is
+// safe in the href; all other values are escaped.
+export function genericAlertEmail(title: string, message: string, linkUrl?: string, linkLabel = 'Open in AHITS') {
+  return base(
+    title,
+    `<h3 style="color:#d32f2f;">🔔 ${esc(title)}</h3>
+     <p>${esc(message)}</p>
+     ${linkUrl ? `<p style="text-align:center;margin:24px 0;">
+       <a href="${linkUrl}" style="background:#2e7d32;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;display:inline-block;">
+         ${esc(linkLabel)}
+       </a>
+     </p>` : ''}`
+  )
+}
+
 export function inviteEmail(name: string, role: string, setupUrl: string) {
   const roleLabel = role === 'ADMIN' ? 'Admin' : 'Field Operator'
   // setupUrl is server-constructed (env app URL + CSPRNG token, already
