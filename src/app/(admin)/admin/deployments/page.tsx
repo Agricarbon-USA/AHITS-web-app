@@ -19,6 +19,7 @@ import CloseIcon from '@mui/icons-material/Close'
 import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline'
 import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
 import { TransferDialog } from '@/components/shared/TransferDialog'
+import { KitItemSelectRow } from '@/components/admin/KitItemSelectRow'
 import { DispositionDialog } from '@/components/shared/DispositionDialog'
 import type { HubOption, UserOption } from '@/components/shared/DispositionDialog'
 
@@ -265,63 +266,9 @@ function NewDeploymentDialog({
                       {catName}
                     </Typography>
                     <Stack spacing={1}>
-                      {catItems.map((item) => {
-                        const isSerialized = item.itemType === 'SERIALIZED'
-
-                        if (isSerialized) {
-                          return (
-                            <Stack key={item.id} spacing={0.25}>
-                              <Stack direction="row" alignItems="center" spacing={1}>
-                                <Box flexGrow={1}>
-                                  <Typography variant="body2" fontWeight={500}>{item.name}</Typography>
-                                  <Chip size="small" label="Serialized" variant="outlined" color="primary" sx={{ height: 16, fontSize: 10, mt: 0.25 }} />
-                                </Box>
-                              </Stack>
-                              <Stack spacing={0} pl={1}>
-                                {item.availableUnits.map((u) => (
-                                  <Stack key={u.id} direction="row" alignItems="center" spacing={1}>
-                                    <Checkbox size="small" checked={kitItems.has(u.id)}
-                                      onChange={(e) => {
-                                        const m = new Map(kitItems)
-                                        if (e.target.checked) {
-                                          m.set(u.id, { inventoryItemId: item.id, itemType: 'SERIALIZED', inventoryUnitId: u.id, unitLabel: u.serialNumber ?? `Unit ${u.position}` })
-                                        } else {
-                                          m.delete(u.id)
-                                        }
-                                        setKitItems(m)
-                                      }} />
-                                    <Typography variant="body2">{u.serialNumber ?? `Unit ${u.position}`}</Typography>
-                                  </Stack>
-                                ))}
-                              </Stack>
-                            </Stack>
-                          )
-                        }
-
-                        const entry = kitItems.get(item.id)
-                        const checked = !!entry
-                        return (
-                          <Stack key={item.id} direction="row" alignItems="center" spacing={1}>
-                            <Checkbox size="small" checked={checked}
-                              onChange={(e) => {
-                                const m = new Map(kitItems)
-                                if (e.target.checked) {
-                                  m.set(item.id, { inventoryItemId: item.id, itemType: 'CONSUMABLE', quantity: 1 })
-                                } else {
-                                  m.delete(item.id)
-                                }
-                                setKitItems(m)
-                              }} />
-                            <Typography variant="body2" flexGrow={1}>{item.name}</Typography>
-                            {checked && (
-                              <TextField type="number" size="small" value={(entry as { itemType: 'CONSUMABLE'; quantity: number }).quantity}
-                                onChange={(e) => { const m = new Map(kitItems); m.set(item.id, { inventoryItemId: item.id, itemType: 'CONSUMABLE', quantity: parseInt(e.target.value) || 1 }); setKitItems(m) }}
-                                inputProps={{ min: 1, style: { MozAppearance: 'textfield', width: 60 } }}
-                                sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }} />
-                            )}
-                          </Stack>
-                        )
-                      })}
+                      {catItems.map((item) => (
+                        <KitItemSelectRow key={item.id} item={item} selected={kitItems} onChange={setKitItems} />
+                      ))}
                     </Stack>
                   </Box>
                 ))}
@@ -892,71 +839,9 @@ function DeploymentDrawer({
             <Typography variant="body2" color="text.secondary">No available items.</Typography>
           ) : (
             <Stack spacing={1} mt={1}>
-              {availableItems.map((item) => {
-                const isSerialized = item.itemType === 'SERIALIZED'
-
-                if (isSerialized) {
-                  return (
-                    <Stack key={item.id} spacing={0.25}>
-                      <Stack direction="row" alignItems="center" spacing={1}>
-                        <Box flexGrow={1}>
-                          <Typography variant="body2" fontWeight={500}>{item.name}</Typography>
-                          <Stack direction="row" spacing={0.5}>
-                            <Chip size="small" label={item.category?.name ?? ''} sx={{ height: 16, fontSize: 10 }} />
-                            <Chip size="small" label="Serialized" variant="outlined" color="primary" sx={{ height: 16, fontSize: 10 }} />
-                          </Stack>
-                        </Box>
-                      </Stack>
-                      <Stack spacing={0} pl={1}>
-                        {item.availableUnits.map((u) => (
-                          <Stack key={u.id} direction="row" alignItems="center" spacing={1}>
-                            <Checkbox size="small" checked={pendingItems.has(u.id)}
-                              onChange={(e) => {
-                                const m = new Map(pendingItems)
-                                if (e.target.checked) {
-                                  m.set(u.id, { inventoryItemId: item.id, itemType: 'SERIALIZED', inventoryUnitId: u.id, unitLabel: u.serialNumber ?? `Unit ${u.position}` })
-                                } else {
-                                  m.delete(u.id)
-                                }
-                                setPendingItems(m)
-                              }} />
-                            <Typography variant="body2">{u.serialNumber ?? `Unit ${u.position}`}</Typography>
-                          </Stack>
-                        ))}
-                      </Stack>
-                    </Stack>
-                  )
-                }
-
-                const entry = pendingItems.get(item.id)
-                const checked = !!entry
-                return (
-                  <Stack key={item.id} spacing={0.5}>
-                    <Stack direction="row" alignItems="center" spacing={1}>
-                      <Checkbox size="small" checked={checked}
-                        onChange={(e) => {
-                          const m = new Map(pendingItems)
-                          if (e.target.checked) {
-                            m.set(item.id, { inventoryItemId: item.id, itemType: 'CONSUMABLE', quantity: 1 })
-                          } else {
-                            m.delete(item.id)
-                          }
-                          setPendingItems(m)
-                        }} />
-                      <Box flexGrow={1}>
-                        <Typography variant="body2">{item.name}</Typography>
-                        <Chip size="small" label={item.category?.name ?? ''} sx={{ height: 16, fontSize: 10 }} />
-                      </Box>
-                      {checked && (
-                        <TextField type="number" size="small" value={(entry as { itemType: 'CONSUMABLE'; quantity: number }).quantity}
-                          onChange={(e) => { const m = new Map(pendingItems); m.set(item.id, { inventoryItemId: item.id, itemType: 'CONSUMABLE', quantity: parseInt(e.target.value) || 1 }); setPendingItems(m) }}
-                          inputProps={{ min: 1, style: { MozAppearance: 'textfield', width: 60 } }}
-                          sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }} />
-                      )}
-                    </Stack>
-                  </Stack>
-                )
-              })}
+              {availableItems.map((item) => (
+                <KitItemSelectRow key={item.id} item={item} selected={pendingItems} onChange={setPendingItems} showCategoryChip />
+              ))}
             </Stack>
           )}
         </DialogContent>
