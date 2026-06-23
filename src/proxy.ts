@@ -11,6 +11,9 @@ const PUBLIC_PATHS = [
   '/api/users/invite/complete',
   '/api/cron/',
   '/~offline',
+  // Wave F: tokenized external status links (login-less, token-gated).
+  '/s/',
+  '/api/s/',
 ]
 
 const ADMIN_PATHS = ['/admin']

@@ -116,6 +116,38 @@ export function genericAlertEmail(title: string, message: string, linkUrl?: stri
   )
 }
 
+// Wave F — work order sent to an external maintenance shop. `linkUrl` is
+// server-constructed (app URL + CSPRNG token); all other values are escaped.
+export function workOrderEmail(opts: {
+  shopName?: string | null
+  taskName: string
+  assetName: string
+  problem?: string | null
+  shipToHub?: string | null
+  linkUrl: string
+}) {
+  const greeting = opts.shopName ? `Hi ${esc(opts.shopName)},` : 'Hello,'
+  return base(
+    'Work Order from Agricarbon',
+    `<h3 style="color:#2e7d32;">🔧 Repair Work Order</h3>
+     <p>${greeting}</p>
+     <p>Agricarbon has a repair request for you:</p>
+     <table style="width:100%;border-collapse:collapse;margin:12px 0;">
+       <tr><td style="padding:6px 0;color:#555;">Asset</td><td style="padding:6px 0;"><strong>${esc(opts.assetName)}</strong></td></tr>
+       <tr><td style="padding:6px 0;color:#555;">Work</td><td style="padding:6px 0;">${esc(opts.taskName)}</td></tr>
+       ${opts.problem ? `<tr><td style="padding:6px 0;color:#555;">Problem</td><td style="padding:6px 0;">${esc(opts.problem)}</td></tr>` : ''}
+       ${opts.shipToHub ? `<tr><td style="padding:6px 0;color:#555;">Return to</td><td style="padding:6px 0;">${esc(opts.shipToHub)}</td></tr>` : ''}
+     </table>
+     <p>Open the work order to view photos and update its status (received, in progress, completed, invoiced) — no account needed:</p>
+     <p style="text-align:center;margin:24px 0;">
+       <a href="${opts.linkUrl}" style="background:#2e7d32;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;display:inline-block;">
+         Open Work Order
+       </a>
+     </p>
+     <p style="color:#757575;font-size:13px;">This is a private link unique to this work order. Please don't forward it.</p>`
+  )
+}
+
 export function inviteEmail(name: string, role: string, setupUrl: string) {
   const roleLabel = role === 'ADMIN' ? 'Admin' : 'Field Operator'
   // setupUrl is server-constructed (env app URL + CSPRNG token, already

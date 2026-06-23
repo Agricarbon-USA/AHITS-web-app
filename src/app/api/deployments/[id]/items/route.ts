@@ -5,6 +5,7 @@ import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { createAlert } from '@/lib/alerts'
 import { withIdempotency } from '@/lib/idempotency'
+import { issueStatusLink } from '@/lib/status-links'
 
 const RIG_INCLUDE = {
   operator: { select: { id: true, name: true } },
@@ -464,6 +465,32 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
     const msg = err instanceof Error ? err.message : 'Failed to process items'
     console.error('[DELETE /api/deployments/[id]/items]', err)
     return NextResponse.json({ error: msg }, { status: 500 })
+  }
+
+  // Wave F-R (soft-gate, best-effort, non-blocking): for each "Return to Hub" of
+  // a serialized unit, issue a HUB_RETURN status link so the hub can confirm
+  // receipt. The unit stays AVAILABLE (still re-deployable) — this only records a
+  // pending receipt; any failure here never affects the return that committed.
+  try {
+    const hubDisps = itemDispositions.filter((d) => d.type === 'HUB' && d.hubId)
+    if (hubDisps.length > 0) {
+      const hubByKitItem = new Map(hubDisps.map((d) => [d.kitItemId, d.hubId as string]))
+      const serializedKitItems = await prisma.kitItem.findMany({
+        where: { id: { in: hubDisps.map((d) => d.kitItemId) }, inventoryUnitId: { not: null } },
+        select: { id: true, inventoryUnitId: true },
+      })
+      for (const ki of serializedKitItems) {
+        if (!ki.inventoryUnitId) continue
+        await issueStatusLink({
+          type: 'HUB_RETURN',
+          createdById: session.userId,
+          inventoryUnitId: ki.inventoryUnitId,
+          hubId: hubByKitItem.get(ki.id),
+        })
+      }
+    }
+  } catch (e) {
+    console.error('[items hub-return link issue]', e)
   }
 
   const updated = await prisma.rig.findUniqueOrThrow({ where: { id }, include: RIG_INCLUDE })
