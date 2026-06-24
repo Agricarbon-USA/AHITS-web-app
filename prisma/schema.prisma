@@ -216,6 +216,10 @@ model Hub {
   name             String
   city             String
   state            String
+  // M6: optional contact email. When set, HUB_RETURN links auto-deliver here.
+  // Read/written via raw SQL (lib/status-links, /api/hubs) so it needs no
+  // generated-client coupling.
+  email            String?
   isActive         Boolean           @default(true)
   createdAt        DateTime          @default(now())
   items            InventoryItem[]

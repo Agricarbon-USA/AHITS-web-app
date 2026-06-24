@@ -148,6 +148,31 @@ export function workOrderEmail(opts: {
   )
 }
 
+// M6: HUB_RETURN delivery. One email per hub, listing each inbound unit with its
+// own private confirm-receipt link (each link is scoped to a single unit).
+export function hubReturnEmail(opts: {
+  hubName?: string | null
+  units: { name: string; serial?: string | null; url: string }[]
+}) {
+  const greeting = opts.hubName ? `Hi ${esc(opts.hubName)},` : 'Hello,'
+  const many = opts.units.length > 1
+  const rows = opts.units.map((u) => `
+       <tr>
+         <td style="padding:8px 0;border-top:1px solid #eee;">${esc(u.name)}${u.serial ? ` <span style="color:#757575;">(#${esc(u.serial)})</span>` : ''}</td>
+         <td style="padding:8px 0;border-top:1px solid #eee;text-align:right;"><a href="${u.url}" style="color:#2e7d32;font-weight:600;text-decoration:none;">Confirm receipt →</a></td>
+       </tr>`).join('')
+  return base(
+    'Equipment inbound to your hub',
+    `<h3 style="color:#2e7d32;">📦 Equipment returning to your hub</h3>
+     <p>${greeting}</p>
+     <p>The following ${many ? 'items are' : 'item is'} on the way back to your hub. When ${many ? 'they arrive' : 'it arrives'}, open the matching link to confirm receipt — or flag a discrepancy. No account needed:</p>
+     <table style="width:100%;border-collapse:collapse;margin:12px 0;">
+       ${rows}
+     </table>
+     <p style="color:#757575;font-size:13px;">Each link is private to one item. Please don't forward them.</p>`
+  )
+}
+
 export function inviteEmail(name: string, role: string, setupUrl: string) {
   const roleLabel = role === 'ADMIN' ? 'Admin' : 'Field Operator'
   // setupUrl is server-constructed (env app URL + CSPRNG token, already

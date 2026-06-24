@@ -1,5 +1,7 @@
 import { createHash, randomBytes } from 'crypto'
 import { prisma } from '@/lib/prisma'
+import { sendEmail } from '@/lib/email/resend'
+import { hubReturnEmail } from '@/lib/email/templates'
 import type { Prisma, StatusLink, StatusLinkType } from '@prisma/client'
 
 /**
@@ -91,16 +93,49 @@ export async function issueHubReturnLinks(
   const hubByKitItem = new Map(hubDispositions.map((d) => [d.kitItemId, d.hubId]))
   const serialized = await prisma.kitItem.findMany({
     where: { id: { in: hubDispositions.map((d) => d.kitItemId) }, inventoryUnitId: { not: null } },
-    select: { id: true, inventoryUnitId: true },
+    select: {
+      id: true,
+      inventoryUnitId: true,
+      inventoryUnit: { select: { serialNumber: true, inventoryItem: { select: { name: true } } } },
+    },
   })
+
+  // Issue one link per serialized unit, collecting them per hub so we can send a
+  // single batched delivery email to each hub (each link is unit-scoped).
+  const byHub = new Map<string, { name: string; serial: string | null; url: string }[]>()
   for (const ki of serialized) {
     if (!ki.inventoryUnitId) continue
-    await issueStatusLink({
+    const hubId = hubByKitItem.get(ki.id)
+    const { url } = await issueStatusLink({
       type: 'HUB_RETURN',
       createdById,
       inventoryUnitId: ki.inventoryUnitId,
-      hubId: hubByKitItem.get(ki.id),
+      hubId,
     })
+    if (!hubId) continue
+    const list = byHub.get(hubId) ?? []
+    list.push({ name: ki.inventoryUnit?.inventoryItem?.name ?? 'Item', serial: ki.inventoryUnit?.serialNumber ?? null, url })
+    byHub.set(hubId, list)
+  }
+
+  // M6: auto-deliver to each hub that has a contact email. Best-effort — a hub
+  // without an email (or a mailer blip) just leaves the link to be copied from
+  // the admin UI; never blocks the return.
+  for (const [hubId, units] of byHub) {
+    try {
+      const rows = await prisma.$queryRaw<{ name: string; email: string | null }[]>`
+        SELECT "name", "email" FROM "hubs" WHERE "id" = ${hubId}
+      `
+      const hub = rows[0]
+      if (!hub?.email) continue
+      await sendEmail({
+        to: hub.email,
+        subject: `Equipment inbound to ${hub.name}`,
+        html: hubReturnEmail({ hubName: hub.name, units }),
+      })
+    } catch {
+      /* table/column missing pre-migration, or transient mailer error — non-fatal */
+    }
   }
 }
 

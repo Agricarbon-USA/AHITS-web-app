@@ -30,6 +30,7 @@ interface Hub {
   name: string
   city: string
   state: string
+  email?: string | null
   isActive: boolean
 }
 
@@ -55,7 +56,7 @@ export default function SettingsPage() {
   // Hub state
   const [addHubOpen, setAddHubOpen] = React.useState(false)
   const [editHub, setEditHub] = React.useState<Hub | null>(null)
-  const [hubForm, setHubForm] = React.useState({ name: '', city: '', state: '' })
+  const [hubForm, setHubForm] = React.useState({ name: '', city: '', state: '', email: '' })
   const [savingHub, setSavingHub] = React.useState(false)
   const [deleteHub, setDeleteHub] = React.useState<Hub | null>(null)
 
@@ -176,8 +177,8 @@ export default function SettingsPage() {
   }
 
   // Hub CRUD
-  const openAddHub = () => { setHubForm({ name: '', city: '', state: '' }); setAddHubOpen(true) }
-  const openEditHub = (hub: Hub) => { setEditHub(hub); setHubForm({ name: hub.name, city: hub.city, state: hub.state }) }
+  const openAddHub = () => { setHubForm({ name: '', city: '', state: '', email: '' }); setAddHubOpen(true) }
+  const openEditHub = (hub: Hub) => { setEditHub(hub); setHubForm({ name: hub.name, city: hub.city, state: hub.state, email: hub.email ?? '' }) }
 
   const saveHub = async () => {
     setSavingHub(true)
@@ -444,6 +445,7 @@ export default function SettingsPage() {
             <TextField label="Hub Name" value={hubForm.name} onChange={(e) => setHubForm((f) => ({ ...f, name: e.target.value }))} fullWidth autoFocus />
             <TextField label="City" value={hubForm.city} onChange={(e) => setHubForm((f) => ({ ...f, city: e.target.value }))} fullWidth />
             <TextField label="State (2-letter)" value={hubForm.state} onChange={(e) => setHubForm((f) => ({ ...f, state: e.target.value.toUpperCase().slice(0, 2) }))} fullWidth inputProps={{ maxLength: 2 }} />
+            <TextField label="Contact email (optional)" type="email" value={hubForm.email} onChange={(e) => setHubForm((f) => ({ ...f, email: e.target.value }))} fullWidth helperText="If set, return-to-hub confirmation links are emailed here automatically." />
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
