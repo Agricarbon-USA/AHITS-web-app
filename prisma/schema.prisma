@@ -853,3 +853,60 @@ model ChecklistTemplate {
   @@index([vehicleType, isActive])
   @@map("checklist_templates")
 }
+
+// M6 / Addendum §F: Deployment Requests — pre-specify the equipment a deployment
+// needs so a hub fulfiller can stage and reserve it before pickup. THIS SLICE
+// covers create → list → submit → cancel; the staging/reserve step (RESERVED
+// status + resolved* fields) and checkout-conversion into Kit/Rig rows pair with
+// the deployment-model refactor (#29). Accessed via raw SQL (no generated-client
+// coupling) and intentionally declared with scalar FK columns + no @relation so
+// this addition touches no existing model.
+enum DeploymentRequestStatus {
+  DRAFT
+  REQUESTED
+  STAGED
+  FULFILLED
+  CANCELLED
+}
+
+enum RequestLineType {
+  KIT_ITEM
+  VEHICLE
+}
+
+model DeploymentRequest {
+  id            String                  @id @default(cuid())
+  status        DeploymentRequestStatus @default(DRAFT)
+  label         String?
+  notes         String?
+  neededBy      DateTime?
+  projectId     String?
+  forOperatorId String?
+  requestedById String
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @default(now())
+
+  @@index([status])
+  @@map("deployment_requests")
+}
+
+model DeploymentRequestLine {
+  id                      String          @id @default(cuid())
+  requestId               String
+  lineType                RequestLineType
+  categoryId              String?
+  itemType                String?
+  vehicleType             VehicleType?
+  requestedQty            Int             @default(1)
+  specificInventoryItemId String?
+  specificVehicleId       String?
+  // Set at staging (deferred slice): the concrete unit/vehicle reserved + its
+  // door-side condition check.
+  resolvedUnitId          String?
+  resolvedVehicleId       String?
+  stagedCondition         String?
+  createdAt               DateTime        @default(now())
+
+  @@index([requestId])
+  @@map("deployment_request_lines")
+}
