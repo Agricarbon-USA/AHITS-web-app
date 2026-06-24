@@ -910,3 +910,56 @@ model DeploymentRequestLine {
   @@index([requestId])
   @@map("deployment_request_lines")
 }
+
+// ── M6 / #29: Deployment-model refactor — FOUNDATION slice ───────────────────
+// Two additive tables that generalize the single `Rig.projectId` link and the
+// `Rig.operatorId` + `rig_operators` primary/secondary operator model into:
+//   - DeploymentProject     — a Rig↔Project MANY-TO-MANY.
+//   - DeploymentAssignment  — operator-assignment HISTORY (PRIMARY/SECONDARY,
+//                             started/ended) folding in RigOperator, the basis
+//                             for self-service handoff (transfer-accept pattern).
+// Both are BACKFILLED from existing data in migration `…_deployment_model_
+// foundation`. The legacy columns (`Rig.projectId`, `Rig.operatorId`) and the
+// `rig_operators` table are RETAINED during the transition so every existing
+// reader keeps working untouched; a follow-on PR migrates readers onto these
+// tables, adds the handoff UI, and (then) enforces the one-active-PRIMARY-per-
+// operator invariant as a partial unique index. Accessed via raw SQL (no
+// generated-client coupling) and declared with scalar FK columns + no @relation
+// so this addition touches NO existing model — making the PR deploy-safe even
+// before its migration is applied (no rendered surface reads these yet).
+enum DeploymentAssignmentRole {
+  PRIMARY
+  SECONDARY
+}
+
+model DeploymentProject {
+  id        String    @id @default(cuid())
+  rigId     String
+  projectId String
+  addedAt   DateTime  @default(now())
+  removedAt DateTime?
+
+  @@unique([rigId, projectId])
+  @@index([projectId])
+  @@map("deployment_projects")
+}
+
+model DeploymentAssignment {
+  id         String                   @id @default(cuid())
+  rigId      String
+  operatorId String
+  role       DeploymentAssignmentRole @default(PRIMARY)
+  startedAt  DateTime                 @default(now())
+  endedAt    DateTime?
+  addedById  String?
+  note       String?
+  createdAt  DateTime                 @default(now())
+
+  @@index([rigId])
+  @@index([operatorId])
+  // Partial index supporting "this operator's current PRIMARY deployment" lookups
+  // and the future one-active-PRIMARY-per-operator unique constraint (added in
+  // the follow-on reader-migration PR once all writers go through this table).
+  @@index([operatorId, role, endedAt])
+  @@map("deployment_assignments")
+}
