@@ -337,6 +337,10 @@ function DeploymentDrawer({
   const [cancelLoading, setCancelLoading] = React.useState(false)
   const [addingOperator, setAddingOperator] = React.useState(false)
   const [operatorToAdd, setOperatorToAdd] = React.useState('')
+  const [reassignOpen, setReassignOpen] = React.useState(false)
+  const [reassignTargetId, setReassignTargetId] = React.useState('')
+  const [reassignNote, setReassignNote] = React.useState('')
+  const [reassignLoading, setReassignLoading] = React.useState(false)
   const [history, setHistory] = React.useState<Array<{
     id: string; action: string; submittedAt: string; notes: string | null
     item: { name: string }; operator: { name: string } | null
@@ -383,6 +387,32 @@ function DeploymentDrawer({
     if (res.ok) { const d = await res.json(); setRig(d) }
     await loadTransfers()
     onUpdated()
+  }
+
+  const handleReassignPrimary = async () => {
+    if (!reassignTargetId || !reassignNote.trim()) return
+    setReassignLoading(true)
+    try {
+      const res = await fetch(`/api/deployments/${rig.id}/handoff`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ toOperatorId: reassignTargetId, note: reassignNote, force: true }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        showToast(typeof d.error === 'string' ? d.error : 'Could not reassign primary operator.', 'error')
+        return
+      }
+      setReassignOpen(false)
+      setReassignTargetId('')
+      setReassignNote('')
+      showToast('Primary operator reassigned.')
+      await refresh()
+    } catch {
+      showToast('Network error. Please try again.', 'error')
+    } finally {
+      setReassignLoading(false)
+    }
   }
 
   const handleAddOperator = async (rigId: string) => {
@@ -752,9 +782,14 @@ function DeploymentDrawer({
                   <Button size="small" onClick={() => { setAddingOperator(false); setOperatorToAdd('') }}>Cancel</Button>
                 </Stack>
               ) : (
-                <Button size="small" sx={{ mt: 0.5 }} onClick={() => setAddingOperator(true)}>
-                  + Add Operator
-                </Button>
+                <Stack direction="row" spacing={1} mt={0.5}>
+                  <Button size="small" onClick={() => setAddingOperator(true)}>
+                    + Add Operator
+                  </Button>
+                  <Button size="small" color="warning" onClick={() => { setReassignOpen(true); setReassignTargetId(''); setReassignNote('') }}>
+                    Reassign Primary…
+                  </Button>
+                </Stack>
               ))}
             </Box>
 
@@ -1024,6 +1059,40 @@ function DeploymentDrawer({
           <Button variant="contained" color="error" onClick={handleCancelTransfer} disabled={cancelLoading}
             startIcon={cancelLoading ? <CircularProgress size={16} color="inherit" /> : null}>
             {cancelLoading ? 'Cancelling…' : 'Cancel Transfer'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Reassign primary operator (admin force handoff) */}
+      <Dialog open={reassignOpen} onClose={() => setReassignOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Reassign Primary Operator</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Immediately reassigns primary responsibility. Takes effect without the new operator needing to accept.
+          </Typography>
+          <TextField
+            select label="Reassign to" value={reassignTargetId}
+            onChange={(e) => setReassignTargetId(e.target.value)} fullWidth sx={{ mb: 2 }}
+          >
+            {operators.filter((u) => u.role === 'OPERATOR' && u.id !== rig.operator.id).map((u) => (
+              <MenuItem key={u.id} value={u.id}>{u.name}</MenuItem>
+            ))}
+          </TextField>
+          <TextField
+            label="Reason (required)"
+            value={reassignNote}
+            onChange={(e) => setReassignNote(e.target.value)}
+            multiline rows={2} fullWidth
+            placeholder="e.g. Operator unavailable — emergency reassignment"
+          />
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setReassignOpen(false)} disabled={reassignLoading}>Cancel</Button>
+          <Button variant="contained" color="warning"
+            disabled={!reassignTargetId || !reassignNote.trim() || reassignLoading}
+            onClick={handleReassignPrimary}
+            startIcon={reassignLoading ? <CircularProgress size={16} color="inherit" /> : null}>
+            {reassignLoading ? 'Reassigning…' : 'Reassign Primary'}
           </Button>
         </DialogActions>
       </Dialog>
