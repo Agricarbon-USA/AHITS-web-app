@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
 import { withIdempotency } from '@/lib/idempotency'
+import { ensureOpenAssignment, endAllAssignmentsForRig, removeAllProjectLinks } from '@/lib/deployment-assignments'
 
 const schema = z.object({
   responseNote: z.string().optional(),
@@ -118,6 +119,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       destRig = await tx.rig.create({
         data: { operatorId: toOperatorId, startedAt: now },
       })
+      await ensureOpenAssignment({ rigId: destRig.id, operatorId: toOperatorId, role: 'PRIMARY', addedById: session.userId, note: 'Created on transfer accept' }, tx)
     }
 
     // Find or create destination kit
@@ -205,6 +207,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     const remainingItems = sourceKits.reduce((sum, k) => sum + k.items.length, 0)
     if (remainingVehicles === 0 && remainingItems === 0 && !transfer.fromRig.endedAt) {
       await tx.rig.update({ where: { id: transfer.fromRig.id }, data: { endedAt: now } })
+      await endAllAssignmentsForRig(transfer.fromRig.id, tx)
+      await removeAllProjectLinks(transfer.fromRig.id, tx)
     }
 
       // Status/respondedAt/responseNote were already written by the claim above.
