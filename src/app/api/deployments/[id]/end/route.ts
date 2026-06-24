@@ -7,6 +7,7 @@ import { createAlert } from '@/lib/alerts'
 import { withIdempotency } from '@/lib/idempotency'
 import { issueHubReturnLinks } from '@/lib/status-links'
 import { filterAllowedPhotoUrls } from '@/lib/photo-security'
+import { endAllAssignmentsForRig, removeAllProjectLinks } from '@/lib/deployment-assignments'
 
 const dispositionSchema = z.object({
   kitItemId: z.string(),
@@ -76,6 +77,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
   await prisma.$transaction(async (tx) => {
     await tx.rig.update({ where: { id }, data: { endedAt: now, notes: note } })
+    await endAllAssignmentsForRig(id, tx)
+    await removeAllProjectLinks(id, tx)
 
     for (const disp of itemDispositions) {
       const kitItem = allKitItems.find((ki) => ki.id === disp.kitItemId)

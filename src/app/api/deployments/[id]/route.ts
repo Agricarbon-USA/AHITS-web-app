@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
+import { addProjectLink, removeAllProjectLinks } from '@/lib/deployment-assignments'
 
 const RIG_INCLUDE = {
   operator: { select: { id: true, name: true } },
@@ -74,6 +75,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const parsed = patchSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const updated = await prisma.rig.update({ where: { id }, data: parsed.data, include: RIG_INCLUDE })
+  const updated = await prisma.$transaction(async (tx) => {
+    const result = await tx.rig.update({ where: { id }, data: parsed.data, include: RIG_INCLUDE })
+    if (parsed.data.projectId !== undefined) {
+      await removeAllProjectLinks(id, tx)
+      if (parsed.data.projectId) await addProjectLink(id, parsed.data.projectId, tx)
+    }
+    return result
+  })
   return NextResponse.json(updated)
 }
