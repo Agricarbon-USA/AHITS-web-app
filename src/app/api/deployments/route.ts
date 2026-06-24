@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
+import { getDeploymentRosters } from '@/lib/deployment-assignments'
 
 const RIG_INCLUDE = {
   operator: { select: { id: true, name: true } },
@@ -32,6 +33,34 @@ const RIG_INCLUDE = {
   },
   secondaryOperators: {
     include: { operator: { select: { id: true, name: true, email: true } } },
+  },
+} as const
+
+// Trimmed include for GET list — operator/project/secondaryOperators sourced from roster helpers
+const RIG_LIST_INCLUDE = {
+  vehicles: {
+    where: { removedAt: null },
+    include: { vehicle: { select: { id: true, name: true, type: true } } },
+  },
+  kits: {
+    include: {
+      items: {
+        where: { removedAt: null },
+        include: {
+          item: {
+            select: {
+              id: true,
+              name: true,
+              itemType: true,
+              categoryRef: { select: { name: true } },
+            },
+          },
+          inventoryUnit: {
+            select: { id: true, qrCodeId: true, serialNumber: true, status: true },
+          },
+        },
+      },
+    },
   },
 } as const
 
@@ -76,11 +105,22 @@ export async function GET(req: NextRequest) {
         ? { OR: [{ operatorId: session.userId }, { secondaryOperators: { some: { operatorId: session.userId } } }] }
         : operatorId ? { operatorId } : {}),
     },
-    include: RIG_INCLUDE,
+    include: RIG_LIST_INCLUDE,
     orderBy: { startedAt: 'desc' },
   })
 
-  return NextResponse.json(rigs)
+  const rosters = await getDeploymentRosters(rigs.map((r) => r.id))
+  const out = rigs.map((r) => {
+    const ro = rosters.get(r.id) ?? { operator: null, operatorId: null, secondaryOperators: [], projects: [] }
+    return {
+      ...r,
+      operatorId: ro.operatorId ?? r.operatorId,
+      operator: ro.operator ? { id: ro.operator.id, name: ro.operator.name } : null,
+      project: ro.projects[0] ?? null,
+      secondaryOperators: ro.secondaryOperators,
+    }
+  })
+  return NextResponse.json(out)
 }
 
 export async function POST(req: NextRequest) {

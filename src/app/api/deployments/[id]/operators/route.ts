@@ -2,23 +2,17 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
+import { getDeploymentRoster } from '@/lib/deployment-assignments'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAdmin()
   if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const { id } = await params
 
-  const rig = await prisma.rig.findUnique({
-    where: { id },
-    include: {
-      operator: { select: { id: true, name: true, email: true } },
-      secondaryOperators: {
-        include: { operator: { select: { id: true, name: true, email: true } } },
-      },
-    },
-  })
+  const rig = await prisma.rig.findUnique({ where: { id } })
   if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  return NextResponse.json(rig)
+  const ro = await getDeploymentRoster(id)
+  return NextResponse.json({ ...rig, operator: ro.operator, secondaryOperators: ro.secondaryOperators })
 }
 
 const addSchema = z.object({ operatorId: z.string() })
