@@ -963,3 +963,32 @@ model DeploymentAssignment {
   @@index([operatorId, role, endedAt])
   @@map("deployment_assignments")
 }
+
+enum DeploymentHandoffStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  CANCELLED
+}
+
+// #29 slice 3: operator self-service handoff of a deployment's PRIMARY operator.
+// Mirrors the TransferRequest lifecycle (PENDING→ACCEPTED/DECLINED/CANCELLED).
+// Scalar FKs + no @relation (raw-SQL access). At most one PENDING per rig
+// (partial unique index in the migration).
+model DeploymentHandoff {
+  id             String                  @id @default(cuid())
+  rigId          String
+  fromOperatorId String
+  toOperatorId   String
+  initiatedById  String
+  status         DeploymentHandoffStatus @default(PENDING)
+  note           String
+  responseNote   String?
+  respondedAt    DateTime?
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @default(now())
+  @@index([status])
+  @@index([toOperatorId])
+  @@index([rigId])
+  @@map("deployment_handoffs")
+}
