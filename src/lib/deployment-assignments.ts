@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 
 type RawClient = Pick<typeof prisma, '$executeRaw' | '$queryRaw'>
@@ -25,6 +26,68 @@ export interface DeploymentAssignmentRow {
   endedAt: Date | null
   addedById: string | null
   note: string | null
+}
+
+/** Current operator + project roster for one or more deployments, sourced from the new tables. */
+export interface DeploymentRoster {
+  operator: { id: string; name: string; email: string } | null
+  operatorId: string | null
+  secondaryOperators: { operator: { id: string; name: string; email: string } }[]
+  projects: { id: string; name: string }[]
+}
+
+export async function getDeploymentRosters(
+  rigIds: string[],
+  db: RawClient = prisma,
+): Promise<Map<string, DeploymentRoster>> {
+  const map = new Map<string, DeploymentRoster>()
+  if (rigIds.length === 0) return map
+  for (const id of rigIds) {
+    map.set(id, { operator: null, operatorId: null, secondaryOperators: [], projects: [] })
+  }
+
+  const assignments = await db.$queryRaw<
+    { rigId: string; operatorId: string; name: string | null; email: string | null; role: string }[]
+  >`
+    SELECT a."rigId", a."operatorId", u."name", u."email", a."role"::text AS "role"
+    FROM "deployment_assignments" a
+    LEFT JOIN "users" u ON u."id" = a."operatorId"
+    WHERE a."rigId" IN (${Prisma.join(rigIds)}) AND a."endedAt" IS NULL
+  `
+  for (const a of assignments) {
+    const r = map.get(a.rigId)
+    if (!r) continue
+    if (a.role === 'PRIMARY') {
+      r.operator = { id: a.operatorId, name: a.name ?? '', email: a.email ?? '' }
+      r.operatorId = a.operatorId
+    } else {
+      r.secondaryOperators.push({ operator: { id: a.operatorId, name: a.name ?? '', email: a.email ?? '' } })
+    }
+  }
+
+  const projectRows = await db.$queryRaw<
+    { rigId: string; projectId: string; name: string | null }[]
+  >`
+    SELECT dp."rigId", dp."projectId", p."name"
+    FROM "deployment_projects" dp
+    LEFT JOIN "projects" p ON p."id" = dp."projectId"
+    WHERE dp."rigId" IN (${Prisma.join(rigIds)}) AND dp."removedAt" IS NULL
+  `
+  for (const p of projectRows) {
+    const r = map.get(p.rigId)
+    if (!r) continue
+    r.projects.push({ id: p.projectId, name: p.name ?? '' })
+  }
+
+  return map
+}
+
+export async function getDeploymentRoster(
+  rigId: string,
+  db: RawClient = prisma,
+): Promise<DeploymentRoster> {
+  const map = await getDeploymentRosters([rigId], db)
+  return map.get(rigId) ?? { operator: null, operatorId: null, secondaryOperators: [], projects: [] }
 }
 
 /** All (active + historical) project links for a deployment, newest first. */
