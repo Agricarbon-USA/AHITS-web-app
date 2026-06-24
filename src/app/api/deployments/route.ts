@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
-import { getDeploymentRosters } from '@/lib/deployment-assignments'
+import { getDeploymentRosters, ensureOpenAssignment, addProjectLink } from '@/lib/deployment-assignments'
 
 const RIG_INCLUDE = {
   operator: { select: { id: true, name: true } },
@@ -151,6 +151,9 @@ export async function POST(req: NextRequest) {
     const newRig = await tx.rig.create({
       data: { operatorId, projectId, label },
     })
+
+    await ensureOpenAssignment({ rigId: newRig.id, operatorId, role: 'PRIMARY', addedById: session.userId }, tx)
+    if (projectId) await addProjectLink(newRig.id, projectId, tx)
 
     if (vehicleIds.length > 0) {
       // Reject vehicles already held by another active deployment (open RigVehicle).
