@@ -1,8 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { prisma } from '../src/lib/prisma'
-import { createRequest, applyRequestTransition } from '../src/lib/deployment-requests'
+import {
+  createRequest,
+  applyRequestTransition,
+  setLineFulfillment,
+} from '../src/lib/deployment-requests'
 import { seedInventoryStock } from './helpers/fixtures'
-import { createHub, createCategory, createInventoryItem, createOperator } from './helpers/fixtures'
+import { createHub, createCategory, createInventoryItem, createInventoryUnit, createOperator } from './helpers/fixtures'
 
 async function getStockRow(itemId: string, hubId: string) {
   const rows = await prisma.$queryRaw<{ quantity: number; reservedQty: number }[]>`
@@ -16,6 +20,23 @@ async function getRequestRow(id: string) {
     SELECT "status"::text AS "status", "stockReservedAt" FROM "deployment_requests" WHERE "id" = ${id}
   `
   return rows[0] ?? null
+}
+
+async function getLineIds(requestId: string): Promise<string[]> {
+  const rows = await prisma.$queryRaw<{ id: string }[]>`
+    SELECT "id" FROM "deployment_request_lines"
+    WHERE "requestId" = ${requestId}
+    ORDER BY "createdAt" ASC
+  `
+  return rows.map((r) => r.id)
+}
+
+/** F3: confirm all lines (CONFIRMED, as-requested) so the PENDING gate passes. */
+async function confirmAllLines(requestId: string): Promise<void> {
+  const lineIds = await getLineIds(requestId)
+  for (const lineId of lineIds) {
+    await setLineFulfillment(lineId, { status: 'CONFIRMED', actor: { label: 'test' } })
+  }
 }
 
 describe('R4 hub-stock hard-reserve', () => {
@@ -39,6 +60,9 @@ describe('R4 hub-stock hard-reserve', () => {
     // Before confirm: nothing reserved
     const before = await getStockRow(item.id, hub.id)
     expect(before?.reservedQty).toBe(0)
+
+    // F3: check off all lines first
+    await confirmAllLines(requestId)
 
     // Confirm stages the request and reserves stock
     const confirmResult = await applyRequestTransition(requestId, 'confirm', 'RESERVATION')
@@ -80,6 +104,9 @@ describe('R4 hub-stock hard-reserve', () => {
       operator.id,
     )
 
+    // F3: confirm all lines (even though qty > stock, the gate must pass before reserve check)
+    await confirmAllLines(requestId)
+
     const result = await applyRequestTransition(requestId, 'confirm', 'RESERVATION')
     expect(result.ok).toBe(false)
     if (!result.ok) {
@@ -114,6 +141,7 @@ describe('R4 hub-stock hard-reserve', () => {
       operator.id,
     )
 
+    await confirmAllLines(requestId)
     await applyRequestTransition(requestId, 'confirm', 'RESERVATION')
     const afterConfirm = await getStockRow(item.id, hub.id)
     expect(afterConfirm?.reservedQty).toBe(4)
@@ -146,6 +174,8 @@ describe('R4 hub-stock hard-reserve', () => {
       operator.id,
     )
 
+    await confirmAllLines(requestId)
+
     const first = await applyRequestTransition(requestId, 'confirm', 'RESERVATION')
     expect(first.ok).toBe(true)
 
@@ -174,6 +204,8 @@ describe('R4 hub-stock hard-reserve', () => {
       operator.id,
     )
 
+    await confirmAllLines(requestId)
+
     const result = await applyRequestTransition(requestId, 'confirm', 'RESERVATION')
     expect(result).toEqual({ ok: true })
 
@@ -186,6 +218,7 @@ describe('R4 hub-stock hard-reserve', () => {
     const cat = await createCategory()
     const operator = await createOperator()
     const serialItem = await createInventoryItem(cat.id, { itemType: 'SERIALIZED', quantity: 1 })
+    const unit = await createInventoryUnit(serialItem.id)
 
     const requestId = await createRequest(
       {
@@ -201,6 +234,17 @@ describe('R4 hub-stock hard-reserve', () => {
       },
       operator.id,
     )
+
+    const [catLineId, serialLineId] = await getLineIds(requestId)
+
+    // Category-only: confirm with no unit
+    await setLineFulfillment(catLineId, { status: 'CONFIRMED', actor: { label: 'test' } })
+    // Serialized: confirm with unit
+    await setLineFulfillment(serialLineId, {
+      status: 'CONFIRMED',
+      resolvedUnitId: unit.id,
+      actor: { label: 'test' },
+    })
 
     const result = await applyRequestTransition(requestId, 'confirm', 'RESERVATION')
     expect(result).toEqual({ ok: true })

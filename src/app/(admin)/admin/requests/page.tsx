@@ -8,10 +8,10 @@ import {
 } from '@mui/material'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ExpandLessIcon from '@mui/icons-material/ExpandLess'
-import ContentCopyIcon from '@mui/icons-material/ContentCopy'
 import SendIcon from '@mui/icons-material/Send'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { useToast } from '@/components/shared/useToast'
+import { FulfillmentChecklist, type ChecklistLine, type LineActionData } from '@/components/shared/FulfillmentChecklist'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -42,6 +42,15 @@ interface LineRow {
   specificVehicleName: string | null
   specificUnitSerial: string | null
   description: string | null
+  // F3 fulfillment fields
+  fulfillmentStatus?: string
+  fulfilledQty?: number | null
+  substitutedItemId?: string | null
+  substitutedName?: string | null
+  resolvedUnitId?: string | null
+  denyReason?: string | null
+  availableUnits?: { id: string; serialNumber: string | null }[]
+  substitutableItems?: { id: string; name: string; availableAtHub: boolean }[]
 }
 
 interface HubOption { id: string; name: string; city: string; state: string }
@@ -69,6 +78,21 @@ function lineDisplayName(l: LineRow): string {
 
 async function patchRequest(id: string, body: Record<string, unknown>): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(`/api/deployment-requests/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) return { ok: false, error: data.error ?? 'Action failed.' }
+  return { ok: true }
+}
+
+async function patchLine(
+  requestId: string,
+  lineId: string,
+  body: Record<string, unknown>,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`/api/deployment-requests/${requestId}/lines/${lineId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -198,6 +222,7 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
 }) {
   const [expanded, setExpanded] = React.useState(false)
   const [lines, setLines] = React.useState<LineRow[] | null>(null)
+  const [progress, setProgress] = React.useState<{ checked: number; total: number } | null>(null)
   const [linesLoading, setLinesLoading] = React.useState(false)
   const [dialog, setDialog] = React.useState<'hub' | 'operator' | 'decline' | null>(null)
   const [busy, setBusy] = React.useState<string | null>(null)
@@ -210,6 +235,18 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
     if (res.ok) {
       const d = await res.json()
       setLines((d.data?.lines as LineRow[]) ?? [])
+      setProgress(d.data?.progress ?? null)
+    }
+    setLinesLoading(false)
+  }
+
+  const reloadLines = async () => {
+    setLinesLoading(true)
+    const res = await fetch(`/api/deployment-requests/${req.id}`)
+    if (res.ok) {
+      const d = await res.json()
+      setLines((d.data?.lines as LineRow[]) ?? [])
+      setProgress(d.data?.progress ?? null)
     }
     setLinesLoading(false)
   }
@@ -246,6 +283,38 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
   const isReservation = req.requestType === 'RESERVATION'
   const isTerminal = TERMINAL.has(req.status)
 
+  // Build checklist lines from loaded LineRow data (RESERVATION only)
+  const checklistLines: ChecklistLine[] = React.useMemo(() => {
+    if (!lines || !isReservation) return []
+    return lines.map((l) => ({
+      id: l.id,
+      name: lineDisplayName(l),
+      requestedQty: l.requestedQty,
+      itemType: l.itemType ?? null,
+      fulfillmentStatus: l.fulfillmentStatus ?? 'PENDING',
+      fulfilledQty: l.fulfilledQty ?? null,
+      substitutedItemId: l.substitutedItemId ?? null,
+      substitutedName: l.substitutedName ?? null,
+      resolvedUnitId: l.resolvedUnitId ?? null,
+      denyReason: l.denyReason ?? null,
+      availableUnits: l.availableUnits ?? [],
+      substitutableItems: l.substitutableItems ?? [],
+    }))
+  }, [lines, isReservation])
+
+  const onLineAction = async (lineId: string, lineAction: 'confirm' | 'edit' | 'deny', data: LineActionData) => {
+    return patchLine(req.id, lineId, { action: lineAction, ...data })
+  }
+
+  const onStage = async () => {
+    const r = await patchRequest(req.id, { action: 'confirm' })
+    if (r.ok) {
+      showToast({ message: 'Reservation staged.', severity: 'success' })
+      onRefresh()
+    }
+    return r
+  }
+
   return (
     <>
       <Card variant="outlined">
@@ -275,7 +344,6 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
               )}
             </Box>
             <Stack direction="row" spacing={0.5} alignItems="center" flexShrink={0}>
-              {/* Lines toggle */}
               <Tooltip title={expanded ? 'Hide lines' : 'Show lines'}>
                 <IconButton size="small" onClick={toggleExpand}>
                   {expanded ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
@@ -284,20 +352,33 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
             </Stack>
           </Stack>
 
-          {/* Lines panel */}
+          {/* Lines / checklist panel */}
           <Collapse in={expanded}>
             <Box sx={{ mt: 1.5, pl: 0.5 }}>
               {linesLoading ? (
                 <CircularProgress size={18} />
               ) : lines && lines.length > 0 ? (
-                <Stack spacing={0.5}>
-                  {lines.map((l) => (
-                    <Stack key={l.id} direction="row" justifyContent="space-between" sx={{ fontSize: 13, color: 'text.secondary' }}>
-                      <span>{lineDisplayName(l)}</span>
-                      <span>×{l.requestedQty}</span>
-                    </Stack>
-                  ))}
-                </Stack>
+                isReservation && req.status === 'REQUESTED' ? (
+                  // F3: per-line fulfillment checklist for active reservations
+                  <FulfillmentChecklist
+                    lines={checklistLines}
+                    progress={progress ?? { checked: 0, total: checklistLines.length }}
+                    onLineAction={onLineAction}
+                    onStage={onStage}
+                    isActionable
+                    stageLabel="Stage (admin)"
+                  />
+                ) : (
+                  // Read-only line list for non-REQUESTED or non-RESERVATION
+                  <Stack spacing={0.5}>
+                    {lines.map((l) => (
+                      <Stack key={l.id} direction="row" justifyContent="space-between" sx={{ fontSize: 13, color: 'text.secondary' }}>
+                        <span>{lineDisplayName(l)}</span>
+                        <span>×{l.requestedQty}</span>
+                      </Stack>
+                    ))}
+                  </Stack>
+                )
               ) : (
                 <Typography variant="caption" color="text.secondary">No lines.</Typography>
               )}
@@ -342,9 +423,10 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
 
                 {isReservation && req.status === 'REQUESTED' && (
                   <>
-                    <Button size="small" variant="contained" color="success"
-                      disabled={!!busy} onClick={() => void action('confirm')}>
-                      {busy === 'confirm' ? <CircularProgress size={14} color="inherit" /> : 'Stage (admin)'}
+                    <Button size="small" variant="outlined"
+                      disabled={!!busy}
+                      onClick={() => { if (!expanded) void loadLines(); setExpanded(true) }}>
+                      {expanded ? 'Hide checklist' : 'Open checklist'}
                     </Button>
                     <Button size="small" variant="outlined" color="error" disabled={!!busy}
                       onClick={() => setDialog('decline')}>
@@ -374,7 +456,6 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
                   </>
                 )}
 
-                {/* Cancel is available for DRAFT on both types */}
                 {req.status === 'DRAFT' && (
                   <Button size="small" variant="outlined" color="error" disabled={!!busy}
                     onClick={() => void action('cancel')}>

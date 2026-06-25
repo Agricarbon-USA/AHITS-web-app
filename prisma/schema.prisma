@@ -977,10 +977,36 @@ model DeploymentRequestLine {
   resolvedUnitId          String?
   resolvedVehicleId       String?
   stagedCondition         String?
+  // F3: per-line fulfillment state (hub loading checklist).
+  fulfillmentStatus       String          @default("PENDING") // PENDING | CONFIRMED | EDITED | DENIED
+  fulfilledQty            Int?
+  substitutedItemId       String?
+  denyReason              String?
   createdAt               DateTime        @default(now())
 
   @@index([requestId])
   @@map("deployment_request_lines")
+}
+
+// F3: per-line change log — every Confirm/Edit/Deny appends one row (from→to).
+// Raw-SQL access only (same discipline as status_link_events).
+model RequestLineEvent {
+  id          String   @id @default(cuid())
+  lineId      String
+  requestId   String
+  action      String   // 'CONFIRM' | 'EDIT' | 'DENY'
+  fromQty     Int?
+  toQty       Int?
+  fromItemId  String?
+  toItemId    String?
+  note        String?
+  actorLabel  String?  // portal (no account)
+  actorUserId String?  // admin (session user)
+  createdAt   DateTime @default(now())
+
+  @@index([lineId])
+  @@index([requestId])
+  @@map("request_line_events")
 }
 
 // ── M6 / #29: Deployment-model refactor — FOUNDATION slice ───────────────────

@@ -1,13 +1,26 @@
 'use client'
 
 import { useEffect, useState, use } from 'react'
+import { FulfillmentChecklist, type ChecklistLine } from '@/components/shared/FulfillmentChecklist'
+
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface ReservationLine {
+  id: string
   name: string
-  qty: number
+  requestedQty: number
   kind: string
-  serial?: string | null
+  itemType: string | null
+  fulfillmentStatus: string
+  fulfilledQty: number | null
+  substitutedItemId: string | null
+  substitutedName: string | null
+  resolvedUnitId: string | null
+  denyReason: string | null
+  availableUnits: { id: string; serialNumber: string | null }[]
+  substitutableItems: { id: string; name: string; availableAtHub: boolean }[]
 }
+
 interface Subject {
   kind?: string
   taskName?: string
@@ -22,8 +35,10 @@ interface Subject {
   neededBy?: string | null
   requester?: string | null
   project?: string | null
+  progress?: { checked: number; total: number }
   lines?: ReservationLine[]
 }
+
 interface Context {
   type: 'WORK_ORDER' | 'HUB_RETURN' | 'INVOICE' | 'RESERVATION'
   state: string
@@ -32,6 +47,15 @@ interface Context {
   recipientName?: string | null
   subject: Subject
 }
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+
+const wrap: React.CSSProperties = { maxWidth: 560, margin: '0 auto', padding: 24, fontFamily: 'system-ui, sans-serif', color: '#1a1a1a' }
+const card: React.CSSProperties = { border: '1px solid #e0e0e0', borderRadius: 12, padding: 20, marginTop: 16, background: '#fff' }
+const btn: React.CSSProperties = { background: '#2e7d32', color: '#fff', border: 'none', padding: '12px 20px', borderRadius: 8, fontWeight: 600, fontSize: 15, cursor: 'pointer', minHeight: 48, width: '100%', marginTop: 8 }
+const btnOutline: React.CSSProperties = { ...btn, background: '#fff', color: '#2e7d32', border: '1px solid #2e7d32' }
+const btnDanger: React.CSSProperties = { ...btnOutline, color: '#d32f2f', border: '1px solid #d32f2f' }
+const inputStyle: React.CSSProperties = { width: '100%', padding: 12, fontSize: 15, borderRadius: 8, border: '1px solid #ccc', margin: '6px 0 12px', minHeight: 44, boxSizing: 'border-box' }
 
 const ACTION_LABELS: Record<string, string> = {
   RECEIVED: 'Mark received',
@@ -45,10 +69,7 @@ const ACTION_LABELS: Record<string, string> = {
   DECLINED: 'Decline',
 }
 
-const wrap: React.CSSProperties = { maxWidth: 560, margin: '0 auto', padding: 24, fontFamily: 'system-ui, sans-serif', color: '#1a1a1a' }
-const card: React.CSSProperties = { border: '1px solid #e0e0e0', borderRadius: 12, padding: 20, marginTop: 16, background: '#fff' }
-const btn: React.CSSProperties = { background: '#2e7d32', color: '#fff', border: 'none', padding: '12px 20px', borderRadius: 8, fontWeight: 600, fontSize: 15, cursor: 'pointer', minHeight: 48, width: '100%', marginTop: 8 }
-const btnOutline: React.CSSProperties = { ...btn, background: '#fff', color: '#2e7d32', border: '1px solid #2e7d32' }
+// ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function StatusLinkPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = use(params)
@@ -69,6 +90,7 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
       .finally(() => setLoading(false))
   }, [token])
 
+  // Generic whole-request submit (non-reservation or decline)
   async function submit(action: string) {
     if (!actorLabel.trim()) { setError('Please enter your name first.'); return }
     setSubmitting(true); setError(null)
@@ -108,47 +130,140 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
   const isWO = ctx.type === 'WORK_ORDER'
   const isRes = ctx.type === 'RESERVATION'
 
+  // ── Reservation checklist path ─────────────────────────────────────────────
+  if (isRes) {
+    const lines = s.lines ?? []
+    const progress = s.progress ?? { checked: 0, total: lines.length }
+
+    const checklistLines: ChecklistLine[] = lines.map((l) => ({
+      id: l.id,
+      name: l.name,
+      requestedQty: l.requestedQty,
+      itemType: l.itemType,
+      fulfillmentStatus: l.fulfillmentStatus,
+      fulfilledQty: l.fulfilledQty,
+      substitutedItemId: l.substitutedItemId,
+      substitutedName: l.substitutedName,
+      resolvedUnitId: l.resolvedUnitId,
+      denyReason: l.denyReason,
+      availableUnits: l.availableUnits,
+      substitutableItems: l.substitutableItems,
+    }))
+
+    const onLineAction = async (lineId: string, action: 'confirm' | 'edit' | 'deny', data: { fulfilledQty?: number; resolvedUnitId?: string; substitutedItemId?: string; denyReason?: string }) => {
+      if (!actorLabel.trim()) return { ok: false, error: 'Please enter your name first.' }
+      try {
+        const res = await fetch(`/api/s/${token}/transition`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `${token}:line:${lineId}:${action}:${Date.now()}` },
+          body: JSON.stringify({ lineId, action, actorLabel, ...data }),
+        })
+        const json = await res.json().catch(() => ({}))
+        if (!res.ok) return { ok: false, error: json.error ?? 'Action failed.' }
+        return { ok: true }
+      } catch {
+        return { ok: false, error: 'Network error — please try again.' }
+      }
+    }
+
+    const onStage = async () => {
+      if (!actorLabel.trim()) return { ok: false, error: 'Please enter your name first.' }
+      try {
+        const res = await fetch(`/api/s/${token}/transition`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `${token}:PREPARED:${Date.now()}` },
+          body: JSON.stringify({ action: 'PREPARED', actorLabel }),
+        })
+        const json = await res.json().catch(() => ({}))
+        if (!res.ok) return { ok: false, error: json.error ?? 'Could not stage.' }
+        setDone('PREPARED')
+        return { ok: true }
+      } catch {
+        return { ok: false, error: 'Network error — please try again.' }
+      }
+    }
+
+    return (
+      <div style={wrap}>
+        <Header />
+        <div style={card}>
+          <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.6, color: '#757575' }}>
+            Rig Reservation Request
+          </div>
+          <h2 style={{ margin: '6px 0 12px' }}>{s.label ?? 'Rig Reservation'}</h2>
+          {s.neededBy && <Row label="Needed by" value={new Date(s.neededBy).toLocaleDateString()} />}
+          {s.requester && <Row label="Requester" value={s.requester} />}
+          {s.project && <Row label="Project" value={s.project} />}
+        </div>
+
+        {!ctx.actionable ? (
+          <div style={card}>
+            <p style={{ margin: 0, color: '#757575' }}>
+              {ctx.state === 'COMPLETED' ? 'This has been completed — thank you.'
+                : ctx.state === 'EXPIRED' ? 'This link has expired. Please contact Agricarbon.'
+                : ctx.state === 'REVOKED' ? 'This link is no longer valid. Please contact Agricarbon.'
+                : 'No further action is available.'}
+            </p>
+          </div>
+        ) : (
+          <div style={card}>
+            <h3 style={{ marginTop: 0 }}>Loading checklist</h3>
+            <label style={{ fontSize: 13, color: '#555' }}>Your name</label>
+            <input
+              value={actorLabel}
+              onChange={(e) => setActorLabel(e.target.value)}
+              placeholder="e.g. Joe at Eastside Hub"
+              style={inputStyle}
+            />
+            {lines.length > 0 ? (
+              <FulfillmentChecklist
+                lines={checklistLines}
+                progress={progress}
+                onLineAction={onLineAction}
+                onStage={onStage}
+                isActionable={ctx.actionable}
+                stageLabel="Mark prepared / staged"
+              />
+            ) : (
+              <p style={{ color: '#757575', fontSize: 14 }}>No items on this reservation.</p>
+            )}
+            {error && <p style={{ color: '#d32f2f', fontSize: 14, marginTop: 8 }}>{error}</p>}
+            <div style={{ marginTop: 16, borderTop: '1px solid #e0e0e0', paddingTop: 12 }}>
+              <button
+                disabled={submitting}
+                style={btnDanger}
+                onClick={() => { setChosen('DECLINED'); void submit('DECLINED') }}
+              >
+                {submitting && chosen === 'DECLINED' ? 'Submitting…' : 'Decline entire request'}
+              </button>
+            </div>
+          </div>
+        )}
+        <p style={{ color: '#9aa0a6', fontSize: 12, marginTop: 16, textAlign: 'center' }}>Agricarbon Hardware Inventory &amp; Tracking</p>
+      </div>
+    )
+  }
+
+  // ── Non-reservation path (unchanged) ──────────────────────────────────────
   return (
     <div style={wrap}>
       <Header />
       <div style={card}>
         <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.6, color: '#757575' }}>
-          {isWO ? 'Repair Work Order' : ctx.type === 'HUB_RETURN' ? 'Hub Return — Confirm Receipt' : isRes ? 'Rig Reservation Request' : 'Invoice'}
+          {isWO ? 'Repair Work Order' : ctx.type === 'HUB_RETURN' ? 'Hub Return — Confirm Receipt' : 'Invoice'}
         </div>
-        {isRes ? (
-          <>
-            <h2 style={{ margin: '6px 0 12px' }}>{s.label ?? 'Rig Reservation'}</h2>
-            {s.neededBy && <Row label="Needed by" value={new Date(s.neededBy).toLocaleDateString()} />}
-            {s.requester && <Row label="Requester" value={s.requester} />}
-            {s.project && <Row label="Project" value={s.project} />}
-            {s.lines && s.lines.length > 0 && (
-              <div style={{ marginTop: 12 }}>
-                <div style={{ fontSize: 12, color: '#757575', marginBottom: 6 }}>Requested items</div>
-                {s.lines.map((l, i) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid #f0f0f0', fontSize: 14 }}>
-                    <span>{l.name}{l.serial ? ` · #${l.serial}` : ''}</span>
-                    <span style={{ color: '#757575' }}>×{l.qty}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
-        ) : (
-          <>
-            <h2 style={{ margin: '6px 0 12px' }}>{s.asset ?? 'Equipment'}{s.serialNumber ? ` · #${s.serialNumber}` : ''}</h2>
-            {s.taskName && <Row label="Work" value={s.taskName} />}
-            {s.problem && <Row label="Problem" value={s.problem} />}
-            {s.shipToHub && <Row label="Return to" value={s.shipToHub} />}
-            {s.hub && <Row label="Hub" value={s.hub} />}
-            {!!s.photos?.length && (
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
-                {s.photos.map((u, i) => (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img key={i} src={u} alt={`photo ${i + 1}`} style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 8, border: '1px solid #e0e0e0' }} />
-                ))}
-              </div>
-            )}
-          </>
+        <h2 style={{ margin: '6px 0 12px' }}>{s.asset ?? 'Equipment'}{s.serialNumber ? ` · #${s.serialNumber}` : ''}</h2>
+        {s.taskName && <Row label="Work" value={s.taskName} />}
+        {s.problem && <Row label="Problem" value={s.problem} />}
+        {s.shipToHub && <Row label="Return to" value={s.shipToHub} />}
+        {s.hub && <Row label="Hub" value={s.hub} />}
+        {!!s.photos?.length && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+            {s.photos.map((u, i) => (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img key={i} src={u} alt={`photo ${i + 1}`} style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 8, border: '1px solid #e0e0e0' }} />
+            ))}
+          </div>
         )}
       </div>
 
@@ -166,7 +281,7 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
           <h3 style={{ marginTop: 0 }}>Update status</h3>
           <label style={{ fontSize: 13, color: '#555' }}>Your name</label>
           <input value={actorLabel} onChange={(e) => setActorLabel(e.target.value)} placeholder="e.g. Joe at Eastside Repair"
-            style={{ width: '100%', padding: 12, fontSize: 15, borderRadius: 8, border: '1px solid #ccc', margin: '6px 0 12px', minHeight: 44 }} />
+            style={inputStyle} />
           <label style={{ fontSize: 13, color: '#555' }}>{chosen === 'INVOICED' ? 'Invoice number' : 'Note (optional)'}</label>
           <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2}
             style={{ width: '100%', padding: 12, fontSize: 15, borderRadius: 8, border: '1px solid #ccc', margin: '6px 0 8px' }} />
@@ -174,7 +289,7 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
           {ctx.allowedActions.map((a) => (
             <button key={a} disabled={submitting}
               style={a === 'DISCREPANCY' || a === 'DECLINED' ? { ...btnOutline, borderColor: '#d32f2f', color: '#d32f2f' } : btn}
-              onClick={() => { setChosen(a); submit(a) }}>
+              onClick={() => { setChosen(a); void submit(a) }}>
               {submitting && chosen === a ? 'Submitting…' : (ACTION_LABELS[a] ?? a)}
             </button>
           ))}
@@ -192,6 +307,7 @@ function Header() {
     </div>
   )
 }
+
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div style={{ display: 'flex', gap: 12, padding: '6px 0', borderBottom: '1px solid #f0f0f0' }}>
