@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
+import { getActiveProjectsForVehicles } from '@/lib/project-associations'
 
 export async function GET(req: NextRequest) {
   const session = await requireAuth()
@@ -41,12 +42,18 @@ export async function GET(req: NextRequest) {
     for (const r of rows) meta.set(r.id, { hubId: r.hubId, hubName: r.hubName, assignedOperatorName: r.assignedOperatorName })
   } catch { /* hubId column missing pre-migration */ }
 
+  const vehicleIds = vehicles.map((v) => v.id)
+  const projectsMap = vehicleIds.length > 0
+    ? await getActiveProjectsForVehicles(vehicleIds)
+    : new Map<string, { id: string; name: string }[]>()
+
   return NextResponse.json({
     data: vehicles.map((v) => ({
       ...v,
       hubId: meta.get(v.id)?.hubId ?? null,
       hubName: meta.get(v.id)?.hubName ?? null,
       assignedOperatorName: meta.get(v.id)?.assignedOperatorName ?? null,
+      activeProjects: projectsMap.get(v.id) ?? [],
     })),
   })
 }

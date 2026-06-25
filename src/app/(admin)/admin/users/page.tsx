@@ -34,6 +34,7 @@ interface UserRow {
   hourlyRate?: number | string | null
   homeHubId?: string | null
   homeHub?: HubRow | null
+  activeProjects?: { id: string; name: string }[]
 }
 
 // ── Invite Dialog ─────────────────────────────────────────────────
@@ -272,6 +273,8 @@ export default function AdminUsersPage() {
   const [hubs, setHubs] = React.useState<HubRow[]>([])
   const [loading, setLoading] = React.useState(true)
   const [toast, setToast] = React.useState('')
+  const [filterProject, setFilterProject] = React.useState('')
+  const [projects, setProjects] = React.useState<{ id: string; name: string }[]>([])
   const [inviteOpen, setInviteOpen] = React.useState(false)
   const [activityOpen, setActivityOpen] = React.useState(false)
   const [editUser, setEditUser] = React.useState<UserRow | null>(null)
@@ -293,6 +296,7 @@ export default function AdminUsersPage() {
   React.useEffect(() => {
     load()
     fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(d ?? d?.data ?? [])).catch(() => {})
+    fetch('/api/projects').then((r) => r.json()).then((d) => setProjects(d.data ?? d ?? [])).catch(() => {})
   }, [load])
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 4000) }
@@ -335,6 +339,19 @@ export default function AdminUsersPage() {
 
       {toast && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setToast('')}>{toast}</Alert>}
 
+      {projects.length > 0 && (
+        <Stack direction="row" spacing={1.5} mb={2} alignItems="center">
+          <TextField select size="small" label="All Projects" value={filterProject}
+            onChange={(e) => setFilterProject(e.target.value)} sx={{ minWidth: 180 }}>
+            <MenuItem value="">All Projects</MenuItem>
+            {projects.map((p) => <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>)}
+          </TextField>
+          {filterProject && (
+            <Button size="small" onClick={() => setFilterProject('')}>Clear</Button>
+          )}
+        </Stack>
+      )}
+
       {/* Users table */}
       <TableContainer component={Paper} sx={{ borderRadius: 2 }}>
         <Table>
@@ -344,6 +361,7 @@ export default function AdminUsersPage() {
               <TableCell>ROLE</TableCell>
               <TableCell>STATUS</TableCell>
               <TableCell>HOME HUB</TableCell>
+              <TableCell>PROJECT</TableCell>
               <TableCell>LAST LOGIN</TableCell>
               <TableCell align="right">ACTIONS</TableCell>
             </TableRow>
@@ -352,12 +370,12 @@ export default function AdminUsersPage() {
             {loading
               ? Array.from({ length: 4 }).map((_, i) => (
                   <TableRow key={i}>
-                    {Array.from({ length: 6 }).map((_, j) => (
-                      <TableCell key={j}><Skeleton width={j === 5 ? 80 : 110} /></TableCell>
+                    {Array.from({ length: 7 }).map((_, j) => (
+                      <TableCell key={j}><Skeleton width={j === 6 ? 80 : 110} /></TableCell>
                     ))}
                   </TableRow>
                 ))
-              : users.map((user) => (
+              : users.filter((u) => !filterProject || (u.activeProjects ?? []).some((p) => p.id === filterProject)).map((user) => (
                   <TableRow key={user.id} sx={{ opacity: user.isActive ? 1 : 0.5, '&:last-child td': { border: 0 } }}>
                     <TableCell>
                       <Stack direction="row" alignItems="center" spacing={1.5}>
@@ -372,6 +390,13 @@ export default function AdminUsersPage() {
                     <TableCell>{statusChip(user)}</TableCell>
                     <TableCell>
                       <Typography variant="body2" color="text.secondary">{user.homeHub?.name ?? '—'}</Typography>
+                    </TableCell>
+                    <TableCell>
+                      {user.role === 'OPERATOR' && (user.activeProjects ?? []).length > 0
+                        ? <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                            {(user.activeProjects ?? []).map((p) => <Chip key={p.id} size="small" label={p.name} variant="outlined" />)}
+                          </Stack>
+                        : <Typography variant="body2" color="text.secondary">—</Typography>}
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2" color="text.secondary">
@@ -430,7 +455,7 @@ export default function AdminUsersPage() {
 
             {!loading && users.length === 0 && (
               <TableRow>
-                <TableCell colSpan={6} align="center" sx={{ py: 6, color: 'text.secondary' }}>
+                <TableCell colSpan={7} align="center" sx={{ py: 6, color: 'text.secondary' }}>
                   No team members yet. Click &quot;Invite Member&quot; to add your first one.
                 </TableCell>
               </TableRow>
