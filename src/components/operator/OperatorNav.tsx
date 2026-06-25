@@ -6,6 +6,7 @@ import DashboardIcon from '@mui/icons-material/Dashboard'
 import ChecklistIcon from '@mui/icons-material/Checklist'
 import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner'
+import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck'
 import DirectionsCarIcon from '@mui/icons-material/DirectionsCar'
 import LockResetIcon from '@mui/icons-material/LockReset'
 import LogoutIcon from '@mui/icons-material/Logout'
@@ -17,6 +18,7 @@ const NAV_ITEMS = [
   { label: 'Daily Check', href: '/operator/daily-check', icon: ChecklistIcon },
   { label: 'My Rig', href: '/operator/my-rig', icon: LocalShippingIcon },
   { label: 'Scan QR', href: '/operator/scan', icon: QrCodeScannerIcon },
+  { label: 'Requests', href: '/operator/requests', icon: PlaylistAddCheckIcon },
 ]
 
 // Read-only org-wide views (workplan §6). Keep in lockstep with
