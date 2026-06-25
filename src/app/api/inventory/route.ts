@@ -5,7 +5,8 @@ import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import type { EquipmentCategory, EquipmentStatus, ItemType } from '@prisma/client'
 import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions } from '@/lib/inventory'
 import { money } from '@/lib/validation'
-import { setStockAtHub } from '@/lib/inventory-stock'
+import { setStockAtHub, resyncItemTotal, listStockForItems } from '@/lib/inventory-stock'
+import type { ItemStockRow } from '@/lib/inventory-stock'
 
 export async function GET(req: NextRequest) {
   const session = await requireAuth()
@@ -91,6 +92,13 @@ export async function GET(req: NextRequest) {
     prisma.inventoryItem.count({ where }),
   ])
 
+  // Fetch per-hub stock for consumables so all surfaces (picker, admin, checkout)
+  // read from the same source (inventory_stock) instead of legacy item.quantity.
+  const consumableIds = items.filter((i) => i.itemType === 'CONSUMABLE').map((i) => i.id)
+  const stockMap = consumableIds.length > 0
+    ? await listStockForItems(consumableIds)
+    : new Map<string, ItemStockRow[]>()
+
   const data = items.map((item) => {
     const unitCounts = computeUnitCounts(item.units)
     const derived = deriveQuantities(item, unitCounts)
@@ -107,6 +115,17 @@ export async function GET(req: NextRequest) {
 
     const positionedUnits = withPositions(item.units)
 
+    // For consumables: use stock-table sums so picker, admin table, and checkout
+    // all read the same source. Fall back to legacy item.quantity when no stock
+    // rows exist yet (legacy items not yet backfilled).
+    const stockRows = item.itemType === 'CONSUMABLE' ? (stockMap.get(item.id) ?? []) : []
+    const derivedQuantity = stockRows.length > 0
+      ? stockRows.reduce((s, r) => s + r.quantity, 0)
+      : derived.effectiveQuantity
+    const availableQuantity = stockRows.length > 0
+      ? stockRows.reduce((s, r) => s + r.available, 0)
+      : derived.availableQuantity
+
     return {
       ...rest,
       ...(session.role === 'ADMIN' ? { unitCost } : {}),
@@ -120,9 +139,11 @@ export async function GET(req: NextRequest) {
         .map((u) => ({ id: u.id, serialNumber: u.serialNumber, qrCodeId: u.qrCodeId, position: u.position })),
       category: categoryDisplay(item),
       unitCounts,
-      // Derived single-source-of-truth quantities (units for serialized, stored count for consumables)
-      derivedQuantity: derived.effectiveQuantity,
-      availableQuantity: derived.availableQuantity,
+      derivedQuantity,
+      availableQuantity,
+      // Per-hub stock rows for consumables — used by the operator picker to gate
+      // quantity caps on the selected source hub rather than the cross-hub total.
+      ...(item.itemType === 'CONSUMABLE' && { hubStock: stockRows }),
       currentOperator: activeRig?.operator ?? null,
       currentProject: activeRig?.project ?? null,
     }
@@ -165,9 +186,11 @@ export async function POST(req: NextRequest) {
         ...(realHubId && { hubId: realHubId }),
       } as never,
     })
-    // Seed per-hub stock row for new CONSUMABLE items so MH-2 stock table is populated from creation
+    // Seed per-hub stock row for new CONSUMABLE items so MH-2 stock table is populated from creation.
+    // resyncItemTotal keeps the dual-write invariant: item.quantity == SUM(stock.quantity).
     if (created.itemType === 'CONSUMABLE' && realHubId && (rest.quantity ?? 0) > 0) {
       await setStockAtHub(created.id, realHubId, rest.quantity ?? 0, tx)
+      await resyncItemTotal(created.id, tx)
     }
     return created
   })
