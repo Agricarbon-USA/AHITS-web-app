@@ -1,10 +1,13 @@
 import { randomUUID } from 'crypto'
 import { prisma } from '@/lib/prisma'
+import { reserveAtHub, releaseAtHub } from '@/lib/inventory-stock'
 
 // M6 / Addendum §F — Deployment Requests data layer. Raw SQL (no generated-client
 // coupling, same approach as lib/checklist-templates). R1 extends the original
 // create→list→submit→cancel slice with the RESERVATION/MATERIAL discriminator,
 // routing + lifecycle columns, and a full 8-action state machine.
+// R4 adds hub-stock hard-reserve: confirm/prepare reserves CONSUMABLE KIT_ITEM lines;
+// cancel/fulfill from STAGED releases them. Guarded by stockReservedAt idempotency.
 
 export const LINE_TYPES = ['KIT_ITEM', 'VEHICLE', 'NEW_PURCHASE', 'SHIPPING_LABEL'] as const
 export type LineType = (typeof LINE_TYPES)[number]
@@ -47,6 +50,10 @@ export interface TransitionExtra {
   decisionNote?: string | null
 }
 
+export type TransitionResult =
+  | { ok: true }
+  | { ok: false; code: 'STATE_MISMATCH' | 'TYPE_MISMATCH' | 'INSUFFICIENT_STOCK'; shortItems?: string[] }
+
 interface RequestRow {
   id: string
   status: string
@@ -60,10 +67,12 @@ interface RequestRow {
   projectName: string | null
   lineCount: number
   fulfillerHubId: string | null
+  fulfillerHubName: string | null
   fulfillerOperatorId: string | null
   decisionNote: string | null
   decidedAt: Date | null
   fulfilledAt: Date | null
+  stockReservedAt: Date | null
 }
 
 interface LineRow {
@@ -74,6 +83,7 @@ interface LineRow {
   itemType: string | null
   vehicleType: string | null
   requestedQty: number
+  specificInventoryItemId: string | null
   specificInventoryUnitId: string | null
   specificItemName: string | null
   specificVehicleName: string | null
@@ -88,13 +98,16 @@ export async function listRequests(requestedById?: string): Promise<RequestRow[]
     return prisma.$queryRaw<RequestRow[]>`
       SELECT r."id", r."status"::text AS "status", r."requestType"::text AS "requestType",
              r."label", r."notes", r."neededBy", r."createdAt",
-             r."fulfillerHubId", r."fulfillerOperatorId", r."decisionNote", r."decidedAt", r."fulfilledAt",
+             r."fulfillerHubId", fh."name" AS "fulfillerHubName",
+             r."fulfillerOperatorId", r."decisionNote", r."decidedAt", r."fulfilledAt",
+             r."stockReservedAt",
              u."name" AS "requestedByName", fo."name" AS "forOperatorName", p."name" AS "projectName",
              (SELECT count(*)::int FROM "deployment_request_lines" l WHERE l."requestId" = r."id") AS "lineCount"
       FROM "deployment_requests" r
       LEFT JOIN "users" u ON u."id" = r."requestedById"
       LEFT JOIN "users" fo ON fo."id" = r."forOperatorId"
       LEFT JOIN "projects" p ON p."id" = r."projectId"
+      LEFT JOIN "hubs" fh ON fh."id" = r."fulfillerHubId"
       WHERE (r."requestedById" = ${requestedById} OR r."fulfillerOperatorId" = ${requestedById})
       ORDER BY r."createdAt" DESC
     `
@@ -102,13 +115,16 @@ export async function listRequests(requestedById?: string): Promise<RequestRow[]
   return prisma.$queryRaw<RequestRow[]>`
     SELECT r."id", r."status"::text AS "status", r."requestType"::text AS "requestType",
            r."label", r."notes", r."neededBy", r."createdAt",
-           r."fulfillerHubId", r."fulfillerOperatorId", r."decisionNote", r."decidedAt", r."fulfilledAt",
+           r."fulfillerHubId", fh."name" AS "fulfillerHubName",
+           r."fulfillerOperatorId", r."decisionNote", r."decidedAt", r."fulfilledAt",
+           r."stockReservedAt",
            u."name" AS "requestedByName", fo."name" AS "forOperatorName", p."name" AS "projectName",
            (SELECT count(*)::int FROM "deployment_request_lines" l WHERE l."requestId" = r."id") AS "lineCount"
     FROM "deployment_requests" r
     LEFT JOIN "users" u ON u."id" = r."requestedById"
     LEFT JOIN "users" fo ON fo."id" = r."forOperatorId"
     LEFT JOIN "projects" p ON p."id" = r."projectId"
+    LEFT JOIN "hubs" fh ON fh."id" = r."fulfillerHubId"
     ORDER BY r."createdAt" DESC
   `
 }
@@ -117,13 +133,16 @@ export async function getRequest(id: string): Promise<{ request: RequestRow; lin
   const rows = await prisma.$queryRaw<(RequestRow & { requestedById: string })[]>`
     SELECT r."id", r."status"::text AS "status", r."requestType"::text AS "requestType",
            r."label", r."notes", r."neededBy", r."createdAt", r."requestedById",
-           r."fulfillerHubId", r."fulfillerOperatorId", r."decisionNote", r."decidedAt", r."fulfilledAt",
+           r."fulfillerHubId", fh."name" AS "fulfillerHubName",
+           r."fulfillerOperatorId", r."decisionNote", r."decidedAt", r."fulfilledAt",
+           r."stockReservedAt",
            u."name" AS "requestedByName", fo."name" AS "forOperatorName", p."name" AS "projectName",
            (SELECT count(*)::int FROM "deployment_request_lines" l WHERE l."requestId" = r."id") AS "lineCount"
     FROM "deployment_requests" r
     LEFT JOIN "users" u ON u."id" = r."requestedById"
     LEFT JOIN "users" fo ON fo."id" = r."forOperatorId"
     LEFT JOIN "projects" p ON p."id" = r."projectId"
+    LEFT JOIN "hubs" fh ON fh."id" = r."fulfillerHubId"
     WHERE r."id" = ${id}
   `
   const request = rows[0]
@@ -131,7 +150,7 @@ export async function getRequest(id: string): Promise<{ request: RequestRow; lin
   const lines = await prisma.$queryRaw<LineRow[]>`
     SELECT l."id", l."lineType"::text AS "lineType", l."categoryId", c."name" AS "categoryName",
            l."itemType", l."vehicleType"::text AS "vehicleType", l."requestedQty",
-           l."specificInventoryUnitId", l."description", l."reorderUrl",
+           l."specificInventoryItemId", l."specificInventoryUnitId", l."description", l."reorderUrl",
            ii."name" AS "specificItemName",
            v."name" AS "specificVehicleName",
            iu."serialNumber" AS "specificUnitSerial"
@@ -177,18 +196,46 @@ export async function createRequest(input: CreateRequestInput, requestedById: st
   return id
 }
 
+// ── Internal helpers ──────────────────────────────────────────────────────────
+
+type RawTx = Pick<typeof prisma, '$executeRaw' | '$queryRaw'>
+
+/** Release all reserved consumable stock for a request if stockReservedAt is set. */
+async function releaseReservedStock(requestId: string, tx: RawTx): Promise<void> {
+  const reqRows = await tx.$queryRaw<{ stockReservedAt: Date | null; fulfillerHubId: string | null }[]>`
+    SELECT "stockReservedAt", "fulfillerHubId" FROM "deployment_requests" WHERE "id" = ${requestId}
+  `
+  const req = reqRows[0]
+  if (!req?.stockReservedAt || !req?.fulfillerHubId) return
+
+  const lines = await tx.$queryRaw<{ specificInventoryItemId: string; requestedQty: number }[]>`
+    SELECT l."specificInventoryItemId", l."requestedQty"
+    FROM "deployment_request_lines" l
+    JOIN "inventory_items" ii ON ii."id" = l."specificInventoryItemId"
+    WHERE l."requestId" = ${requestId}
+      AND l."lineType" = 'KIT_ITEM'
+      AND l."specificInventoryItemId" IS NOT NULL
+      AND ii."itemType" = 'CONSUMABLE'
+  `
+  for (const line of lines) {
+    await releaseAtHub(line.specificInventoryItemId, req.fulfillerHubId, line.requestedQty, tx)
+  }
+}
+
+// ── State machine ─────────────────────────────────────────────────────────────
+
 /**
- * Apply a state-machine transition. Guards are checked via the WHERE clause
- * (returns false if no row matched, i.e. status/type guard failed → 409 in the route).
+ * Apply a state-machine transition. Returns a structured result so callers can
+ * distinguish state mismatches from insufficient-stock failures (R4).
  *
  * Actions and their guards:
  *   submit   — both types:        DRAFT → REQUESTED
- *   cancel   — RESERVATION:       {DRAFT,REQUESTED,STAGED} → CANCELLED
+ *   cancel   — RESERVATION:       {DRAFT,REQUESTED,STAGED} → CANCELLED (releases stock if STAGED)
  *              MATERIAL:           {DRAFT,REQUESTED,FORWARDED} → CANCELLED
- *   confirm  — RESERVATION only:  REQUESTED → STAGED (sets decidedAt + decisionNote)
+ *   confirm  — RESERVATION only:  REQUESTED → STAGED (reserves CONSUMABLE KIT_ITEM lines)
  *   prepare  — alias for confirm
- *   decline  — both types:        REQUESTED → DENIED
- *   fulfill  — RESERVATION:       STAGED → FULFILLED
+ *   decline  — both types:        REQUESTED → DENIED (never staged → no release needed)
+ *   fulfill  — RESERVATION:       STAGED → FULFILLED (releases stock before marking fulfilled)
  *              MATERIAL:           REQUESTED → FULFILLED
  *   forward  — MATERIAL only:     REQUESTED → FORWARDED (sets fulfiller*)
  *   complete — MATERIAL only:     FORWARDED → FULFILLED
@@ -198,40 +245,87 @@ export async function applyRequestTransition(
   action: RequestAction,
   requestType: string,
   extra?: TransitionExtra,
-): Promise<boolean> {
+): Promise<TransitionResult> {
   switch (action) {
     case 'submit': {
       const n = await prisma.$executeRaw`
         UPDATE "deployment_requests" SET "status" = 'REQUESTED', "updatedAt" = now()
         WHERE "id" = ${id} AND "status" = 'DRAFT'
       `
-      return Number(n) > 0
+      return Number(n) > 0 ? { ok: true } : { ok: false, code: 'STATE_MISMATCH' }
     }
+
     case 'cancel': {
       if (requestType === 'MATERIAL') {
         const n = await prisma.$executeRaw`
           UPDATE "deployment_requests" SET "status" = 'CANCELLED', "updatedAt" = now()
           WHERE "id" = ${id} AND "status" IN ('DRAFT', 'REQUESTED', 'FORWARDED')
         `
-        return Number(n) > 0
+        return Number(n) > 0 ? { ok: true } : { ok: false, code: 'STATE_MISMATCH' }
       }
-      const n = await prisma.$executeRaw`
-        UPDATE "deployment_requests" SET "status" = 'CANCELLED', "updatedAt" = now()
-        WHERE "id" = ${id} AND "status" IN ('DRAFT', 'REQUESTED', 'STAGED')
-      `
-      return Number(n) > 0
+      return prisma.$transaction(async (tx) => {
+        await releaseReservedStock(id, tx)
+        const n = await tx.$executeRaw`
+          UPDATE "deployment_requests"
+          SET "status" = 'CANCELLED', "updatedAt" = now(), "stockReservedAt" = NULL
+          WHERE "id" = ${id} AND "status" IN ('DRAFT', 'REQUESTED', 'STAGED')
+        `
+        return Number(n) > 0 ? ({ ok: true } as TransitionResult) : ({ ok: false, code: 'STATE_MISMATCH' } as TransitionResult)
+      })
     }
+
     case 'confirm':
     case 'prepare': {
-      if (requestType !== 'RESERVATION') return false
-      const n = await prisma.$executeRaw`
-        UPDATE "deployment_requests"
-        SET "status" = 'STAGED', "updatedAt" = now(), "decidedAt" = now(),
-            "decisionNote" = ${extra?.decisionNote ?? null}
-        WHERE "id" = ${id} AND "status" = 'REQUESTED'
-      `
-      return Number(n) > 0
+      if (requestType !== 'RESERVATION') return { ok: false, code: 'TYPE_MISMATCH' }
+      try {
+        return await prisma.$transaction(async (tx) => {
+          // Guard: flip status and set idempotency stamp in one UPDATE
+          const n = await tx.$executeRaw`
+            UPDATE "deployment_requests"
+            SET "status" = 'STAGED', "updatedAt" = now(), "decidedAt" = now(),
+                "decisionNote" = ${extra?.decisionNote ?? null},
+                "stockReservedAt" = now()
+            WHERE "id" = ${id} AND "status" = 'REQUESTED' AND "stockReservedAt" IS NULL
+          `
+          if (Number(n) === 0) throw Object.assign(new Error('STATE_MISMATCH'), { _code: 'STATE_MISMATCH' })
+
+          // Resolve fulfillerHubId (may be on the request already or passed in extra)
+          const reqRows = await tx.$queryRaw<{ fulfillerHubId: string | null }[]>`
+            SELECT "fulfillerHubId" FROM "deployment_requests" WHERE "id" = ${id}
+          `
+          const fulfillerHubId = reqRows[0]?.fulfillerHubId ?? extra?.fulfillerHubId ?? null
+          if (!fulfillerHubId) return { ok: true } as TransitionResult
+
+          // Reserve each CONSUMABLE KIT_ITEM line with a specific item
+          const lines = await tx.$queryRaw<{ specificInventoryItemId: string; itemName: string | null; requestedQty: number }[]>`
+            SELECT l."specificInventoryItemId", ii."name" AS "itemName", l."requestedQty"
+            FROM "deployment_request_lines" l
+            JOIN "inventory_items" ii ON ii."id" = l."specificInventoryItemId"
+            WHERE l."requestId" = ${id}
+              AND l."lineType" = 'KIT_ITEM'
+              AND l."specificInventoryItemId" IS NOT NULL
+              AND ii."itemType" = 'CONSUMABLE'
+          `
+
+          const shortItems: string[] = []
+          for (const line of lines) {
+            const ok = await reserveAtHub(line.specificInventoryItemId, fulfillerHubId, line.requestedQty, tx)
+            if (!ok) shortItems.push(line.itemName ?? line.specificInventoryItemId)
+          }
+
+          if (shortItems.length > 0) {
+            throw Object.assign(new Error('INSUFFICIENT_STOCK'), { _code: 'INSUFFICIENT_STOCK', _shortItems: shortItems })
+          }
+          return { ok: true } as TransitionResult
+        })
+      } catch (err: unknown) {
+        const e = err as { _code?: string; _shortItems?: string[] }
+        if (e._code === 'STATE_MISMATCH') return { ok: false, code: 'STATE_MISMATCH' }
+        if (e._code === 'INSUFFICIENT_STOCK') return { ok: false, code: 'INSUFFICIENT_STOCK', shortItems: e._shortItems ?? [] }
+        throw err
+      }
     }
+
     case 'decline': {
       const n = await prisma.$executeRaw`
         UPDATE "deployment_requests"
@@ -239,8 +333,9 @@ export async function applyRequestTransition(
             "decisionNote" = ${extra?.decisionNote ?? null}
         WHERE "id" = ${id} AND "status" = 'REQUESTED'
       `
-      return Number(n) > 0
+      return Number(n) > 0 ? { ok: true } : { ok: false, code: 'STATE_MISMATCH' }
     }
+
     case 'fulfill': {
       if (requestType === 'MATERIAL') {
         const n = await prisma.$executeRaw`
@@ -249,17 +344,23 @@ export async function applyRequestTransition(
               "decisionNote" = ${extra?.decisionNote ?? null}
           WHERE "id" = ${id} AND "status" = 'REQUESTED'
         `
-        return Number(n) > 0
+        return Number(n) > 0 ? { ok: true } : { ok: false, code: 'STATE_MISMATCH' }
       }
-      const n = await prisma.$executeRaw`
-        UPDATE "deployment_requests"
-        SET "status" = 'FULFILLED', "updatedAt" = now(), "fulfilledAt" = now()
-        WHERE "id" = ${id} AND "status" = 'STAGED'
-      `
-      return Number(n) > 0
+      // RESERVATION: release reserves then mark fulfilled
+      return prisma.$transaction(async (tx) => {
+        await releaseReservedStock(id, tx)
+        const n = await tx.$executeRaw`
+          UPDATE "deployment_requests"
+          SET "status" = 'FULFILLED', "updatedAt" = now(), "fulfilledAt" = now(),
+              "stockReservedAt" = NULL
+          WHERE "id" = ${id} AND "status" = 'STAGED'
+        `
+        return Number(n) > 0 ? ({ ok: true } as TransitionResult) : ({ ok: false, code: 'STATE_MISMATCH' } as TransitionResult)
+      })
     }
+
     case 'forward': {
-      if (requestType !== 'MATERIAL') return false
+      if (requestType !== 'MATERIAL') return { ok: false, code: 'TYPE_MISMATCH' }
       const n = await prisma.$executeRaw`
         UPDATE "deployment_requests"
         SET "status" = 'FORWARDED', "updatedAt" = now(),
@@ -268,18 +369,20 @@ export async function applyRequestTransition(
             "decisionNote" = ${extra?.decisionNote ?? null}
         WHERE "id" = ${id} AND "status" = 'REQUESTED'
       `
-      return Number(n) > 0
+      return Number(n) > 0 ? { ok: true } : { ok: false, code: 'STATE_MISMATCH' }
     }
+
     case 'complete': {
-      if (requestType !== 'MATERIAL') return false
+      if (requestType !== 'MATERIAL') return { ok: false, code: 'TYPE_MISMATCH' }
       const n = await prisma.$executeRaw`
         UPDATE "deployment_requests"
         SET "status" = 'FULFILLED', "updatedAt" = now(), "fulfilledAt" = now()
         WHERE "id" = ${id} AND "status" = 'FORWARDED'
       `
-      return Number(n) > 0
+      return Number(n) > 0 ? { ok: true } : { ok: false, code: 'STATE_MISMATCH' }
     }
+
     default:
-      return false
+      return { ok: false, code: 'STATE_MISMATCH' }
   }
 }

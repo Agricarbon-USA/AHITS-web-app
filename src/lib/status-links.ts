@@ -335,7 +335,8 @@ async function applyReservationTransition(
   if (action === 'CONFIRMED' || action === 'PREPARED') {
     // RESERVATION → confirm (REQUESTED→STAGED); MATERIAL → complete (FORWARDED→FULFILLED)
     const transitionAction = reqInfo.requestType === 'MATERIAL' ? 'complete' : 'confirm'
-    ok = await applyRequestTransition(requestId, transitionAction, reqInfo.requestType, { decisionNote: note })
+    const confirmResult = await applyRequestTransition(requestId, transitionAction, reqInfo.requestType, { decisionNote: note })
+    ok = confirmResult.ok
     if (ok) {
       await prisma.statusLink.update({
         where: { id: link.id },
@@ -351,7 +352,8 @@ async function applyReservationTransition(
     // RESERVATION → decline (REQUESTED→DENIED); MATERIAL → cancel (FORWARDED→CANCELLED).
     // NOTE: for MATERIAL the hub is declining a forwarded order; we cancel it so admin can re-route.
     const transitionAction = reqInfo.requestType === 'MATERIAL' ? 'cancel' : 'decline'
-    ok = await applyRequestTransition(requestId, transitionAction, reqInfo.requestType, { decisionNote: note })
+    const declineResult = await applyRequestTransition(requestId, transitionAction, reqInfo.requestType, { decisionNote: note })
+    ok = declineResult.ok
     if (ok) {
       await prisma.statusLink.update({
         where: { id: link.id },

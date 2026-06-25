@@ -42,6 +42,8 @@ interface RequestRow {
   lineCount: number
   decisionNote: string | null
   projectName: string | null
+  fulfillerHubName: string | null
+  stockReservedAt: string | null
   fulfillerOperatorId: string | null
 }
 
@@ -820,6 +822,11 @@ export default function RequestsPage() {
                         {req.decisionNote && (
                           <Typography variant="caption" display="block" color="text.secondary">
                             Admin note: {req.decisionNote}
+                          </Typography>
+                        )}
+                        {req.status === 'STAGED' && req.requestType === 'RESERVATION' && req.stockReservedAt && req.fulfillerHubName && (
+                          <Typography variant="caption" display="block" color="success.main">
+                            Stock reserved at {req.fulfillerHubName}
                           </Typography>
                         )}
                       </Box>
