@@ -1109,7 +1109,9 @@ export default function AdminDeploymentsPage() {
   const [toastSeverity, setToastSeverity] = React.useState<'success' | 'error'>('success')
   const [showEnded, setShowEnded] = React.useState(false)
   const [filterOperator, setFilterOperator] = React.useState('')
+  const [filterProject, setFilterProject] = React.useState('')
   const [operators, setOperators] = React.useState<UserOption[]>([])
+  const [projects, setProjects] = React.useState<{ id: string; name: string }[]>([])
   const [vehicles, setVehicles] = React.useState<VehicleOption[]>([])
   const [inventoryItems, setInventoryItems] = React.useState<InventoryOption[]>([])
   const [hubs, setHubs] = React.useState<HubOption[]>([])
@@ -1127,10 +1129,11 @@ export default function AdminDeploymentsPage() {
     setLoading(true)
     const params = new URLSearchParams({ active: showEnded ? 'false' : 'true' })
     if (filterOperator) params.set('operatorId', filterOperator)
+    if (filterProject) params.set('projectId', filterProject)
     const res = await fetch(`/api/deployments?${params}`)
     if (res.ok) setRigs(await res.json())
     setLoading(false)
-  }, [showEnded, filterOperator])
+  }, [showEnded, filterOperator, filterProject])
 
   const loadTransfers = React.useCallback(async () => {
     const res = await fetch('/api/transfers?status=PENDING')
@@ -1142,6 +1145,7 @@ export default function AdminDeploymentsPage() {
 
   React.useEffect(() => {
     fetch('/api/users').then((r) => r.json()).then((d) => setOperators(d.data ?? [])).catch(() => {})
+    fetch('/api/projects').then((r) => r.json()).then((d) => setProjects(d.data ?? d ?? [])).catch(() => {})
     fetch('/api/vehicles').then((r) => r.json()).then((d) => setVehicles(d.data ?? d ?? [])).catch(() => {})
     fetch('/api/inventory?pageSize=200').then((r) => r.json()).then((d) => {
       const items = (d.data ?? []).map((item: InventoryOption & { units?: { id: string; serialNumber: string | null; status: string }[] }) => ({
@@ -1244,6 +1248,13 @@ export default function AdminDeploymentsPage() {
             <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>
           ))}
         </TextField>
+        {projects.length > 0 && (
+          <TextField select size="small" label="All Projects" value={filterProject}
+            onChange={(e) => setFilterProject(e.target.value)} sx={{ minWidth: 160 }}>
+            <MenuItem value="">All Projects</MenuItem>
+            {projects.map((p) => <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>)}
+          </TextField>
+        )}
         <FormControlLabel
           control={<Switch checked={showEnded} onChange={(e) => setShowEnded(e.target.checked)} size="small" />}
           label={<Typography variant="body2">Show ended</Typography>}

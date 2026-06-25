@@ -7,6 +7,7 @@ import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions } f
 import { money } from '@/lib/validation'
 import { setStockAtHub, resyncItemTotal, listStockForItems } from '@/lib/inventory-stock'
 import type { ItemStockRow } from '@/lib/inventory-stock'
+import { getActiveProjectsForItems } from '@/lib/project-associations'
 
 export async function GET(req: NextRequest) {
   const session = await requireAuth()
@@ -25,6 +26,21 @@ export async function GET(req: NextRequest) {
   // Accept both 'q' and 'search' for backward compat
   const q = searchParams.get('q') ?? searchParams.get('search')
 
+  // Rewire the projectId filter off legacy Rig.projectId onto deployment_projects.
+  // Run the subquery before the main find so we can use `id: { in: ... }`.
+  let projectItemIds: string[] | undefined
+  if (projectId) {
+    const rows = await prisma.$queryRaw<{ inventoryItemId: string }[]>`
+      SELECT DISTINCT ki."inventoryItemId"
+      FROM "kit_items" ki
+      JOIN "kits" k ON k."id" = ki."kitId"
+      JOIN "rigs" r ON r."id" = k."rigId" AND r."endedAt" IS NULL
+      JOIN "deployment_projects" dp ON dp."rigId" = r."id" AND dp."removedAt" IS NULL
+      WHERE ki."removedAt" IS NULL AND dp."projectId" = ${projectId}
+    `
+    projectItemIds = rows.map((r) => r.inventoryItemId)
+  }
+
   const where = {
     deletedAt: null,
     ...(status && { status }),
@@ -33,18 +49,13 @@ export async function GET(req: NextRequest) {
     ...(itemType && { itemType: itemType as ItemType }),
     ...(hubId && { hubId }),
     ...(q && { name: { contains: q, mode: 'insensitive' as const } }),
-    // Filter by active operator/project via kit items → kit → rig
-    ...((operatorId || projectId) && {
+    ...(projectItemIds !== undefined && { id: { in: projectItemIds } }),
+    // Filter by active operator via kit items → kit → rig
+    ...(operatorId && {
       kitItems: {
         some: {
           removedAt: null,
-          kit: {
-            rig: {
-              endedAt: null,
-              ...(operatorId && { operatorId }),
-              ...(projectId && { projectId }),
-            },
-          },
+          kit: { rig: { endedAt: null, operatorId } },
         },
       },
     }),
@@ -99,6 +110,11 @@ export async function GET(req: NextRequest) {
     ? await listStockForItems(consumableIds)
     : new Map<string, ItemStockRow[]>()
 
+  const allItemIds = items.map((i) => i.id)
+  const activeProjectsMap = allItemIds.length > 0
+    ? await getActiveProjectsForItems(allItemIds)
+    : new Map<string, { id: string; name: string }[]>()
+
   const data = items.map((item) => {
     const unitCounts = computeUnitCounts(item.units)
     const derived = deriveQuantities(item, unitCounts)
@@ -146,6 +162,7 @@ export async function GET(req: NextRequest) {
       ...(item.itemType === 'CONSUMABLE' && { hubStock: stockRows }),
       currentOperator: activeRig?.operator ?? null,
       currentProject: activeRig?.project ?? null,
+      activeProjects: activeProjectsMap.get(item.id) ?? [],
     }
   })
 

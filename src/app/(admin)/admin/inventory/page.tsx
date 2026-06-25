@@ -73,6 +73,7 @@ interface InventoryItemRow {
   updatedAt: string
   currentOperator: { id: string; name: string } | null
   currentProject: { id: string; name: string; location: string | null } | null
+  activeProjects?: { id: string; name: string }[]
   unitCounts: UnitCounts
   units: UnitRow[]
   derivedQuantity: number
@@ -709,7 +710,12 @@ function DetailDrawer({
                   <Box mb={2}>
                     <Typography variant="subtitle2" fontWeight={600} mb={0.5}>Current Status</Typography>
                     {row?.currentOperator && <Typography variant="body2">Currently with <strong>{row.currentOperator.name}</strong></Typography>}
-                    {row?.currentProject && <Typography variant="body2">Checked out to <strong>{row.currentProject.name}</strong></Typography>}
+                    {(row?.activeProjects ?? []).length > 0
+                      ? <Stack direction="row" spacing={0.5} flexWrap="wrap" mt={0.5}>
+                          <Typography variant="body2" color="text.secondary" sx={{ mr: 0.5 }}>Projects:</Typography>
+                          {(row?.activeProjects ?? []).map((p) => <Chip key={p.id} size="small" label={p.name} variant="outlined" />)}
+                        </Stack>
+                      : row?.currentProject && <Typography variant="body2">Checked out to <strong>{row.currentProject.name}</strong></Typography>}
                   </Box>
                 )}
               </>
