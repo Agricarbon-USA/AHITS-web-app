@@ -1,12 +1,5 @@
-import { Typography, Box } from '@mui/material'
+import { redirect } from 'next/navigation'
 
-export default function OperatorCheckoutPage() {
-  return (
-    <Box>
-      <Typography variant="h5">Checkout</Typography>
-      <Typography color="text.secondary" mt={1}>
-        Checkout — implementation in progress.
-      </Typography>
-    </Box>
-  )
+export default function CheckoutPage() {
+  redirect('/operator/scan')
 }

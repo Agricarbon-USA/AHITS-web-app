@@ -1,10 +1,10 @@
 {
-  "name": "AHITS — Agricarbon",
+  "name": "AHITS \u2014 Agricarbon",
   "short_name": "AHITS",
   "description": "Agricarbon Hardware Inventory & Tracking System",
   "start_url": "/",
   "display": "standalone",
-  "orientation": "portrait",
+  "orientation": "any",
   "background_color": "#ffffff",
   "theme_color": "#2e7d32",
   "icons": [

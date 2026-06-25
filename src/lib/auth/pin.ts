@@ -1,5 +1,6 @@
 import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
+import { createAlert } from '@/lib/alerts'
 
 const MAX_ATTEMPTS = 5
 const LOCK_DURATION_MS = 15 * 60 * 1000 // 15 minutes
@@ -34,6 +35,9 @@ export async function verifyPin(userId: string, pin: string): Promise<boolean> {
         pinLockedAt: attempts >= MAX_ATTEMPTS ? new Date() : null,
       },
     })
+    if (attempts >= MAX_ATTEMPTS) {
+      createAlert('PIN_LOCKED', 'users', userId, { name: user.name, email: user.email }).catch(() => {})
+    }
     return false
   }
 

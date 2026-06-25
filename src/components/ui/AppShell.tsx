@@ -3,10 +3,11 @@
 import * as React from 'react'
 import {
   Box, Drawer, AppBar, Toolbar, Typography, IconButton,
-  Tooltip, Badge, useTheme, useMediaQuery,
+  Tooltip, Badge, CircularProgress, useTheme, useMediaQuery,
 } from '@mui/material'
 import MenuIcon from '@mui/icons-material/Menu'
 import WifiOffIcon from '@mui/icons-material/WifiOff'
+import CloudSyncIcon from '@mui/icons-material/CloudSync'
 import AgricultureIcon from '@mui/icons-material/Agriculture'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 
@@ -16,13 +17,15 @@ interface AppShellProps {
   nav: React.ReactNode
   children: React.ReactNode
   title?: string
+  /** Optional header controls (e.g. the admin notification bell), shown left of the sync indicator. */
+  headerActions?: React.ReactNode
 }
 
-export function AppShell({ nav, children, title = 'AHITS' }: AppShellProps) {
+export function AppShell({ nav, children, title = 'AHITS', headerActions }: AppShellProps) {
   const theme = useTheme()
   const isMobile = useMediaQuery(theme.breakpoints.down('md'))
   const [drawerOpen, setDrawerOpen] = React.useState(false)
-  const { queueSize, isOffline } = useOfflineQueue()
+  const { pending, isOffline, syncing } = useOfflineQueue()
 
   const drawer = (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -44,13 +47,24 @@ export function AppShell({ nav, children, title = 'AHITS' }: AppShellProps) {
             </IconButton>
           )}
           <Typography variant="h6" noWrap sx={{ flexGrow: 1 }}>{title}</Typography>
-          {isOffline && (
-            <Tooltip title={`Offline — ${queueSize} item(s) queued`}>
-              <Badge badgeContent={queueSize || undefined} color="warning">
+          {headerActions}
+          {isOffline ? (
+            <Tooltip title={`Offline — ${pending} action(s) queued`}>
+              <Badge badgeContent={pending || undefined} color="warning">
                 <WifiOffIcon />
               </Badge>
             </Tooltip>
-          )}
+          ) : syncing ? (
+            <Tooltip title={`Syncing ${pending} action(s)…`}>
+              <CircularProgress size={20} color="inherit" />
+            </Tooltip>
+          ) : pending > 0 ? (
+            <Tooltip title={`${pending} action(s) waiting to sync`}>
+              <Badge badgeContent={pending} color="info">
+                <CloudSyncIcon />
+              </Badge>
+            </Tooltip>
+          ) : null}
         </Toolbar>
       </AppBar>
 

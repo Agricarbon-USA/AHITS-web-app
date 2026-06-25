@@ -13,6 +13,7 @@ yarn-error.log*
 # Environment
 .env
 .env.local
+.env.test
 .env.*.local
 
 # TypeScript
@@ -39,3 +40,6 @@ Thumbs.db
 
 
 google-creds.json
+
+# Claude Code local settings
+.claude/

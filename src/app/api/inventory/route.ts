@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
-import { getSession } from '@/lib/auth/session'
-import type { EquipmentCategory, EquipmentStatus } from '@prisma/client'
+import { requireAuth, requireAdmin } from '@/lib/auth/session'
+import type { EquipmentCategory, EquipmentStatus, ItemType } from '@prisma/client'
+import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions } from '@/lib/inventory'
+import { money } from '@/lib/validation'
+import { setStockAtHub, resyncItemTotal, listStockForItems } from '@/lib/inventory-stock'
+import type { ItemStockRow } from '@/lib/inventory-stock'
 
 export async function GET(req: NextRequest) {
-  const session = await getSession()
+  const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = req.nextUrl
@@ -13,47 +17,182 @@ export async function GET(req: NextRequest) {
   const pageSize = parseInt(searchParams.get('pageSize') ?? '25')
   const status = searchParams.get('status') as EquipmentStatus | null
   const category = searchParams.get('category') as EquipmentCategory | null
-  const q = searchParams.get('q')
+  const categoryId = searchParams.get('categoryId')
+  const itemType = searchParams.get('itemType')
+  const hubId = searchParams.get('hubId')
+  const operatorId = searchParams.get('operatorId')
+  const projectId = searchParams.get('projectId')
+  // Accept both 'q' and 'search' for backward compat
+  const q = searchParams.get('q') ?? searchParams.get('search')
 
   const where = {
+    deletedAt: null,
     ...(status && { status }),
     ...(category && { category }),
+    ...(categoryId && { categoryId }),
+    ...(itemType && { itemType: itemType as ItemType }),
+    ...(hubId && { hubId }),
     ...(q && { name: { contains: q, mode: 'insensitive' as const } }),
+    // Filter by active operator/project via kit items → kit → rig
+    ...((operatorId || projectId) && {
+      kitItems: {
+        some: {
+          removedAt: null,
+          kit: {
+            rig: {
+              endedAt: null,
+              ...(operatorId && { operatorId }),
+              ...(projectId && { projectId }),
+            },
+          },
+        },
+      },
+    }),
   }
 
-  const [data, total] = await Promise.all([
+  const [items, total] = await Promise.all([
     prisma.inventoryItem.findMany({
       where,
       skip: (page - 1) * pageSize,
       take: pageSize,
       orderBy: { name: 'asc' },
-      include: { _count: { select: { checkLogs: true } } },
+      include: {
+        categoryRef: { select: { id: true, name: true } },
+        hub: { select: { id: true, name: true, city: true, state: true } },
+        units: {
+          where: { deletedAt: null },
+          select: {
+            id: true,
+            qrCodeId: true,
+            serialNumber: true,
+            status: true,
+            notes: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: 'asc' },
+        },
+        kitItems: {
+          where: { removedAt: null },
+          select: {
+            kit: {
+              select: {
+                rig: {
+                  select: {
+                    endedAt: true,
+                    operator: { select: { id: true, name: true } },
+                    project: { select: { id: true, name: true, location: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
     }),
     prisma.inventoryItem.count({ where }),
   ])
+
+  // Fetch per-hub stock for consumables so all surfaces (picker, admin, checkout)
+  // read from the same source (inventory_stock) instead of legacy item.quantity.
+  const consumableIds = items.filter((i) => i.itemType === 'CONSUMABLE').map((i) => i.id)
+  const stockMap = consumableIds.length > 0
+    ? await listStockForItems(consumableIds)
+    : new Map<string, ItemStockRow[]>()
+
+  const data = items.map((item) => {
+    const unitCounts = computeUnitCounts(item.units)
+    const derived = deriveQuantities(item, unitCounts)
+
+    // Find active rig assignment via kit items
+    const activeKit = item.kitItems.find((ki) => ki.kit.rig !== null && ki.kit.rig.endedAt === null)
+    const activeRig = activeKit?.kit.rig ?? null
+
+    // Pull unitCost out of the spread — cost/spend data is admin-only (§10.2)
+    // and is re-added below only for admins.
+    const { kitItems, categoryRef, unitCost, ...rest } = item
+    void kitItems
+    void categoryRef
+
+    const positionedUnits = withPositions(item.units)
+
+    // For consumables: use stock-table sums so picker, admin table, and checkout
+    // all read the same source. Fall back to legacy item.quantity when no stock
+    // rows exist yet (legacy items not yet backfilled).
+    const stockRows = item.itemType === 'CONSUMABLE' ? (stockMap.get(item.id) ?? []) : []
+    const derivedQuantity = stockRows.length > 0
+      ? stockRows.reduce((s, r) => s + r.quantity, 0)
+      : derived.effectiveQuantity
+    const availableQuantity = stockRows.length > 0
+      ? stockRows.reduce((s, r) => s + r.available, 0)
+      : derived.availableQuantity
+
+    return {
+      ...rest,
+      ...(session.role === 'ADMIN' ? { unitCost } : {}),
+      units: positionedUnits,
+      // The deployment Build-Kit / Add-Items unit pickers select from this list
+      // (documented contract in PRD_ADDITIONS_V2). Restored after the Wave-0
+      // refactor dropped it, which left the pickers showing "Select a unit…"
+      // with no options even when units were available.
+      availableUnits: positionedUnits
+        .filter((u) => u.status === 'AVAILABLE')
+        .map((u) => ({ id: u.id, serialNumber: u.serialNumber, qrCodeId: u.qrCodeId, position: u.position })),
+      category: categoryDisplay(item),
+      unitCounts,
+      derivedQuantity,
+      availableQuantity,
+      // Per-hub stock rows for consumables — used by the operator picker to gate
+      // quantity caps on the selected source hub rather than the cross-hub total.
+      ...(item.itemType === 'CONSUMABLE' && { hubStock: stockRows }),
+      currentOperator: activeRig?.operator ?? null,
+      currentProject: activeRig?.project ?? null,
+    }
+  })
 
   return NextResponse.json({ data, total, page, pageSize })
 }
 
 const createSchema = z.object({
   name: z.string().min(1),
-  category: z.string(),
+  categoryId: z.string().optional(),
+  itemType: z.string().optional(),
+  unitId: z.string().optional(),
   quantity: z.number().int().min(0).default(1),
-  unitCost: z.number().optional(),
+  expectedQuantity: z.number().int().optional(),
+  unitCost: money().optional(),
   supplier: z.string().optional(),
   reorderUrl: z.string().url().optional(),
   location: z.string().optional(),
   notes: z.string().optional(),
   lowStockThreshold: z.number().int().optional(),
+  hubId: z.string().optional(),
 })
 
 export async function POST(req: NextRequest) {
-  const session = await getSession()
-  if (!session || session.role !== 'ADMIN') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const session = await requireAdmin()
+  if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const parsed = createSchema.safeParse(await req.json())
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const item = await prisma.inventoryItem.create({ data: parsed.data as never })
+  const { categoryId, hubId, ...rest } = parsed.data
+  const realHubId = hubId && !/^[A-Z_]+$/.test(hubId) ? hubId : null
+  const item = await prisma.$transaction(async (tx) => {
+    const created = await tx.inventoryItem.create({
+      data: {
+        ...rest,
+        // Only connect real CUID references, not enum-style fallbacks
+        ...(categoryId && !/^[A-Z_]+$/.test(categoryId) && { categoryId }),
+        ...(realHubId && { hubId: realHubId }),
+      } as never,
+    })
+    // Seed per-hub stock row for new CONSUMABLE items so MH-2 stock table is populated from creation.
+    // resyncItemTotal keeps the dual-write invariant: item.quantity == SUM(stock.quantity).
+    if (created.itemType === 'CONSUMABLE' && realHubId && (rest.quantity ?? 0) > 0) {
+      await setStockAtHub(created.id, realHubId, rest.quantity ?? 0, tx)
+      await resyncItemTotal(created.id, tx)
+    }
+    return created
+  })
   return NextResponse.json({ data: item }, { status: 201 })
 }

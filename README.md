@@ -18,10 +18,10 @@ make setup                    # Install, migrate, seed
 make dev                       # Start dev server → http://localhost:3000
 ```
 
-Default seed credentials:
+Default seed credentials (local/dev only — the seed refuses to run with `NODE_ENV=production`):
 
-- **Admin:** `ops@agricarbon.com` / password `Admin1234!`
-- **Operator:** `operator1@agricarbon.com` / PIN `123456`
+- **Admin:** `ops@agricarbon.com`. The password is generated randomly and **printed once** by `make db-seed` (or set `SEED_ADMIN_PASSWORD` to choose your own). Change it after first login.
+- **Operator:** `operator1@agricarbon.com` / PIN `123456` (sample dev account).
 
 ---
 
@@ -40,6 +40,7 @@ Copy `.env.example` to `.env` and fill in:
 | `RESEND_API_KEY`                | Resend API key for email alerts                        |
 | `ADMIN_EMAIL`                   | Email to receive system alerts                         |
 | `GCP_PROJECT_ID`                | GCP project ID for deployment                          |
+| `EMAIL_FROM`                | Email that resend will send FROM                          |
 
 ---
 
@@ -56,6 +57,35 @@ make deploy          # Deploy to Cloud Run (staging)
 make deploy-prod     # Deploy to Cloud Run (production)
 make logs            # Tail Cloud Run logs
 ```
+
+---
+
+## Testing
+
+Tests run against an **isolated local Postgres** (Docker), never your real database.
+The suite deletes all rows between cases, so two guards make a production wipe
+impossible: `vitest.config.ts` requires `DATABASE_URL_TEST` (it will not fall back
+to `DATABASE_URL`), and `tests/setup.ts` refuses any database that isn't local or
+named `*test*`.
+
+**Prerequisite:** Docker running, and a `.env.test` file (copy from
+`.env.test.example` — it's gitignored).
+
+```bash
+make test            # one-shot: start test DB → apply schema → run the suite
+```
+
+Or step by step:
+
+```bash
+make test-db-up      # start the Docker Postgres test DB on :5433
+make test-prepare    # (re)apply the current Prisma schema to it
+make test            # run the suite
+make test-db-down    # stop the test DB and discard its data
+```
+
+If you run `npm test` without a test database configured, it stops with a clear
+error instead of touching production.
 
 ---
 

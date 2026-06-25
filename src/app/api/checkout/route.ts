@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
-import { getSession } from '@/lib/auth/session'
+import { requireAuth } from '@/lib/auth/session'
 
 const schema = z.object({
   action: z.enum(['CHECK_OUT', 'CHECK_IN']),
@@ -14,36 +14,15 @@ const schema = z.object({
   notes: z.string().optional(),
 })
 
-export async function POST(req: NextRequest) {
-  const session = await getSession()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-  const parsed = schema.safeParse(await req.json())
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
-
-  const { action, itemId, ...rest } = parsed.data
-
-  const log = await prisma.$transaction(async (tx) => {
-    const newStatus = action === 'CHECK_OUT' ? 'CHECKED_OUT' : 'AVAILABLE'
-    await tx.inventoryItem.update({ where: { id: itemId }, data: { status: newStatus } })
-
-    return tx.checkLog.create({
-      data: {
-        action,
-        itemId,
-        operatorId: session.userId,
-        syncedAt: new Date(),
-        ...rest,
-        expectedReturn: rest.expectedReturn ? new Date(rest.expectedReturn) : undefined,
-      },
-    })
-  })
-
-  return NextResponse.json({ data: log }, { status: 201 })
+export async function POST() {
+  return NextResponse.json(
+    { error: 'This endpoint is deprecated. Use POST /api/deployments/[id]/items instead.' },
+    { status: 410 }
+  )
 }
 
 export async function GET(req: NextRequest) {
-  const session = await getSession()
+  const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = req.nextUrl

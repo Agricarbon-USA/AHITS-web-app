@@ -1,13 +1,38 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
+import { VehicleType, VehicleStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { getSession } from '@/lib/auth/session'
+import { requireAuth, requireAdmin } from '@/lib/auth/session'
+
+// Whitelist of admin-editable fields. Excludes id/createdAt/updatedAt and
+// qrCodeId (QR association is set on create, not via a generic edit) to prevent
+// mass-assignment. `.strict()` rejects any unexpected key.
+const vehicleUpdateSchema = z
+  .object({
+    name: z.string().min(1),
+    type: z.nativeEnum(VehicleType),
+    year: z.number().int().nullable(),
+    makeModel: z.string().nullable(),
+    vin: z.string().nullable(),
+    licensePlate: z.string().nullable(),
+    odometer: z.number().int().nullable(),
+    status: z.nativeEnum(VehicleStatus),
+    location: z.string().nullable(),
+    hubId: z.string().nullable(),
+    assignedOperatorId: z.string().nullable(),
+    insuranceExpires: z.coerce.date().nullable(),
+    registrationExpires: z.coerce.date().nullable(),
+    notes: z.string().nullable(),
+  })
+  .partial()
+  .strict()
 
 export async function GET(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await getSession()
+  const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { id } = await params
-  const vehicle = await prisma.vehicle.findUnique({
-    where: { id },
+  const vehicle = await prisma.vehicle.findFirst({
+    where: { id, deletedAt: null },
     include: {
       dailyChecks: { orderBy: { date: 'desc' }, take: 10, include: { operator: true } },
       maintenanceTasks: { orderBy: { nextDue: 'asc' } },
@@ -15,22 +40,53 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
     },
   })
   if (!vehicle) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  return NextResponse.json({ data: vehicle })
+
+  // Merge hub + assigned-operator names via raw SQL (hubId newer than client).
+  let hubId: string | null = null
+  let hubName: string | null = null
+  let assignedOperatorName: string | null = null
+  try {
+    const rows = await prisma.$queryRaw<{ hubId: string | null; hubName: string | null; assignedOperatorName: string | null }[]>`
+      SELECT v."hubId", h."name" AS "hubName", u."name" AS "assignedOperatorName"
+      FROM "vehicles" v
+      LEFT JOIN "hubs" h ON h."id" = v."hubId"
+      LEFT JOIN "users" u ON u."id" = v."assignedOperatorId"
+      WHERE v."id" = ${id}
+    `
+    if (rows[0]) { hubId = rows[0].hubId; hubName = rows[0].hubName; assignedOperatorName = rows[0].assignedOperatorName }
+  } catch { /* hubId column missing pre-migration */ }
+
+  return NextResponse.json({ data: { ...vehicle, hubId, hubName, assignedOperatorName } })
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await getSession()
-  if (!session || session.role !== 'ADMIN') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const session = await requireAdmin()
+  if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const { id } = await params
-  const body = await req.json()
-  const vehicle = await prisma.vehicle.update({ where: { id }, data: body })
-  return NextResponse.json({ data: vehicle })
+  const parsed = vehicleUpdateSchema.safeParse(await req.json())
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten().fieldErrors }, { status: 400 })
+  }
+  // hubId is newer than the generated client — update it via raw SQL, the rest
+  // through the typed client.
+  const { hubId, ...rest } = parsed.data
+  try {
+    const vehicle = await prisma.vehicle.update({ where: { id }, data: rest })
+    if ('hubId' in parsed.data) {
+      await prisma.$executeRaw`UPDATE "vehicles" SET "hubId" = ${hubId ?? null} WHERE "id" = ${id}`
+    }
+    return NextResponse.json({ data: { ...vehicle, hubId: hubId ?? null } })
+  } catch {
+    return NextResponse.json({ error: 'Vehicle not found or update failed' }, { status: 404 })
+  }
 }
 
 export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await getSession()
-  if (!session || session.role !== 'ADMIN') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const session = await requireAdmin()
+  if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const { id } = await params
-  await prisma.vehicle.delete({ where: { id } })
+  // Soft-delete (CR-8): never hard-delete a vehicle with check/maintenance
+  // history — set the tombstone so reads hide it but history is preserved.
+  await prisma.vehicle.update({ where: { id }, data: { deletedAt: new Date() } })
   return NextResponse.json({ ok: true })
 }

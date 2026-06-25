@@ -13,6 +13,8 @@ COPY . .
 # Generate Prisma client
 RUN npx prisma generate
 
+ARG DISABLE_SW=false
+ENV DISABLE_SW=${DISABLE_SW}
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 

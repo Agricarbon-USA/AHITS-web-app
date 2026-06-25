@@ -47,7 +47,41 @@ enum EquipmentStatus {
   AVAILABLE
   CHECKED_OUT
   IN_MAINTENANCE
+  INOPERABLE
   RETIRED
+  // Wave F-R: an item an operator marked "Return to Hub" whose physical receipt
+  // the hub has not yet confirmed. Soft-gate — flagged, not blocked (a unit
+  // IN_TRANSIT can still be re-deployed; the dashboard simply surfaces it).
+  IN_TRANSIT
+}
+
+enum RepairType {
+  IN_FIELD
+  AT_SHOP
+  SHIP_TO_HUB
+  SHIP_FOR_REPAIR
+}
+
+// Where an in-repair unit physically is right now (PRD v2.1 addendum A.3), so
+// "zero equipment lost > 24h" is answerable. Derived from RepairType on report.
+enum ResolutionPath {
+  IN_FIELD
+  HUB
+  SHOP
+}
+
+// PRD v2.1 addendum A.6: how a repaired unit gets back to its return destination.
+enum RepairMethod {
+  DELIVER
+  SHIP
+}
+
+// PRD v2.1 addendum A.4: where a repaired unit returns, chosen per-case on close
+// (no default). DEPLOYMENT records the target rig; HUB / OTHER_HUB record a hub.
+enum ReturnDestinationType {
+  HUB
+  DEPLOYMENT
+  OTHER_HUB
 }
 
 enum CheckAction {
@@ -102,11 +136,11 @@ enum AlertType {
   MAINTENANCE_OVERDUE
   EQUIPMENT_NOT_RETURNED
   DAMAGE_REPORTED
-  REPAIR_NEEDED
   LOW_INVENTORY
   INSURANCE_EXPIRING
   REGISTRATION_EXPIRING
   PIN_LOCKED
+  MATERIAL_REQUEST
 }
 
 enum PhotoContext {
@@ -117,36 +151,244 @@ enum PhotoContext {
   VEHICLE_REFERENCE
 }
 
+enum TransferStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  CANCELLED
+}
+
 // ─── Models ───────────────────────────────────────────────────────
 
 model User {
-  id                String      @id @default(cuid())
+  id                String    @id @default(cuid())
   name              String
-  email             String      @unique
-  role              UserRole    @default(OPERATOR)
+  email             String    @unique
+  role              UserRole  @default(OPERATOR)
   pinHash           String?
-  failedPinAttempts Int         @default(0)
+  failedPinAttempts Int       @default(0)
   pinLockedAt       DateTime?
-  isActive          Boolean     @default(true)
+  isActive          Boolean   @default(true)
   lastLoginAt       DateTime?
-  createdAt         DateTime    @default(now())
-  updatedAt         DateTime    @updatedAt
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  checkLogs         CheckLog[]
-  dailyChecks       DailyCheck[]
-  projectsLed       Project[]   @relation("ProjectLead")
-  photos            Photo[]
-  alerts            Alert[]
+  hourlyRate Decimal? @db.Decimal(10, 2)
 
+  // Account management (Wave 2A.5). tokenVersion is bumped to revoke all of a
+  // user's active sessions (suspend / force-logout); getSession compares the
+  // JWT's version against this. mustChangePin forces a credential reset on next
+  // login. homeHub is the operator's default hub.
+  tokenVersion  Int      @default(0)
+  mustChangePin Boolean  @default(false)
+  homeHubId     String?
+  homeHub       Hub?     @relation("HubOperators", fields: [homeHubId], references: [id])
+
+  checkLogs          CheckLog[]
+  dailyChecks        DailyCheck[]
+  projectsLed        Project[]         @relation("ProjectLead")
+  photos             Photo[]
+  alerts             Alert[]
+  notifications      Notification[]
+  statusLinks        StatusLink[]
+  rigs               Rig[]             @relation("OperatorRigs")
+  secondaryRigs      RigOperator[]     @relation("RigSecondaryOperators")
+  transfersReceived  TransferRequest[] @relation("TransferTo")
+  transfersInitiated TransferRequest[] @relation("TransferBy")
+  auditActions       AccountAuditLog[] @relation("AuditActor")
+  auditTargets       AccountAuditLog[] @relation("AuditTarget")
+
+  @@index([homeHubId])
   @@map("users")
+}
+
+model Category {
+  id        String          @id @default(cuid())
+  name      String
+  sortOrder Int             @default(0)
+  createdAt DateTime        @default(now())
+  items     InventoryItem[]
+
+  @@map("categories")
+}
+
+model Hub {
+  id               String            @id @default(cuid())
+  name             String
+  city             String
+  state            String
+  // M6: optional contact email. When set, HUB_RETURN links auto-deliver here.
+  // Read/written via raw SQL (lib/status-links, /api/hubs) so it needs no
+  // generated-client coupling.
+  email            String?
+  isActive         Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  items            InventoryItem[]
+  maintenanceTasks MaintenanceTask[] @relation("HubTasks")
+  repairTasks      MaintenanceTask[] @relation("RepairHub")
+  homeOperators    User[]            @relation("HubOperators")
+  statusLinks      StatusLink[]
+  vehicles         Vehicle[]         @relation("HubVehicles")
+  stock            InventoryStock[]
+
+  @@map("hubs")
+}
+
+model Rig {
+  id         String    @id @default(cuid())
+  label      String?
+  operatorId String
+  operator   User      @relation("OperatorRigs", fields: [operatorId], references: [id])
+  projectId  String?
+  project    Project?  @relation(fields: [projectId], references: [id])
+  startedAt  DateTime  @default(now())
+  endedAt    DateTime?
+  notes      String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  vehicles           RigVehicle[]
+  kits               Kit[]
+  outgoingTransfers  TransferRequest[] @relation("FromRig")
+  secondaryOperators RigOperator[]
+  checkLogs          CheckLog[]
+
+  @@index([operatorId])
+  @@index([endedAt])
+  @@map("rigs")
+}
+
+model RigOperator {
+  id         String   @id @default(cuid())
+  rigId      String
+  operatorId String
+  addedAt    DateTime @default(now())
+
+  rig      Rig  @relation(fields: [rigId], references: [id])
+  operator User @relation("RigSecondaryOperators", fields: [operatorId], references: [id])
+
+  @@unique([rigId, operatorId])
+  @@map("rig_operators")
+}
+
+model RigVehicle {
+  id         String    @id @default(cuid())
+  rigId      String
+  vehicleId  String
+  rig        Rig       @relation(fields: [rigId], references: [id])
+  vehicle    Vehicle   @relation(fields: [vehicleId], references: [id])
+  addedAt    DateTime  @default(now())
+  addNote    String
+  removedAt  DateTime?
+  removeNote String?
+  photoUrls  String[]  @default([])
+
+  @@index([rigId, removedAt])
+  @@map("rig_vehicles")
+}
+
+model Kit {
+  id        String   @id @default(cuid())
+  rigId     String
+  rig       Rig      @relation(fields: [rigId], references: [id])
+  label     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items KitItem[]
+
+  @@map("kits")
+}
+
+model KitItem {
+  id              String         @id @default(cuid())
+  kitId           String
+  inventoryItemId String
+  quantity        Int            @default(1)
+  // Actual CONSUMABLE stock drawn from InventoryItem.quantity at check-out
+  // (may be less than `quantity` when stock was stale/low). Returns restore
+  // exactly this — never more — so on-hand can't ratchet above the true total
+  // (CR-1a / N-2). 0 for serialized items (tracked by unit status instead).
+  drawnQuantity   Int            @default(0)
+  // Hub the drawnQuantity came from; null for serialized items and legacy
+  // consumable draws (pre-MH-1). Returns restore to this hub so stock lands
+  // exactly where it was drawn from.
+  drawnHubId      String?
+  inventoryUnitId String?
+  kit             Kit            @relation(fields: [kitId], references: [id])
+  item            InventoryItem  @relation(fields: [inventoryItemId], references: [id])
+  inventoryUnit   InventoryUnit? @relation(fields: [inventoryUnitId], references: [id])
+  addedAt         DateTime       @default(now())
+  removedAt       DateTime?
+
+  transferItems TransferItem[]
+
+  @@index([kitId])
+  @@index([inventoryUnitId])
+  @@index([drawnHubId])
+  @@index([removedAt])
+  @@map("kit_items")
+}
+
+model TransferRequest {
+  id            String         @id @default(cuid())
+  fromRigId     String
+  fromRig       Rig            @relation("FromRig", fields: [fromRigId], references: [id])
+  toOperatorId  String
+  toOperator    User           @relation("TransferTo", fields: [toOperatorId], references: [id])
+  initiatedById String
+  initiatedBy   User           @relation("TransferBy", fields: [initiatedById], references: [id])
+  note          String
+  photoUrls     String[]       @default([])
+  status        TransferStatus @default(PENDING)
+  responseNote  String?
+  respondedAt   DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  vehicles TransferVehicle[]
+  items    TransferItem[]
+
+  @@map("transfer_requests")
+}
+
+model TransferVehicle {
+  id                String          @id @default(cuid())
+  transferRequestId String
+  vehicleId         String
+  transferRequest   TransferRequest @relation(fields: [transferRequestId], references: [id])
+  vehicle           Vehicle         @relation(fields: [vehicleId], references: [id])
+
+  @@map("transfer_vehicles")
+}
+
+model TransferItem {
+  id                String          @id @default(cuid())
+  transferRequestId String
+  kitItemId         String
+  quantity          Int?
+  inventoryUnitId   String?
+  transferRequest   TransferRequest @relation(fields: [transferRequestId], references: [id])
+  kitItem           KitItem         @relation(fields: [kitItemId], references: [id])
+  inventoryUnit     InventoryUnit?  @relation(fields: [inventoryUnitId], references: [id])
+
+  @@map("transfer_items")
+}
+
+enum ItemType {
+  SERIALIZED
+  CONSUMABLE
 }
 
 model InventoryItem {
   id                String            @id @default(cuid())
   name              String
-  category          EquipmentCategory
+  category          EquipmentCategory @default(OTHER)
+  itemType          ItemType          @default(CONSUMABLE)
+  unitId            String?
   sku               String?
   quantity          Int               @default(1)
+  expectedQuantity  Int?
   unitCost          Decimal?          @db.Decimal(10, 2)
   reorderUrl        String?
   supplier          String?
@@ -155,15 +397,88 @@ model InventoryItem {
   qrCodeId          String            @unique @default(cuid())
   notes             String?
   lowStockThreshold Int?
+  categoryId        String?
+  hubId             String?
+  deletedAt         DateTime?
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
-  checkLogs         CheckLog[]
-  photos            Photo[]
-  maintenanceTasks  MaintenanceTask[]
-  projectEquipment  ProjectEquipment[]
+  categoryRef      Category?          @relation(fields: [categoryId], references: [id])
+  hub              Hub?               @relation(fields: [hubId], references: [id])
+  units            InventoryUnit[]
+  checkLogs        CheckLog[]
+  photos           Photo[]
+  maintenanceTasks MaintenanceTask[]
+  projectEquipment ProjectEquipment[]
+  kitItems         KitItem[]
+  stock            InventoryStock[]
 
+  @@index([categoryId])
+  @@index([hubId])
+  @@index([deletedAt])
   @@map("inventory_items")
+}
+
+model InventoryUnit {
+  id                     String          @id @default(cuid())
+  qrCodeId               String          @unique @default(cuid())
+  inventoryItemId        String
+  serialNumber           String?
+  status                 EquipmentStatus @default(AVAILABLE)
+  notes                  String?
+  inoperableNotes        String?
+  inoperableReportedAt   DateTime?
+  inoperableReportedById String?
+  deletedAt              DateTime?
+  createdAt              DateTime        @default(now())
+  updatedAt              DateTime        @updatedAt
+
+  inventoryItem    InventoryItem    @relation(fields: [inventoryItemId], references: [id])
+  kitItems         KitItem[]
+  transferItems    TransferItem[]
+  checkLogs        CheckLog[]
+  maintenanceTasks MaintenanceTask[]
+  statusLinks      StatusLink[]
+
+  @@index([inventoryItemId])
+  @@index([status])
+  @@index([deletedAt])
+  // Serial numbers must be unique within an item (DAT-7). NULLs are allowed and
+  // treated as distinct by Postgres, so unserialized units don't collide.
+  @@unique([inventoryItemId, serialNumber])
+  @@map("inventory_units")
+}
+
+// ── M2 / workplan §2.2: Multi-hub inventory stock — EXPAND slice ─────────────
+// Generalizes the single `InventoryItem.hubId` so one consumable item can hold
+// stock at MANY hubs (one row per item+hub). BACKFILLED in migration
+// `…_inventory_stock` from each consumable item's (hubId, quantity). The legacy
+// `InventoryItem.quantity`/`hubId` are RETAINED during the transition: this slice
+// is additive and rewires NO live reader/writer (checkout still draws from
+// `InventoryItem.quantity`). Accessed via raw SQL (lib/inventory-stock.ts) so it
+// needs no generated-client regen and the PR is deploy-safe before the migration
+// is applied. A follow-on MIGRATE slice points checkout/return/low-stock at these
+// rows (operator picks the hub each checkout — confirmed direction), then a
+// CONTRACT slice retires the single-hub assumption. SERIALIZED per-unit location
+// is a separate axis (a future InventoryUnit.hubId), out of scope here.
+model InventoryStock {
+  id          String   @id @default(cuid())
+  itemId      String
+  hubId       String
+  quantity    Int      @default(0)
+  // Reserved counter for Requests R4 (hub-stock hard-reserve). Ships now as
+  // additive column (default 0); not decremented/incremented until R4 wires
+  // staging/release. availableAtHub = quantity - reservedQty.
+  reservedQty Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  item InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  hub  Hub           @relation(fields: [hubId], references: [id], onDelete: Cascade)
+
+  @@unique([itemId, hubId])
+  @@index([hubId])
+  @@map("inventory_stock")
 }
 
 model Vehicle {
@@ -176,19 +491,30 @@ model Vehicle {
   licensePlate        String?
   odometer            Int?
   status              VehicleStatus @default(ACTIVE)
+  // Free-text `location` is retained for backward-compat, but the primary home
+  // is now `hubId` (a Hub dropdown). See migration 20260625000000_vehicle_hub.
+  // hubId is read/written via raw SQL in /api/vehicles until the generated
+  // client is regenerated locally (matches the Hub.email pattern).
   location            String?
+  hubId               String?
   assignedOperatorId  String?
   insuranceExpires    DateTime?
   registrationExpires DateTime?
   qrCodeId            String        @unique @default(cuid())
   notes               String?
+  deletedAt           DateTime? // CR-8: soft-delete so history isn't orphaned
   createdAt           DateTime      @default(now())
   updatedAt           DateTime      @updatedAt
 
-  dailyChecks         DailyCheck[]
-  maintenanceTasks    MaintenanceTask[]
-  photos              Photo[]
+  dailyChecks      DailyCheck[]
+  maintenanceTasks MaintenanceTask[]
+  photos           Photo[]
+  rigVehicles      RigVehicle[]
+  transferVehicles TransferVehicle[]
+  hub              Hub?              @relation("HubVehicles", fields: [hubId], references: [id])
 
+  @@index([deletedAt])
+  @@index([hubId])
   @@map("vehicles")
 }
 
@@ -199,40 +525,50 @@ model DailyCheck {
   date          DateTime  @db.Date
   site          String?
   odometer      Int?
-  checklistJson Json      // { itemKey: "yes" | "no" | "na", note?: string }[]
+  checklistJson Json // { itemKey: "yes" | "no" | "na", note?: string }[]
   issues        String?
   passFail      Boolean   @default(true)
   submittedAt   DateTime  @default(now())
   syncedAt      DateTime?
 
-  vehicle       Vehicle   @relation(fields: [vehicleId], references: [id])
-  operator      User      @relation(fields: [operatorId], references: [id])
-  photos        Photo[]
+  vehicle  Vehicle @relation(fields: [vehicleId], references: [id])
+  operator User    @relation(fields: [operatorId], references: [id])
+  photos   Photo[]
 
   @@unique([vehicleId, date, operatorId])
   @@map("daily_checks")
 }
 
 model CheckLog {
-  id             String      @id @default(cuid())
-  action         CheckAction
-  itemId         String
-  operatorId     String?
-  projectId      String?
-  fromLocation   String?
-  toLocation     String?
-  condition      Condition?
-  expectedReturn DateTime?
-  actualReturn   DateTime?
-  notes          String?
-  submittedAt    DateTime    @default(now())
-  syncedAt       DateTime?
+  id              String      @id @default(cuid())
+  action          CheckAction
+  itemId          String
+  inventoryUnitId String?
+  operatorId      String?
+  rigId           String?
+  projectId       String?
+  fromLocation    String?
+  toLocation      String?
+  condition       Condition?
+  expectedReturn  DateTime?
+  actualReturn    DateTime?
+  notes           String?
+  submittedAt     DateTime    @default(now())
+  syncedAt        DateTime?
 
-  item           InventoryItem @relation(fields: [itemId], references: [id])
-  operator       User?       @relation(fields: [operatorId], references: [id])
-  project        Project?    @relation(fields: [projectId], references: [id])
-  photos         Photo[]
+  item          InventoryItem  @relation(fields: [itemId], references: [id])
+  inventoryUnit InventoryUnit? @relation(fields: [inventoryUnitId], references: [id])
+  operator      User?          @relation(fields: [operatorId], references: [id])
+  rig           Rig?           @relation(fields: [rigId], references: [id])
+  project       Project?       @relation(fields: [projectId], references: [id])
+  photos        Photo[]
 
+  @@index([itemId])
+  @@index([itemId, action])
+  @@index([inventoryUnitId])
+  @@index([operatorId])
+  @@index([rigId])
+  @@index([submittedAt])
   @@map("check_logs")
 }
 
@@ -241,8 +577,8 @@ model MaintenanceTask {
   vehicleId      String?
   itemId         String?
   taskName       String
-  intervalType   IntervalType
-  intervalValue  Int
+  intervalType   IntervalType      @default(DAYS)
+  intervalValue  Int               @default(0)
   priority       Priority          @default(MEDIUM)
   lastCompleted  DateTime?
   lastOdometer   Int?
@@ -252,15 +588,38 @@ model MaintenanceTask {
   estimatedCost  Decimal?          @db.Decimal(10, 2)
   actualCost     Decimal?          @db.Decimal(10, 2)
   assigneeId     String?
+  hubId          String?
+  repairHubId    String?
   notes          String?
   completedAt    DateTime?
+  isDamageReport  Boolean           @default(false)
+  repairType      RepairType?
+  resolutionPath  ResolutionPath?
+  locationNote    String?
+  // A.4: per-case return destination, set when a repair is closed (no default).
+  repairMethod          RepairMethod?
+  returnDestinationType ReturnDestinationType?
+  returnDestinationId   String?
+  inventoryUnitId String?
+  shopName        String?
+  shopAddress    String?
+  dateDelivered  DateTime?
+  purchaseOrder  String?
+  invoiceNumber  String?
+  deletedAt      DateTime? // CR-8: soft-delete so history isn't orphaned
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
 
-  vehicle        Vehicle?          @relation(fields: [vehicleId], references: [id])
-  item           InventoryItem?    @relation(fields: [itemId], references: [id])
-  photos         Photo[]
+  vehicle   Vehicle?       @relation(fields: [vehicleId], references: [id])
+  item      InventoryItem? @relation(fields: [itemId], references: [id])
+  unit      InventoryUnit? @relation(fields: [inventoryUnitId], references: [id])
+  hub       Hub?           @relation("HubTasks", fields: [hubId], references: [id])
+  repairHub Hub?           @relation("RepairHub", fields: [repairHubId], references: [id])
+  photos    Photo[]
+  statusLinks StatusLink[]
 
+  @@index([inventoryUnitId])
+  @@index([deletedAt])
   @@map("maintenance_tasks")
 }
 
@@ -280,6 +639,7 @@ model Project {
   lead      User?              @relation("ProjectLead", fields: [leadId], references: [id])
   checkLogs CheckLog[]
   equipment ProjectEquipment[]
+  rigs      Rig[]
 
   @@map("projects")
 }
@@ -288,8 +648,8 @@ model ProjectEquipment {
   projectId String
   itemId    String
 
-  project   Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  item      InventoryItem @relation(fields: [itemId], references: [id])
+  project Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  item    InventoryItem @relation(fields: [itemId], references: [id])
 
   @@id([projectId, itemId])
   @@map("project_equipment")
@@ -301,14 +661,46 @@ model Alert {
   triggeredAt DateTime  @default(now())
   resolved    Boolean   @default(false)
   resolvedAt  DateTime?
+  // Set once the notification dispatcher has emailed admins and created the
+  // in-app notification rows for this alert, so the cron never double-sends.
+  notifiedAt  DateTime?
   adminId     String?
   sourceTable String?
   sourceId    String?
   metadata    Json?
+  // Dedup key (DAT-7): set to `${type}:${sourceTable}:${sourceId}` while an alert
+  // is unresolved, NULL once resolved. The @unique constraint then enforces "at
+  // most one UNRESOLVED alert per source" (multiple NULLs are allowed). Replaces
+  // the race-prone findFirst-then-create dedup in createAlert.
+  activeKey   String?   @unique
 
-  admin       User?     @relation(fields: [adminId], references: [id])
+  admin User? @relation(fields: [adminId], references: [id])
 
   @@map("alerts")
+}
+
+// Per-user in-app notification (the bell). Created by the dispatcher alongside
+// the outbound email so an admin sees the same alerts in-app and over email.
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  type      String // mirrors AlertType
+  title     String
+  body      String?
+  link      String? // in-app deep link to the underlying record
+  alertId   String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // At most one in-app notification per alert per user — makes dispatch
+  // idempotent (with createMany skipDuplicates) even if a run is retried.
+  // alertId is nullable; Postgres treats NULLs as distinct, so non-alert
+  // notifications are unconstrained.
+  @@unique([alertId, userId])
+  @@index([userId, readAt])
+  @@map("notifications")
 }
 
 model Photo {
@@ -334,4 +726,340 @@ model Photo {
   vehicle         Vehicle?         @relation(fields: [vehicleId], references: [id])
 
   @@map("photos")
+}
+
+model InviteToken {
+  id        String    @id @default(cuid())
+  email     String
+  role      UserRole
+  name      String
+  // Security: token is generated with a CSPRNG (crypto.randomBytes) in the
+  // invite-create route — NOT cuid(), which is not cryptographically random
+  // and is guessable on a public, throttled endpoint that can mint accounts.
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  revokedAt DateTime? // set when an admin revokes an outstanding invite (Wave 2A.5)
+  createdAt DateTime  @default(now())
+  createdBy String // admin user id
+
+  @@map("invite_tokens")
+}
+
+// Account management audit trail (Wave 2A.5): who did what to whose account.
+// Append-only; admin-visible. action is a stable string (RESET_PIN, SUSPEND,
+// REACTIVATE, FORCE_LOGOUT, ROLE_CHANGE, INVITE_SENT, INVITE_REVOKED,
+// SET_DEFAULTS, BULK_IMPORT, …); metadata holds action-specific detail.
+model AccountAuditLog {
+  id           String   @id @default(cuid())
+  actorId      String
+  actor        User     @relation("AuditActor", fields: [actorId], references: [id])
+  action       String
+  targetUserId String?
+  targetUser   User?    @relation("AuditTarget", fields: [targetUserId], references: [id])
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  @@index([targetUserId])
+  @@index([createdAt])
+  @@map("account_audit_log")
+}
+
+// Wave 1: dedup store for offline replay of non-idempotent writes.
+// Written/read via raw SQL in src/lib/idempotency.ts (no client coupling).
+model IdempotencyKey {
+  key          String   @id
+  scope        String
+  statusCode   Int?     @map("status_code")
+  responseBody Json?    @map("response_body")
+  // CR-2: sha256 of the request body, bound at claim time. A replay of the same
+  // key with a DIFFERENT body is rejected (422) instead of silently returning
+  // the first response. Nullable for legacy rows written before this column.
+  bodyHash     String?  @map("body_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@map("idempotency_key")
+}
+
+// CR-3/CR-4: shared-store rate limiter. A fixed-window counter keyed by
+// "<scope:ip>|<windowStartEpochMs>" so each window is its own row and the
+// ceiling holds across all Cloud Run instances (the in-memory limiter in
+// lib/rate-limit.ts is retained only as a fallback when the DB is unreachable).
+// Rows expire by resetAt and are reaped opportunistically.
+model RateLimitHit {
+  bucketKey String   @id @map("bucket_key")
+  count     Int      @default(0)
+  resetAt   DateTime @map("reset_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([resetAt])
+  @@map("rate_limit_hit")
+}
+
+// M3: single-row global notification configuration (id is always "global").
+// Read/written via raw SQL in src/lib/notification-config.ts (no client coupling).
+// `disabledAlertTypes` is a comma-separated list of AlertType values the
+// dispatcher should NOT notify on; empty = all enabled.
+model NotificationConfig {
+  id                 String   @id @default("global")
+  dailyCheckCutoff   String   @default("18:00")
+  disabledAlertTypes String   @default("")
+  updatedAt          DateTime @default(now())
+  createdAt          DateTime @default(now())
+
+  @@map("notification_config")
+}
+
+// ── Wave F: external delivery (tokenized status links) ──────────────────────
+// A StatusLink is a capability URL granting one external party (a maintenance
+// shop, a hub, later an invoice processor) scoped, time-bounded, login-less
+// access to ONE record, plus a fixed set of allowed transitions that write back
+// into AHITS. The raw token is emailed; only its sha256 hash is stored.
+
+enum StatusLinkType {
+  WORK_ORDER  // → maintenance shop
+  HUB_RETURN  // → hub operator (F-R)
+  INVOICE     // → processor (Phase 3)
+  RESERVATION // → hub portal (R1)
+}
+
+enum StatusLinkState {
+  ISSUED    // created, not yet opened
+  VIEWED    // recipient opened it at least once
+  ACTED     // recipient performed a non-terminal transition
+  COMPLETED // terminal success (repair done / receipt confirmed / invoice paid)
+  EXPIRED   // past expiresAt with no completion
+  REVOKED   // admin killed it
+}
+
+model StatusLink {
+  id        String          @id @default(cuid())
+  type      StatusLinkType
+  state     StatusLinkState @default(ISSUED)
+  // Store ONLY sha256(token) — the raw token lives only in the emailed URL.
+  tokenHash String          @unique
+  expiresAt DateTime
+
+  // Polymorphic subject — exactly one primary subject set per type
+  // (WORK_ORDER → maintenanceTask, HUB_RETURN → inventoryUnit + hub).
+  maintenanceTaskId String?
+  maintenanceTask   MaintenanceTask? @relation(fields: [maintenanceTaskId], references: [id])
+  inventoryUnitId   String?
+  inventoryUnit     InventoryUnit?   @relation(fields: [inventoryUnitId], references: [id])
+  hubId             String?
+  hub               Hub?             @relation(fields: [hubId], references: [id])
+  deploymentRequestId String?
+  deploymentRequest   DeploymentRequest? @relation(fields: [deploymentRequestId], references: [id])
+
+  recipientEmail String?
+  recipientName  String?
+
+  createdById String
+  createdBy   User   @relation(fields: [createdById], references: [id])
+
+  viewedAt    DateTime?
+  actedAt     DateTime?
+  completedAt DateTime?
+  revokedAt   DateTime?
+
+  events    StatusLinkEvent[]
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  @@index([type, state])
+  @@index([maintenanceTaskId])
+  @@index([inventoryUnitId])
+  @@index([deploymentRequestId])
+  @@map("status_links")
+}
+
+model StatusLinkEvent {
+  id           String     @id @default(cuid())
+  statusLinkId String
+  statusLink   StatusLink @relation(fields: [statusLinkId], references: [id], onDelete: Cascade)
+  action       String // 'VIEWED' | 'RECEIVED' | 'IN_PROGRESS' | 'COMPLETED' | 'DISCREPANCY' | ...
+  note         String?
+  actorLabel   String // free-text identity the external party supplies (no account)
+  createdAt    DateTime   @default(now())
+
+  @@index([statusLinkId])
+  @@map("status_link_events")
+}
+
+// M5 item 25: admin-configurable daily-check checklists. A template's items
+// (itemsJson = [{key,label}]) override the built-in DEFAULT_DAILY_CHECKLIST for
+// vehicles of a given type. `vehicleType` null = a general override for all
+// types. Read/written via raw SQL (lib/checklist-templates.ts) so it needs no
+// generated-client coupling; this model documents the shape and lets a future
+// `prisma generate` produce the typed client.
+model ChecklistTemplate {
+  id          String       @id @default(cuid())
+  name        String
+  vehicleType VehicleType?
+  itemsJson   Json         @default("[]")
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @default(now())
+
+  @@index([vehicleType, isActive])
+  @@map("checklist_templates")
+}
+
+// M6 / Addendum §F: Deployment Requests — pre-specify the equipment a deployment
+// needs so a hub fulfiller can stage and reserve it before pickup. R1 adds the
+// requestType discriminator (RESERVATION | MATERIAL), lifecycle columns, and the
+// hub-portal StatusLink relation. Accessed via raw SQL (no generated-client
+// coupling for data reads/writes; the StatusLink inverse is schema-only).
+enum DeploymentRequestType {
+  RESERVATION // hub stages kit/vehicle for operator pickup
+  MATERIAL    // operator requests consumable resupply from hub
+}
+
+enum DeploymentRequestStatus {
+  DRAFT
+  REQUESTED
+  STAGED     // RESERVATION: hub confirmed, kit being prepared
+  FULFILLED  // terminal success
+  CANCELLED  // terminal cancel
+  FORWARDED  // MATERIAL: assigned to a fulfiller hub/operator
+  DENIED     // terminal decline
+}
+
+enum RequestLineType {
+  KIT_ITEM
+  VEHICLE
+  NEW_PURCHASE   // MATERIAL: free-text consumable to procure
+  SHIPPING_LABEL // MATERIAL: return shipping for a unit
+}
+
+model DeploymentRequest {
+  id                  String                  @id @default(cuid())
+  status              DeploymentRequestStatus @default(DRAFT)
+  requestType         DeploymentRequestType   @default(RESERVATION)
+  label               String?
+  notes               String?
+  neededBy            DateTime?
+  projectId           String?
+  forOperatorId       String?
+  requestedById       String
+  fulfillerHubId      String?
+  fulfillerOperatorId String?
+  decisionNote        String?
+  decidedAt           DateTime?
+  fulfilledAt         DateTime?
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @default(now())
+
+  statusLinks StatusLink[]
+
+  @@index([status])
+  @@index([requestType])
+  @@map("deployment_requests")
+}
+
+model DeploymentRequestLine {
+  id                      String          @id @default(cuid())
+  requestId               String
+  lineType                RequestLineType
+  categoryId              String?
+  itemType                String?
+  vehicleType             VehicleType?
+  requestedQty            Int             @default(1)
+  specificInventoryItemId String?
+  specificVehicleId       String?
+  specificInventoryUnitId String?
+  description             String?
+  reorderUrl              String?
+  // Set at staging (deferred slice): the concrete unit/vehicle reserved + its
+  // door-side condition check.
+  resolvedUnitId          String?
+  resolvedVehicleId       String?
+  stagedCondition         String?
+  createdAt               DateTime        @default(now())
+
+  @@index([requestId])
+  @@map("deployment_request_lines")
+}
+
+// ── M6 / #29: Deployment-model refactor — FOUNDATION slice ───────────────────
+// Two additive tables that generalize the single `Rig.projectId` link and the
+// `Rig.operatorId` + `rig_operators` primary/secondary operator model into:
+//   - DeploymentProject     — a Rig↔Project MANY-TO-MANY.
+//   - DeploymentAssignment  — operator-assignment HISTORY (PRIMARY/SECONDARY,
+//                             started/ended) folding in RigOperator, the basis
+//                             for self-service handoff (transfer-accept pattern).
+// Both are BACKFILLED from existing data in migration `…_deployment_model_
+// foundation`. The legacy columns (`Rig.projectId`, `Rig.operatorId`) and the
+// `rig_operators` table are RETAINED during the transition so every existing
+// reader keeps working untouched; a follow-on PR migrates readers onto these
+// tables, adds the handoff UI, and (then) enforces the one-active-PRIMARY-per-
+// operator invariant as a partial unique index. Accessed via raw SQL (no
+// generated-client coupling) and declared with scalar FK columns + no @relation
+// so this addition touches NO existing model — making the PR deploy-safe even
+// before its migration is applied (no rendered surface reads these yet).
+enum DeploymentAssignmentRole {
+  PRIMARY
+  SECONDARY
+}
+
+model DeploymentProject {
+  id        String    @id @default(cuid())
+  rigId     String
+  projectId String
+  addedAt   DateTime  @default(now())
+  removedAt DateTime?
+
+  @@unique([rigId, projectId])
+  @@index([projectId])
+  @@map("deployment_projects")
+}
+
+model DeploymentAssignment {
+  id         String                   @id @default(cuid())
+  rigId      String
+  operatorId String
+  role       DeploymentAssignmentRole @default(PRIMARY)
+  startedAt  DateTime                 @default(now())
+  endedAt    DateTime?
+  addedById  String?
+  note       String?
+  createdAt  DateTime                 @default(now())
+
+  @@index([rigId])
+  @@index([operatorId])
+  // Partial index supporting "this operator's current PRIMARY deployment" lookups
+  // and the future one-active-PRIMARY-per-operator unique constraint (added in
+  // the follow-on reader-migration PR once all writers go through this table).
+  @@index([operatorId, role, endedAt])
+  @@map("deployment_assignments")
+}
+
+enum DeploymentHandoffStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  CANCELLED
+}
+
+// #29 slice 3: operator self-service handoff of a deployment's PRIMARY operator.
+// Mirrors the TransferRequest lifecycle (PENDING→ACCEPTED/DECLINED/CANCELLED).
+// Scalar FKs + no @relation (raw-SQL access). At most one PENDING per rig
+// (partial unique index in the migration).
+model DeploymentHandoff {
+  id             String                  @id @default(cuid())
+  rigId          String
+  fromOperatorId String
+  toOperatorId   String
+  initiatedById  String
+  status         DeploymentHandoffStatus @default(PENDING)
+  note           String
+  responseNote   String?
+  respondedAt    DateTime?
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @default(now())
+  @@index([status])
+  @@index([toOperatorId])
+  @@index([rigId])
+  @@map("deployment_handoffs")
 }
