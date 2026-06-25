@@ -5,9 +5,20 @@ import { Box, Typography, Card, CardContent, Button, Stack, Alert } from '@mui/m
 import ChecklistIcon from '@mui/icons-material/Checklist'
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz'
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner'
+import AssignmentIcon from '@mui/icons-material/Assignment'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/hooks/useAuth'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
+import { StatusChip } from '@/components/shared/StatusChip'
+
+const TERMINAL = new Set(['FULFILLED', 'CANCELLED', 'DENIED'])
+
+interface RequestRow {
+  id: string
+  status: string
+  label: string | null
+  requestType: string
+}
 
 export default function OperatorDashboardPage() {
   const { user } = useAuth()
@@ -18,20 +29,32 @@ export default function OperatorDashboardPage() {
   // clock, resolved user). Gate behind mounted so the server shell is a stable
   // placeholder — no React #418 mismatch, Sign Out onClick fires reliably (S7/S8).
   const [mounted, setMounted] = React.useState(false)
-  React.useEffect(() => setMounted(true), [])
+  const [openRequests, setOpenRequests] = React.useState<RequestRow[]>([])
+
+  React.useEffect(() => {
+    setMounted(true)
+    fetch('/api/deployment-requests')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return
+        const all: RequestRow[] = d.data ?? []
+        setOpenRequests(all.filter((r) => !TERMINAL.has(r.status)))
+      })
+      .catch(() => {})
+  }, [])
 
   return (
     <Box>
       <Typography variant="h5" mb={0.5}>
-        {mounted ? `Good ${getGreeting()}, ${user?.name?.split(' ')[0] ?? ''}` : ' '}
+        {mounted ? `Good ${getGreeting()}, ${user?.name?.split(' ')[0] ?? ''}` : ' '}
       </Typography>
       <Typography color="text.secondary" mb={3}>
-        {mounted ? new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) : ' '}
+        {mounted ? new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) : ' '}
       </Typography>
 
       {mounted && isOffline && (
         <Alert severity="warning" sx={{ mb: 2 }}>
-          You're offline. {pending > 0 ? `${pending} submission(s) will sync when reconnected.` : 'Submissions will queue until reconnected.'}
+          You&apos;re offline. {pending > 0 ? `${pending} submission(s) will sync when reconnected.` : 'Submissions will queue until reconnected.'}
         </Alert>
       )}
 
@@ -65,6 +88,40 @@ export default function OperatorDashboardPage() {
             </Box>
           </CardContent>
         </Card>
+
+        {mounted && openRequests.length > 0 && (
+          <Card sx={{ cursor: 'pointer' }} onClick={() => router.push('/operator/requests')}>
+            <CardContent>
+              <Stack direction="row" alignItems="center" justifyContent="space-between" mb={1}>
+                <Stack direction="row" alignItems="center" gap={2}>
+                  <AssignmentIcon sx={{ fontSize: 40, color: 'primary.main' }} />
+                  <Box>
+                    <Typography variant="h6">My Requests</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {openRequests.length} open request{openRequests.length !== 1 ? 's' : ''}
+                    </Typography>
+                  </Box>
+                </Stack>
+                <Button
+                  size="small"
+                  onClick={(e) => { e.stopPropagation(); router.push('/operator/requests') }}
+                >
+                  View all
+                </Button>
+              </Stack>
+              <Stack spacing={0.5}>
+                {openRequests.slice(0, 3).map((req) => (
+                  <Stack key={req.id} direction="row" alignItems="center" justifyContent="space-between">
+                    <Typography variant="body2" noWrap sx={{ flex: 1, mr: 1 }}>
+                      {req.label ?? req.requestType.replace(/_/g, ' ')}
+                    </Typography>
+                    <StatusChip status={req.status} kind="request" />
+                  </Stack>
+                ))}
+              </Stack>
+            </CardContent>
+          </Card>
+        )}
       </Stack>
     </Box>
   )

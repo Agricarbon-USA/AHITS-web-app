@@ -38,6 +38,7 @@ export interface SessionUser {
   role: UserRole
   name: string
   email: string
+  homeHubId?: string | null
 }
 
 // Daily check form
