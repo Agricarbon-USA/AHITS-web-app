@@ -4,7 +4,7 @@ import * as React from 'react'
 import {
   Box, Typography, Button, Card, CardContent, Stack, Chip, Alert, CircularProgress,
   MenuItem, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Collapse,
-  Divider, Tooltip, IconButton,
+  Divider, Tooltip, IconButton, ToggleButtonGroup, ToggleButton,
 } from '@mui/material'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ExpandLessIcon from '@mui/icons-material/ExpandLess'
@@ -413,6 +413,7 @@ export default function AdminRequestsPage() {
   const [filterStatus, setFilterStatus] = React.useState('ALL')
   const [filterHub, setFilterHub] = React.useState('ALL')
   const [filterRequester, setFilterRequester] = React.useState('')
+  const [activeTab, setActiveTab] = React.useState<'ACTIVE' | 'CLOSED'>('ACTIVE')
   const showToast = useToast()
 
   const load = React.useCallback(async () => {
@@ -441,13 +442,16 @@ export default function AdminRequestsPage() {
   const filtered = React.useMemo(() => {
     if (!requests) return []
     return requests.filter((r) => {
+      const isTerminal = TERMINAL.has(r.status)
+      if (activeTab === 'ACTIVE' && isTerminal) return false
+      if (activeTab === 'CLOSED' && !isTerminal) return false
       if (filterType !== 'ALL' && r.requestType !== filterType) return false
       if (filterStatus !== 'ALL' && r.status !== filterStatus) return false
       if (filterHub !== 'ALL' && r.fulfillerHubId !== filterHub) return false
       if (filterRequester && !(r.requestedByName ?? '').toLowerCase().includes(filterRequester.toLowerCase())) return false
       return true
     })
-  }, [requests, filterType, filterStatus, filterHub, filterRequester])
+  }, [requests, activeTab, filterType, filterStatus, filterHub, filterRequester])
 
   return (
     <Box>
@@ -455,6 +459,17 @@ export default function AdminRequestsPage() {
         <Typography variant="h5">Deployment Requests</Typography>
         <Button size="small" variant="outlined" onClick={() => void load()}>Refresh</Button>
       </Stack>
+
+      <ToggleButtonGroup
+        value={activeTab}
+        exclusive
+        onChange={(_e, v) => { if (v) setActiveTab(v as 'ACTIVE' | 'CLOSED') }}
+        size="small"
+        sx={{ mb: 2 }}
+      >
+        <ToggleButton value="ACTIVE">Active</ToggleButton>
+        <ToggleButton value="CLOSED">Closed</ToggleButton>
+      </ToggleButtonGroup>
 
       {/* Filter bar */}
       <Stack direction="row" spacing={1.5} mb={2} flexWrap="wrap">

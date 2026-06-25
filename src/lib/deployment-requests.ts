@@ -95,7 +95,7 @@ export async function listRequests(requestedById?: string): Promise<RequestRow[]
       LEFT JOIN "users" u ON u."id" = r."requestedById"
       LEFT JOIN "users" fo ON fo."id" = r."forOperatorId"
       LEFT JOIN "projects" p ON p."id" = r."projectId"
-      WHERE r."requestedById" = ${requestedById}
+      WHERE (r."requestedById" = ${requestedById} OR r."fulfillerOperatorId" = ${requestedById})
       ORDER BY r."createdAt" DESC
     `
   }
