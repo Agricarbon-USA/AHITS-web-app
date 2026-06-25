@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto'
 import { prisma } from '../../src/lib/prisma'
 
 let counter = 0
@@ -95,6 +96,25 @@ export async function createRig(operatorId: string) {
     data: { rigId: rig.id },
   })
   return { rig, kit }
+}
+
+export async function createHub(overrides?: { name?: string; city?: string; state?: string }) {
+  return prisma.hub.create({
+    data: {
+      name: overrides?.name ?? `Hub-${uid()}`,
+      city: overrides?.city ?? 'Austin',
+      state: overrides?.state ?? 'TX',
+    },
+  })
+}
+
+/** Seed (or overwrite) inventory_stock for a given item+hub pair. */
+export async function seedInventoryStock(itemId: string, hubId: string, quantity: number) {
+  await prisma.$executeRaw`
+    INSERT INTO "inventory_stock" ("id", "itemId", "hubId", "quantity", "updatedAt")
+    VALUES (${randomUUID()}, ${itemId}, ${hubId}, ${quantity}, now())
+    ON CONFLICT ("itemId", "hubId") DO UPDATE SET "quantity" = ${quantity}, "updatedAt" = now()
+  `
 }
 
 export function operatorSession(userId: string) {

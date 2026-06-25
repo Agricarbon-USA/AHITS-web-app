@@ -160,12 +160,14 @@ function NewDeploymentDialog({
   vehicles,
   inventoryItems,
   operators,
+  hubs,
   onClose,
   onSuccess,
 }: {
   vehicles: VehicleOption[]
   inventoryItems: InventoryOption[]
   operators: UserOption[]
+  hubs: HubOption[]
   onClose: () => void
   onSuccess: () => void
 }) {
@@ -178,6 +180,7 @@ function NewDeploymentDialog({
   const [note, setNote] = React.useState('')
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState('')
+  const [sourceHubId, setSourceHubId] = React.useState('')
 
   const unassignedVehicles = vehicles.filter((v) => !v.assignedOperatorId && v.status === 'ACTIVE')
   const availableItems = inventoryItems.filter((i) => availFor(i) > 0)
@@ -236,8 +239,11 @@ function NewDeploymentDialog({
     }
   }
 
+  const hasConsumableInKit = Array.from(kitItems.values()).some((e) => e.itemType === 'CONSUMABLE')
+
   const launch = async () => {
     if (!note.trim()) { setError('Note is required'); return }
+    if (hasConsumableInKit && !sourceHubId) { setError('Select a source hub for consumable items.'); return }
     setLoading(true)
     setError('')
     const res = await fetch('/api/deployments', {
@@ -252,6 +258,7 @@ function NewDeploymentDialog({
             ? { itemType: 'SERIALIZED', inventoryItemId, inventoryUnitId: entry.inventoryUnitId! }
             : { inventoryItemId, quantity: entry.quantity }
         ),
+        ...(sourceHubId && { sourceHubId }),
       }),
     })
     if (res.status === 409) {
@@ -417,6 +424,22 @@ function NewDeploymentDialog({
                 })}
               </Stack>
             )}
+            {hasConsumableInKit && (
+              <TextField
+                select
+                label="Source hub (required for consumables)"
+                value={sourceHubId}
+                onChange={(e) => setSourceHubId(e.target.value)}
+                fullWidth
+                size="small"
+                sx={{ mt: 2 }}
+              >
+                <MenuItem value="" disabled>Select a hub…</MenuItem>
+                {hubs.map((h) => (
+                  <MenuItem key={h.id} value={h.id}>{h.name} — {h.city}, {h.state}</MenuItem>
+                ))}
+              </TextField>
+            )}
             {kitItems.size === 0 && (
               <Alert severity="warning" sx={{ mt: 1 }}>Starting with empty kit</Alert>
             )}
@@ -442,7 +465,7 @@ function NewDeploymentDialog({
         {step < 3 ? (
           <Button variant="contained" onClick={() => setStep((s) => s + 1)}>Next</Button>
         ) : (
-          <Button variant="contained" onClick={launch} disabled={!note.trim() || loading || hasUnselectedSerialized}
+          <Button variant="contained" onClick={launch} disabled={!note.trim() || loading || hasUnselectedSerialized || (hasConsumableInKit && !sourceHubId)}
             startIcon={loading ? <CircularProgress size={16} color="inherit" /> : null}>
             {loading ? 'Launching…' : 'Launch Deployment'}
           </Button>
@@ -515,6 +538,7 @@ export default function MyRigPage() {
   const [rentalError, setRentalError] = React.useState('')
   const [addItemOpen, setAddItemOpen] = React.useState(false)
   const [pendingItems, setPendingItems] = React.useState<Map<string, PendingItemEntry>>(new Map())
+  const [addItemSourceHubId, setAddItemSourceHubId] = React.useState('')
   const [unitManualQR, setUnitManualQR] = React.useState<Record<string, string>>({})
   const [unitQrLoading, setUnitQrLoading] = React.useState<Record<string, boolean>>({})
 
@@ -788,6 +812,7 @@ export default function MyRigPage() {
             ),
             note,
             photoUrls,
+            ...(addItemSourceHubId && { sourceHubId: addItemSourceHubId }),
           },
           label: 'Add items',
         })
@@ -876,6 +901,7 @@ export default function MyRigPage() {
             vehicles={vehicles}
             inventoryItems={inventoryItems}
             operators={operators}
+            hubs={hubs}
             onClose={() => setNewOpen(false)}
             onSuccess={load}
           />
@@ -1311,7 +1337,7 @@ export default function MyRigPage() {
       </Dialog>
 
       {/* Add Items picker */}
-      <Dialog open={addItemOpen} onClose={() => { setAddItemOpen(false); setPendingItems(new Map()); setUnitManualQR({}) }} maxWidth="sm" fullWidth>
+      <Dialog open={addItemOpen} onClose={() => { setAddItemOpen(false); setPendingItems(new Map()); setUnitManualQR({}); setAddItemSourceHubId('') }} maxWidth="sm" fullWidth>
         <DialogTitle>Add Items</DialogTitle>
         <DialogContent>
           {inventoryItems.filter((i) => availFor(i) > 0).length === 0 ? (
@@ -1460,10 +1486,31 @@ export default function MyRigPage() {
             </Stack>
           )}
         </DialogContent>
+        {Array.from(pendingItems.values()).some((e) => e.itemType === 'CONSUMABLE') && (
+          <Box sx={{ px: 3, pb: 1 }}>
+            <TextField
+              select
+              label="Source hub (required for consumables)"
+              value={addItemSourceHubId}
+              onChange={(e) => setAddItemSourceHubId(e.target.value)}
+              fullWidth
+              size="small"
+            >
+              <MenuItem value="" disabled>Select a hub…</MenuItem>
+              {hubs.map((h) => (
+                <MenuItem key={h.id} value={h.id}>{h.name} — {h.city}, {h.state}</MenuItem>
+              ))}
+            </TextField>
+          </Box>
+        )}
         <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => { setAddItemOpen(false); setPendingItems(new Map()); setUnitManualQR({}) }}>Cancel</Button>
+          <Button onClick={() => { setAddItemOpen(false); setPendingItems(new Map()); setUnitManualQR({}); setAddItemSourceHubId('') }}>Cancel</Button>
           <Button variant="contained"
-            disabled={pendingItems.size === 0 || Array.from(pendingItems.values()).some(e => e.itemType === 'SERIALIZED' && !e.inventoryUnitId)}
+            disabled={
+              pendingItems.size === 0 ||
+              Array.from(pendingItems.values()).some(e => e.itemType === 'SERIALIZED' && !e.inventoryUnitId) ||
+              (Array.from(pendingItems.values()).some(e => e.itemType === 'CONSUMABLE') && !addItemSourceHubId)
+            }
             onClick={() => { setAddItemOpen(false); setNoteDialog('addItems') }}>
             Continue
           </Button>

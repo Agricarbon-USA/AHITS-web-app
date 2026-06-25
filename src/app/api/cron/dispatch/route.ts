@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { createAlert, resolveActiveAlert } from '@/lib/alerts'
 import { dispatchPendingAlerts } from '@/lib/notifications'
+import { allHubStockForScan } from '@/lib/inventory-stock'
 
 // Notification dispatcher, hit on a schedule by an external scheduler (e.g.
 // GCP Cloud Scheduler). It is NOT behind the session auth — it is gated by a
@@ -54,25 +55,26 @@ async function run() {
     /* table missing / transient — non-fatal */
   }
 
-  // 3) Scan: low consumable stock → raise/clear LOW_INVENTORY alerts. Only
-  // consumables with a configured threshold participate; the alert self-clears
-  // once stock recovers above the threshold (resolveActiveAlert nulls activeKey).
-  const consumables = await prisma.inventoryItem.findMany({
-    where: { itemType: 'CONSUMABLE', deletedAt: null, lowStockThreshold: { not: null } },
-    select: { id: true, name: true, quantity: true, lowStockThreshold: true },
-  })
+  // 3) Per-hub low-stock scan → raise/clear LOW_INVENTORY per (item, hub).
+  // Uses allHubStockForScan (returns ALL rows, not just low ones) so the
+  // clear path works: a hub that recovered above threshold still appears and
+  // gets its alert resolved. Each (item,hub) pair dedupes independently via
+  // a composite sourceId so two hubs' alerts for the same item don't collide.
+  const hubStockRows = await allHubStockForScan()
   let lowFlagged = 0
-  for (const it of consumables) {
-    const threshold = it.lowStockThreshold as number
-    if (it.quantity <= threshold) {
-      await createAlert('LOW_INVENTORY', 'inventory_items', it.id, {
-        itemName: it.name,
-        quantity: it.quantity,
-        threshold,
+  for (const row of hubStockRows) {
+    const sourceId = `${row.itemId}:${row.hubId}`
+    if (row.quantity <= row.threshold) {
+      await createAlert('LOW_INVENTORY', 'inventory_items', sourceId, {
+        itemName: row.itemName,
+        hubName: row.hubName,
+        hubId: row.hubId,
+        quantity: row.quantity,
+        threshold: row.threshold,
       })
       lowFlagged++
     } else {
-      await resolveActiveAlert('LOW_INVENTORY', 'inventory_items', it.id)
+      await resolveActiveAlert('LOW_INVENTORY', 'inventory_items', sourceId)
     }
   }
 

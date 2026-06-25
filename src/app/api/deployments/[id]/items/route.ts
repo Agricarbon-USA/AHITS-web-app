@@ -7,6 +7,7 @@ import { createAlert } from '@/lib/alerts'
 import { withIdempotency } from '@/lib/idempotency'
 import { issueHubReturnLinks } from '@/lib/status-links'
 import { filterAllowedPhotoUrls } from '@/lib/photo-security'
+import { drawFromHub, getStockAtHub } from '@/lib/inventory-stock'
 
 const RIG_INCLUDE = {
   operator: { select: { id: true, name: true } },
@@ -54,6 +55,8 @@ const addSchema = z.object({
   // (low-friction field use). A note still flows to the check-out log when given.
   note: z.string().optional(),
   photoUrls: z.array(z.string()).default([]),
+  // Required when any item is CONSUMABLE — identifies which hub to draw from.
+  sourceHubId: z.string().optional(),
 })
 
 const dispositionSchema = z.object({
@@ -119,7 +122,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   const parsed = addSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const { items, note, photoUrls } = parsed.data
+  const { items, note, photoUrls, sourceHubId } = parsed.data
   const kit = await prisma.kit.findFirst({ where: { rigId: id } })
   if (!kit) return NextResponse.json({ error: 'Kit not found' }, { status: 404 })
 
@@ -182,31 +185,31 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
               throw Object.assign(new Error('UNIT_CONFLICT'), {})
             }
           }
-          // Draw down authoritative consumable stock on check-out and record the
-          // ACTUAL amount drawn (drawnQuantity) so the HUB-return restore gives
-          // back exactly that — never more (CR-1a / N-2). Full atomic draw, else
-          // draw exactly what remains (down to 0).
+          // CONSUMABLE stock: draw from the selected hub (MH-1). Hard fail on
+          // insufficient — operator must pick another hub or reduce qty.
+          // Dual-write: hub row (authoritative) + InventoryItem.quantity (total).
           let drawnQuantity = 0
+          let drawnHubId: string | null = null
           if (invItem?.itemType === 'CONSUMABLE') {
-            const fullDraw = await tx.inventoryItem.updateMany({
-              where: { id: entry.inventoryItemId, quantity: { gte: entry.quantity } },
-              data: { quantity: { decrement: entry.quantity } },
-            })
-            if (fullDraw.count > 0) {
-              drawnQuantity = entry.quantity
-            } else {
-              const cur = await tx.inventoryItem.findUnique({
-                where: { id: entry.inventoryItemId },
-                select: { quantity: true },
-              })
-              drawnQuantity = cur?.quantity ?? 0
-              if (drawnQuantity > 0) {
-                await tx.inventoryItem.update({
-                  where: { id: entry.inventoryItemId },
-                  data: { quantity: { decrement: drawnQuantity } },
-                })
-              }
+            if (!sourceHubId) {
+              throw Object.assign(new Error('CONSUMABLE_NEEDS_HUB'), {})
             }
+            const drawn = await drawFromHub(entry.inventoryItemId, sourceHubId, entry.quantity, tx)
+            if (drawn < entry.quantity) {
+              const atHub = await getStockAtHub(entry.inventoryItemId, sourceHubId, tx)
+              const hubRow = await tx.hub.findUnique({ where: { id: sourceHubId }, select: { name: true } })
+              throw Object.assign(new Error('INSUFFICIENT_HUB_STOCK'), {
+                available: atHub,
+                requested: entry.quantity,
+                hubName: hubRow?.name ?? sourceHubId,
+              })
+            }
+            drawnQuantity = drawn
+            drawnHubId = sourceHubId
+            await tx.inventoryItem.update({
+              where: { id: entry.inventoryItemId },
+              data: { quantity: { decrement: drawn } },
+            })
           }
           await tx.kitItem.create({
             data: {
@@ -215,6 +218,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
               quantity: entry.quantity,
               inventoryUnitId: null,
               drawnQuantity,
+              drawnHubId,
             },
           })
           await tx.checkLog.create({
@@ -241,6 +245,19 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       }
     })
   } catch (err: unknown) {
+    if (err instanceof Error && err.message === 'CONSUMABLE_NEEDS_HUB') {
+      return NextResponse.json(
+        { error: 'A source hub is required when checking out consumable items.' },
+        { status: 400 }
+      )
+    }
+    if (err instanceof Error && err.message === 'INSUFFICIENT_HUB_STOCK') {
+      const e = err as Error & { available?: number; requested?: number; hubName?: string }
+      return NextResponse.json(
+        { error: `Only ${e.available ?? 0} available at ${e.hubName ?? 'the selected hub'} (requested ${e.requested ?? 0}).` },
+        { status: 409 }
+      )
+    }
     if (err instanceof Error && err.message === 'UNIT_CONFLICT') {
       return NextResponse.json(
         { error: 'This unit was just checked out by someone else. Please select a different unit and try again.' },

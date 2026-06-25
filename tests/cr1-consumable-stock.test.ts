@@ -5,14 +5,14 @@ import { DELETE as returnKitItem } from '../src/app/api/deployments/[id]/items/[
 import { prisma } from '../src/lib/prisma'
 import {
   createOperator, createCategory, createInventoryItem, createRig, operatorSession,
+  createHub, seedInventoryStock,
 } from './helpers/fixtures'
 
-// CR-1: CONSUMABLE stock is authoritative as InventoryItem.quantity. Checking
-// out a consumable must draw it down, and a genuine good return to the hub must
-// restore it — while daily-usage logging (consumed) and damaged returns must
-// NOT restore it. Before the fix, check-out never decremented quantity, so
-// on-hand never reflected field usage and reorder/LOW_INVENTORY signals were
-// unreliable.
+// CR-1: CONSUMABLE stock accounting. MH-1 wires per-hub draws via drawFromHub:
+// checkout decrements hub stock + item total (dual-write); a genuine good return
+// restores hub stock + item total; daily-usage and damaged returns do not.
+// MH-1 changes: sourceHubId required for consumable lines; insufficient hub
+// stock is a hard 409 (no silent partial-draw fallback).
 
 let mockSession: object | null = null
 vi.mock('../src/lib/auth/session', () => ({
@@ -34,11 +34,12 @@ function jsonReq(url: string, method: string, body: unknown) {
   })
 }
 
-async function addConsumable(rigId: string, inventoryItemId: string, quantity: number) {
+async function addConsumable(rigId: string, inventoryItemId: string, quantity: number, sourceHubId: string) {
   const req = jsonReq(`http://localhost/api/deployments/${rigId}/items`, 'POST', {
     items: [{ itemType: 'CONSUMABLE', inventoryItemId, quantity }],
     note: 'add',
     photoUrls: [],
+    sourceHubId,
   })
   return addItems(req, { params: Promise.resolve({ id: rigId }) })
 }
@@ -55,10 +56,12 @@ describe('CR-1: consumable stock accounting', () => {
     const op = await createOperator()
     const cat = await createCategory()
     const item = await createInventoryItem(cat.id, { itemType: 'CONSUMABLE', quantity: 10 })
+    const hub = await createHub()
+    await seedInventoryStock(item.id, hub.id, 10)
     const { rig } = await createRig(op.id)
     mockSession = operatorSession(op.id)
 
-    const addRes = await addConsumable(rig.id, item.id, 3)
+    const addRes = await addConsumable(rig.id, item.id, 3, hub.id)
     expect(addRes.status).toBe(200)
     expect((await prisma.inventoryItem.findUnique({ where: { id: item.id } }))?.quantity).toBe(7)
 
@@ -80,10 +83,12 @@ describe('CR-1: consumable stock accounting', () => {
     const op = await createOperator()
     const cat = await createCategory()
     const item = await createInventoryItem(cat.id, { itemType: 'CONSUMABLE', quantity: 10 })
+    const hub = await createHub()
+    await seedInventoryStock(item.id, hub.id, 10)
     const { rig } = await createRig(op.id)
     mockSession = operatorSession(op.id)
 
-    await addConsumable(rig.id, item.id, 4)
+    await addConsumable(rig.id, item.id, 4, hub.id)
     expect((await prisma.inventoryItem.findUnique({ where: { id: item.id } }))?.quantity).toBe(6)
 
     const kitItemId = await openKitItemId(rig.id, item.id)
@@ -104,10 +109,12 @@ describe('CR-1: consumable stock accounting', () => {
     const op = await createOperator()
     const cat = await createCategory()
     const item = await createInventoryItem(cat.id, { itemType: 'CONSUMABLE', quantity: 10 })
+    const hub = await createHub()
+    await seedInventoryStock(item.id, hub.id, 10)
     const { rig } = await createRig(op.id)
     mockSession = operatorSession(op.id)
 
-    await addConsumable(rig.id, item.id, 4)
+    await addConsumable(rig.id, item.id, 4, hub.id)
     const kitItemId = await openKitItemId(rig.id, item.id)
     const res = await returnKitItem(
       jsonReq(`http://localhost/api/deployments/${rig.id}/items/${kitItemId}`, 'DELETE', {
@@ -120,15 +127,19 @@ describe('CR-1: consumable stock accounting', () => {
     expect((await prisma.inventoryItem.findUnique({ where: { id: item.id } }))?.quantity).toBe(10)
   })
 
-  it('floors at zero on a stale/low count instead of going negative', async () => {
+  it('returns 409 when hub stock is insufficient (hard fail, replaces partial-draw)', async () => {
     const op = await createOperator()
     const cat = await createCategory()
     const item = await createInventoryItem(cat.id, { itemType: 'CONSUMABLE', quantity: 2 })
+    const hub = await createHub()
+    await seedInventoryStock(item.id, hub.id, 2)
     const { rig } = await createRig(op.id)
     mockSession = operatorSession(op.id)
 
-    const res = await addConsumable(rig.id, item.id, 5)
-    expect(res.status).toBe(200)
-    expect((await prisma.inventoryItem.findUnique({ where: { id: item.id } }))?.quantity).toBe(0)
+    // Request 5 but only 2 at hub → hard fail
+    const res = await addConsumable(rig.id, item.id, 5, hub.id)
+    expect(res.status).toBe(409)
+    // Stock unchanged
+    expect((await prisma.inventoryItem.findUnique({ where: { id: item.id } }))?.quantity).toBe(2)
   })
 })
