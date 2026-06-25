@@ -6,6 +6,9 @@ import {
   Button, TextField, MenuItem, Typography, Stack, Divider,
   CircularProgress, Chip,
 } from '@mui/material'
+import { useOfflineQueue } from '@/hooks/useOfflineQueue'
+import { PhotoCapture } from './PhotoCapture'
+import { FIXABLE_OPTIONS, type ReturnCondition } from '@/lib/status'
 
 export interface HubOption {
   id: string
@@ -30,7 +33,6 @@ export interface KitItemSummary {
 }
 
 type DispositionType = 'HUB' | 'TRANSFER' | 'INOPERABLE'
-type ReturnCondition = 'GOOD' | 'IN_MAINTENANCE' | 'INOPERABLE'
 
 interface ItemDisposition {
   kitItemId: string
@@ -76,6 +78,7 @@ export function DispositionDialog({
   const [note, setNote] = React.useState('')
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const { mutate, isOffline } = useOfflineQueue()
 
   // Reset state when dialog opens with new items
   React.useEffect(() => {
@@ -101,27 +104,32 @@ export function DispositionDialog({
   async function handleSubmit() {
     setLoading(true)
     setError(null)
-    try {
-      const itemDispositions = Array.from(dispositions.values())
-      const url = mode === 'end-deployment'
-        ? `/api/deployments/${deploymentId}/end`
-        : `/api/deployments/${deploymentId}/items`
-      const method = mode === 'end-deployment' ? 'POST' : 'DELETE'
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ note: note || 'Returned', itemDispositions }),
-      })
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}))
-        throw new Error(typeof d.error === 'string' ? d.error : 'Request failed')
-      }
-      onComplete()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unknown error')
-    } finally {
-      setLoading(false)
+    const itemDispositions = Array.from(dispositions.values())
+    const url = mode === 'end-deployment'
+      ? `/api/deployments/${deploymentId}/end`
+      : `/api/deployments/${deploymentId}/items`
+    const method = mode === 'end-deployment' ? 'POST' : 'DELETE'
+    // Route through the offline queue rather than a raw fetch: if the operator
+    // is offline or the network drops, the write is durably queued with an
+    // idempotency key and replayed exactly once on reconnect (the /end and
+    // /items routes are both wrapped in withIdempotency). Previously this used
+    // a bare fetch, so ending a deployment or bulk-returning items in the field
+    // — the core offline scenario — threw a network error instead of queueing.
+    const result = await mutate({
+      endpoint: url,
+      method,
+      body: { note: note || 'Returned', itemDispositions },
+      label: mode === 'end-deployment' ? 'End deployment' : 'Return items',
+    })
+    setLoading(false)
+    // mutate() returns ok:true both when the server applied the write and when
+    // it was queued offline; it only returns ok:false for a server-reached
+    // (4xx/5xx) rejection, which is the only case the operator must act on.
+    if (!result.ok) {
+      setError(result.error || 'Request failed')
+      return
     }
+    onComplete()
   }
 
   return (
@@ -221,8 +229,9 @@ export function DispositionDialog({
                       value={disp.canBeFixed === true ? 'yes' : disp.canBeFixed === false ? 'no' : ''}
                       onChange={(e) => setDisp(item.kitItemId, { canBeFixed: e.target.value === 'yes' })}
                     >
-                      <MenuItem value="yes">Yes — send for repair</MenuItem>
-                      <MenuItem value="no">No — write off</MenuItem>
+                      {FIXABLE_OPTIONS.map((o) => (
+                        <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>
+                      ))}
                     </TextField>
                     <TextField
                       label="Notes"
@@ -232,12 +241,25 @@ export function DispositionDialog({
                       multiline
                       rows={2}
                     />
+                    <Typography variant="caption" color="text.secondary">
+                      Damage photos (recommended)
+                    </Typography>
+                    <PhotoCapture
+                      value={disp.photoUrls}
+                      onChange={(photoUrls) => setDisp(item.kitItemId, { photoUrls })}
+                      disabled={loading}
+                    />
                   </Stack>
                 )}
               </Stack>
             )
           })}
         </Stack>
+        {isOffline && (
+          <Typography color="text.secondary" variant="body2" mt={2}>
+            You&rsquo;re offline — this will be saved on your device and synced automatically when you reconnect.
+          </Typography>
+        )}
         {error && (
           <Typography color="error" variant="body2" mt={2}>{error}</Typography>
         )}

@@ -6,9 +6,11 @@ import {
   DialogActions, TextField, Stack, Alert,
   IconButton, Tooltip, CircularProgress,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  Paper, Card, CardContent,
+  Paper, Card, CardContent, Switch, FormControlLabel,
 } from '@mui/material'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { ChecklistTemplatesSection } from '@/components/admin/ChecklistTemplatesSection'
+import { ALERT_LABELS } from '@/lib/alert-display'
 import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
@@ -28,6 +30,7 @@ interface Hub {
   name: string
   city: string
   state: string
+  email?: string | null
   isActive: boolean
 }
 
@@ -53,9 +56,15 @@ export default function SettingsPage() {
   // Hub state
   const [addHubOpen, setAddHubOpen] = React.useState(false)
   const [editHub, setEditHub] = React.useState<Hub | null>(null)
-  const [hubForm, setHubForm] = React.useState({ name: '', city: '', state: '' })
+  const [hubForm, setHubForm] = React.useState({ name: '', city: '', state: '', email: '' })
   const [savingHub, setSavingHub] = React.useState(false)
   const [deleteHub, setDeleteHub] = React.useState<Hub | null>(null)
+
+  // Notification config state
+  const [notifCutoff, setNotifCutoff] = React.useState('18:00')
+  const [notifDisabled, setNotifDisabled] = React.useState<string[]>([])
+  const [notifTypes, setNotifTypes] = React.useState<string[]>([])
+  const [notifSaving, setNotifSaving] = React.useState(false)
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 4000) }
   const showError = (msg: string) => { setError(msg); setTimeout(() => setError(''), 6000) }
@@ -72,10 +81,41 @@ export default function SettingsPage() {
     setHubs(data)
   }, [])
 
+  const loadConfig = React.useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/notification-config')
+      if (!res.ok) return
+      const { data } = await res.json()
+      setNotifCutoff(data.dailyCheckCutoff ?? '18:00')
+      setNotifDisabled(data.disabledAlertTypes ?? [])
+      setNotifTypes(data.configurableTypes ?? [])
+    } catch {
+      /* non-fatal — section just shows defaults */
+    }
+  }, [])
+
   React.useEffect(() => {
     loadCategories()
     loadHubs()
-  }, [loadCategories, loadHubs])
+    loadConfig()
+  }, [loadCategories, loadHubs, loadConfig])
+
+  const saveConfig = async () => {
+    setNotifSaving(true)
+    try {
+      const res = await fetch('/api/admin/notification-config', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dailyCheckCutoff: notifCutoff, disabledAlertTypes: notifDisabled }),
+      })
+      if (!res.ok) { showError('Could not save notification settings.'); return }
+      showToast('Notification settings saved')
+    } catch {
+      showError('Could not save notification settings.')
+    } finally {
+      setNotifSaving(false)
+    }
+  }
 
   // Category CRUD
   const startEditCat = (cat: Category) => {
@@ -137,8 +177,8 @@ export default function SettingsPage() {
   }
 
   // Hub CRUD
-  const openAddHub = () => { setHubForm({ name: '', city: '', state: '' }); setAddHubOpen(true) }
-  const openEditHub = (hub: Hub) => { setEditHub(hub); setHubForm({ name: hub.name, city: hub.city, state: hub.state }) }
+  const openAddHub = () => { setHubForm({ name: '', city: '', state: '', email: '' }); setAddHubOpen(true) }
+  const openEditHub = (hub: Hub) => { setEditHub(hub); setHubForm({ name: hub.name, city: hub.city, state: hub.state, email: hub.email ?? '' }) }
 
   const saveHub = async () => {
     setSavingHub(true)
@@ -184,6 +224,57 @@ export default function SettingsPage() {
 
       {toast && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setToast('')}>{toast}</Alert>}
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>{error}</Alert>}
+
+      {/* Notifications */}
+      <Card sx={{ mb: 3 }}>
+        <CardContent>
+          <Typography variant="h6" fontWeight={600} mb={0.5}>Notifications</Typography>
+          <Typography variant="body2" color="text.secondary" mb={2}>
+            Control which alerts notify admins and the daily-check cutoff time.
+          </Typography>
+          <Stack spacing={2}>
+            <TextField
+              label="Daily-check cutoff"
+              type="time"
+              value={notifCutoff}
+              onChange={(e) => setNotifCutoff(e.target.value)}
+              sx={{ width: 200 }}
+              InputLabelProps={{ shrink: true }}
+              helperText="Checks not submitted by this time count as missed."
+            />
+            <Box>
+              <Typography variant="subtitle2" mb={0.5}>Alert notifications</Typography>
+              <Stack>
+                {notifTypes.map((t) => (
+                  <FormControlLabel
+                    key={t}
+                    control={
+                      <Switch
+                        checked={!notifDisabled.includes(t)}
+                        onChange={(e) =>
+                          setNotifDisabled((prev) => (e.target.checked ? prev.filter((x) => x !== t) : [...prev, t]))
+                        }
+                      />
+                    }
+                    label={ALERT_LABELS[t] ?? t}
+                  />
+                ))}
+              </Stack>
+              <Typography variant="caption" color="text.secondary">
+                Operator PIN-lock alerts always notify and aren&rsquo;t listed.
+              </Typography>
+            </Box>
+            <Box>
+              <Button variant="contained" onClick={saveConfig} disabled={notifSaving}>
+                {notifSaving ? 'Saving…' : 'Save notification settings'}
+              </Button>
+            </Box>
+          </Stack>
+        </CardContent>
+      </Card>
+
+      {/* Daily-Check Checklists (M5-25) */}
+      <ChecklistTemplatesSection onToast={showToast} onError={showError} />
 
       {/* Equipment Categories */}
       <Card sx={{ mb: 3 }}>
@@ -354,6 +445,7 @@ export default function SettingsPage() {
             <TextField label="Hub Name" value={hubForm.name} onChange={(e) => setHubForm((f) => ({ ...f, name: e.target.value }))} fullWidth autoFocus />
             <TextField label="City" value={hubForm.city} onChange={(e) => setHubForm((f) => ({ ...f, city: e.target.value }))} fullWidth />
             <TextField label="State (2-letter)" value={hubForm.state} onChange={(e) => setHubForm((f) => ({ ...f, state: e.target.value.toUpperCase().slice(0, 2) }))} fullWidth inputProps={{ maxLength: 2 }} />
+            <TextField label="Contact email (optional)" type="email" value={hubForm.email} onChange={(e) => setHubForm((f) => ({ ...f, email: e.target.value }))} fullWidth helperText="If set, return-to-hub confirmation links are emailed here automatically." />
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>

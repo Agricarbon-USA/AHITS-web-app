@@ -26,10 +26,72 @@ export const VEHICLE_STATUS: Record<string, StatusMeta> = {
   RETIRED: { label: 'Retired', color: 'default' },
 }
 
+// Maintenance-task status (MaintenanceStatus enum).
+export const MAINTENANCE_STATUS: Record<string, StatusMeta> = {
+  UPCOMING: { label: 'Upcoming', color: 'default' },
+  DUE_SOON: { label: 'Due Soon', color: 'info' },
+  OVERDUE: { label: 'Overdue', color: 'error' },
+  IN_PROGRESS: { label: 'In Progress', color: 'warning' },
+  COMPLETED: { label: 'Completed', color: 'success' },
+}
+
+// Task priority (Priority enum).
+export const PRIORITY_STATUS: Record<string, StatusMeta> = {
+  HIGH: { label: 'High', color: 'error' },
+  MEDIUM: { label: 'Medium', color: 'warning' },
+  LOW: { label: 'Low', color: 'default' },
+}
+
+// Operator-declared equipment condition on return/scan. One vocabulary so the
+// scan flow and the disposition dialog present identical wording (M1-8). The
+// `<ConditionSelect/>` control renders these options; submit payloads stay
+// per-endpoint.
+export type ReturnCondition = 'GOOD' | 'IN_MAINTENANCE' | 'INOPERABLE'
+
+export const RETURN_CONDITION: Record<ReturnCondition, StatusMeta> = {
+  GOOD: { label: 'Good', color: 'success' },
+  IN_MAINTENANCE: { label: 'Needs maintenance', color: 'warning' },
+  INOPERABLE: { label: 'Inoperable', color: 'error' },
+}
+
+// Ordered options for a condition <Select>.
+export const RETURN_CONDITION_OPTIONS = (Object.keys(RETURN_CONDITION) as ReturnCondition[])
+  .map((value) => ({ value, label: RETURN_CONDITION[value].label }))
+
+// The damaged-item "can it be fixed?" question, shared by every screen that
+// marks an item inoperable so the wording never drifts.
+export const FIXABLE_OPTIONS = [
+  { value: 'yes', label: 'Yes — send for repair' },
+  { value: 'no', label: 'No — write off' },
+] as const
+
 export function equipmentStatusMeta(status: string): StatusMeta {
   return EQUIPMENT_STATUS[status] ?? { label: status, color: 'default' }
 }
 
 export function vehicleStatusMeta(status: string): StatusMeta {
   return VEHICLE_STATUS[status] ?? { label: status, color: 'default' }
+}
+
+export function maintenanceStatusMeta(status: string): StatusMeta {
+  return MAINTENANCE_STATUS[status] ?? { label: status, color: 'default' }
+}
+
+export function priorityMeta(priority: string): StatusMeta {
+  return PRIORITY_STATUS[priority] ?? { label: priority, color: 'default' }
+}
+
+// Deployment-request status (DeploymentRequestStatus enum).
+export const REQUEST_STATUS: Record<string, StatusMeta> = {
+  DRAFT: { label: 'Draft', color: 'default' },
+  REQUESTED: { label: 'Requested', color: 'warning' },
+  STAGED: { label: 'Staged', color: 'info' },
+  FORWARDED: { label: 'Forwarded', color: 'warning' },
+  FULFILLED: { label: 'Fulfilled', color: 'success' },
+  DENIED: { label: 'Denied', color: 'error' },
+  CANCELLED: { label: 'Cancelled', color: 'default' },
+}
+
+export function requestStatusMeta(status: string): StatusMeta {
+  return REQUEST_STATUS[status] ?? { label: status, color: 'default' }
 }

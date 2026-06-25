@@ -4,11 +4,16 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { withIdempotency } from '@/lib/idempotency'
+import { restoreToHub } from '@/lib/inventory-stock'
 
 const bodySchema = z.object({
   quantity: z.number().int().min(1).optional(),
   returnCondition: z.enum(['GOOD', 'IN_MAINTENANCE', 'INOPERABLE']).optional(),
   notes: z.string().optional(),
+  // Daily-usage logging reuses this return endpoint but means "consumed in the
+  // field," not "returned to the hub." When true, consumable stock is NOT
+  // restored (the item was used up). Genuine returns omit it / pass false.
+  consumed: z.boolean().optional(),
 })
 
 export async function DELETE(
@@ -39,7 +44,7 @@ async function _DELETE(
 
   const kitItem = await prisma.kitItem.findUnique({
     where: { id: kitItemId },
-    include: { item: { select: { itemType: true } }, kit: { select: { rigId: true } } },
+    include: { item: { select: { itemType: true, hubId: true } }, kit: { select: { rigId: true } } },
   })
   if (!kitItem || kitItem.removedAt) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (kitItem.kit.rigId !== rigId) return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -56,7 +61,13 @@ async function _DELETE(
 
   await prisma.$transaction(async (tx) => {
     if (isSerialized) {
-      await tx.kitItem.update({ where: { id: kitItemId }, data: { removedAt: new Date() } })
+      // Claim the removal conditionally (CR-17): if a concurrent return already
+      // flipped removedAt, this matches 0 rows and we skip — no double unit flip.
+      const claimed = await tx.kitItem.updateMany({
+        where: { id: kitItemId, removedAt: null },
+        data: { removedAt: new Date() },
+      })
+      if (claimed.count === 0) return
       if (kitItem.inventoryUnitId) {
         await tx.inventoryUnit.update({
           where: { id: kitItem.inventoryUnitId },
@@ -76,12 +87,40 @@ async function _DELETE(
       }
     } else {
       const removeQty = body.data.quantity ?? kitItem.quantity
+      const drawn = kitItem.drawnQuantity ?? 0
+      // Restore exactly what was drawn at check-out, never more (CR-1a / N-2):
+      // a full return gives back all remaining drawn stock; a partial return
+      // gives back its proportional share, capped at what's left to restore.
+      let restoreQty = 0
+      // Claim the removal/decrement conditionally (CR-17): two concurrent returns
+      // of the same consumable kit item must not BOTH restore stock. The loser
+      // matches 0 rows and bails before the increment below.
       if (removeQty >= kitItem.quantity) {
-        await tx.kitItem.update({ where: { id: kitItemId }, data: { removedAt: new Date() } })
+        const claimed = await tx.kitItem.updateMany({
+          where: { id: kitItemId, removedAt: null },
+          data: { removedAt: new Date() },
+        })
+        if (claimed.count === 0) return
+        restoreQty = drawn
       } else {
-        await tx.kitItem.update({
-          where: { id: kitItemId },
-          data: { quantity: kitItem.quantity - removeQty },
+        restoreQty = Math.min(removeQty, drawn)
+        const claimed = await tx.kitItem.updateMany({
+          where: { id: kitItemId, removedAt: null, quantity: { gte: removeQty } },
+          data: { quantity: { decrement: removeQty }, drawnQuantity: { decrement: restoreQty } },
+        })
+        if (claimed.count === 0) return
+      }
+      if (returnCondition === 'GOOD' && !body.data.consumed && restoreQty > 0) {
+        // Genuine return: restore hub stock (MH-1 dual-write) + cross-hub total.
+        // Legacy null drawnHubId falls back to item.hubId; if still null, skip
+        // hub restore but always increment the total so no stock is lost.
+        const hubForRestore = kitItem.drawnHubId ?? kitItem.item.hubId
+        if (hubForRestore) {
+          await restoreToHub(kitItem.inventoryItemId, hubForRestore, restoreQty, tx)
+        }
+        await tx.inventoryItem.update({
+          where: { id: kitItem.inventoryItemId },
+          data: { quantity: { increment: restoreQty } },
         })
       }
       const excludeUnitIds = await getUnitsInOtherRigs(tx, kitItem.inventoryItemId, rigId)

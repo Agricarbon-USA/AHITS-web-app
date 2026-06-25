@@ -17,7 +17,9 @@ import StopCircleIcon from '@mui/icons-material/StopCircle'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner'
 import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline'
+import GroupIcon from '@mui/icons-material/Group'
 import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
+import { TransferDialog } from '@/components/shared/TransferDialog'
 import { DispositionDialog, KitItemSummary } from '@/components/shared/DispositionDialog'
 import { RentalVehicleForm, RentalVehicleFields } from '@/components/shared/RentalVehicleForm'
 import { useToast } from '@/components/shared/useToast'
@@ -92,7 +94,9 @@ interface InventoryOption {
     inoperable: number
     totalUnits: number
   }
+  availableQuantity: number
   availableUnits: Array<{ id: string; serialNumber: string | null; qrCodeId: string; position: number }>
+  hubStock?: Array<{ hubId: string; hubName: string | null; quantity: number; reservedQty: number; available: number }>
 }
 
 interface PendingItemEntry {
@@ -127,195 +131,44 @@ interface TransferRow {
   items: { id: string; quantity: number | null; kitItem: { id: string; quantity: number; item: { id: string; name: string } } }[]
 }
 
-// ── Transfer Dialog ───────────────────────────────────────────────
-
-function TransferDialog({
-  rig,
-  operators,
-  onClose,
-  onSuccess,
-  showToast,
-}: {
-  rig: Rig
-  operators: UserOption[]
-  onClose: () => void
-  onSuccess: () => void
-  showToast: (t: { message: string; severity: 'success' | 'error' | 'warning' | 'info' }) => void
-}) {
-  const [step, setStep] = React.useState(0)
-  const [toOperatorId, setToOperatorId] = React.useState('')
-  const [selVehicles, setSelVehicles] = React.useState<Set<string>>(
-    new Set(rig.vehicles.map((rv) => rv.vehicle.id))
-  )
-  const kitItems = rig.kits.flatMap((k) => k.items)
-  const [selKitItems, setSelKitItems] = React.useState<Set<string>>(
-    new Set(kitItems.map((ki) => ki.id))
-  )
-  const [transferQtys, setTransferQtys] = React.useState<Map<string, number>>(
-    new Map(kitItems.map((ki) => [ki.id, ki.quantity]))
-  )
-  const [loading, setLoading] = React.useState(false)
-
-  const doTransfer = async (note: string, photoUrls: string[]) => {
-    setLoading(true)
-    try {
-      const res = await fetch(`/api/deployments/${rig.id}/transfer`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          toOperatorId,
-          note,
-          photoUrls,
-          vehicleIds: Array.from(selVehicles),
-          items: kitItems
-            .filter((ki) => selKitItems.has(ki.id))
-            .map((ki) => ({
-              kitItemId: ki.id,
-              quantity: transferQtys.get(ki.id) ?? ki.quantity,
-              inventoryUnitId: ki.inventoryUnit?.id ?? undefined,
-            })),
-        }),
-      })
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}))
-        showToast({ message: typeof d.error === 'string' ? d.error : 'Transfer failed. Please try again.', severity: 'error' })
-        return
-      }
-      const destName = operators.find((o) => o.id === toOperatorId)?.name ?? 'operator'
-      showToast({ message: `Transfer request sent — waiting for ${destName} to accept.`, severity: 'success' })
-      onSuccess()
-      onClose()
-    } catch {
-      showToast({ message: 'Network error. Please try again.', severity: 'error' })
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  if (step === 2) {
-    return (
-      <NotePhotoDialog
-        title="Transfer equipment"
-        description={`Transferring to ${operators.find((o) => o.id === toOperatorId)?.name ?? 'operator'}`}
-        open={true}
-        loading={loading}
-        onClose={onClose}
-        onConfirm={doTransfer}
-        confirmLabel="Transfer"
-      />
-    )
-  }
-
-  return (
-    <Dialog open={true} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Transfer Equipment</DialogTitle>
-      <DialogContent>
-        <Stepper activeStep={step} sx={{ mb: 3, mt: 1 }}>
-          <Step><StepLabel>Destination</StepLabel></Step>
-          <Step><StepLabel>Select Items</StepLabel></Step>
-          <Step><StepLabel>Note</StepLabel></Step>
-        </Stepper>
-
-        {step === 0 && (
-          <TextField select label="Destination Operator" value={toOperatorId}
-            onChange={(e) => setToOperatorId(e.target.value)} fullWidth>
-            {operators.map((o) => (
-              <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>
-            ))}
-          </TextField>
-        )}
-
-        {step === 1 && (
-          <Stack spacing={2}>
-            {rig.vehicles.length > 0 && (
-              <Box>
-                <Typography variant="subtitle2" fontWeight={600} mb={1}>Vehicles</Typography>
-                {rig.vehicles.map((rv) => {
-                  const Icon = VEHICLE_ICON[rv.vehicle.type] ?? LocalShippingIcon
-                  return (
-                    <Stack key={rv.vehicle.id} direction="row" alignItems="center" spacing={1}>
-                      <Checkbox size="small" checked={selVehicles.has(rv.vehicle.id)}
-                        onChange={(e) => {
-                          const s = new Set(selVehicles)
-                          e.target.checked ? s.add(rv.vehicle.id) : s.delete(rv.vehicle.id)
-                          setSelVehicles(s)
-                        }} />
-                      <Icon fontSize="small" color="action" />
-                      <Typography variant="body2">{rv.vehicle.name}</Typography>
-                    </Stack>
-                  )
-                })}
-              </Box>
-            )}
-            {kitItems.length > 0 && (
-              <Box>
-                <Typography variant="subtitle2" fontWeight={600} mb={1}>Kit Items</Typography>
-                <Stack spacing={0.5}>
-                  {kitItems.map((ki) => (
-                    <Stack key={ki.id} direction="row" alignItems="center" spacing={1}>
-                      <Checkbox size="small" checked={selKitItems.has(ki.id)}
-                        onChange={(e) => {
-                          const s = new Set(selKitItems)
-                          e.target.checked ? s.add(ki.id) : s.delete(ki.id)
-                          setSelKitItems(s)
-                        }} />
-                      <Box flexGrow={1}>
-                        <Typography variant="body2">{ki.item.name}</Typography>
-                        {ki.inventoryUnit && (
-                          <Typography variant="caption" color="text.secondary">
-                            {ki.inventoryUnit.serialNumber ?? ki.inventoryUnit.qrCodeId.slice(0, 8)}
-                          </Typography>
-                        )}
-                      </Box>
-                      {ki.item.itemType === 'CONSUMABLE' && selKitItems.has(ki.id) ? (
-                        <TextField
-                          type="number"
-                          size="small"
-                          value={transferQtys.get(ki.id) ?? ki.quantity}
-                          onChange={(e) => {
-                            const qty = Math.max(1, Math.min(parseInt(e.target.value) || 1, ki.quantity))
-                            const m = new Map(transferQtys)
-                            m.set(ki.id, qty)
-                            setTransferQtys(m)
-                          }}
-                          inputProps={{ min: 1, max: ki.quantity }}
-                          sx={{ width: 70 }}
-                        />
-                      ) : (
-                        <Typography variant="caption" color="text.secondary">×{ki.quantity}</Typography>
-                      )}
-                    </Stack>
-                  ))}
-                </Stack>
-              </Box>
-            )}
-          </Stack>
-        )}
-      </DialogContent>
-      <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button onClick={onClose}>Cancel</Button>
-        {step > 0 && <Button onClick={() => setStep((s) => s - 1)}>Back</Button>}
-        <Button variant="contained" onClick={() => setStep((s) => s + 1)}
-          disabled={step === 0 && !toOperatorId}>
-          {step < 1 ? 'Next' : 'Continue to Note'}
-        </Button>
-      </DialogActions>
-    </Dialog>
-  )
+interface HandoffRow {
+  id: string
+  rigId: string
+  fromOperatorId: string
+  toOperatorId: string
+  initiatedById: string
+  status: string
+  note: string
+  responseNote: string | null
+  respondedAt: string | null
+  createdAt: string
+  updatedAt: string
+  fromOperatorName: string | null
+  toOperatorName: string | null
+  initiatedByName: string | null
 }
 
+// Returns the available stock count for display and quantity-capping.
+// Serialized items use unitCounts.available (unit rows); consumables use
+// availableQuantity (= InventoryItem.quantity, the stored consumable count).
+const availFor = (i: { itemType: string; unitCounts?: { available?: number } | null; availableQuantity?: number }) =>
+  i.itemType === 'SERIALIZED' ? (i.unitCounts?.available ?? 0) : (i.availableQuantity ?? 0)
+
+// Transfer Dialog now lives in components/shared/TransferDialog.tsx (UX-5).
 // ── New Deployment Dialog (operator) ──────────────────────────────
 
 function NewDeploymentDialog({
   vehicles,
   inventoryItems,
   operators,
+  hubs,
   onClose,
   onSuccess,
 }: {
   vehicles: VehicleOption[]
   inventoryItems: InventoryOption[]
   operators: UserOption[]
+  hubs: HubOption[]
   onClose: () => void
   onSuccess: () => void
 }) {
@@ -328,9 +181,33 @@ function NewDeploymentDialog({
   const [note, setNote] = React.useState('')
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState('')
+  // Default to first hub on dialog open — hubs are fetched before the dialog mounts.
+  const [sourceHubId, setSourceHubId] = React.useState(() => hubs[0]?.id ?? '')
+
+  // When hub changes, re-cap consumable quantities that exceed the new hub's available.
+  React.useEffect(() => {
+    if (!sourceHubId) return
+    setKitItems((prev) => {
+      let changed = false
+      const m = new Map(prev)
+      for (const [itemId, entry] of m) {
+        if (entry.itemType !== 'CONSUMABLE') continue
+        const item = inventoryItems.find((i) => i.id === itemId)
+        if (!item) continue
+        const hubAvail = item.hubStock?.find((s) => s.hubId === sourceHubId)?.available ?? 0
+        if (hubAvail > 0 && entry.quantity > hubAvail) {
+          m.set(itemId, { ...entry, quantity: hubAvail })
+          changed = true
+        }
+      }
+      return changed ? m : prev
+    })
+  // inventoryItems is stable (fetched once); sourceHubId is the trigger.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceHubId])
 
   const unassignedVehicles = vehicles.filter((v) => !v.assignedOperatorId && v.status === 'ACTIVE')
-  const availableItems = inventoryItems.filter((i) => (i.unitCounts?.available ?? 0) > 0)
+  const availableItems = inventoryItems.filter((i) => availFor(i) > 0)
 
   const hasUnselectedSerialized = Array.from(kitItems.values()).some(
     (e) => e.itemType === 'SERIALIZED' && !e.inventoryUnitId,
@@ -386,8 +263,11 @@ function NewDeploymentDialog({
     }
   }
 
+  const hasConsumableInKit = Array.from(kitItems.values()).some((e) => e.itemType === 'CONSUMABLE')
+
   const launch = async () => {
     if (!note.trim()) { setError('Note is required'); return }
+    if (hasConsumableInKit && !sourceHubId) { setError('Select a source hub for consumable items.'); return }
     setLoading(true)
     setError('')
     const res = await fetch('/api/deployments', {
@@ -402,6 +282,7 @@ function NewDeploymentDialog({
             ? { itemType: 'SERIALIZED', inventoryItemId, inventoryUnitId: entry.inventoryUnitId! }
             : { inventoryItemId, quantity: entry.quantity }
         ),
+        ...(sourceHubId && { sourceHubId }),
       }),
     })
     if (res.status === 409) {
@@ -481,6 +362,12 @@ function NewDeploymentDialog({
                   const isSerialized = item.itemType === 'SERIALIZED'
                   const entry = kitItems.get(item.id)
                   const checked = !!entry
+                  // Gate consumable qty on the selected hub's available; fall back to total if no hub.
+                  const hubAvail = !isSerialized
+                    ? (sourceHubId
+                        ? (item.hubStock?.find((s) => s.hubId === sourceHubId)?.available ?? (item.availableQuantity ?? 0))
+                        : (item.availableQuantity ?? 0))
+                    : 0
                   return (
                     <Box key={item.id}>
                       <Stack direction="row" alignItems="center" spacing={1}>
@@ -505,12 +392,12 @@ function NewDeploymentDialog({
                             value={entry?.quantity ?? 1}
                             onChange={(e) => {
                               const m = new Map(kitItems)
-                              const v = Math.min(parseInt(e.target.value) || 1, item.unitCounts?.available ?? 1)
+                              const v = Math.min(parseInt(e.target.value) || 1, hubAvail)
                               m.set(item.id, { itemType: 'CONSUMABLE', quantity: v, inventoryUnitId: null, unitLabel: null })
                               setKitItems(m)
                             }}
-                            inputProps={{ min: 1, max: item.unitCounts?.available ?? 1, style: { MozAppearance: 'textfield', width: 60 } }}
-                            helperText={`${item.unitCounts?.available ?? 0} avail.`}
+                            inputProps={{ min: 1, max: hubAvail, style: { MozAppearance: 'textfield', width: 60 } }}
+                            helperText={`${hubAvail} avail.`}
                             sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }}
                           />
                         )}
@@ -567,6 +454,28 @@ function NewDeploymentDialog({
                 })}
               </Stack>
             )}
+            {hasConsumableInKit && (
+              hubs.length === 0 ? (
+                <Alert severity="error" sx={{ mt: 2 }}>
+                  No active hubs configured — consumable checkout is unavailable. Contact an admin to set up a hub.
+                </Alert>
+              ) : (
+                <TextField
+                  select
+                  label="Source hub (required for consumables)"
+                  value={sourceHubId}
+                  onChange={(e) => setSourceHubId(e.target.value)}
+                  fullWidth
+                  size="small"
+                  sx={{ mt: 2 }}
+                >
+                  <MenuItem value="" disabled>Select a hub…</MenuItem>
+                  {hubs.map((h) => (
+                    <MenuItem key={h.id} value={h.id}>{h.name} — {h.city}, {h.state}</MenuItem>
+                  ))}
+                </TextField>
+              )
+            )}
             {kitItems.size === 0 && (
               <Alert severity="warning" sx={{ mt: 1 }}>Starting with empty kit</Alert>
             )}
@@ -592,7 +501,7 @@ function NewDeploymentDialog({
         {step < 3 ? (
           <Button variant="contained" onClick={() => setStep((s) => s + 1)}>Next</Button>
         ) : (
-          <Button variant="contained" onClick={launch} disabled={!note.trim() || loading || hasUnselectedSerialized}
+          <Button variant="contained" onClick={launch} disabled={!note.trim() || loading || hasUnselectedSerialized || (hasConsumableInKit && !sourceHubId)}
             startIcon={loading ? <CircularProgress size={16} color="inherit" /> : null}>
             {loading ? 'Launching…' : 'Launch Deployment'}
           </Button>
@@ -625,6 +534,19 @@ export default function MyRigPage() {
   const [cancelTransferId, setCancelTransferId] = React.useState<string | null>(null)
   const [cancelLoading, setCancelLoading] = React.useState(false)
 
+  // Handoffs
+  const [incomingHandoffs, setIncomingHandoffs] = React.useState<HandoffRow[]>([])
+  const [outgoingHandoffs, setOutgoingHandoffs] = React.useState<HandoffRow[]>([])
+  const [handoffRespondDialog, setHandoffRespondDialog] = React.useState<{ handoff: HandoffRow; action: 'accept' | 'decline' } | null>(null)
+  const [handoffResponseNote, setHandoffResponseNote] = React.useState('')
+  const [handoffRespondLoading, setHandoffRespondLoading] = React.useState(false)
+  const [cancelHandoffId, setCancelHandoffId] = React.useState<string | null>(null)
+  const [cancelHandoffLoading, setCancelHandoffLoading] = React.useState(false)
+  const [handoffOpen, setHandoffOpen] = React.useState(false)
+  const [handoffTargetId, setHandoffTargetId] = React.useState('')
+  const [handoffNote, setHandoffNote] = React.useState('')
+  const [handoffLoading, setHandoffLoading] = React.useState(false)
+
   // Vehicle remove
   const [removingVehicles, setRemovingVehicles] = React.useState(false)
   const [selVehicles, setSelVehicles] = React.useState<Set<string>>(new Set())
@@ -652,6 +574,7 @@ export default function MyRigPage() {
   const [rentalError, setRentalError] = React.useState('')
   const [addItemOpen, setAddItemOpen] = React.useState(false)
   const [pendingItems, setPendingItems] = React.useState<Map<string, PendingItemEntry>>(new Map())
+  const [addItemSourceHubId, setAddItemSourceHubId] = React.useState('')
   const [unitManualQR, setUnitManualQR] = React.useState<Record<string, string>>({})
   const [unitQrLoading, setUnitQrLoading] = React.useState<Record<string, boolean>>({})
 
@@ -661,12 +584,16 @@ export default function MyRigPage() {
 
 
   const loadTransfers = React.useCallback(async () => {
-    const [inRes, outRes] = await Promise.all([
+    const [inRes, outRes, inHRes, outHRes] = await Promise.all([
       fetch('/api/transfers?status=PENDING&direction=incoming'),
       fetch('/api/transfers?status=PENDING&direction=outgoing'),
+      fetch('/api/handoffs?status=PENDING&direction=incoming'),
+      fetch('/api/handoffs?status=PENDING&direction=outgoing'),
     ])
     if (inRes.ok) setIncomingTransfers(await inRes.json())
     if (outRes.ok) setOutgoingTransfers(await outRes.json())
+    if (inHRes.ok) setIncomingHandoffs(await inHRes.json())
+    if (outHRes.ok) setOutgoingHandoffs(await outHRes.json())
   }, [])
 
   const load = React.useCallback(async () => {
@@ -692,6 +619,10 @@ export default function MyRigPage() {
 
   const handleRespond = async () => {
     if (!respondDialog) return
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      showToast({ message: 'Responding to a transfer needs an internet connection. Try again once you’re back online.', severity: 'warning' })
+      return
+    }
     setRespondLoading(true)
     const { transfer, action } = respondDialog
     try {
@@ -718,6 +649,10 @@ export default function MyRigPage() {
 
   const handleCancelTransfer = async () => {
     if (!cancelTransferId) return
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      showToast({ message: 'Cancelling a transfer needs an internet connection. Try again once you’re back online.', severity: 'warning' })
+      return
+    }
     setCancelLoading(true)
     try {
       const res = await fetch(`/api/transfers/${cancelTransferId}`, { method: 'DELETE' })
@@ -733,6 +668,90 @@ export default function MyRigPage() {
       showToast({ message: 'Network error. Please try again.', severity: 'error' })
     } finally {
       setCancelLoading(false)
+    }
+  }
+
+  const handleHandoffRespond = async () => {
+    if (!handoffRespondDialog) return
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      showToast({ message: "Responding to a handoff needs an internet connection. Try again once you're back online.", severity: 'warning' })
+      return
+    }
+    setHandoffRespondLoading(true)
+    const { handoff, action } = handoffRespondDialog
+    try {
+      const res = await fetch(`/api/handoffs/${handoff.id}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ responseNote: handoffResponseNote || undefined }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        showToast({ message: typeof d.error === 'string' ? d.error : `Could not ${action} the handoff.`, severity: 'error' })
+        return
+      }
+      showToast({ message: action === 'accept' ? 'Handoff accepted. You are now the primary operator.' : 'Handoff declined.', severity: 'success' })
+      setHandoffRespondDialog(null)
+      setHandoffResponseNote('')
+      await load()
+    } catch {
+      showToast({ message: 'Network error. Please try again.', severity: 'error' })
+    } finally {
+      setHandoffRespondLoading(false)
+    }
+  }
+
+  const handleHandoffCancel = async () => {
+    if (!cancelHandoffId) return
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      showToast({ message: "Cancelling a handoff needs an internet connection. Try again once you're back online.", severity: 'warning' })
+      return
+    }
+    setCancelHandoffLoading(true)
+    try {
+      const res = await fetch(`/api/handoffs/${cancelHandoffId}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not cancel the handoff.', severity: 'error' })
+        return
+      }
+      showToast({ message: 'Handoff cancelled.', severity: 'success' })
+      setCancelHandoffId(null)
+      await loadTransfers()
+    } catch {
+      showToast({ message: 'Network error. Please try again.', severity: 'error' })
+    } finally {
+      setCancelHandoffLoading(false)
+    }
+  }
+
+  const handleHandoffInitiate = async () => {
+    if (!rig || !handoffTargetId || !handoffNote.trim()) return
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      showToast({ message: 'Initiating a handoff needs an internet connection.', severity: 'warning' })
+      return
+    }
+    setHandoffLoading(true)
+    try {
+      const res = await fetch(`/api/deployments/${rig.id}/handoff`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ toOperatorId: handoffTargetId, note: handoffNote }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not initiate handoff.', severity: 'error' })
+        return
+      }
+      showToast({ message: 'Handoff request sent.', severity: 'success' })
+      setHandoffOpen(false)
+      setHandoffTargetId('')
+      setHandoffNote('')
+      await loadTransfers()
+    } catch {
+      showToast({ message: 'Network error. Please try again.', severity: 'error' })
+    } finally {
+      setHandoffLoading(false)
     }
   }
 
@@ -765,6 +784,7 @@ export default function MyRigPage() {
       body: {
         quantity: logUsageQty,
         returnCondition: 'GOOD',
+        consumed: true, // used in the field, not returned — do not restore stock
         notes: `Daily usage log — ${logUsageQty} used`,
       },
       label: 'Log usage',
@@ -828,6 +848,7 @@ export default function MyRigPage() {
             ),
             note,
             photoUrls,
+            ...(addItemSourceHubId && { sourceHubId: addItemSourceHubId }),
           },
           label: 'Add items',
         })
@@ -878,6 +899,30 @@ export default function MyRigPage() {
   if (!rig) {
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', pt: 10 }}>
+        {incomingHandoffs.map((h) => (
+          <Alert
+            key={h.id}
+            severity="info"
+            sx={{ mb: 1.5, width: '100%', alignItems: 'flex-start' }}
+            action={
+              <Stack direction="row" spacing={1} sx={{ mt: -0.5 }}>
+                <Button size="small" color="error" variant="outlined"
+                  onClick={() => { setHandoffRespondDialog({ handoff: h, action: 'decline' }); setHandoffResponseNote('') }}>
+                  Decline
+                </Button>
+                <Button size="small" color="success" variant="contained"
+                  onClick={() => { setHandoffRespondDialog({ handoff: h, action: 'accept' }); setHandoffResponseNote('') }}>
+                  Accept
+                </Button>
+              </Stack>
+            }
+          >
+            <Typography variant="body2" fontWeight={600}>
+              Deployment Handoff from {h.fromOperatorName}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">&ldquo;{h.note}&rdquo;</Typography>
+          </Alert>
+        ))}
         <LocalShippingIcon sx={{ fontSize: 72, color: 'text.disabled', mb: 2 }} />
         <Typography variant="h6" color="text.secondary">No active deployment</Typography>
         <Typography variant="body2" color="text.secondary" mb={3}>
@@ -892,16 +937,87 @@ export default function MyRigPage() {
             vehicles={vehicles}
             inventoryItems={inventoryItems}
             operators={operators}
+            hubs={hubs}
             onClose={() => setNewOpen(false)}
             onSuccess={load}
           />
         )}
+
+        {/* Handoff respond dialog (accessible when operator has no rig — they're the recipient) */}
+        <Dialog open={!!handoffRespondDialog} onClose={() => setHandoffRespondDialog(null)} maxWidth="xs" fullWidth>
+          <DialogTitle>{handoffRespondDialog?.action === 'accept' ? 'Accept Handoff' : 'Decline Handoff'}</DialogTitle>
+          <DialogContent>
+            {handoffRespondDialog?.action === 'accept' && (
+              <Typography variant="body2" color="text.secondary" mb={1.5}>
+                You will become the primary operator for this deployment.
+              </Typography>
+            )}
+            <TextField
+              label="Response note (optional)"
+              value={handoffResponseNote}
+              onChange={(e) => setHandoffResponseNote(e.target.value)}
+              multiline rows={2} fullWidth sx={{ mt: 1 }}
+            />
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2 }}>
+            <Button onClick={() => setHandoffRespondDialog(null)} disabled={handoffRespondLoading}>Cancel</Button>
+            <Button
+              variant="contained"
+              color={handoffRespondDialog?.action === 'accept' ? 'success' : 'error'}
+              onClick={handleHandoffRespond}
+              disabled={handoffRespondLoading}
+              startIcon={handoffRespondLoading ? <CircularProgress size={16} color="inherit" /> : null}
+            >
+              {handoffRespondLoading ? 'Saving…' : handoffRespondDialog?.action === 'accept' ? 'Accept' : 'Decline'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+        <Dialog open={!!cancelHandoffId} onClose={() => setCancelHandoffId(null)} maxWidth="xs" fullWidth>
+          <DialogTitle>Cancel Handoff</DialogTitle>
+          <DialogContent>
+            <Typography>Are you sure you want to cancel this pending handoff request?</Typography>
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2 }}>
+            <Button onClick={() => setCancelHandoffId(null)} disabled={cancelHandoffLoading}>Keep</Button>
+            <Button variant="contained" color="error" onClick={handleHandoffCancel}
+              disabled={cancelHandoffLoading}
+              startIcon={cancelHandoffLoading ? <CircularProgress size={16} color="inherit" /> : null}>
+              {cancelHandoffLoading ? 'Cancelling…' : 'Cancel Handoff'}
+            </Button>
+          </DialogActions>
+        </Dialog>
       </Box>
     )
   }
 
   return (
     <Box>
+      {/* Incoming handoff banners */}
+      {incomingHandoffs.map((h) => (
+        <Alert
+          key={h.id}
+          severity="info"
+          sx={{ mb: 1.5, alignItems: 'flex-start' }}
+          action={
+            <Stack direction="row" spacing={1} sx={{ mt: -0.5 }}>
+              <Button size="small" color="error" variant="outlined"
+                onClick={() => { setHandoffRespondDialog({ handoff: h, action: 'decline' }); setHandoffResponseNote('') }}>
+                Decline
+              </Button>
+              <Button size="small" color="success" variant="contained"
+                onClick={() => { setHandoffRespondDialog({ handoff: h, action: 'accept' }); setHandoffResponseNote('') }}>
+                Accept
+              </Button>
+            </Stack>
+          }
+        >
+          <Typography variant="body2" fontWeight={600}>
+            Deployment Handoff from {h.fromOperatorName}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">&ldquo;{h.note}&rdquo;</Typography>
+        </Alert>
+      ))}
+
       {/* Incoming transfer banners */}
       {incomingTransfers.map((tr) => {
         const vehicleNames = tr.vehicles.map((tv) => tv.vehicle.name).join(', ')
@@ -1070,7 +1186,7 @@ export default function MyRigPage() {
             )}
             <Stack direction="row" spacing={1}>
               <Button size="small" variant="outlined" startIcon={<AddIcon />}
-                onClick={() => setAddItemOpen(true)}>
+                onClick={() => { setAddItemOpen(true); if (!addItemSourceHubId) setAddItemSourceHubId(hubs[0]?.id ?? '') }}>
                 Add Items
               </Button>
               {kitItems.length > 0 && !removingItems && (
@@ -1115,11 +1231,31 @@ export default function MyRigPage() {
         )
       })}
 
+      {/* Outgoing pending handoff notice */}
+      {outgoingHandoffs.map((h) => (
+        <Alert key={h.id} severity="warning" icon={false} sx={{ mb: 1.5 }}
+          action={
+            <Button size="small" color="error" onClick={() => setCancelHandoffId(h.id)}>
+              Cancel Handoff
+            </Button>
+          }
+        >
+          <Typography variant="body2">
+            ⏳ Waiting for <strong>{h.toOperatorName}</strong> to accept your deployment handoff
+          </Typography>
+          <Typography variant="caption" color="text.secondary">&ldquo;{h.note}&rdquo;</Typography>
+        </Alert>
+      ))}
+
       {/* Action row */}
       <Stack direction="row" spacing={2} alignItems="center">
         <Button variant="outlined" fullWidth startIcon={<SwapHorizIcon />}
           onClick={() => setTransferOpen(true)}>
           Transfer Equipment
+        </Button>
+        <Button variant="outlined" fullWidth startIcon={<GroupIcon />}
+          onClick={() => { setHandoffOpen(true); setHandoffTargetId(''); setHandoffNote('') }}>
+          Hand Off Deployment
         </Button>
         <Button variant="text" color="error" startIcon={<StopCircleIcon />}
           onClick={() => setNoteDialog('end')}>
@@ -1237,14 +1373,14 @@ export default function MyRigPage() {
       </Dialog>
 
       {/* Add Items picker */}
-      <Dialog open={addItemOpen} onClose={() => { setAddItemOpen(false); setPendingItems(new Map()); setUnitManualQR({}) }} maxWidth="sm" fullWidth>
+      <Dialog open={addItemOpen} onClose={() => { setAddItemOpen(false); setPendingItems(new Map()); setUnitManualQR({}); setAddItemSourceHubId('') }} maxWidth="sm" fullWidth>
         <DialogTitle>Add Items</DialogTitle>
         <DialogContent>
-          {inventoryItems.filter((i) => (i.unitCounts?.available ?? 0) > 0).length === 0 ? (
+          {inventoryItems.filter((i) => availFor(i) > 0).length === 0 ? (
             <Typography variant="body2" color="text.secondary">No available items.</Typography>
           ) : (
             <Stack spacing={1.5} mt={1}>
-              {inventoryItems.filter((i) => (i.unitCounts?.available ?? 0) > 0).map((item) => {
+              {inventoryItems.filter((i) => availFor(i) > 0).map((item) => {
                 const entry = pendingItems.get(item.id)
                 const checked = !!entry
                 const isSerialized = item.itemType === 'SERIALIZED'
@@ -1298,6 +1434,11 @@ export default function MyRigPage() {
                   }
                 }
 
+                const addHubAvail = !isSerialized
+                  ? (addItemSourceHubId
+                      ? (item.hubStock?.find((s) => s.hubId === addItemSourceHubId)?.available ?? (item.availableQuantity ?? 0))
+                      : (item.availableQuantity ?? 0))
+                  : 0
                 return (
                   <Box key={item.id}>
                     <Stack direction="row" alignItems="center" spacing={1}>
@@ -1322,12 +1463,12 @@ export default function MyRigPage() {
                           value={entry?.quantity ?? 1}
                           onChange={(e) => {
                             const m = new Map(pendingItems)
-                            const v = Math.min(parseInt(e.target.value) || 1, item.unitCounts?.available ?? 1)
+                            const v = Math.min(parseInt(e.target.value) || 1, addHubAvail)
                             m.set(item.id, { itemType: 'CONSUMABLE', quantity: v, inventoryUnitId: null, unitLabel: null })
                             setPendingItems(m)
                           }}
-                          inputProps={{ min: 1, max: item.unitCounts?.available ?? 1, style: { MozAppearance: 'textfield', width: 60 } }}
-                          helperText={`${item.unitCounts?.available ?? 0} avail.`}
+                          inputProps={{ min: 1, max: addHubAvail, style: { MozAppearance: 'textfield', width: 60 } }}
+                          helperText={`${addHubAvail} avail.`}
                           sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }}
                         />
                       )}
@@ -1386,10 +1527,37 @@ export default function MyRigPage() {
             </Stack>
           )}
         </DialogContent>
+        {Array.from(pendingItems.values()).some((e) => e.itemType === 'CONSUMABLE') && (
+          <Box sx={{ px: 3, pb: 1 }}>
+            {hubs.length === 0 ? (
+              <Alert severity="error">
+                No active hubs configured — consumable checkout is unavailable. Contact an admin to set up a hub.
+              </Alert>
+            ) : (
+              <TextField
+                select
+                label="Source hub (required for consumables)"
+                value={addItemSourceHubId}
+                onChange={(e) => setAddItemSourceHubId(e.target.value)}
+                fullWidth
+                size="small"
+              >
+                <MenuItem value="" disabled>Select a hub…</MenuItem>
+                {hubs.map((h) => (
+                  <MenuItem key={h.id} value={h.id}>{h.name} — {h.city}, {h.state}</MenuItem>
+                ))}
+              </TextField>
+            )}
+          </Box>
+        )}
         <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => { setAddItemOpen(false); setPendingItems(new Map()); setUnitManualQR({}) }}>Cancel</Button>
+          <Button onClick={() => { setAddItemOpen(false); setPendingItems(new Map()); setUnitManualQR({}); setAddItemSourceHubId('') }}>Cancel</Button>
           <Button variant="contained"
-            disabled={pendingItems.size === 0 || Array.from(pendingItems.values()).some(e => e.itemType === 'SERIALIZED' && !e.inventoryUnitId)}
+            disabled={
+              pendingItems.size === 0 ||
+              Array.from(pendingItems.values()).some(e => e.itemType === 'SERIALIZED' && !e.inventoryUnitId) ||
+              (Array.from(pendingItems.values()).some(e => e.itemType === 'CONSUMABLE') && !addItemSourceHubId)
+            }
             onClick={() => { setAddItemOpen(false); setNoteDialog('addItems') }}>
             Continue
           </Button>
@@ -1543,6 +1711,8 @@ export default function MyRigPage() {
           onClose={() => setTransferOpen(false)}
           onSuccess={load}
           showToast={showToast}
+          blockOffline
+          resolvePhotos
         />
       )}
 
@@ -1586,6 +1756,86 @@ export default function MyRigPage() {
             disabled={cancelLoading}
             startIcon={cancelLoading ? <CircularProgress size={16} color="inherit" /> : null}>
             {cancelLoading ? 'Cancelling…' : 'Cancel Transfer'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Hand off deployment — initiate dialog */}
+      <Dialog open={handoffOpen} onClose={() => setHandoffOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Hand Off Deployment</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Transfer primary responsibility to another operator. They will need to accept before the handoff takes effect.
+          </Typography>
+          <TextField
+            select label="Hand off to" value={handoffTargetId}
+            onChange={(e) => setHandoffTargetId(e.target.value)} fullWidth sx={{ mb: 2 }}
+          >
+            {operators.filter((o) => o.id !== rig.operator.id).map((o) => (
+              <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>
+            ))}
+          </TextField>
+          <TextField
+            label="Note (required)"
+            value={handoffNote}
+            onChange={(e) => setHandoffNote(e.target.value)}
+            multiline rows={2} fullWidth
+            placeholder="e.g. Heading home — handing off to cover the weekend"
+          />
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setHandoffOpen(false)} disabled={handoffLoading}>Cancel</Button>
+          <Button variant="contained" color="warning"
+            disabled={!handoffTargetId || !handoffNote.trim() || handoffLoading}
+            onClick={handleHandoffInitiate}
+            startIcon={handoffLoading ? <CircularProgress size={16} color="inherit" /> : null}>
+            {handoffLoading ? 'Sending…' : 'Send Handoff Request'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Handoff accept / decline respond dialog */}
+      <Dialog open={!!handoffRespondDialog} onClose={() => setHandoffRespondDialog(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>{handoffRespondDialog?.action === 'accept' ? 'Accept Handoff' : 'Decline Handoff'}</DialogTitle>
+        <DialogContent>
+          {handoffRespondDialog?.action === 'accept' && (
+            <Typography variant="body2" color="text.secondary" mb={1.5}>
+              You will become the primary operator for this deployment.
+            </Typography>
+          )}
+          <TextField
+            label="Response note (optional)"
+            value={handoffResponseNote}
+            onChange={(e) => setHandoffResponseNote(e.target.value)}
+            multiline rows={2} fullWidth sx={{ mt: 1 }}
+          />
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setHandoffRespondDialog(null)} disabled={handoffRespondLoading}>Cancel</Button>
+          <Button
+            variant="contained"
+            color={handoffRespondDialog?.action === 'accept' ? 'success' : 'error'}
+            onClick={handleHandoffRespond}
+            disabled={handoffRespondLoading}
+            startIcon={handoffRespondLoading ? <CircularProgress size={16} color="inherit" /> : null}
+          >
+            {handoffRespondLoading ? 'Saving…' : handoffRespondDialog?.action === 'accept' ? 'Accept' : 'Decline'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Cancel handoff confirm */}
+      <Dialog open={!!cancelHandoffId} onClose={() => setCancelHandoffId(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>Cancel Handoff</DialogTitle>
+        <DialogContent>
+          <Typography>Are you sure you want to cancel this pending handoff request?</Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setCancelHandoffId(null)} disabled={cancelHandoffLoading}>Keep</Button>
+          <Button variant="contained" color="error" onClick={handleHandoffCancel}
+            disabled={cancelHandoffLoading}
+            startIcon={cancelHandoffLoading ? <CircularProgress size={16} color="inherit" /> : null}>
+            {cancelHandoffLoading ? 'Cancelling…' : 'Cancel Handoff'}
           </Button>
         </DialogActions>
       </Dialog>

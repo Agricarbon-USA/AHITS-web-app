@@ -5,6 +5,9 @@ import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { createAlert } from '@/lib/alerts'
 import { withIdempotency } from '@/lib/idempotency'
+import { issueHubReturnLinks } from '@/lib/status-links'
+import { filterAllowedPhotoUrls } from '@/lib/photo-security'
+import { drawFromHub, getStockAtHub } from '@/lib/inventory-stock'
 
 const RIG_INCLUDE = {
   operator: { select: { id: true, name: true } },
@@ -48,8 +51,12 @@ const addSchema = z.object({
       inventoryUnitId: z.string(),
     }),
   ])).min(1),
-  note: z.string().min(1, 'Note is required'),
+  // Optional: adding a tool mid-deployment shouldn't require typing a note
+  // (low-friction field use). A note still flows to the check-out log when given.
+  note: z.string().optional(),
   photoUrls: z.array(z.string()).default([]),
+  // Required when any item is CONSUMABLE — identifies which hub to draw from.
+  sourceHubId: z.string().optional(),
 })
 
 const dispositionSchema = z.object({
@@ -115,7 +122,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   const parsed = addSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const { items, note, photoUrls } = parsed.data
+  const { items, note, photoUrls, sourceHubId } = parsed.data
   const kit = await prisma.kit.findFirst({ where: { rigId: id } })
   if (!kit) return NextResponse.json({ error: 'Kit not found' }, { status: 404 })
 
@@ -178,12 +185,40 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
               throw Object.assign(new Error('UNIT_CONFLICT'), {})
             }
           }
+          // CONSUMABLE stock: draw from the selected hub (MH-1). Hard fail on
+          // insufficient — operator must pick another hub or reduce qty.
+          // Dual-write: hub row (authoritative) + InventoryItem.quantity (total).
+          let drawnQuantity = 0
+          let drawnHubId: string | null = null
+          if (invItem?.itemType === 'CONSUMABLE') {
+            if (!sourceHubId) {
+              throw Object.assign(new Error('CONSUMABLE_NEEDS_HUB'), {})
+            }
+            const drawn = await drawFromHub(entry.inventoryItemId, sourceHubId, entry.quantity, tx)
+            if (drawn < entry.quantity) {
+              const atHub = await getStockAtHub(entry.inventoryItemId, sourceHubId, tx)
+              const hubRow = await tx.hub.findUnique({ where: { id: sourceHubId }, select: { name: true } })
+              throw Object.assign(new Error('INSUFFICIENT_HUB_STOCK'), {
+                available: atHub,
+                requested: entry.quantity,
+                hubName: hubRow?.name ?? sourceHubId,
+              })
+            }
+            drawnQuantity = drawn
+            drawnHubId = sourceHubId
+            await tx.inventoryItem.update({
+              where: { id: entry.inventoryItemId },
+              data: { quantity: { decrement: drawn } },
+            })
+          }
           await tx.kitItem.create({
             data: {
               kitId: kit.id,
               inventoryItemId: entry.inventoryItemId,
               quantity: entry.quantity,
               inventoryUnitId: null,
+              drawnQuantity,
+              drawnHubId,
             },
           })
           await tx.checkLog.create({
@@ -201,7 +236,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
       if (photoUrls.length > 0) {
         await tx.photo.createMany({
-          data: photoUrls.map((url) => ({
+          data: filterAllowedPhotoUrls(photoUrls).map((url) => ({
             url,
             context: 'INVENTORY_REFERENCE' as const,
             uploadedById: session.userId,
@@ -210,6 +245,19 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       }
     })
   } catch (err: unknown) {
+    if (err instanceof Error && err.message === 'CONSUMABLE_NEEDS_HUB') {
+      return NextResponse.json(
+        { error: 'A source hub is required when checking out consumable items.' },
+        { status: 400 }
+      )
+    }
+    if (err instanceof Error && err.message === 'INSUFFICIENT_HUB_STOCK') {
+      const e = err as Error & { available?: number; requested?: number; hubName?: string }
+      return NextResponse.json(
+        { error: `Only ${e.available ?? 0} available at ${e.hubName ?? 'the selected hub'} (requested ${e.requested ?? 0}).` },
+        { status: 409 }
+      )
+    }
     if (err instanceof Error && err.message === 'UNIT_CONFLICT') {
       return NextResponse.json(
         { error: 'This unit was just checked out by someone else. Please select a different unit and try again.' },
@@ -223,8 +271,11 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
         { status: 409 }
       )
     }
+    // Unexpected error (e.g. transient DB failure) → 500 so the offline queue
+    // RETRIES it. Returning 409 here would make the queue treat it as a
+    // terminal client error and silently drop the write.
     const msg = err instanceof Error ? err.message : 'Checkout failed'
-    return NextResponse.json({ error: msg }, { status: 409 })
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 
   const updated = await prisma.rig.findUniqueOrThrow({ where: { id }, include: RIG_INCLUDE })
@@ -270,16 +321,32 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
       const removeQty = isSerialized ? 1 : Math.min(disp.quantity ?? kitItem.quantity, kitItem.quantity)
       const fullRemoval = isSerialized || removeQty >= kitItem.quantity
 
-      if (fullRemoval) {
-        await tx.kitItem.update({ where: { id: disp.kitItemId }, data: { removedAt: now } })
-      } else {
-        await tx.kitItem.update({
-          where: { id: disp.kitItemId },
-          data: { quantity: kitItem.quantity - removeQty },
-        })
+      // TRANSFER removal is finalized only when the recipient ACCEPTS (the
+      // transfer/accept route decrements the source kit item then). Removing it
+      // here too would double-decrement the source quantity — so, exactly like
+      // end/route.ts, skip the kit-item mutation for TRANSFER dispositions.
+      if (disp.type !== 'TRANSFER') {
+        if (fullRemoval) {
+          await tx.kitItem.update({ where: { id: disp.kitItemId }, data: { removedAt: now } })
+        } else {
+          await tx.kitItem.update({
+            where: { id: disp.kitItemId },
+            data: { quantity: kitItem.quantity - removeQty },
+          })
+        }
       }
 
       if (disp.type === 'HUB') {
+        if (kitItem.item.itemType === 'CONSUMABLE' && (disp.returnCondition ?? 'GOOD') === 'GOOD') {
+          // Consumable returned to the hub in usable condition → restore exactly
+          // the stock drawn at check-out, capped at what's left to restore, so
+          // on-hand can't overshoot the true total (CR-1a / N-2). Damaged/
+          // maintenance returns are not restored (the stock isn't usable).
+          await tx.inventoryItem.update({
+            where: { id: inventoryItemId },
+            data: { quantity: { increment: Math.min(removeQty, kitItem.drawnQuantity) } },
+          })
+        }
         await tx.checkLog.create({
           data: {
             action: 'CHECK_IN',
@@ -369,7 +436,7 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
           })
           if (disp.photoUrls.length > 0) {
             await tx.photo.createMany({
-              data: disp.photoUrls.map((url) => ({
+              data: filterAllowedPhotoUrls(disp.photoUrls).map((url) => ({
                 url,
                 context: 'DAMAGE' as const,
                 inventoryItemId,
@@ -396,7 +463,7 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
           }
           if (disp.photoUrls.length > 0) {
             await tx.photo.createMany({
-              data: disp.photoUrls.map((url) => ({
+              data: filterAllowedPhotoUrls(disp.photoUrls).map((url) => ({
                 url,
                 context: 'DAMAGE' as const,
                 inventoryItemId,
@@ -432,6 +499,19 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
     const msg = err instanceof Error ? err.message : 'Failed to process items'
     console.error('[DELETE /api/deployments/[id]/items]', err)
     return NextResponse.json({ error: msg }, { status: 500 })
+  }
+
+  // Wave F-R (soft-gate, best-effort, non-blocking): for each "Return to Hub" of
+  // a serialized unit, issue a HUB_RETURN status link so the hub can confirm
+  // receipt. The unit stays AVAILABLE (still re-deployable) — this only records a
+  // pending receipt; any failure here never affects the return that committed.
+  try {
+    const hubDisps = itemDispositions
+      .filter((d) => d.type === 'HUB' && d.hubId)
+      .map((d) => ({ kitItemId: d.kitItemId, hubId: d.hubId as string }))
+    await issueHubReturnLinks(session.userId, hubDisps)
+  } catch (e) {
+    console.error('[items hub-return link issue]', e)
   }
 
   const updated = await prisma.rig.findUniqueOrThrow({ where: { id }, include: RIG_INCLUDE })

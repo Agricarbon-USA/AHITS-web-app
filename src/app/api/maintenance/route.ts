@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import { createAlert } from '@/lib/alerts'
+import { money } from '@/lib/validation'
 
 export async function GET(req: NextRequest) {
   const session = await requireAuth()
@@ -14,6 +15,7 @@ export async function GET(req: NextRequest) {
 
   const tasks = await prisma.maintenanceTask.findMany({
     where: {
+      deletedAt: null,
       ...(status && { status: status as never }),
       ...(vehicleId && { vehicleId }),
     },
@@ -21,6 +23,10 @@ export async function GET(req: NextRequest) {
     include: {
       vehicle: { select: { id: true, name: true } },
       item: { select: { id: true, name: true } },
+      unit: { select: { id: true, qrCodeId: true, serialNumber: true, status: true } },
+      repairHub: { select: { id: true, name: true } },
+      hub: { select: { id: true, name: true } },
+      photos: { select: { id: true, url: true, takenAt: true }, orderBy: { takenAt: 'desc' } },
     },
   })
 
@@ -57,7 +63,7 @@ const createSchema = z.object({
   priority: z.enum(['HIGH', 'MEDIUM', 'LOW']).default('MEDIUM'),
   nextDue: z.string().datetime().optional(),
   nextOdometer: z.number().int().optional(),
-  estimatedCost: z.number().optional(),
+  estimatedCost: money().optional(),
   notes: z.string().optional(),
 })
 

@@ -5,6 +5,10 @@ import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { createAlert } from '@/lib/alerts'
 import { withIdempotency } from '@/lib/idempotency'
+import { issueHubReturnLinks } from '@/lib/status-links'
+import { filterAllowedPhotoUrls } from '@/lib/photo-security'
+import { endAllAssignmentsForRig, removeAllProjectLinks } from '@/lib/deployment-assignments'
+import { restoreToHub } from '@/lib/inventory-stock'
 
 const dispositionSchema = z.object({
   kitItemId: z.string(),
@@ -46,7 +50,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           items: {
             where: { removedAt: null },
             include: {
-              item: { select: { id: true, name: true } },
+              item: { select: { id: true, name: true, itemType: true, hubId: true } },
               inventoryUnit: true,
             },
           },
@@ -74,6 +78,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
   await prisma.$transaction(async (tx) => {
     await tx.rig.update({ where: { id }, data: { endedAt: now, notes: note } })
+    await endAllAssignmentsForRig(id, tx)
+    await removeAllProjectLinks(id, tx)
 
     for (const disp of itemDispositions) {
       const kitItem = allKitItems.find((ki) => ki.id === disp.kitItemId)
@@ -86,6 +92,19 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       }
 
       if (disp.type === 'HUB') {
+        if (kitItem.item.itemType === 'CONSUMABLE' && (disp.returnCondition ?? 'GOOD') === 'GOOD') {
+          // Restore exactly the stock drawn at check-out (CR-1a / N-2).
+          // Dual-write: per-hub row (MH-1) + cross-hub total (always, so no
+          // stock is lost even for legacy null drawnHubId items).
+          const hubForRestore = kitItem.drawnHubId ?? kitItem.item.hubId
+          if (hubForRestore && kitItem.drawnQuantity > 0) {
+            await restoreToHub(inventoryItemId, hubForRestore, kitItem.drawnQuantity, tx)
+          }
+          await tx.inventoryItem.update({
+            where: { id: inventoryItemId },
+            data: { quantity: { increment: kitItem.drawnQuantity } },
+          })
+        }
         const logCondition =
           disp.type === 'HUB' ? returnConditionToLogCondition(disp.returnCondition) : null
 
@@ -174,7 +193,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           })
           if (disp.photoUrls.length > 0) {
             await tx.photo.createMany({
-              data: disp.photoUrls.map((url) => ({
+              data: filterAllowedPhotoUrls(disp.photoUrls).map((url) => ({
                 url,
                 context: 'DAMAGE' as const,
                 inventoryItemId,
@@ -199,7 +218,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           }
           if (disp.photoUrls.length > 0) {
             await tx.photo.createMany({
-              data: disp.photoUrls.map((url) => ({
+              data: filterAllowedPhotoUrls(disp.photoUrls).map((url) => ({
                 url,
                 context: 'DAMAGE' as const,
                 inventoryItemId,
@@ -240,6 +259,18 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       })
     }
   })
+
+  // Wave F-R (soft-gate, best-effort): issue HUB_RETURN confirmation links for
+  // serialized units sent back to a hub at end-of-deployment — the most common
+  // hub-return moment. Non-blocking; failures never affect the ended deployment.
+  try {
+    const hubDisps = itemDispositions
+      .filter((d) => d.type === 'HUB' && d.hubId)
+      .map((d) => ({ kitItemId: d.kitItemId, hubId: d.hubId as string }))
+    await issueHubReturnLinks(session.userId, hubDisps)
+  } catch (e) {
+    console.error('[end hub-return link issue]', e)
+  }
 
   return NextResponse.json({ ok: true })
 }

@@ -14,6 +14,7 @@ export type AuditAction =
   | 'INVITE_RESENT'
   | 'INVITE_REVOKED'
   | 'BULK_IMPORT'
+  | 'DEPLOYMENT_HANDOFF'
 
 /**
  * Append an entry to the account audit log. Best-effort: a logging failure

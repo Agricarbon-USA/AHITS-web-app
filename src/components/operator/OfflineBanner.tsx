@@ -1,11 +1,16 @@
 'use client'
+import * as React from 'react'
 import { Alert, Button, CircularProgress, Stack } from '@mui/material'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 
 export function OfflineBanner() {
   const { isOffline, pending, failed, syncing, listFailed, discardFailed } = useOfflineQueue()
+  const [mounted, setMounted] = React.useState(false)
+  React.useEffect(() => setMounted(true), [])
 
-  // Nothing to report: online, synced, no failures, not syncing.
+  // Server and initial client render must match — return null until mounted to
+  // avoid #418 from the isOffline state initializer diverging when offline.
+  if (!mounted) return null
   if (!isOffline && pending === 0 && failed === 0 && !syncing) return null
 
   const dismissFailed = async () => {

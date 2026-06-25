@@ -5,6 +5,7 @@ import { requireAuth } from '@/lib/auth/session'
 import { sendEmail } from '@/lib/email/resend'
 import { dailyCheckFailedEmail } from '@/lib/email/templates'
 import { createAlert } from '@/lib/alerts'
+import { applyOdometerReading } from '@/lib/maintenance'
 
 const schema = z.object({
   vehicleId: z.string(),
@@ -19,6 +20,17 @@ const schema = z.object({
   })),
   issues: z.string().optional(),
   passFail: z.boolean(),
+}).superRefine((data, ctx) => {
+  // PRD §11.4 / §7.4: every failed item needs a reason, and a failing check
+  // needs an overall summary. Enforced server-side so the rule holds for queued
+  // offline replays and any direct API call, not just the happy-path UI.
+  const failing = data.checklistJson.filter((i) => i.value === 'no')
+  if (failing.some((i) => !i.note || !i.note.trim())) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['checklistJson'], message: 'Each item marked “No” must include a note describing the issue.' })
+  }
+  if (!data.passFail && !data.issues?.trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['issues'], message: 'A failing check requires an issue summary.' })
+  }
 })
 
 export async function GET(req: NextRequest) {
@@ -69,6 +81,7 @@ export async function POST(req: NextRequest) {
     const owns = await prisma.vehicle.findFirst({
       where: {
         id: vehicleId,
+        deletedAt: null,
         OR: [
           { assignedOperatorId: session.userId },
           {
@@ -126,6 +139,12 @@ export async function POST(req: NextRequest) {
     },
   })
 
+  // Mileage trigger (Wave G): advance the vehicle odometer and flag any
+  // mileage-based maintenance that's now due. Best-effort, never blocks the check.
+  if (odometer != null) {
+    await applyOdometerReading(vehicleId, odometer)
+  }
+
   // Alert if any kit items have been out > 90 days. Awaited (not fire-and-forget)
   // so it runs reliably on serverless/Cloud Run, where a floating promise can be
   // dropped when the instance freezes after the response. Wrapped so an alert
@@ -157,7 +176,7 @@ export async function POST(req: NextRequest) {
 
   // Notify admin on fail
   if (!passFail && process.env.ADMIN_EMAIL) {
-    const vehicle = await prisma.vehicle.findUnique({ where: { id: vehicleId } })
+    const vehicle = await prisma.vehicle.findFirst({ where: { id: vehicleId, deletedAt: null } })
     await sendEmail({
       to: process.env.ADMIN_EMAIL,
       subject: `Daily Check Failed — ${vehicle?.name}`,

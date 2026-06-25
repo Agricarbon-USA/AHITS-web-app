@@ -5,6 +5,7 @@ import {
   Dialog, DialogTitle, DialogContent, DialogActions,
   Button, TextField, Typography,
 } from '@mui/material'
+import { PhotoCapture } from './PhotoCapture'
 
 interface NotePhotoDialogProps {
   open: boolean
@@ -28,14 +29,17 @@ export function NotePhotoDialog({
   confirmColor = 'primary',
 }: NotePhotoDialogProps) {
   const [note, setNote] = React.useState('')
+  const [photos, setPhotos] = React.useState<string[]>([])
 
   function handleConfirm() {
-    onConfirm(note, [])
+    onConfirm(note, photos)
     setNote('')
+    setPhotos([])
   }
 
   function handleClose() {
     setNote('')
+    setPhotos([])
     onClose()
   }
 
@@ -57,6 +61,10 @@ export function NotePhotoDialog({
           fullWidth
           sx={{ mt: 1 }}
         />
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2, mb: 0.5 }}>
+          Photos (optional)
+        </Typography>
+        <PhotoCapture value={photos} onChange={setPhotos} disabled={loading} />
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
         <Button onClick={handleClose} disabled={loading}>Cancel</Button>

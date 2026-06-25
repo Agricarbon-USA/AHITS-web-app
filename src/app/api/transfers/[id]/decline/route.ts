@@ -49,11 +49,16 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
   const now = new Date()
 
-  await prisma.$transaction(async (tx) => {
-    await tx.transferRequest.update({
-      where: { id },
+  try {
+    await prisma.$transaction(async (tx) => {
+    // Claim-first: only one concurrent decline/accept/cancel may win the flip.
+    const claim = await tx.transferRequest.updateMany({
+      where: { id, status: 'PENDING' },
       data: { status: 'DECLINED', respondedAt: now, responseNote: responseNote ?? null },
     })
+    if (claim.count === 0) {
+      throw new Error('Transfer is no longer pending')
+    }
 
     // For end-of-deployment transfers (source rig ended), restore units and mark kit items removed.
     // For active-rig transfers, items stay in the source kit unchanged.
@@ -97,7 +102,24 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
         })
       }
     }
-  })
+    })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Decline failed'
+    return NextResponse.json({ error: msg }, { status: 409 })
+  }
+
+  // Notify the initiator their transfer was declined (best-effort, non-fatal).
+  if (transfer.initiatedById && transfer.initiatedById !== session.userId) {
+    await prisma.notification.create({
+      data: {
+        userId: transfer.initiatedById,
+        type: 'TRANSFER_DECLINED',
+        title: 'Transfer declined',
+        body: `${session.name} declined the equipment transfer${responseNote ? `: ${responseNote}` : ''}.`,
+        link: '/operator/my-rig',
+      },
+    }).catch(() => {})
+  }
 
   return NextResponse.json({ ok: true })
 }

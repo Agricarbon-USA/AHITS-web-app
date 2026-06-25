@@ -18,11 +18,15 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import DownloadIcon from '@mui/icons-material/Download'
 import HistoryIcon from '@mui/icons-material/History'
 import ExpandLessIcon from '@mui/icons-material/ExpandLess'
+import SwapHorizIcon from '@mui/icons-material/SwapHoriz'
 import QRCode from 'qrcode'
 import { useToast } from '@/components/shared/useToast'
 import { QrScanField } from '@/components/shared/QrScanField'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { PhotoGallery } from '@/components/shared/PhotoGallery'
+import { RepairReviewDialog } from '@/components/shared/RepairReviewDialog'
 import { EQUIPMENT_STATUS } from '@/lib/status'
+import { MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -70,6 +74,8 @@ interface InventoryItemRow {
   currentProject: { id: string; name: string; location: string | null } | null
   unitCounts: UnitCounts
   units: UnitRow[]
+  derivedQuantity: number
+  availableQuantity: number
 }
 
 interface CheckLogEntry {
@@ -96,102 +102,17 @@ interface ItemDetail extends InventoryItemRow {
 interface UserOption { id: string; name: string; role: string }
 interface ProjectOption { id: string; name: string }
 
+interface HubStockRow {
+  hubId: string
+  hubName: string | null
+  quantity: number
+  reservedQty: number
+  available: number
+}
+
 // ── Confirm Dialog ────────────────────────────────────────────────
 
-// ── Repair Dialog (admin review — per unit) ───────────────────────
-
-function RepairReviewDialog({
-  open, itemId, unitId, hubs, onClose, onSuccess,
-}: {
-  open: boolean; itemId: string; unitId: string; hubs: HubOption[]
-  onClose: () => void; onSuccess: () => void
-}) {
-  const [repairType, setRepairType] = React.useState('')
-  const [shopName, setShopName] = React.useState('')
-  const [shopAddress, setShopAddress] = React.useState('')
-  const [dateDelivered, setDateDelivered] = React.useState('')
-  const [purchaseOrder, setPurchaseOrder] = React.useState('')
-  const [invoiceNumber, setInvoiceNumber] = React.useState('')
-  const [repairHubId, setRepairHubId] = React.useState('')
-  const [note, setNote] = React.useState('')
-  const [loading, setLoading] = React.useState(false)
-  const [error, setError] = React.useState('')
-
-  React.useEffect(() => {
-    if (!open) {
-      setRepairType(''); setShopName(''); setShopAddress(''); setDateDelivered('')
-      setPurchaseOrder(''); setInvoiceNumber(''); setRepairHubId(''); setNote(''); setError('')
-    }
-  }, [open])
-
-  const handleSubmit = async () => {
-    if (!repairType) { setError('Select a repair type'); return }
-    if (!note.trim()) { setError('Note is required'); return }
-    setLoading(true); setError('')
-    const res = await fetch(`/api/inventory/${itemId}/review-inoperable`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        unitId,
-        decision: 'REPAIR', repairType, note,
-        shopName: shopName || undefined,
-        shopAddress: shopAddress || undefined,
-        dateDelivered: dateDelivered || undefined,
-        purchaseOrder: purchaseOrder || undefined,
-        invoiceNumber: invoiceNumber || undefined,
-        repairHubId: repairHubId || undefined,
-      }),
-    })
-    setLoading(false)
-    if (res.ok) { onSuccess() }
-    else { const d = await res.json().catch(() => ({})); setError(d.error ?? 'Failed') }
-  }
-
-  return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Send for Repair</DialogTitle>
-      <DialogContent>
-        <Stack spacing={2} pt={0.5}>
-          {error && <Alert severity="error">{error}</Alert>}
-          <FormControl required>
-            <FormLabel>Repair Method</FormLabel>
-            <RadioGroup value={repairType} onChange={(e) => setRepairType(e.target.value)}>
-              <FormControlLabel value="IN_FIELD" control={<Radio />} label="Fix it in the field" />
-              <FormControlLabel value="AT_SHOP" control={<Radio />} label="Take it to a shop" />
-              <FormControlLabel value="SHIP_TO_HUB" control={<Radio />} label="Ship it to a hub" />
-              <FormControlLabel value="SHIP_FOR_REPAIR" control={<Radio />} label="Ship for external repair" />
-            </RadioGroup>
-          </FormControl>
-          {(repairType === 'AT_SHOP' || repairType === 'SHIP_FOR_REPAIR') && (
-            <Stack spacing={1.5}>
-              <TextField size="small" label="Shop Name (optional)" value={shopName} onChange={(e) => setShopName(e.target.value)} fullWidth />
-              <TextField size="small" label="Shop Address (optional)" value={shopAddress} onChange={(e) => setShopAddress(e.target.value)} fullWidth />
-              <TextField size="small" label="Date Delivered (optional)" type="date" value={dateDelivered} onChange={(e) => setDateDelivered(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} />
-              <TextField size="small" label="Purchase Order (optional)" value={purchaseOrder} onChange={(e) => setPurchaseOrder(e.target.value)} fullWidth />
-              <TextField size="small" label="Invoice # (optional)" value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} fullWidth />
-            </Stack>
-          )}
-          {repairType === 'SHIP_TO_HUB' && (
-            <Stack spacing={1.5}>
-              <TextField select label="Ship to Hub" value={repairHubId} onChange={(e) => setRepairHubId(e.target.value)} fullWidth required>
-                {hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.name} — {h.city}, {h.state}</MenuItem>)}
-              </TextField>
-              <TextField size="small" label="Date Shipped (optional)" type="date" value={dateDelivered} onChange={(e) => setDateDelivered(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} />
-            </Stack>
-          )}
-          <TextField label="Admin note (required)" value={note} onChange={(e) => setNote(e.target.value)} multiline rows={2} fullWidth required />
-        </Stack>
-      </DialogContent>
-      <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button onClick={onClose} disabled={loading}>Cancel</Button>
-        <Button variant="contained" onClick={handleSubmit} disabled={loading}
-          startIcon={loading ? <CircularProgress size={16} color="inherit" /> : null}>
-          {loading ? 'Saving…' : 'Send for Repair'}
-        </Button>
-      </DialogActions>
-    </Dialog>
-  )
-}
+// RepairReviewDialog now lives in components/shared/RepairReviewDialog.tsx (UX-13).
 
 // ── Item Form Dialog ──────────────────────────────────────────────
 
@@ -292,8 +213,14 @@ function ItemFormDialog({
             </TextField>
             {isEdit ? (
               <Box>
-                <Typography variant="caption" color="text.secondary">Total Units</Typography>
-                <Typography variant="body2">{item?.unitCounts?.totalUnits ?? item?.quantity ?? 0} (managed in Units tab)</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {itemType === 'CONSUMABLE' ? 'Total Stock' : 'Total Units'}
+                </Typography>
+                <Typography variant="body2">
+                  {itemType === 'CONSUMABLE'
+                    ? `${item?.quantity ?? 0} total (managed per hub — use Stock by Hub below)`
+                    : `${item?.unitCounts?.totalUnits ?? item?.quantity ?? 0} (managed in Units tab)`}
+                </Typography>
               </Box>
             ) : (
               <TextField label="Initial Quantity" type="number" value={quantity} onChange={(e) => setQuantity(parseInt(e.target.value) || 0)} required fullWidth inputProps={{ min: 0 }} />
@@ -326,6 +253,227 @@ function ItemFormDialog({
         </DialogActions>
       </Box>
     </Dialog>
+  )
+}
+
+// ── Move Stock Dialog ─────────────────────────────────────────────
+
+function MoveStockDialog({
+  itemId, hubs, stock, onClose, onSuccess,
+}: {
+  itemId: string
+  hubs: HubOption[]
+  stock: HubStockRow[]
+  onClose: () => void
+  onSuccess: () => void
+}) {
+  const [fromHubId, setFromHubId] = React.useState('')
+  const [toHubId, setToHubId] = React.useState('')
+  const [qty, setQty] = React.useState(1)
+  const [loading, setLoading] = React.useState(false)
+  const [error, setError] = React.useState('')
+
+  const hubsWithStock = stock.filter((s) => s.quantity > 0)
+  const fromAvailable = stock.find((s) => s.hubId === fromHubId)?.available ?? 0
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    if (!fromHubId || !toHubId) { setError('Select both hubs'); return }
+    if (fromHubId === toHubId) { setError('Source and destination must differ'); return }
+    if (qty < 1) { setError('Quantity must be at least 1'); return }
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/inventory/${itemId}/stock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fromHubId, toHubId, qty }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setError(res.status === 409 ? `Not enough stock at source hub (only ${fromAvailable} available)` : (typeof data.error === 'string' ? data.error : 'Move failed'))
+        return
+      }
+      onSuccess()
+    } catch { setError('Network error') }
+    finally { setLoading(false) }
+  }
+
+  return (
+    <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle>Move Stock</DialogTitle>
+      <Box component="form" onSubmit={handleSubmit}>
+        <DialogContent>
+          <Stack spacing={2.5} pt={0.5}>
+            {error && <Alert severity="error">{error}</Alert>}
+            <TextField select label="From hub" value={fromHubId} onChange={(e) => setFromHubId(e.target.value)} fullWidth required>
+              {hubsWithStock.length === 0
+                ? <MenuItem value="" disabled>No hubs with stock</MenuItem>
+                : hubsWithStock.map((s) => (
+                    <MenuItem key={s.hubId} value={s.hubId}>
+                      {s.hubName ?? s.hubId} ({s.available} available)
+                    </MenuItem>
+                  ))}
+            </TextField>
+            <TextField select label="To hub" value={toHubId} onChange={(e) => setToHubId(e.target.value)} fullWidth required>
+              {hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.name}</MenuItem>)}
+            </TextField>
+            <TextField
+              label="Quantity"
+              type="number"
+              value={qty}
+              onChange={(e) => setQty(Math.max(1, parseInt(e.target.value) || 1))}
+              inputProps={{ min: 1, max: fromAvailable || undefined }}
+              fullWidth
+              required
+              helperText={fromHubId ? `${fromAvailable} available at source` : undefined}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={onClose} disabled={loading}>Cancel</Button>
+          <MutationButton type="submit" variant="contained" disabled={loading} startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <SwapHorizIcon />}>
+            {loading ? 'Moving…' : 'Move'}
+          </MutationButton>
+        </DialogActions>
+      </Box>
+    </Dialog>
+  )
+}
+
+// ── Stock by Hub Section ──────────────────────────────────────────
+
+function StockByHubSection({
+  itemId, hubs, onUpdated,
+}: {
+  itemId: string
+  hubs: HubOption[]
+  onUpdated: () => void
+}) {
+  const [stock, setStock] = React.useState<HubStockRow[]>([])
+  const [loading, setLoading] = React.useState(true)
+  const [editingHubId, setEditingHubId] = React.useState<string | null>(null)
+  const [editQty, setEditQty] = React.useState('')
+  const [saving, setSaving] = React.useState(false)
+  const [error, setError] = React.useState('')
+  const [moveOpen, setMoveOpen] = React.useState(false)
+
+  const loadStock = React.useCallback(async () => {
+    setLoading(true)
+    fetch(`/api/inventory/${itemId}/stock`)
+      .then((r) => r.json())
+      .then((d) => setStock(d.data ?? []))
+      .catch(() => setStock([]))
+      .finally(() => setLoading(false))
+  }, [itemId])
+
+  React.useEffect(() => { loadStock() }, [loadStock])
+
+  const handleEditSave = async (hubId: string) => {
+    const qty = parseInt(editQty)
+    if (isNaN(qty) || qty < 0) { setError('Quantity must be 0 or more'); return }
+    setSaving(true)
+    setError('')
+    try {
+      const res = await fetch(`/api/inventory/${itemId}/stock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hubId, quantity: qty }),
+      })
+      if (!res.ok) { setError('Save failed'); return }
+      setEditingHubId(null)
+      await loadStock()
+      onUpdated()
+    } catch { setError('Network error') }
+    finally { setSaving(false) }
+  }
+
+  if (loading) return <Skeleton height={80} />
+
+  return (
+    <Box mb={3}>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" mb={1}>
+        <Typography variant="subtitle2" fontWeight={600}>Stock by Hub</Typography>
+        <MutationButton size="small" startIcon={<SwapHorizIcon />} onClick={() => setMoveOpen(true)} disabled={stock.length === 0}>
+          Move Stock
+        </MutationButton>
+      </Stack>
+      {error && <Alert severity="error" onClose={() => setError('')} sx={{ mb: 1 }}>{error}</Alert>}
+      {stock.length === 0 ? (
+        <Typography variant="body2" color="text.secondary">No stock rows yet. Use the edit controls to set stock at a hub.</Typography>
+      ) : (
+        <TableContainer component={Paper} variant="outlined">
+          <Table size="small">
+            <TableHead>
+              <TableRow sx={{ '& th': { fontWeight: 600, fontSize: 11, color: 'text.secondary' } }}>
+                <TableCell>Hub</TableCell>
+                <TableCell align="right">On-hand</TableCell>
+                <TableCell align="right">Reserved</TableCell>
+                <TableCell align="right">Available</TableCell>
+                <TableCell align="right">Edit</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {stock.map((row) => (
+                <TableRow key={row.hubId} sx={{ '&:last-child td': { border: 0 } }}>
+                  <TableCell>{row.hubName ?? row.hubId}</TableCell>
+                  <TableCell align="right">
+                    {editingHubId === row.hubId ? (
+                      <TextField
+                        size="small"
+                        type="number"
+                        value={editQty}
+                        onChange={(e) => setEditQty(e.target.value)}
+                        inputProps={{ min: 0, style: { width: 60, textAlign: 'right' } }}
+                        variant="standard"
+                        autoFocus
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleEditSave(row.hubId); if (e.key === 'Escape') setEditingHubId(null) }}
+                      />
+                    ) : (
+                      <Typography variant="body2">{row.quantity}</Typography>
+                    )}
+                  </TableCell>
+                  <TableCell align="right">
+                    <Typography variant="body2" color="text.secondary">{row.reservedQty}</Typography>
+                  </TableCell>
+                  <TableCell align="right">
+                    <Chip size="small" label={row.available} color={row.available > 0 ? 'success' : 'default'} variant="outlined" />
+                  </TableCell>
+                  <TableCell align="right">
+                    {editingHubId === row.hubId ? (
+                      <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                        <MutationButton size="small" onClick={() => handleEditSave(row.hubId)} disabled={saving}>
+                          {saving ? <CircularProgress size={14} /> : 'Save'}
+                        </MutationButton>
+                        <Button size="small" onClick={() => setEditingHubId(null)}>Cancel</Button>
+                      </Stack>
+                    ) : (
+                      <MutationIconButton
+                        size="small"
+                        tooltip="Edit on-hand quantity"
+                        onClick={() => { setEditingHubId(row.hubId); setEditQty(String(row.quantity)) }}
+                      >
+                        <EditIcon fontSize="small" />
+                      </MutationIconButton>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      )}
+
+      {moveOpen && (
+        <MoveStockDialog
+          itemId={itemId}
+          hubs={hubs}
+          stock={stock}
+          onClose={() => setMoveOpen(false)}
+          onSuccess={() => { setMoveOpen(false); loadStock(); onUpdated() }}
+        />
+      )}
+    </Box>
   )
 }
 
@@ -498,12 +646,9 @@ function DetailDrawer({
                   </Alert>
                 )}
                 {damagePhotos.length > 0 && (
-                  <Stack direction="row" spacing={1} flexWrap="wrap" mb={2}>
-                    {damagePhotos.map((p) => (
-                      <Box key={p.id} component="img" src={p.url} alt="damage"
-                        sx={{ width: 80, height: 80, objectFit: 'cover', borderRadius: 1, border: '1px solid', borderColor: 'divider' }} />
-                    ))}
-                  </Stack>
+                  <Box mb={2}>
+                    <PhotoGallery photos={damagePhotos.map((p) => ({ id: p.id, url: p.url, context: p.context }))} />
+                  </Box>
                 )}
 
                 <Box display="grid" gridTemplateColumns="1fr 1fr" gap={1.5} mb={3}>
@@ -554,6 +699,10 @@ function DetailDrawer({
                     </Box>
                   )}
                 </Box>
+
+                {detail.itemType === 'CONSUMABLE' && (
+                  <StockByHubSection itemId={detail.id} hubs={hubs} onUpdated={() => { loadDetail(detail.id); onUpdated() }} />
+                )}
 
                 {detail.unitCounts.checkedOut > 0 && (
                   <Box mb={2}>
@@ -992,13 +1141,13 @@ export default function AdminInventoryPage() {
                       </Typography>
                     </TableCell>
                     <TableCell align="center">
-                      <Chip size="small" label={item.unitCounts?.available ?? 0} color="success" variant="outlined" />
+                      <Chip size="small" label={item.itemType === 'CONSUMABLE' ? (item.availableQuantity ?? 0) : (item.unitCounts?.available ?? 0)} color="success" variant="outlined" />
                     </TableCell>
                     <TableCell align="center">
                       <Chip size="small" label={item.unitCounts?.checkedOut ?? 0} color={item.unitCounts?.checkedOut > 0 ? 'info' : 'default'} variant="outlined" />
                     </TableCell>
                     <TableCell align="center">
-                      <Typography variant="body2">{item.unitCounts?.totalUnits ?? item.quantity ?? 0}</Typography>
+                      <Typography variant="body2">{item.itemType === 'CONSUMABLE' ? (item.derivedQuantity ?? item.quantity ?? 0) : (item.unitCounts?.totalUnits ?? 0)}</Typography>
                     </TableCell>
                     <TableCell align="right" onClick={(e) => e.stopPropagation()}>
                       <Stack direction="row" spacing={0.5} justifyContent="flex-end">

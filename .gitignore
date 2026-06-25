@@ -40,3 +40,6 @@ Thumbs.db
 
 
 google-creds.json
+
+# Claude Code local settings
+.claude/

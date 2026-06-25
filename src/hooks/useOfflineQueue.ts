@@ -2,6 +2,8 @@
 
 import * as React from 'react'
 import type { OfflineQueueItem, MutateResult } from '@/types'
+import { resolvePhotoRefs } from '@/lib/photoStore'
+import { extractCreatedId, itemReferencesPlaceholder, remapPlaceholderId } from '@/lib/offline-remap'
 
 const DB_NAME = 'ahits_offline'
 const STORE = 'queue'
@@ -57,8 +59,16 @@ function extractError(body: unknown): string {
   if (!body || typeof body !== 'object') return 'Request failed'
   const b = body as Record<string, unknown>
   if (typeof b.error === 'string') return b.error
-  const fe = (b.error as { formErrors?: string[] } | undefined)?.formErrors
-  if (fe?.[0]) return fe[0]
+  // zod flatten() shape: surface a top-level formError, else the first
+  // field-level message (e.g. "Note is required") so validation failures aren't
+  // swallowed into a generic "Request failed".
+  const err = b.error as { formErrors?: string[]; fieldErrors?: Record<string, string[] | undefined> } | undefined
+  if (err?.formErrors?.[0]) return err.formErrors[0]
+  if (err?.fieldErrors) {
+    for (const msgs of Object.values(err.fieldErrors)) {
+      if (msgs?.[0]) return msgs[0]
+    }
+  }
   return 'Request failed'
 }
 
@@ -111,29 +121,59 @@ export function useOfflineQueue() {
       const items = await getAllItems(db)
       for (const item of items) {
         if (item.status === 'failed' || item.id == null) continue
+        // Upload any pending local photos and swap their `localphoto:` refs for
+        // real URLs before sending. No-op for writes without photos.
+        let work = item
+        try {
+          const body = await resolvePhotoRefs(item.body)
+          if (body !== item.body) {
+            work = { ...item, body }
+            await putItem(db, work) // persist so a later retry doesn't re-upload
+          }
+        } catch {
+          // Photos can't upload yet (still offline) — stop; retry next cycle.
+          break
+        }
         let res: Response
         try {
           const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-          if (item.idempotencyKey) headers['Idempotency-Key'] = item.idempotencyKey
-          res = await fetch(item.endpoint, {
-            method: item.method,
+          if (work.idempotencyKey) headers['Idempotency-Key'] = work.idempotencyKey
+          res = await fetch(work.endpoint, {
+            method: work.method,
             headers,
-            body: item.body !== undefined ? JSON.stringify(item.body) : undefined,
+            body: work.body !== undefined ? JSON.stringify(work.body) : undefined,
           })
         } catch {
           // Network dropped mid-flush — stop; the rest stay pending for next time.
           break
         }
         if (res.ok) {
+          // M1-9: if this was a queued create with a placeholder id, read the
+          // real server id from the response and rewrite every later queued
+          // item that referenced the placeholder, so dependent offline writes
+          // (e.g. add-items to a just-created deployment) target the real id.
+          if (work.placeholderId) {
+            const created = await res.json().catch(() => null)
+            const realId = extractCreatedId(created)
+            if (realId) {
+              const all = await getAllItems(db)
+              for (const other of all) {
+                if (other.id == null || other.id === item.id) continue
+                if (itemReferencesPlaceholder(other, work.placeholderId)) {
+                  await putItem(db, remapPlaceholderId(other, work.placeholderId, realId))
+                }
+              }
+            }
+          }
           await deleteItem(db, item.id)
         } else if (TERMINAL_STATUSES.has(res.status)) {
           const errBody = await res.json().catch(() => ({}))
-          await putItem(db, { ...item, status: 'failed', lastError: extractError(errBody) })
+          await putItem(db, { ...work, status: 'failed', lastError: extractError(errBody) })
         } else {
           // 5xx / 408 / 429 — transient; retry up to the cap.
-          const retries = (item.retries ?? 0) + 1
+          const retries = (work.retries ?? 0) + 1
           await putItem(db, {
-            ...item,
+            ...work,
             retries,
             ...(retries >= MAX_RETRIES ? { status: 'failed' as const, lastError: `Failed after ${MAX_RETRIES} attempts` } : {}),
           })
@@ -177,14 +217,30 @@ export function useOfflineQueue() {
       method?: OfflineQueueItem['method']
       body?: unknown
       label?: string
+      /**
+       * M1-9: when this write CREATES a resource other queued writes depend on,
+       * pass the client-generated placeholder id used in their endpoints/bodies.
+       * On offline replay the real id is read from the response and remapped.
+       */
+      placeholderId?: string
     }): Promise<MutateResult<T>> => {
       const method = args.method ?? 'POST'
       const idempotencyKey = newKey()
+      // Upload any locally-stored photos now (online) and swap their
+      // `localphoto:` refs for real URLs. If this throws (offline / upload
+      // failed) we keep the original body — its local refs and stored blobs are
+      // preserved, and flush() resolves them on reconnect.
+      let body = args.body
+      try {
+        body = await resolvePhotoRefs(args.body)
+      } catch {
+        body = args.body
+      }
       try {
         const res = await fetch(args.endpoint, {
           method,
           headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
-          body: args.body === undefined ? undefined : JSON.stringify(args.body),
+          body: body === undefined ? undefined : JSON.stringify(body),
         })
         if (res.ok) {
           const data = (await res.json().catch(() => null)) as T
@@ -193,7 +249,7 @@ export function useOfflineQueue() {
         const errBody = await res.json().catch(() => ({}))
         return { ok: false, queued: false, error: extractError(errBody), status: res.status }
       } catch {
-        await enqueue({ endpoint: args.endpoint, method, body: args.body, idempotencyKey, label: args.label })
+        await enqueue({ endpoint: args.endpoint, method, body, idempotencyKey, label: args.label, placeholderId: args.placeholderId })
         return { ok: true, queued: true, data: null }
       }
     },

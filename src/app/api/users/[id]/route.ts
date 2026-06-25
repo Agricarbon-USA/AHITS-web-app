@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
 import { hashPin } from '@/lib/auth/pin'
 import { writeAudit, type AuditAction } from '@/lib/audit'
+import { pinSchema, money } from '@/lib/validation'
 
 // Account-management actions for a single user (Wave 2A.5 §B). A strict,
 // whitelisted schema — no mass-assignment.
@@ -13,8 +14,8 @@ const patchSchema = z
     role: z.enum(['ADMIN', 'OPERATOR']),
     isActive: z.boolean(),
     homeHubId: z.string().nullable(),
-    hourlyRate: z.number().nullable(),
-    pin: z.string().length(6).regex(/^\d{6}$/), // reset PIN
+    hourlyRate: money().nullable(),
+    pin: pinSchema, // reset PIN
     unlockPin: z.boolean(), // clear lockout
     forceLogout: z.boolean(), // revoke all active sessions
   })
@@ -35,6 +36,20 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!target) return NextResponse.json({ error: 'User not found' }, { status: 404 })
 
   const { pin, unlockPin, forceLogout, role, isActive, homeHubId, hourlyRate, name } = parsed.data
+
+  // Guardrail: an admin cannot suspend, demote, or force-logout their OWN
+  // account (CR-7). Self-suspend/self-demote bumps tokenVersion and instantly
+  // locks the actor out mid-session; route these through another admin instead.
+  const isSelf = id === session.userId
+  const selfDemote = isSelf && role === 'OPERATOR'
+  const selfDeactivate = isSelf && isActive === false
+  const selfForceLogout = isSelf && forceLogout === true
+  if (selfDemote || selfDeactivate || selfForceLogout) {
+    return NextResponse.json(
+      { error: 'You cannot suspend, demote, or force-logout your own account.' },
+      { status: 400 },
+    )
+  }
 
   // Guardrail: never demote, deactivate, or otherwise remove the LAST active
   // admin — that would lock the whole org out.

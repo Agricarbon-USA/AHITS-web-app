@@ -17,13 +17,24 @@ interface AppShellProps {
   nav: React.ReactNode
   children: React.ReactNode
   title?: string
+  /** Optional header controls (e.g. the admin notification bell), shown left of the sync indicator. */
+  headerActions?: React.ReactNode
 }
 
-export function AppShell({ nav, children, title = 'AHITS' }: AppShellProps) {
+export function AppShell({ nav, children, title = 'AHITS', headerActions }: AppShellProps) {
   const theme = useTheme()
   const isMobile = useMediaQuery(theme.breakpoints.down('md'))
   const [drawerOpen, setDrawerOpen] = React.useState(false)
+  const [mounted, setMounted] = React.useState(false)
   const { pending, isOffline, syncing } = useOfflineQueue()
+
+  React.useEffect(() => setMounted(true), [])
+
+  // MUI v6 useMediaQuery uses useSyncExternalStore — the client reads the real
+  // window.matchMedia value immediately during hydration while the server always
+  // produces false. Gate behind mounted so the first client render matches the
+  // server-rendered HTML and avoids React #418.
+  const effectiveIsMobile = mounted && isMobile
 
   const drawer = (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -39,13 +50,14 @@ export function AppShell({ nav, children, title = 'AHITS' }: AppShellProps) {
     <Box sx={{ display: 'flex', minHeight: '100vh' }}>
       <AppBar position="fixed" sx={{ zIndex: theme.zIndex.drawer + 1 }}>
         <Toolbar>
-          {isMobile && (
+          {effectiveIsMobile && (
             <IconButton color="inherit" edge="start" onClick={() => setDrawerOpen(true)} sx={{ mr: 2 }}>
               <MenuIcon />
             </IconButton>
           )}
           <Typography variant="h6" noWrap sx={{ flexGrow: 1 }}>{title}</Typography>
-          {isOffline ? (
+          {headerActions}
+          {mounted && (isOffline ? (
             <Tooltip title={`Offline — ${pending} action(s) queued`}>
               <Badge badgeContent={pending || undefined} color="warning">
                 <WifiOffIcon />
@@ -61,19 +73,19 @@ export function AppShell({ nav, children, title = 'AHITS' }: AppShellProps) {
                 <CloudSyncIcon />
               </Badge>
             </Tooltip>
-          ) : null}
+          ) : null)}
         </Toolbar>
       </AppBar>
 
       {/* Desktop permanent drawer */}
-      {!isMobile && (
+      {!effectiveIsMobile && (
         <Drawer variant="permanent" sx={{ width: DRAWER_WIDTH, '& .MuiDrawer-paper': { width: DRAWER_WIDTH, boxSizing: 'border-box' } }}>
           {drawer}
         </Drawer>
       )}
 
       {/* Mobile temporary drawer */}
-      {isMobile && (
+      {effectiveIsMobile && (
         <Drawer variant="temporary" open={drawerOpen} onClose={() => setDrawerOpen(false)}
           sx={{ '& .MuiDrawer-paper': { width: DRAWER_WIDTH } }}>
           {drawer}
