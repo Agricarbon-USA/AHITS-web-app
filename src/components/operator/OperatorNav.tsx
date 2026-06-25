@@ -22,18 +22,20 @@ export function OperatorNav() {
   const pathname = usePathname()
   const router = useRouter()
   const { logout, user } = useAuth()
-  const [pendingTransfers, setPendingTransfers] = React.useState(0)
+  const [pendingCount, setPendingCount] = React.useState(0)
 
-  // Poll incoming pending transfers so the My Rig item carries a live badge —
-  // operators previously only learned of transfers by opening My Rig.
+  // Poll incoming pending transfers + handoffs so the My Rig item carries a live badge.
   React.useEffect(() => {
     let active = true
     const load = async () => {
       try {
-        const res = await fetch('/api/transfers?status=PENDING&direction=incoming')
-        if (!res.ok) return
-        const d = await res.json()
-        if (active) setPendingTransfers(Array.isArray(d) ? d.length : 0)
+        const [tRes, hRes] = await Promise.all([
+          fetch('/api/transfers?status=PENDING&direction=incoming'),
+          fetch('/api/handoffs?status=PENDING&direction=incoming'),
+        ])
+        const transfers = tRes.ok ? await tRes.json() : []
+        const handoffs = hRes.ok ? await hRes.json() : []
+        if (active) setPendingCount((Array.isArray(transfers) ? transfers.length : 0) + (Array.isArray(handoffs) ? handoffs.length : 0))
       } catch {
         /* offline / transient — keep last known count */
       }
@@ -57,7 +59,7 @@ export function OperatorNav() {
           >
             <ListItemIcon sx={{ minWidth: 36 }}>
               {href === '/operator/my-rig' ? (
-                <Badge badgeContent={pendingTransfers || undefined} color="error">
+                <Badge badgeContent={pendingCount || undefined} color="error">
                   <Icon fontSize="small" />
                 </Badge>
               ) : (
