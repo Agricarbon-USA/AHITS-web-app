@@ -51,6 +51,10 @@ interface LineRow {
   denyReason?: string | null
   availableUnits?: { id: string; serialNumber: string | null }[]
   substitutableItems?: { id: string; name: string; availableAtHub: boolean }[]
+  // F2 ship-to fields
+  shipToHubId?: string | null
+  shipToAddress?: string | null
+  shipToHubName?: string | null
 }
 
 interface HubOption { id: string; name: string; city: string; state: string }
@@ -373,8 +377,15 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
                   <Stack spacing={0.5}>
                     {lines.map((l) => (
                       <Stack key={l.id} direction="row" justifyContent="space-between" sx={{ fontSize: 13, color: 'text.secondary' }}>
-                        <span>{lineDisplayName(l)}</span>
-                        <span>×{l.requestedQty}</span>
+                        <Box sx={{ minWidth: 0 }}>
+                          <span>{lineDisplayName(l)}</span>
+                          {l.lineType === 'SHIPPING_LABEL' && (l.shipToHubName ?? l.shipToAddress) && (
+                            <Typography variant="caption" display="block" color="text.secondary">
+                              Ship to: {l.shipToHubName ?? l.shipToAddress}
+                            </Typography>
+                          )}
+                        </Box>
+                        <span style={{ flexShrink: 0, marginLeft: 8 }}>×{l.requestedQty}</span>
                       </Stack>
                     ))}
                   </Stack>

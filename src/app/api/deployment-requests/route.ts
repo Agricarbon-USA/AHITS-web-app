@@ -20,6 +20,8 @@ const lineSchema = z
     specificInventoryUnitId: z.string().optional().nullable(),
     description: z.string().trim().max(500).optional().nullable(),
     reorderUrl: z.string().trim().max(1000).optional().nullable(),
+    shipToHubId: z.string().optional().nullable(),
+    shipToAddress: z.string().trim().max(500).optional().nullable(),
   })
   .refine(
     (l) => {
@@ -81,6 +83,8 @@ export async function POST(req: NextRequest) {
         specificInventoryUnitId: l.specificInventoryUnitId ?? null,
         description: l.description ?? null,
         reorderUrl: l.reorderUrl ?? null,
+        shipToHubId: l.shipToHubId ?? null,
+        shipToAddress: l.shipToAddress ?? null,
       })),
     },
     session.userId,

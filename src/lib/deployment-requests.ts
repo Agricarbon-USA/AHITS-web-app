@@ -34,6 +34,8 @@ export interface RequestLineInput {
   specificInventoryUnitId?: string | null
   description?: string | null
   reorderUrl?: string | null
+  shipToHubId?: string | null
+  shipToAddress?: string | null
 }
 
 export interface CreateRequestInput {
@@ -149,6 +151,10 @@ interface LineRow {
   resolvedUnitId: string | null
   resolvedVehicleId: string | null
   denyReason: string | null
+  // F2 ship-to fields
+  shipToHubId: string | null
+  shipToAddress: string | null
+  shipToHubName: string | null
 }
 
 /** List requests (newest first). Optionally scope to one requester (operators see their own). */
@@ -206,31 +212,62 @@ export async function getRequest(id: string): Promise<{ request: RequestRow; lin
   `
   const request = rows[0]
   if (!request) return null
-  const lines = await prisma.$queryRaw<LineRow[]>`
-    SELECT l."id", l."lineType"::text AS "lineType", l."categoryId", c."name" AS "categoryName",
-           l."itemType", l."vehicleType"::text AS "vehicleType", l."requestedQty",
-           l."specificInventoryItemId", l."specificInventoryUnitId", l."description", l."reorderUrl",
-           ii."name" AS "specificItemName",
-           v."name" AS "specificVehicleName",
-           iu."serialNumber" AS "specificUnitSerial",
-           l."fulfillmentStatus", l."fulfilledQty", l."denyReason",
-           l."substitutedItemId", si."name" AS "substitutedName",
-           l."resolvedUnitId", l."resolvedVehicleId"
-    FROM "deployment_request_lines" l
-    LEFT JOIN "categories" c ON c."id" = l."categoryId"
-    LEFT JOIN "inventory_items" ii ON ii."id" = l."specificInventoryItemId"
-    LEFT JOIN "inventory_items" si ON si."id" = l."substitutedItemId"
-    LEFT JOIN "vehicles" v ON v."id" = l."specificVehicleId"
-    LEFT JOIN "inventory_units" iu ON iu."id" = l."specificInventoryUnitId"
-    WHERE l."requestId" = ${id}
-    ORDER BY l."createdAt" ASC
-  `
+  let lines: LineRow[]
+  try {
+    lines = await prisma.$queryRaw<LineRow[]>`
+      SELECT l."id", l."lineType"::text AS "lineType", l."categoryId", c."name" AS "categoryName",
+             l."itemType", l."vehicleType"::text AS "vehicleType", l."requestedQty",
+             l."specificInventoryItemId", l."specificInventoryUnitId", l."description", l."reorderUrl",
+             ii."name" AS "specificItemName",
+             v."name" AS "specificVehicleName",
+             iu."serialNumber" AS "specificUnitSerial",
+             l."fulfillmentStatus", l."fulfilledQty", l."denyReason",
+             l."substitutedItemId", si."name" AS "substitutedName",
+             l."resolvedUnitId", l."resolvedVehicleId",
+             l."shipToHubId", l."shipToAddress", sh."name" AS "shipToHubName"
+      FROM "deployment_request_lines" l
+      LEFT JOIN "categories" c ON c."id" = l."categoryId"
+      LEFT JOIN "inventory_items" ii ON ii."id" = l."specificInventoryItemId"
+      LEFT JOIN "inventory_items" si ON si."id" = l."substitutedItemId"
+      LEFT JOIN "vehicles" v ON v."id" = l."specificVehicleId"
+      LEFT JOIN "inventory_units" iu ON iu."id" = l."specificInventoryUnitId"
+      LEFT JOIN "hubs" sh ON sh."id" = l."shipToHubId"
+      WHERE l."requestId" = ${id}
+      ORDER BY l."createdAt" ASC
+    `
+  } catch {
+    // Pre-migration DB: fall back to query without F2 columns
+    const base = await prisma.$queryRaw<Omit<LineRow, 'shipToHubId' | 'shipToAddress' | 'shipToHubName'>[]>`
+      SELECT l."id", l."lineType"::text AS "lineType", l."categoryId", c."name" AS "categoryName",
+             l."itemType", l."vehicleType"::text AS "vehicleType", l."requestedQty",
+             l."specificInventoryItemId", l."specificInventoryUnitId", l."description", l."reorderUrl",
+             ii."name" AS "specificItemName",
+             v."name" AS "specificVehicleName",
+             iu."serialNumber" AS "specificUnitSerial",
+             l."fulfillmentStatus", l."fulfilledQty", l."denyReason",
+             l."substitutedItemId", si."name" AS "substitutedName",
+             l."resolvedUnitId", l."resolvedVehicleId"
+      FROM "deployment_request_lines" l
+      LEFT JOIN "categories" c ON c."id" = l."categoryId"
+      LEFT JOIN "inventory_items" ii ON ii."id" = l."specificInventoryItemId"
+      LEFT JOIN "inventory_items" si ON si."id" = l."substitutedItemId"
+      LEFT JOIN "vehicles" v ON v."id" = l."specificVehicleId"
+      LEFT JOIN "inventory_units" iu ON iu."id" = l."specificInventoryUnitId"
+      WHERE l."requestId" = ${id}
+      ORDER BY l."createdAt" ASC
+    `
+    lines = base.map((l) => ({ ...l, shipToHubId: null, shipToAddress: null, shipToHubName: null }))
+  }
   return { request, lines, requestedById: request.requestedById }
 }
 
 export async function createRequest(input: CreateRequestInput, requestedById: string): Promise<string> {
   const id = randomUUID()
   const requestType = input.requestType ?? 'RESERVATION'
+  // Track lineId → ship-to for best-effort post-insert update (F2 columns are
+  // additive; the try/catch keeps this deploy-safe against a pre-migration DB).
+  const lineShipTo: { lineId: string; shipToHubId: string | null; shipToAddress: string | null }[] = []
+
   await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`
       INSERT INTO "deployment_requests"
@@ -242,12 +279,14 @@ export async function createRequest(input: CreateRequestInput, requestedById: st
               ${input.fulfillerHubId ?? null}, ${input.fulfillerOperatorId ?? null})
     `
     for (const line of input.lines) {
+      const lineId = randomUUID()
+      lineShipTo.push({ lineId, shipToHubId: line.shipToHubId ?? null, shipToAddress: line.shipToAddress ?? null })
       await tx.$executeRaw`
         INSERT INTO "deployment_request_lines"
           ("id", "requestId", "lineType", "categoryId", "itemType", "vehicleType", "requestedQty",
            "specificInventoryItemId", "specificVehicleId",
            "specificInventoryUnitId", "description", "reorderUrl")
-        VALUES (${randomUUID()}, ${id}, ${line.lineType}::"RequestLineType",
+        VALUES (${lineId}, ${id}, ${line.lineType}::"RequestLineType",
                 ${line.categoryId ?? null}, ${line.itemType ?? null},
                 ${line.vehicleType ?? null}::"VehicleType",
                 ${Math.max(1, Math.floor(line.requestedQty || 1))},
@@ -256,6 +295,18 @@ export async function createRequest(input: CreateRequestInput, requestedById: st
       `
     }
   })
+
+  // F2: persist ship-to fields after the transaction (deploy-safe — pre-migration DB ignores silently).
+  for (const { lineId, shipToHubId, shipToAddress } of lineShipTo) {
+    if (shipToHubId !== null || shipToAddress !== null) {
+      await prisma.$executeRaw`
+        UPDATE "deployment_request_lines"
+        SET "shipToHubId" = ${shipToHubId}, "shipToAddress" = ${shipToAddress}
+        WHERE "id" = ${lineId}
+      `.catch(() => {})
+    }
+  }
+
   return id
 }
 

@@ -221,6 +221,11 @@ model Hub {
   // Read/written via raw SQL (lib/status-links, /api/hubs) so it needs no
   // generated-client coupling.
   email            String?
+  // F2: optional postal address for Shippo label generation (raw SQL — no generated-client coupling).
+  street1          String?
+  street2          String?
+  zip              String?
+  country          String?           @default("US")
   isActive         Boolean           @default(true)
   createdAt        DateTime          @default(now())
   items            InventoryItem[]
@@ -982,6 +987,9 @@ model DeploymentRequestLine {
   fulfilledQty            Int?
   substitutedItemId       String?
   denyReason              String?
+  // F2: shipping-label ship-to (raw SQL — no generated-client coupling).
+  shipToHubId             String?
+  shipToAddress           String?
   createdAt               DateTime        @default(now())
 
   @@index([requestId])
@@ -1089,4 +1097,41 @@ model DeploymentHandoff {
   @@index([toOperatorId])
   @@index([rigId])
   @@map("deployment_handoffs")
+}
+
+// ── F2: Shippo groundwork ─────────────────────────────────────────────────────
+// Polymorphic shipment tracker — scalar FK columns, no @relation, raw-SQL only.
+// Dormant in this slice (imported by nothing live). The four subject FKs mirror
+// the StatusLink pattern: at most one is populated per row.
+
+enum ShipmentStatus {
+  UNKNOWN
+  PRE_TRANSIT
+  TRANSIT
+  DELIVERED
+  RETURNED
+  FAILURE
+}
+
+model Shipment {
+  id                      String         @id @default(cuid())
+  carrier                 String?
+  trackingNumber          String?
+  status                  ShipmentStatus @default(UNKNOWN)
+  labelUrl                String?
+  estimatedDelivery       DateTime?
+  maintenanceTaskId       String?
+  inventoryUnitId         String?
+  deploymentRequestLineId String?
+  hubId                   String?
+  createdAt               DateTime       @default(now())
+  updatedAt               DateTime       @default(now())
+
+  @@index([status])
+  @@index([trackingNumber])
+  @@index([maintenanceTaskId])
+  @@index([inventoryUnitId])
+  @@index([deploymentRequestLineId])
+  @@index([hubId])
+  @@map("shipments")
 }
