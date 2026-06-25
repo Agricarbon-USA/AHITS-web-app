@@ -17,6 +17,7 @@ import StopCircleIcon from '@mui/icons-material/StopCircle'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner'
 import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline'
+import GroupIcon from '@mui/icons-material/Group'
 import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
 import { TransferDialog } from '@/components/shared/TransferDialog'
 import { DispositionDialog, KitItemSummary } from '@/components/shared/DispositionDialog'
@@ -126,6 +127,23 @@ interface TransferRow {
   initiatedBy: { id: string; name: string }
   vehicles: { id: string; vehicle: { id: string; name: string; type: string } }[]
   items: { id: string; quantity: number | null; kitItem: { id: string; quantity: number; item: { id: string; name: string } } }[]
+}
+
+interface HandoffRow {
+  id: string
+  rigId: string
+  fromOperatorId: string
+  toOperatorId: string
+  initiatedById: string
+  status: string
+  note: string
+  responseNote: string | null
+  respondedAt: string | null
+  createdAt: string
+  updatedAt: string
+  fromOperatorName: string | null
+  toOperatorName: string | null
+  initiatedByName: string | null
 }
 
 // Transfer Dialog now lives in components/shared/TransferDialog.tsx (UX-5).
@@ -450,6 +468,19 @@ export default function MyRigPage() {
   const [cancelTransferId, setCancelTransferId] = React.useState<string | null>(null)
   const [cancelLoading, setCancelLoading] = React.useState(false)
 
+  // Handoffs
+  const [incomingHandoffs, setIncomingHandoffs] = React.useState<HandoffRow[]>([])
+  const [outgoingHandoffs, setOutgoingHandoffs] = React.useState<HandoffRow[]>([])
+  const [handoffRespondDialog, setHandoffRespondDialog] = React.useState<{ handoff: HandoffRow; action: 'accept' | 'decline' } | null>(null)
+  const [handoffResponseNote, setHandoffResponseNote] = React.useState('')
+  const [handoffRespondLoading, setHandoffRespondLoading] = React.useState(false)
+  const [cancelHandoffId, setCancelHandoffId] = React.useState<string | null>(null)
+  const [cancelHandoffLoading, setCancelHandoffLoading] = React.useState(false)
+  const [handoffOpen, setHandoffOpen] = React.useState(false)
+  const [handoffTargetId, setHandoffTargetId] = React.useState('')
+  const [handoffNote, setHandoffNote] = React.useState('')
+  const [handoffLoading, setHandoffLoading] = React.useState(false)
+
   // Vehicle remove
   const [removingVehicles, setRemovingVehicles] = React.useState(false)
   const [selVehicles, setSelVehicles] = React.useState<Set<string>>(new Set())
@@ -486,12 +517,16 @@ export default function MyRigPage() {
 
 
   const loadTransfers = React.useCallback(async () => {
-    const [inRes, outRes] = await Promise.all([
+    const [inRes, outRes, inHRes, outHRes] = await Promise.all([
       fetch('/api/transfers?status=PENDING&direction=incoming'),
       fetch('/api/transfers?status=PENDING&direction=outgoing'),
+      fetch('/api/handoffs?status=PENDING&direction=incoming'),
+      fetch('/api/handoffs?status=PENDING&direction=outgoing'),
     ])
     if (inRes.ok) setIncomingTransfers(await inRes.json())
     if (outRes.ok) setOutgoingTransfers(await outRes.json())
+    if (inHRes.ok) setIncomingHandoffs(await inHRes.json())
+    if (outHRes.ok) setOutgoingHandoffs(await outHRes.json())
   }, [])
 
   const load = React.useCallback(async () => {
@@ -566,6 +601,90 @@ export default function MyRigPage() {
       showToast({ message: 'Network error. Please try again.', severity: 'error' })
     } finally {
       setCancelLoading(false)
+    }
+  }
+
+  const handleHandoffRespond = async () => {
+    if (!handoffRespondDialog) return
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      showToast({ message: "Responding to a handoff needs an internet connection. Try again once you're back online.", severity: 'warning' })
+      return
+    }
+    setHandoffRespondLoading(true)
+    const { handoff, action } = handoffRespondDialog
+    try {
+      const res = await fetch(`/api/handoffs/${handoff.id}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ responseNote: handoffResponseNote || undefined }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        showToast({ message: typeof d.error === 'string' ? d.error : `Could not ${action} the handoff.`, severity: 'error' })
+        return
+      }
+      showToast({ message: action === 'accept' ? 'Handoff accepted. You are now the primary operator.' : 'Handoff declined.', severity: 'success' })
+      setHandoffRespondDialog(null)
+      setHandoffResponseNote('')
+      await load()
+    } catch {
+      showToast({ message: 'Network error. Please try again.', severity: 'error' })
+    } finally {
+      setHandoffRespondLoading(false)
+    }
+  }
+
+  const handleHandoffCancel = async () => {
+    if (!cancelHandoffId) return
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      showToast({ message: "Cancelling a handoff needs an internet connection. Try again once you're back online.", severity: 'warning' })
+      return
+    }
+    setCancelHandoffLoading(true)
+    try {
+      const res = await fetch(`/api/handoffs/${cancelHandoffId}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not cancel the handoff.', severity: 'error' })
+        return
+      }
+      showToast({ message: 'Handoff cancelled.', severity: 'success' })
+      setCancelHandoffId(null)
+      await loadTransfers()
+    } catch {
+      showToast({ message: 'Network error. Please try again.', severity: 'error' })
+    } finally {
+      setCancelHandoffLoading(false)
+    }
+  }
+
+  const handleHandoffInitiate = async () => {
+    if (!rig || !handoffTargetId || !handoffNote.trim()) return
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      showToast({ message: 'Initiating a handoff needs an internet connection.', severity: 'warning' })
+      return
+    }
+    setHandoffLoading(true)
+    try {
+      const res = await fetch(`/api/deployments/${rig.id}/handoff`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ toOperatorId: handoffTargetId, note: handoffNote }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not initiate handoff.', severity: 'error' })
+        return
+      }
+      showToast({ message: 'Handoff request sent.', severity: 'success' })
+      setHandoffOpen(false)
+      setHandoffTargetId('')
+      setHandoffNote('')
+      await loadTransfers()
+    } catch {
+      showToast({ message: 'Network error. Please try again.', severity: 'error' })
+    } finally {
+      setHandoffLoading(false)
     }
   }
 
@@ -712,6 +831,30 @@ export default function MyRigPage() {
   if (!rig) {
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', pt: 10 }}>
+        {incomingHandoffs.map((h) => (
+          <Alert
+            key={h.id}
+            severity="info"
+            sx={{ mb: 1.5, width: '100%', alignItems: 'flex-start' }}
+            action={
+              <Stack direction="row" spacing={1} sx={{ mt: -0.5 }}>
+                <Button size="small" color="error" variant="outlined"
+                  onClick={() => { setHandoffRespondDialog({ handoff: h, action: 'decline' }); setHandoffResponseNote('') }}>
+                  Decline
+                </Button>
+                <Button size="small" color="success" variant="contained"
+                  onClick={() => { setHandoffRespondDialog({ handoff: h, action: 'accept' }); setHandoffResponseNote('') }}>
+                  Accept
+                </Button>
+              </Stack>
+            }
+          >
+            <Typography variant="body2" fontWeight={600}>
+              Deployment Handoff from {h.fromOperatorName}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">&ldquo;{h.note}&rdquo;</Typography>
+          </Alert>
+        ))}
         <LocalShippingIcon sx={{ fontSize: 72, color: 'text.disabled', mb: 2 }} />
         <Typography variant="h6" color="text.secondary">No active deployment</Typography>
         <Typography variant="body2" color="text.secondary" mb={3}>
@@ -730,12 +873,82 @@ export default function MyRigPage() {
             onSuccess={load}
           />
         )}
+
+        {/* Handoff respond dialog (accessible when operator has no rig — they're the recipient) */}
+        <Dialog open={!!handoffRespondDialog} onClose={() => setHandoffRespondDialog(null)} maxWidth="xs" fullWidth>
+          <DialogTitle>{handoffRespondDialog?.action === 'accept' ? 'Accept Handoff' : 'Decline Handoff'}</DialogTitle>
+          <DialogContent>
+            {handoffRespondDialog?.action === 'accept' && (
+              <Typography variant="body2" color="text.secondary" mb={1.5}>
+                You will become the primary operator for this deployment.
+              </Typography>
+            )}
+            <TextField
+              label="Response note (optional)"
+              value={handoffResponseNote}
+              onChange={(e) => setHandoffResponseNote(e.target.value)}
+              multiline rows={2} fullWidth sx={{ mt: 1 }}
+            />
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2 }}>
+            <Button onClick={() => setHandoffRespondDialog(null)} disabled={handoffRespondLoading}>Cancel</Button>
+            <Button
+              variant="contained"
+              color={handoffRespondDialog?.action === 'accept' ? 'success' : 'error'}
+              onClick={handleHandoffRespond}
+              disabled={handoffRespondLoading}
+              startIcon={handoffRespondLoading ? <CircularProgress size={16} color="inherit" /> : null}
+            >
+              {handoffRespondLoading ? 'Saving…' : handoffRespondDialog?.action === 'accept' ? 'Accept' : 'Decline'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+        <Dialog open={!!cancelHandoffId} onClose={() => setCancelHandoffId(null)} maxWidth="xs" fullWidth>
+          <DialogTitle>Cancel Handoff</DialogTitle>
+          <DialogContent>
+            <Typography>Are you sure you want to cancel this pending handoff request?</Typography>
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2 }}>
+            <Button onClick={() => setCancelHandoffId(null)} disabled={cancelHandoffLoading}>Keep</Button>
+            <Button variant="contained" color="error" onClick={handleHandoffCancel}
+              disabled={cancelHandoffLoading}
+              startIcon={cancelHandoffLoading ? <CircularProgress size={16} color="inherit" /> : null}>
+              {cancelHandoffLoading ? 'Cancelling…' : 'Cancel Handoff'}
+            </Button>
+          </DialogActions>
+        </Dialog>
       </Box>
     )
   }
 
   return (
     <Box>
+      {/* Incoming handoff banners */}
+      {incomingHandoffs.map((h) => (
+        <Alert
+          key={h.id}
+          severity="info"
+          sx={{ mb: 1.5, alignItems: 'flex-start' }}
+          action={
+            <Stack direction="row" spacing={1} sx={{ mt: -0.5 }}>
+              <Button size="small" color="error" variant="outlined"
+                onClick={() => { setHandoffRespondDialog({ handoff: h, action: 'decline' }); setHandoffResponseNote('') }}>
+                Decline
+              </Button>
+              <Button size="small" color="success" variant="contained"
+                onClick={() => { setHandoffRespondDialog({ handoff: h, action: 'accept' }); setHandoffResponseNote('') }}>
+                Accept
+              </Button>
+            </Stack>
+          }
+        >
+          <Typography variant="body2" fontWeight={600}>
+            Deployment Handoff from {h.fromOperatorName}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">&ldquo;{h.note}&rdquo;</Typography>
+        </Alert>
+      ))}
+
       {/* Incoming transfer banners */}
       {incomingTransfers.map((tr) => {
         const vehicleNames = tr.vehicles.map((tv) => tv.vehicle.name).join(', ')
@@ -949,11 +1162,31 @@ export default function MyRigPage() {
         )
       })}
 
+      {/* Outgoing pending handoff notice */}
+      {outgoingHandoffs.map((h) => (
+        <Alert key={h.id} severity="warning" icon={false} sx={{ mb: 1.5 }}
+          action={
+            <Button size="small" color="error" onClick={() => setCancelHandoffId(h.id)}>
+              Cancel Handoff
+            </Button>
+          }
+        >
+          <Typography variant="body2">
+            ⏳ Waiting for <strong>{h.toOperatorName}</strong> to accept your deployment handoff
+          </Typography>
+          <Typography variant="caption" color="text.secondary">&ldquo;{h.note}&rdquo;</Typography>
+        </Alert>
+      ))}
+
       {/* Action row */}
       <Stack direction="row" spacing={2} alignItems="center">
         <Button variant="outlined" fullWidth startIcon={<SwapHorizIcon />}
           onClick={() => setTransferOpen(true)}>
           Transfer Equipment
+        </Button>
+        <Button variant="outlined" fullWidth startIcon={<GroupIcon />}
+          onClick={() => { setHandoffOpen(true); setHandoffTargetId(''); setHandoffNote('') }}>
+          Hand Off Deployment
         </Button>
         <Button variant="text" color="error" startIcon={<StopCircleIcon />}
           onClick={() => setNoteDialog('end')}>
@@ -1422,6 +1655,86 @@ export default function MyRigPage() {
             disabled={cancelLoading}
             startIcon={cancelLoading ? <CircularProgress size={16} color="inherit" /> : null}>
             {cancelLoading ? 'Cancelling…' : 'Cancel Transfer'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Hand off deployment — initiate dialog */}
+      <Dialog open={handoffOpen} onClose={() => setHandoffOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Hand Off Deployment</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Transfer primary responsibility to another operator. They will need to accept before the handoff takes effect.
+          </Typography>
+          <TextField
+            select label="Hand off to" value={handoffTargetId}
+            onChange={(e) => setHandoffTargetId(e.target.value)} fullWidth sx={{ mb: 2 }}
+          >
+            {operators.filter((o) => o.id !== rig.operator.id).map((o) => (
+              <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>
+            ))}
+          </TextField>
+          <TextField
+            label="Note (required)"
+            value={handoffNote}
+            onChange={(e) => setHandoffNote(e.target.value)}
+            multiline rows={2} fullWidth
+            placeholder="e.g. Heading home — handing off to cover the weekend"
+          />
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setHandoffOpen(false)} disabled={handoffLoading}>Cancel</Button>
+          <Button variant="contained" color="warning"
+            disabled={!handoffTargetId || !handoffNote.trim() || handoffLoading}
+            onClick={handleHandoffInitiate}
+            startIcon={handoffLoading ? <CircularProgress size={16} color="inherit" /> : null}>
+            {handoffLoading ? 'Sending…' : 'Send Handoff Request'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Handoff accept / decline respond dialog */}
+      <Dialog open={!!handoffRespondDialog} onClose={() => setHandoffRespondDialog(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>{handoffRespondDialog?.action === 'accept' ? 'Accept Handoff' : 'Decline Handoff'}</DialogTitle>
+        <DialogContent>
+          {handoffRespondDialog?.action === 'accept' && (
+            <Typography variant="body2" color="text.secondary" mb={1.5}>
+              You will become the primary operator for this deployment.
+            </Typography>
+          )}
+          <TextField
+            label="Response note (optional)"
+            value={handoffResponseNote}
+            onChange={(e) => setHandoffResponseNote(e.target.value)}
+            multiline rows={2} fullWidth sx={{ mt: 1 }}
+          />
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setHandoffRespondDialog(null)} disabled={handoffRespondLoading}>Cancel</Button>
+          <Button
+            variant="contained"
+            color={handoffRespondDialog?.action === 'accept' ? 'success' : 'error'}
+            onClick={handleHandoffRespond}
+            disabled={handoffRespondLoading}
+            startIcon={handoffRespondLoading ? <CircularProgress size={16} color="inherit" /> : null}
+          >
+            {handoffRespondLoading ? 'Saving…' : handoffRespondDialog?.action === 'accept' ? 'Accept' : 'Decline'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Cancel handoff confirm */}
+      <Dialog open={!!cancelHandoffId} onClose={() => setCancelHandoffId(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>Cancel Handoff</DialogTitle>
+        <DialogContent>
+          <Typography>Are you sure you want to cancel this pending handoff request?</Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setCancelHandoffId(null)} disabled={cancelHandoffLoading}>Keep</Button>
+          <Button variant="contained" color="error" onClick={handleHandoffCancel}
+            disabled={cancelHandoffLoading}
+            startIcon={cancelHandoffLoading ? <CircularProgress size={16} color="inherit" /> : null}>
+            {cancelHandoffLoading ? 'Cancelling…' : 'Cancel Handoff'}
           </Button>
         </DialogActions>
       </Dialog>
