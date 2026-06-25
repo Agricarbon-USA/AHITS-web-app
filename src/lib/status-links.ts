@@ -34,6 +34,7 @@ const DEFAULT_EXPIRY_DAYS: Record<StatusLinkType, number> = {
   WORK_ORDER: 30,
   HUB_RETURN: 14,
   INVOICE: 30,
+  RESERVATION: 14,
 }
 
 /** Allowed transition actions per link type (least-privilege whitelist). */
@@ -41,6 +42,7 @@ export const ALLOWED_ACTIONS: Record<StatusLinkType, string[]> = {
   WORK_ORDER: ['RECEIVED', 'IN_PROGRESS', 'COMPLETED', 'INVOICED'],
   HUB_RETURN: ['RECEIVED', 'DISCREPANCY'],
   INVOICE: ['RECEIVED', 'PAID'],
+  RESERVATION: ['CONFIRMED', 'PREPARED', 'DECLINED'],
 }
 
 export interface IssueOptions {
@@ -49,6 +51,7 @@ export interface IssueOptions {
   maintenanceTaskId?: string
   inventoryUnitId?: string
   hubId?: string
+  deploymentRequestId?: string
   recipientEmail?: string
   recipientName?: string
   expiresInDays?: number
@@ -70,6 +73,7 @@ export async function issueStatusLink(
       maintenanceTaskId: opts.maintenanceTaskId ?? null,
       inventoryUnitId: opts.inventoryUnitId ?? null,
       hubId: opts.hubId ?? null,
+      deploymentRequestId: opts.deploymentRequestId ?? null,
       recipientEmail: opts.recipientEmail ?? null,
       recipientName: opts.recipientName ?? null,
       createdById: opts.createdById,

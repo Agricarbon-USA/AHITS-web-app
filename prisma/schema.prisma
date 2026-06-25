@@ -140,6 +140,7 @@ enum AlertType {
   INSURANCE_EXPIRING
   REGISTRATION_EXPIRING
   PIN_LOCKED
+  MATERIAL_REQUEST
 }
 
 enum PhotoContext {
@@ -808,9 +809,10 @@ model NotificationConfig {
 // into AHITS. The raw token is emailed; only its sha256 hash is stored.
 
 enum StatusLinkType {
-  WORK_ORDER // → maintenance shop
-  HUB_RETURN // → hub operator (F-R)
-  INVOICE    // → processor (Phase 3)
+  WORK_ORDER  // → maintenance shop
+  HUB_RETURN  // → hub operator (F-R)
+  INVOICE     // → processor (Phase 3)
+  RESERVATION // → hub portal (R1)
 }
 
 enum StatusLinkState {
@@ -838,6 +840,8 @@ model StatusLink {
   inventoryUnit     InventoryUnit?   @relation(fields: [inventoryUnitId], references: [id])
   hubId             String?
   hub               Hub?             @relation(fields: [hubId], references: [id])
+  deploymentRequestId String?
+  deploymentRequest   DeploymentRequest? @relation(fields: [deploymentRequestId], references: [id])
 
   recipientEmail String?
   recipientName  String?
@@ -857,6 +861,7 @@ model StatusLink {
   @@index([type, state])
   @@index([maintenanceTaskId])
   @@index([inventoryUnitId])
+  @@index([deploymentRequestId])
   @@map("status_links")
 }
 
@@ -893,38 +898,54 @@ model ChecklistTemplate {
 }
 
 // M6 / Addendum §F: Deployment Requests — pre-specify the equipment a deployment
-// needs so a hub fulfiller can stage and reserve it before pickup. THIS SLICE
-// covers create → list → submit → cancel; the staging/reserve step (RESERVED
-// status + resolved* fields) and checkout-conversion into Kit/Rig rows pair with
-// the deployment-model refactor (#29). Accessed via raw SQL (no generated-client
-// coupling) and intentionally declared with scalar FK columns + no @relation so
-// this addition touches no existing model.
+// needs so a hub fulfiller can stage and reserve it before pickup. R1 adds the
+// requestType discriminator (RESERVATION | MATERIAL), lifecycle columns, and the
+// hub-portal StatusLink relation. Accessed via raw SQL (no generated-client
+// coupling for data reads/writes; the StatusLink inverse is schema-only).
+enum DeploymentRequestType {
+  RESERVATION // hub stages kit/vehicle for operator pickup
+  MATERIAL    // operator requests consumable resupply from hub
+}
+
 enum DeploymentRequestStatus {
   DRAFT
   REQUESTED
-  STAGED
-  FULFILLED
-  CANCELLED
+  STAGED     // RESERVATION: hub confirmed, kit being prepared
+  FULFILLED  // terminal success
+  CANCELLED  // terminal cancel
+  FORWARDED  // MATERIAL: assigned to a fulfiller hub/operator
+  DENIED     // terminal decline
 }
 
 enum RequestLineType {
   KIT_ITEM
   VEHICLE
+  NEW_PURCHASE   // MATERIAL: free-text consumable to procure
+  SHIPPING_LABEL // MATERIAL: return shipping for a unit
 }
 
 model DeploymentRequest {
-  id            String                  @id @default(cuid())
-  status        DeploymentRequestStatus @default(DRAFT)
-  label         String?
-  notes         String?
-  neededBy      DateTime?
-  projectId     String?
-  forOperatorId String?
-  requestedById String
-  createdAt     DateTime                @default(now())
-  updatedAt     DateTime                @default(now())
+  id                  String                  @id @default(cuid())
+  status              DeploymentRequestStatus @default(DRAFT)
+  requestType         DeploymentRequestType   @default(RESERVATION)
+  label               String?
+  notes               String?
+  neededBy            DateTime?
+  projectId           String?
+  forOperatorId       String?
+  requestedById       String
+  fulfillerHubId      String?
+  fulfillerOperatorId String?
+  decisionNote        String?
+  decidedAt           DateTime?
+  fulfilledAt         DateTime?
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @default(now())
+
+  statusLinks StatusLink[]
 
   @@index([status])
+  @@index([requestType])
   @@map("deployment_requests")
 }
 
@@ -938,6 +959,9 @@ model DeploymentRequestLine {
   requestedQty            Int             @default(1)
   specificInventoryItemId String?
   specificVehicleId       String?
+  specificInventoryUnitId String?
+  description             String?
+  reorderUrl              String?
   // Set at staging (deferred slice): the concrete unit/vehicle reserved + its
   // door-side condition check.
   resolvedUnitId          String?
