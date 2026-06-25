@@ -24,6 +24,7 @@ import { DispositionDialog, KitItemSummary } from '@/components/shared/Dispositi
 import { RentalVehicleForm, RentalVehicleFields } from '@/components/shared/RentalVehicleForm'
 import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
+import { useAuth } from '@/hooks/useAuth'
 import { groupBy } from '@/lib/utils'
 
 const VEHICLE_TYPE_ORDER = ['TRUCK', 'TRAILER', 'POLARIS_UTV', 'CAN_AM_UTV', 'CHRISTIE_DRILL', 'ATV', 'OTHER']
@@ -165,6 +166,7 @@ function NewDeploymentDialog({
   inventoryItems,
   operators,
   hubs,
+  homeHubId,
   onClose,
   onSuccess,
 }: {
@@ -172,6 +174,7 @@ function NewDeploymentDialog({
   inventoryItems: InventoryOption[]
   operators: UserOption[]
   hubs: HubOption[]
+  homeHubId?: string | null
   onClose: () => void
   onSuccess: () => void
 }) {
@@ -184,8 +187,10 @@ function NewDeploymentDialog({
   const [note, setNote] = React.useState('')
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState('')
-  // Default to first hub on dialog open — hubs are fetched before the dialog mounts.
-  const [sourceHubId, setSourceHubId] = React.useState(() => hubs[0]?.id ?? '')
+  // Prefer operator's home hub if it's in the active hub list; fall back to first hub.
+  const [sourceHubId, setSourceHubId] = React.useState(
+    () => (homeHubId && hubs.some((h) => h.id === homeHubId) ? homeHubId : hubs[0]?.id) ?? '',
+  )
 
   // When hub changes, re-cap consumable quantities that exceed the new hub's available.
   React.useEffect(() => {
@@ -548,6 +553,7 @@ export default function MyRigPage() {
 
   const showToast = useToast()
   const { mutate } = useOfflineQueue()
+  const { user } = useAuth()
   const [newOpen, setNewOpen] = React.useState(false)
   const [transferOpen, setTransferOpen] = React.useState(false)
 
@@ -964,6 +970,7 @@ export default function MyRigPage() {
             inventoryItems={inventoryItems}
             operators={operators}
             hubs={hubs}
+            homeHubId={user?.homeHubId}
             onClose={() => setNewOpen(false)}
             onSuccess={load}
           />
@@ -1212,7 +1219,7 @@ export default function MyRigPage() {
             )}
             <Stack direction="row" spacing={1}>
               <Button size="small" variant="outlined" startIcon={<AddIcon />}
-                onClick={() => { setAddItemOpen(true); if (!addItemSourceHubId) setAddItemSourceHubId(hubs[0]?.id ?? '') }}>
+                onClick={() => { setAddItemOpen(true); if (!addItemSourceHubId) setAddItemSourceHubId((user?.homeHubId && hubs.some((h) => h.id === user.homeHubId) ? user.homeHubId : hubs[0]?.id) ?? '') }}>
                 Add Items
               </Button>
               {kitItems.length > 0 && !removingItems && (
