@@ -8,6 +8,7 @@ import { withIdempotency } from '@/lib/idempotency'
 import { issueHubReturnLinks } from '@/lib/status-links'
 import { filterAllowedPhotoUrls } from '@/lib/photo-security'
 import { endAllAssignmentsForRig, removeAllProjectLinks } from '@/lib/deployment-assignments'
+import { restoreToHub } from '@/lib/inventory-stock'
 
 const dispositionSchema = z.object({
   kitItemId: z.string(),
@@ -49,7 +50,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           items: {
             where: { removedAt: null },
             include: {
-              item: { select: { id: true, name: true, itemType: true } },
+              item: { select: { id: true, name: true, itemType: true, hubId: true } },
               inventoryUnit: true,
             },
           },
@@ -92,9 +93,13 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
       if (disp.type === 'HUB') {
         if (kitItem.item.itemType === 'CONSUMABLE' && (disp.returnCondition ?? 'GOOD') === 'GOOD') {
-          // Restore exactly the stock drawn at check-out (not the held quantity)
-          // when it comes back to the hub usable — full removal at end-of-
-          // deployment, so all remaining drawn stock is restored (CR-1a / N-2).
+          // Restore exactly the stock drawn at check-out (CR-1a / N-2).
+          // Dual-write: per-hub row (MH-1) + cross-hub total (always, so no
+          // stock is lost even for legacy null drawnHubId items).
+          const hubForRestore = kitItem.drawnHubId ?? kitItem.item.hubId
+          if (hubForRestore && kitItem.drawnQuantity > 0) {
+            await restoreToHub(inventoryItemId, hubForRestore, kitItem.drawnQuantity, tx)
+          }
           await tx.inventoryItem.update({
             where: { id: inventoryItemId },
             data: { quantity: { increment: kitItem.drawnQuantity } },

@@ -310,6 +310,10 @@ model KitItem {
   // exactly this — never more — so on-hand can't ratchet above the true total
   // (CR-1a / N-2). 0 for serialized items (tracked by unit status instead).
   drawnQuantity   Int            @default(0)
+  // Hub the drawnQuantity came from; null for serialized items and legacy
+  // consumable draws (pre-MH-1). Returns restore to this hub so stock lands
+  // exactly where it was drawn from.
+  drawnHubId      String?
   inventoryUnitId String?
   kit             Kit            @relation(fields: [kitId], references: [id])
   item            InventoryItem  @relation(fields: [inventoryItemId], references: [id])
@@ -321,6 +325,7 @@ model KitItem {
 
   @@index([kitId])
   @@index([inventoryUnitId])
+  @@index([drawnHubId])
   @@index([removedAt])
   @@map("kit_items")
 }
@@ -457,12 +462,16 @@ model InventoryUnit {
 // CONTRACT slice retires the single-hub assumption. SERIALIZED per-unit location
 // is a separate axis (a future InventoryUnit.hubId), out of scope here.
 model InventoryStock {
-  id        String   @id @default(cuid())
-  itemId    String
-  hubId     String
-  quantity  Int      @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(cuid())
+  itemId      String
+  hubId       String
+  quantity    Int      @default(0)
+  // Reserved counter for Requests R4 (hub-stock hard-reserve). Ships now as
+  // additive column (default 0); not decremented/incremented until R4 wires
+  // staging/release. availableAtHub = quantity - reservedQty.
+  reservedQty Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   item InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
   hub  Hub           @relation(fields: [hubId], references: [id], onDelete: Cascade)

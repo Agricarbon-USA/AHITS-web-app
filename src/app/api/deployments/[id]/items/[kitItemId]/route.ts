@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { withIdempotency } from '@/lib/idempotency'
+import { restoreToHub } from '@/lib/inventory-stock'
 
 const bodySchema = z.object({
   quantity: z.number().int().min(1).optional(),
@@ -43,7 +44,7 @@ async function _DELETE(
 
   const kitItem = await prisma.kitItem.findUnique({
     where: { id: kitItemId },
-    include: { item: { select: { itemType: true } }, kit: { select: { rigId: true } } },
+    include: { item: { select: { itemType: true, hubId: true } }, kit: { select: { rigId: true } } },
   })
   if (!kitItem || kitItem.removedAt) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (kitItem.kit.rigId !== rigId) return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -110,9 +111,13 @@ async function _DELETE(
         if (claimed.count === 0) return
       }
       if (returnCondition === 'GOOD' && !body.data.consumed && restoreQty > 0) {
-        // Genuine return of a usable consumable → restore exactly the stock drawn
-        // for this return. Daily-usage logging passes consumed:true (used up, not
-        // returned) and is NOT restored; a damaged/maintenance return isn't either.
+        // Genuine return: restore hub stock (MH-1 dual-write) + cross-hub total.
+        // Legacy null drawnHubId falls back to item.hubId; if still null, skip
+        // hub restore but always increment the total so no stock is lost.
+        const hubForRestore = kitItem.drawnHubId ?? kitItem.item.hubId
+        if (hubForRestore) {
+          await restoreToHub(kitItem.inventoryItemId, hubForRestore, restoreQty, tx)
+        }
         await tx.inventoryItem.update({
           where: { id: kitItem.inventoryItemId },
           data: { quantity: { increment: restoreQty } },

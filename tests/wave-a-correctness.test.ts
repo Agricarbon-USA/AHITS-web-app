@@ -8,6 +8,7 @@ import { prisma } from '../src/lib/prisma'
 import {
   createOperator, createCategory, createInventoryItem, createInventoryUnit,
   createRig, createVehicle, addVehicleToRig, operatorSession,
+  createHub, seedInventoryStock,
 } from './helpers/fixtures'
 
 let mockSession: object | null = null
@@ -58,6 +59,8 @@ describe('Wave A — correctness blockers', () => {
 
     it('allows a consumable check-out by quantity even with no unit rows (quantity is authoritative)', async () => {
       const item = await createInventoryItem(cat.id, { itemType: 'CONSUMABLE', quantity: 20 })
+      const hub = await createHub()
+      await seedInventoryStock(item.id, hub.id, 20)
       const { rig } = await createRig(op1.id)
 
       mockSession = operatorSession(op1.id)
@@ -65,6 +68,7 @@ describe('Wave A — correctness blockers', () => {
         jsonReq(`http://localhost/api/deployments/${rig.id}/items`, {
           note: 'add bags',
           items: [{ itemType: 'CONSUMABLE', inventoryItemId: item.id, quantity: 5 }],
+          sourceHubId: hub.id,
         }),
         { params: Promise.resolve({ id: rig.id }) },
       )

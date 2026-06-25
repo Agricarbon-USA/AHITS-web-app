@@ -28,7 +28,11 @@ export function presentAlert(alert: {
     case 'DAMAGE_REPORTED': message = `${subject ?? 'An item'} was reported damaged in the field.`; break
     case 'MAINTENANCE_OVERDUE': message = `${str(meta.taskName) ?? 'A maintenance task'} is overdue${meta.daysPastDue ? ` by ${meta.daysPastDue} day(s)` : ''}.`; break
     case 'EQUIPMENT_NOT_RETURNED': message = `${subject ?? 'Equipment'} has not been returned on time.`; break
-    case 'LOW_INVENTORY': message = `${subject ?? 'An item'} is running low on stock${meta.quantity != null && meta.threshold != null ? ` (${meta.quantity} left, threshold ${meta.threshold})` : ''}.`; break
+    case 'LOW_INVENTORY': {
+      const hubPart = str(meta.hubName) ? ` at ${str(meta.hubName)}` : ''
+      message = `${subject ?? 'An item'} is running low${hubPart}${meta.quantity != null && meta.threshold != null ? ` (${meta.quantity} left, threshold ${meta.threshold})` : ''}.`
+      break
+    }
     case 'INSURANCE_EXPIRING': message = `${subject ?? 'A vehicle'}'s insurance is expiring soon.`; break
     case 'REGISTRATION_EXPIRING': message = `${subject ?? 'A vehicle'}'s registration is expiring soon.`; break
     case 'PIN_LOCKED': message = `${str(meta.name) ?? 'An operator'}'s PIN was locked after too many failed attempts.`; break

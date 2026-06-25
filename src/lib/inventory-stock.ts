@@ -82,16 +82,27 @@ export async function setStockAtHub(itemId: string, hubId: string, quantity: num
     ON CONFLICT ("itemId", "hubId") DO UPDATE SET "quantity" = ${Math.max(0, quantity)}, "updatedAt" = now()`
 }
 
+/** Available quantity of an item at one hub, accounting for reserves (quantity - reservedQty). */
+export async function availableAtHub(itemId: string, hubId: string, db: RawClient = prisma): Promise<number> {
+  const rows = await db.$queryRaw<{ available: bigint | number | null }[]>`
+    SELECT GREATEST("quantity" - "reservedQty", 0) AS "available"
+    FROM "inventory_stock"
+    WHERE "itemId" = ${itemId} AND "hubId" = ${hubId}
+  `
+  return Number(rows[0]?.available ?? 0)
+}
+
 /**
  * Draw `qty` from a hub's stock. Guarded: only succeeds if the hub holds at
- * least `qty` (cannot oversell or go negative). Returns the amount actually
- * drawn (== qty on success, 0 if insufficient).
+ * least `qty` net of reserves (cannot oversell or go negative). Returns the
+ * amount actually drawn (== qty on success, 0 if insufficient).
  */
 export async function drawFromHub(itemId: string, hubId: string, qty: number, db: RawClient = prisma): Promise<number> {
   if (qty <= 0) return 0
   const n = await db.$executeRaw`
     UPDATE "inventory_stock" SET "quantity" = "quantity" - ${qty}, "updatedAt" = now()
-    WHERE "itemId" = ${itemId} AND "hubId" = ${hubId} AND "quantity" >= ${qty}`
+    WHERE "itemId" = ${itemId} AND "hubId" = ${hubId}
+      AND "quantity" - "reservedQty" >= ${qty}`
   return Number(n) > 0 ? qty : 0
 }
 
@@ -102,6 +113,34 @@ export async function restoreToHub(itemId: string, hubId: string, qty: number, d
     INSERT INTO "inventory_stock" ("id", "itemId", "hubId", "quantity", "updatedAt")
     VALUES (${randomUUID()}, ${itemId}, ${hubId}, ${qty}, now())
     ON CONFLICT ("itemId", "hubId") DO UPDATE SET "quantity" = "inventory_stock"."quantity" + ${qty}, "updatedAt" = now()`
+}
+
+export interface HubStockScanRow {
+  itemId: string
+  itemName: string | null
+  hubId: string
+  hubName: string | null
+  quantity: number
+  threshold: number
+}
+
+/**
+ * All (item, hub) stock rows for consumable items that have a lowStockThreshold.
+ * Returns both low AND healthy rows so the cron scan can raise AND clear alerts
+ * in one pass.
+ */
+export async function allHubStockForScan(db: RawClient = prisma): Promise<HubStockScanRow[]> {
+  return db.$queryRaw<HubStockScanRow[]>`
+    SELECT s."itemId", i."name" AS "itemName", s."hubId", h."name" AS "hubName",
+           s."quantity", i."lowStockThreshold" AS "threshold"
+    FROM "inventory_stock" s
+    JOIN "inventory_items" i ON i."id" = s."itemId"
+    LEFT JOIN "hubs" h ON h."id" = s."hubId"
+    WHERE i."deletedAt" IS NULL
+      AND i."lowStockThreshold" IS NOT NULL
+      AND i."itemType" = 'CONSUMABLE'
+    ORDER BY s."quantity" ASC
+  `
 }
 
 export interface LowStockHubRow {
