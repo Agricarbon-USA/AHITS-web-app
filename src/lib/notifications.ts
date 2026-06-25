@@ -32,6 +32,7 @@ export function presentAlert(alert: {
     case 'INSURANCE_EXPIRING': message = `${subject ?? 'A vehicle'}'s insurance is expiring soon.`; break
     case 'REGISTRATION_EXPIRING': message = `${subject ?? 'A vehicle'}'s registration is expiring soon.`; break
     case 'PIN_LOCKED': message = `${str(meta.name) ?? 'An operator'}'s PIN was locked after too many failed attempts.`; break
+    case 'MATERIAL_REQUEST': message = `${str(meta.name) ?? 'A material request'} needs your attention.`; break
     default: message = title
   }
   return { title, message, link: alertLink(alert.sourceTable, alert.sourceId, alert.type) }

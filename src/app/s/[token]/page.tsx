@@ -2,6 +2,12 @@
 
 import { useEffect, useState, use } from 'react'
 
+interface ReservationLine {
+  name: string
+  qty: number
+  kind: string
+  serial?: string | null
+}
 interface Subject {
   kind?: string
   taskName?: string
@@ -11,9 +17,15 @@ interface Subject {
   shipToHub?: string | null
   photos?: string[]
   hub?: string | null
+  // reservation fields
+  label?: string | null
+  neededBy?: string | null
+  requester?: string | null
+  project?: string | null
+  lines?: ReservationLine[]
 }
 interface Context {
-  type: 'WORK_ORDER' | 'HUB_RETURN' | 'INVOICE'
+  type: 'WORK_ORDER' | 'HUB_RETURN' | 'INVOICE' | 'RESERVATION'
   state: string
   actionable: boolean
   allowedActions: string[]
@@ -28,6 +40,9 @@ const ACTION_LABELS: Record<string, string> = {
   INVOICED: 'Submit invoice #',
   DISCREPANCY: 'Report a discrepancy',
   PAID: 'Mark paid',
+  CONFIRMED: 'Confirm we can fulfill',
+  PREPARED: 'Mark prepared / staged',
+  DECLINED: 'Decline',
 }
 
 const wrap: React.CSSProperties = { maxWidth: 560, margin: '0 auto', padding: 24, fontFamily: 'system-ui, sans-serif', color: '#1a1a1a' }
@@ -91,26 +106,49 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
 
   const s = ctx.subject
   const isWO = ctx.type === 'WORK_ORDER'
+  const isRes = ctx.type === 'RESERVATION'
 
   return (
     <div style={wrap}>
       <Header />
       <div style={card}>
         <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.6, color: '#757575' }}>
-          {isWO ? 'Repair Work Order' : ctx.type === 'HUB_RETURN' ? 'Hub Return — Confirm Receipt' : 'Invoice'}
+          {isWO ? 'Repair Work Order' : ctx.type === 'HUB_RETURN' ? 'Hub Return — Confirm Receipt' : isRes ? 'Rig Reservation Request' : 'Invoice'}
         </div>
-        <h2 style={{ margin: '6px 0 12px' }}>{s.asset ?? 'Equipment'}{s.serialNumber ? ` · #${s.serialNumber}` : ''}</h2>
-        {s.taskName && <Row label="Work" value={s.taskName} />}
-        {s.problem && <Row label="Problem" value={s.problem} />}
-        {s.shipToHub && <Row label="Return to" value={s.shipToHub} />}
-        {s.hub && <Row label="Hub" value={s.hub} />}
-        {!!s.photos?.length && (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
-            {s.photos.map((u, i) => (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img key={i} src={u} alt={`photo ${i + 1}`} style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 8, border: '1px solid #e0e0e0' }} />
-            ))}
-          </div>
+        {isRes ? (
+          <>
+            <h2 style={{ margin: '6px 0 12px' }}>{s.label ?? 'Rig Reservation'}</h2>
+            {s.neededBy && <Row label="Needed by" value={new Date(s.neededBy).toLocaleDateString()} />}
+            {s.requester && <Row label="Requester" value={s.requester} />}
+            {s.project && <Row label="Project" value={s.project} />}
+            {s.lines && s.lines.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 12, color: '#757575', marginBottom: 6 }}>Requested items</div>
+                {s.lines.map((l, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: '1px solid #f0f0f0', fontSize: 14 }}>
+                    <span>{l.name}{l.serial ? ` · #${l.serial}` : ''}</span>
+                    <span style={{ color: '#757575' }}>×{l.qty}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <h2 style={{ margin: '6px 0 12px' }}>{s.asset ?? 'Equipment'}{s.serialNumber ? ` · #${s.serialNumber}` : ''}</h2>
+            {s.taskName && <Row label="Work" value={s.taskName} />}
+            {s.problem && <Row label="Problem" value={s.problem} />}
+            {s.shipToHub && <Row label="Return to" value={s.shipToHub} />}
+            {s.hub && <Row label="Hub" value={s.hub} />}
+            {!!s.photos?.length && (
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+                {s.photos.map((u, i) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img key={i} src={u} alt={`photo ${i + 1}`} style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 8, border: '1px solid #e0e0e0' }} />
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -135,7 +173,7 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
           {error && <p style={{ color: '#d32f2f', fontSize: 14 }}>{error}</p>}
           {ctx.allowedActions.map((a) => (
             <button key={a} disabled={submitting}
-              style={a === 'DISCREPANCY' ? btnOutline : btn}
+              style={a === 'DISCREPANCY' || a === 'DECLINED' ? { ...btnOutline, borderColor: '#d32f2f', color: '#d32f2f' } : btn}
               onClick={() => { setChosen(a); submit(a) }}>
               {submitting && chosen === a ? 'Submitting…' : (ACTION_LABELS[a] ?? a)}
             </button>

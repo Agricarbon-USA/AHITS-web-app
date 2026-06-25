@@ -75,6 +75,9 @@ interface LineRow {
   vehicleType: string | null
   requestedQty: number
   specificInventoryUnitId: string | null
+  specificItemName: string | null
+  specificVehicleName: string | null
+  specificUnitSerial: string | null
   description: string | null
   reorderUrl: string | null
 }
@@ -128,9 +131,15 @@ export async function getRequest(id: string): Promise<{ request: RequestRow; lin
   const lines = await prisma.$queryRaw<LineRow[]>`
     SELECT l."id", l."lineType"::text AS "lineType", l."categoryId", c."name" AS "categoryName",
            l."itemType", l."vehicleType"::text AS "vehicleType", l."requestedQty",
-           l."specificInventoryUnitId", l."description", l."reorderUrl"
+           l."specificInventoryUnitId", l."description", l."reorderUrl",
+           ii."name" AS "specificItemName",
+           v."name" AS "specificVehicleName",
+           iu."serialNumber" AS "specificUnitSerial"
     FROM "deployment_request_lines" l
     LEFT JOIN "categories" c ON c."id" = l."categoryId"
+    LEFT JOIN "inventory_items" ii ON ii."id" = l."specificInventoryItemId"
+    LEFT JOIN "vehicles" v ON v."id" = l."specificVehicleId"
+    LEFT JOIN "inventory_units" iu ON iu."id" = l."specificInventoryUnitId"
     WHERE l."requestId" = ${id}
     ORDER BY l."createdAt" ASC
   `

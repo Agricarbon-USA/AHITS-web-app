@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { sendEmail } from '@/lib/email/resend'
 import { hubReturnEmail } from '@/lib/email/templates'
+import { applyRequestTransition } from '@/lib/deployment-requests'
 import type { Prisma, StatusLink, StatusLinkType } from '@prisma/client'
 
 /**
@@ -228,6 +229,12 @@ export async function applyTransition(link: ResolvedStatusLink, input: Transitio
   const note = input.note?.trim().slice(0, 2000) || null
   const now = new Date()
 
+  // RESERVATION has its own path because applyRequestTransition uses prisma.$executeRaw
+  // (not a transaction client), so it can't enlist in the shared transaction below.
+  if (link.type === 'RESERVATION' && link.deploymentRequestId) {
+    return applyReservationTransition(link, action, actorLabel, note, now)
+  }
+
   await prisma.$transaction(async (tx) => {
     // Record the event first (always).
     await tx.statusLinkEvent.create({
@@ -301,4 +308,77 @@ export async function applyTransition(link: ResolvedStatusLink, input: Transitio
 
   const final = await prisma.statusLink.findUnique({ where: { id: link.id }, select: { state: true } })
   return { ok: true, state: final?.state ?? 'ACTED' }
+}
+
+async function applyReservationTransition(
+  link: ResolvedStatusLink,
+  action: string,
+  actorLabel: string,
+  note: string | null,
+  now: Date,
+): Promise<TransitionResult> {
+  const requestId = link.deploymentRequestId!
+
+  // Fetch request metadata needed for discriminating the action and notifying the requester.
+  const reqRows = await prisma.$queryRaw<{ requestedById: string; requestType: string; status: string }[]>`
+    SELECT "requestedById", "requestType"::text AS "requestType", "status"::text AS "status"
+    FROM "deployment_requests" WHERE "id" = ${requestId}
+  `
+  const reqInfo = reqRows[0]
+  if (!reqInfo) return { ok: false, status: 404, error: 'Request not found.' }
+
+  await prisma.statusLinkEvent.create({
+    data: { statusLinkId: link.id, action, note, actorLabel },
+  })
+
+  let ok = false
+  if (action === 'CONFIRMED' || action === 'PREPARED') {
+    // RESERVATION → confirm (REQUESTED→STAGED); MATERIAL → complete (FORWARDED→FULFILLED)
+    const transitionAction = reqInfo.requestType === 'MATERIAL' ? 'complete' : 'confirm'
+    ok = await applyRequestTransition(requestId, transitionAction, reqInfo.requestType, { decisionNote: note })
+    if (ok) {
+      await prisma.statusLink.update({
+        where: { id: link.id },
+        data: { state: 'COMPLETED', completedAt: now, actedAt: now },
+      })
+      const title = reqInfo.requestType === 'MATERIAL' ? 'Material request fulfilled' : 'Reservation staged'
+      const body = reqInfo.requestType === 'MATERIAL'
+        ? 'Your material request has been fulfilled by the hub.'
+        : 'Your rig reservation has been staged by the hub.'
+      await notifyRequester(reqInfo.requestedById, title, body)
+    }
+  } else if (action === 'DECLINED') {
+    // RESERVATION → decline (REQUESTED→DENIED); MATERIAL → cancel (FORWARDED→CANCELLED).
+    // NOTE: for MATERIAL the hub is declining a forwarded order; we cancel it so admin can re-route.
+    const transitionAction = reqInfo.requestType === 'MATERIAL' ? 'cancel' : 'decline'
+    ok = await applyRequestTransition(requestId, transitionAction, reqInfo.requestType, { decisionNote: note })
+    if (ok) {
+      await prisma.statusLink.update({
+        where: { id: link.id },
+        data: { state: 'COMPLETED', completedAt: now, actedAt: now },
+      })
+      await notifyRequester(
+        reqInfo.requestedById,
+        reqInfo.requestType === 'MATERIAL' ? 'Material request returned' : 'Reservation declined',
+        note
+          ? `Your request was declined by the hub: ${note}`
+          : reqInfo.requestType === 'MATERIAL'
+            ? 'The hub could not fulfill your material request. An admin will follow up.'
+            : 'Your rig reservation was declined by the hub.',
+      )
+    }
+  }
+
+  if (!ok) {
+    return { ok: false, status: 409, error: 'Transition not allowed in the current state.' }
+  }
+
+  const final = await prisma.statusLink.findUnique({ where: { id: link.id }, select: { state: true } })
+  return { ok: true, state: final?.state ?? 'ACTED' }
+}
+
+async function notifyRequester(userId: string, title: string, body: string): Promise<void> {
+  await prisma.notification.create({
+    data: { userId, type: 'RESERVATION_UPDATE', title, body, link: '/operator/requests' },
+  })
 }

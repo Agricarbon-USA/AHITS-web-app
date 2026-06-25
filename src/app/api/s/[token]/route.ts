@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { rateLimit, clientIp } from '@/lib/rate-limit'
 import { resolveStatusLink, markViewed, isLinkActionable, ALLOWED_ACTIONS } from '@/lib/status-links'
+import { getRequest } from '@/lib/deployment-requests'
 
 // Public, login-less context for a tokenized status link. Token-gated and
 // rate-limited (the token IS the credential). Returns only the scoped fields
@@ -41,6 +42,24 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
       kind: 'hub_return',
       asset: link.inventoryUnit.inventoryItem?.name ?? 'Equipment',
       hub: link.hub ? `${link.hub.name} — ${link.hub.city}, ${link.hub.state}` : null,
+    }
+  } else if (link.type === 'RESERVATION' && link.deploymentRequestId) {
+    const result = await getRequest(link.deploymentRequestId)
+    if (result) {
+      const { request, lines } = result
+      subject = {
+        kind: 'reservation',
+        label: request.label,
+        neededBy: request.neededBy?.toISOString() ?? null,
+        requester: request.requestedByName,
+        project: request.projectName,
+        lines: lines.map((l) => ({
+          name: l.specificItemName ?? l.specificVehicleName ?? l.categoryName ?? l.itemType ?? l.vehicleType ?? l.description ?? 'Item',
+          qty: l.requestedQty,
+          kind: l.lineType,
+          serial: l.specificUnitSerial ?? null,
+        })),
+      }
     }
   }
 

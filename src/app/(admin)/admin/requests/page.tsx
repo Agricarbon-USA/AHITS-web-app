@@ -2,248 +2,496 @@
 
 import * as React from 'react'
 import {
-  Box, Typography, Button, Card, CardContent, Stack, Chip, Alert, CircularProgress, MenuItem,
-  Dialog, DialogTitle, DialogContent, DialogActions, TextField, IconButton, Divider,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Collapse,
+  Box, Typography, Button, Card, CardContent, Stack, Chip, Alert, CircularProgress,
+  MenuItem, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Collapse,
+  Divider, Tooltip, IconButton,
 } from '@mui/material'
-import AddIcon from '@mui/icons-material/Add'
-import DeleteIcon from '@mui/icons-material/Delete'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ExpandLessIcon from '@mui/icons-material/ExpandLess'
-import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import ContentCopyIcon from '@mui/icons-material/ContentCopy'
+import SendIcon from '@mui/icons-material/Send'
+import { StatusChip } from '@/components/shared/StatusChip'
+import { useToast } from '@/components/shared/useToast'
 
-const VEHICLE_TYPE_OPTIONS = [
-  { value: 'TRUCK', label: 'Truck' }, { value: 'TRAILER', label: 'Trailer' },
-  { value: 'POLARIS_UTV', label: 'Polaris UTV' }, { value: 'CAN_AM_UTV', label: 'Can-Am UTV' },
-  { value: 'CHRISTIE_DRILL', label: 'Christie Drill' }, { value: 'ATV', label: 'ATV' }, { value: 'OTHER', label: 'Other' },
-]
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface ReqRow {
-  id: string; status: string; label: string | null; neededBy: string | null; createdAt: string
-  requestedByName: string | null; forOperatorName: string | null; projectName: string | null; lineCount: number
+  id: string
+  status: string
+  requestType: string
+  label: string | null
+  neededBy: string | null
+  createdAt: string
+  requestedByName: string | null
+  forOperatorName: string | null
+  projectName: string | null
+  lineCount: number
+  fulfillerHubId: string | null
+  fulfillerOperatorId: string | null
+  decisionNote: string | null
 }
-interface LineRow { id: string; lineType: string; categoryName: string | null; itemType: string | null; vehicleType: string | null; requestedQty: number }
-interface DraftLine { lineType: 'KIT_ITEM' | 'VEHICLE'; categoryId: string; vehicleType: string; requestedQty: number }
-interface Named { id: string; name: string }
 
-const STATUS_CHIP: Record<string, { color: 'default' | 'info' | 'warning' | 'success' }> = {
-  DRAFT: { color: 'default' }, REQUESTED: { color: 'warning' }, STAGED: { color: 'info' },
-  FULFILLED: { color: 'success' }, CANCELLED: { color: 'default' },
+interface LineRow {
+  id: string
+  lineType: string
+  categoryName: string | null
+  itemType: string | null
+  vehicleType: string | null
+  requestedQty: number
+  specificItemName: string | null
+  specificVehicleName: string | null
+  specificUnitSerial: string | null
+  description: string | null
 }
-const fmtDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—')
+
+interface HubOption { id: string; name: string; city: string; state: string }
+interface OperatorOption { id: string; name: string }
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const TERMINAL = new Set(['FULFILLED', 'CANCELLED', 'DENIED'])
+
+const VEHICLE_TYPE_LABELS: Record<string, string> = {
+  TRUCK: 'Truck', TRAILER: 'Trailer', POLARIS_UTV: 'Polaris UTV',
+  CAN_AM_UTV: 'Can-Am UTV', CHRISTIE_DRILL: 'Christie Drill', ATV: 'ATV', OTHER: 'Other',
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function lineDisplayName(l: LineRow): string {
+  if (l.specificItemName) return `${l.specificItemName}${l.specificUnitSerial ? ` · #${l.specificUnitSerial}` : ''}`
+  if (l.specificVehicleName) return l.specificVehicleName
+  if (l.categoryName) return l.categoryName
+  if (l.vehicleType) return VEHICLE_TYPE_LABELS[l.vehicleType] ?? l.vehicleType
+  if (l.itemType) return l.itemType
+  return l.description ?? 'Item'
+}
+
+async function patchRequest(id: string, body: Record<string, unknown>): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`/api/deployment-requests/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) return { ok: false, error: data.error ?? 'Action failed.' }
+  return { ok: true }
+}
+
+// ── Forward Hub Dialog ────────────────────────────────────────────────────────
+
+function ForwardHubDialog({ requestId, hubs, onClose, onSuccess }: {
+  requestId: string; hubs: HubOption[]; onClose: () => void; onSuccess: () => void
+}) {
+  const [hubId, setHubId] = React.useState('')
+  const [busy, setBusy] = React.useState(false)
+  const [error, setError] = React.useState('')
+  const showToast = useToast()
+
+  const submit = async () => {
+    if (!hubId) return
+    setBusy(true)
+    const r = await patchRequest(requestId, { action: 'forward', fulfillerHubId: hubId })
+    setBusy(false)
+    if (r.ok) { showToast({ message: 'Forwarded to hub.', severity: 'success' }); onSuccess() }
+    else setError(r.error ?? 'Failed.')
+  }
+
+  return (
+    <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle>Forward to Hub</DialogTitle>
+      <DialogContent>
+        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+        <TextField select label="Hub" value={hubId} onChange={(e) => setHubId(e.target.value)} fullWidth sx={{ mt: 1 }}>
+          <MenuItem value="">— Select hub —</MenuItem>
+          {hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.name} · {h.city}, {h.state}</MenuItem>)}
+        </TextField>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} disabled={busy}>Cancel</Button>
+        <Button variant="contained" onClick={() => void submit()} disabled={!hubId || busy}>
+          {busy ? <CircularProgress size={16} color="inherit" /> : 'Forward'}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
+
+// ── Forward Operator Dialog ───────────────────────────────────────────────────
+
+function ForwardOperatorDialog({ requestId, operators, onClose, onSuccess }: {
+  requestId: string; operators: OperatorOption[]; onClose: () => void; onSuccess: () => void
+}) {
+  const [opId, setOpId] = React.useState('')
+  const [busy, setBusy] = React.useState(false)
+  const [error, setError] = React.useState('')
+  const showToast = useToast()
+
+  const submit = async () => {
+    if (!opId) return
+    setBusy(true)
+    const r = await patchRequest(requestId, { action: 'forward', fulfillerOperatorId: opId })
+    setBusy(false)
+    if (r.ok) { showToast({ message: 'Forwarded to operator.', severity: 'success' }); onSuccess() }
+    else setError(r.error ?? 'Failed.')
+  }
+
+  return (
+    <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle>Forward to Operator</DialogTitle>
+      <DialogContent>
+        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+        <TextField select label="Operator" value={opId} onChange={(e) => setOpId(e.target.value)} fullWidth sx={{ mt: 1 }}>
+          <MenuItem value="">— Select operator —</MenuItem>
+          {operators.map((o) => <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>)}
+        </TextField>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} disabled={busy}>Cancel</Button>
+        <Button variant="contained" onClick={() => void submit()} disabled={!opId || busy}>
+          {busy ? <CircularProgress size={16} color="inherit" /> : 'Forward'}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
+
+// ── Decline Dialog ────────────────────────────────────────────────────────────
+
+function DeclineDialog({ requestId, onClose, onSuccess }: {
+  requestId: string; onClose: () => void; onSuccess: () => void
+}) {
+  const [note, setNote] = React.useState('')
+  const [busy, setBusy] = React.useState(false)
+  const [error, setError] = React.useState('')
+  const showToast = useToast()
+
+  const submit = async () => {
+    setBusy(true)
+    const r = await patchRequest(requestId, { action: 'decline', decisionNote: note.trim() || null })
+    setBusy(false)
+    if (r.ok) { showToast({ message: 'Request declined.', severity: 'success' }); onSuccess() }
+    else setError(r.error ?? 'Failed.')
+  }
+
+  return (
+    <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle>Decline Request</DialogTitle>
+      <DialogContent>
+        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+        <TextField label="Reason (optional)" value={note} onChange={(e) => setNote(e.target.value)} multiline rows={3} fullWidth sx={{ mt: 1 }} />
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} disabled={busy}>Cancel</Button>
+        <Button variant="contained" color="error" onClick={() => void submit()} disabled={busy}>
+          {busy ? <CircularProgress size={16} color="inherit" /> : 'Decline'}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  )
+}
+
+// ── Request Card ──────────────────────────────────────────────────────────────
+
+function RequestCard({ req, hubs, operators, onRefresh }: {
+  req: ReqRow; hubs: HubOption[]; operators: OperatorOption[]; onRefresh: () => void
+}) {
+  const [expanded, setExpanded] = React.useState(false)
+  const [lines, setLines] = React.useState<LineRow[] | null>(null)
+  const [linesLoading, setLinesLoading] = React.useState(false)
+  const [dialog, setDialog] = React.useState<'hub' | 'operator' | 'decline' | null>(null)
+  const [busy, setBusy] = React.useState<string | null>(null)
+  const showToast = useToast()
+
+  const loadLines = async () => {
+    if (lines !== null) return
+    setLinesLoading(true)
+    const res = await fetch(`/api/deployment-requests/${req.id}`)
+    if (res.ok) {
+      const d = await res.json()
+      setLines((d.data?.lines as LineRow[]) ?? [])
+    }
+    setLinesLoading(false)
+  }
+
+  const toggleExpand = () => {
+    if (!expanded) void loadLines()
+    setExpanded((e) => !e)
+  }
+
+  const action = async (act: string, extra?: Record<string, unknown>) => {
+    setBusy(act)
+    const r = await patchRequest(req.id, { action: act, ...extra })
+    setBusy(null)
+    if (r.ok) {
+      showToast({ message: 'Done.', severity: 'success' })
+      onRefresh()
+    } else {
+      showToast({ message: r.error ?? 'Action failed.', severity: 'error' })
+    }
+  }
+
+  const resendLink = async () => {
+    setBusy('resend')
+    const res = await fetch(`/api/deployment-requests/${req.id}/resend-link`, { method: 'POST' })
+    const d = await res.json().catch(() => ({}))
+    setBusy(null)
+    if (res.ok) showToast({ message: 'Hub link resent.', severity: 'success' })
+    else showToast({ message: d.error ?? 'Resend failed.', severity: 'error' })
+  }
+
+  const hubName = req.fulfillerHubId ? (hubs.find((h) => h.id === req.fulfillerHubId)?.name ?? req.fulfillerHubId) : null
+  const opName = req.fulfillerOperatorId ? (operators.find((o) => o.id === req.fulfillerOperatorId)?.name ?? req.fulfillerOperatorId) : null
+  const isMaterial = req.requestType === 'MATERIAL'
+  const isReservation = req.requestType === 'RESERVATION'
+  const isTerminal = TERMINAL.has(req.status)
+
+  return (
+    <>
+      <Card variant="outlined">
+        <CardContent sx={{ pb: '12px !important' }}>
+          <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+            <Box sx={{ minWidth: 0, flexGrow: 1 }}>
+              <Stack direction="row" spacing={1} alignItems="center" mb={0.5} flexWrap="wrap">
+                <StatusChip kind="request" status={req.status} />
+                <Chip size="small" variant="outlined" label={isReservation ? 'Reservation' : 'Material'} />
+                {hubName && <Chip size="small" variant="outlined" color="primary" label={`Hub: ${hubName}`} />}
+                {opName && <Chip size="small" variant="outlined" color="secondary" label={`Operator: ${opName}`} />}
+              </Stack>
+              <Typography variant="body2" fontWeight={600} noWrap>
+                {req.label || (isReservation ? 'Rig Reservation' : 'Material Request')}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {req.requestedByName ?? 'Unknown'}
+                {req.forOperatorName && ` · for ${req.forOperatorName}`}
+                {req.projectName && ` · ${req.projectName}`}
+                {req.lineCount > 0 && ` · ${req.lineCount} line${req.lineCount !== 1 ? 's' : ''}`}
+                {req.neededBy && ` · Needed ${new Date(req.neededBy).toLocaleDateString()}`}
+              </Typography>
+              {req.decisionNote && (
+                <Typography variant="caption" display="block" color="text.secondary">
+                  Note: {req.decisionNote}
+                </Typography>
+              )}
+            </Box>
+            <Stack direction="row" spacing={0.5} alignItems="center" flexShrink={0}>
+              {/* Lines toggle */}
+              <Tooltip title={expanded ? 'Hide lines' : 'Show lines'}>
+                <IconButton size="small" onClick={toggleExpand}>
+                  {expanded ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+                </IconButton>
+              </Tooltip>
+            </Stack>
+          </Stack>
+
+          {/* Lines panel */}
+          <Collapse in={expanded}>
+            <Box sx={{ mt: 1.5, pl: 0.5 }}>
+              {linesLoading ? (
+                <CircularProgress size={18} />
+              ) : lines && lines.length > 0 ? (
+                <Stack spacing={0.5}>
+                  {lines.map((l) => (
+                    <Stack key={l.id} direction="row" justifyContent="space-between" sx={{ fontSize: 13, color: 'text.secondary' }}>
+                      <span>{lineDisplayName(l)}</span>
+                      <span>×{l.requestedQty}</span>
+                    </Stack>
+                  ))}
+                </Stack>
+              ) : (
+                <Typography variant="caption" color="text.secondary">No lines.</Typography>
+              )}
+            </Box>
+          </Collapse>
+
+          {/* Action buttons */}
+          {!isTerminal && (
+            <>
+              <Divider sx={{ my: 1.5 }} />
+              <Stack direction="row" spacing={1} flexWrap="wrap">
+                {isMaterial && req.status === 'REQUESTED' && (
+                  <>
+                    <Button size="small" variant="contained" color="success"
+                      disabled={!!busy} onClick={() => void action('fulfill')}>
+                      {busy === 'fulfill' ? <CircularProgress size={14} color="inherit" /> : 'Fulfill'}
+                    </Button>
+                    <Button size="small" variant="outlined" disabled={!!busy} onClick={() => setDialog('hub')}>
+                      Forward → Hub
+                    </Button>
+                    <Button size="small" variant="outlined" disabled={!!busy} onClick={() => setDialog('operator')}>
+                      Forward → Operator
+                    </Button>
+                    <Button size="small" variant="outlined" color="error" disabled={!!busy} onClick={() => setDialog('decline')}>
+                      Decline
+                    </Button>
+                  </>
+                )}
+
+                {isMaterial && req.status === 'FORWARDED' && (
+                  <>
+                    <Button size="small" variant="contained" color="success"
+                      disabled={!!busy} onClick={() => void action('complete')}>
+                      {busy === 'complete' ? <CircularProgress size={14} color="inherit" /> : 'Mark Fulfilled'}
+                    </Button>
+                    <Button size="small" variant="outlined" color="error" disabled={!!busy}
+                      onClick={() => void action('cancel')}>
+                      Cancel
+                    </Button>
+                  </>
+                )}
+
+                {isReservation && req.status === 'REQUESTED' && (
+                  <>
+                    <Button size="small" variant="contained" color="success"
+                      disabled={!!busy} onClick={() => void action('confirm')}>
+                      {busy === 'confirm' ? <CircularProgress size={14} color="inherit" /> : 'Stage (admin)'}
+                    </Button>
+                    <Button size="small" variant="outlined" color="error" disabled={!!busy}
+                      onClick={() => setDialog('decline')}>
+                      Decline
+                    </Button>
+                    {req.fulfillerHubId && (
+                      <Tooltip title="Revoke old link and send a new one to the hub">
+                        <Button size="small" variant="outlined" startIcon={<SendIcon fontSize="small" />}
+                          disabled={!!busy} onClick={() => void resendLink()}>
+                          {busy === 'resend' ? <CircularProgress size={14} color="inherit" /> : 'Resend hub link'}
+                        </Button>
+                      </Tooltip>
+                    )}
+                  </>
+                )}
+
+                {isReservation && req.status === 'STAGED' && (
+                  <>
+                    <Button size="small" variant="contained" color="success"
+                      disabled={!!busy} onClick={() => void action('fulfill')}>
+                      {busy === 'fulfill' ? <CircularProgress size={14} color="inherit" /> : 'Fulfill'}
+                    </Button>
+                    <Button size="small" variant="outlined" color="error" disabled={!!busy}
+                      onClick={() => void action('cancel')}>
+                      Cancel
+                    </Button>
+                  </>
+                )}
+
+                {/* Cancel is available for DRAFT on both types */}
+                {req.status === 'DRAFT' && (
+                  <Button size="small" variant="outlined" color="error" disabled={!!busy}
+                    onClick={() => void action('cancel')}>
+                    Cancel
+                  </Button>
+                )}
+              </Stack>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {dialog === 'hub' && (
+        <ForwardHubDialog requestId={req.id} hubs={hubs} onClose={() => setDialog(null)}
+          onSuccess={() => { setDialog(null); onRefresh() }} />
+      )}
+      {dialog === 'operator' && (
+        <ForwardOperatorDialog requestId={req.id} operators={operators} onClose={() => setDialog(null)}
+          onSuccess={() => { setDialog(null); onRefresh() }} />
+      )}
+      {dialog === 'decline' && (
+        <DeclineDialog requestId={req.id} onClose={() => setDialog(null)}
+          onSuccess={() => { setDialog(null); onRefresh() }} />
+      )}
+    </>
+  )
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function AdminRequestsPage() {
-  const [rows, setRows] = React.useState<ReqRow[] | null>(null)
-  const [categories, setCategories] = React.useState<Named[]>([])
-  const [operators, setOperators] = React.useState<Named[]>([])
-  const [projects, setProjects] = React.useState<Named[]>([])
-  const [toast, setToast] = React.useState('')
-  const [error, setError] = React.useState('')
-  const [open, setOpen] = React.useState(false)
-  const [saving, setSaving] = React.useState(false)
-  const [cancelId, setCancelId] = React.useState<string | null>(null)
-  const [expanded, setExpanded] = React.useState<string | null>(null)
-  const [lines, setLinesState] = React.useState<Record<string, LineRow[]>>({})
+  const [requests, setRequests] = React.useState<ReqRow[] | null>(null)
+  const [hubs, setHubs] = React.useState<HubOption[]>([])
+  const [operators, setOperators] = React.useState<OperatorOption[]>([])
+  const [filterType, setFilterType] = React.useState('ALL')
+  const [filterStatus, setFilterStatus] = React.useState('ALL')
+  const [filterHub, setFilterHub] = React.useState('ALL')
+  const [filterRequester, setFilterRequester] = React.useState('')
+  const showToast = useToast()
 
-  // new-request form
-  const [label, setLabel] = React.useState('')
-  const [projectId, setProjectId] = React.useState('')
-  const [forOperatorId, setForOperatorId] = React.useState('')
-  const [neededBy, setNeededBy] = React.useState('')
-  const [draftLines, setDraftLines] = React.useState<DraftLine[]>([])
+  const load = React.useCallback(async () => {
+    const res = await fetch('/api/deployment-requests')
+    if (res.ok) {
+      const json = await res.json()
+      setRequests((json.data as ReqRow[]) ?? [])
+    } else {
+      showToast({ message: 'Failed to load requests.', severity: 'error' })
+    }
+  }, [showToast])
 
-  const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(''), 4000) }
-  const showError = (m: string) => { setError(m); setTimeout(() => setError(''), 6000) }
-
-  const load = React.useCallback(() => {
-    fetch('/api/deployment-requests').then((r) => r.ok ? r.json() : null).then((d) => setRows(d?.data ?? [])).catch(() => setRows([]))
-  }, [])
   React.useEffect(() => {
-    load()
-    fetch('/api/categories').then((r) => r.json()).then((d) => setCategories(Array.isArray(d) ? d : d?.data ?? [])).catch(() => {})
-    fetch('/api/operators').then((r) => r.json()).then((d) => setOperators(Array.isArray(d) ? d : d?.data ?? [])).catch(() => {})
-    fetch('/api/projects').then((r) => r.json()).then((d) => setProjects(Array.isArray(d) ? d : d?.data ?? [])).catch(() => {})
+    void load()
+    const loadMeta = async () => {
+      const [hubsRes, opsRes] = await Promise.all([fetch('/api/hubs'), fetch('/api/operators')])
+      if (hubsRes.ok) setHubs((await hubsRes.json()) as HubOption[])
+      if (opsRes.ok) {
+        const d = await opsRes.json()
+        setOperators((d.data as OperatorOption[]) ?? [])
+      }
+    }
+    void loadMeta()
   }, [load])
 
-  const resetForm = () => { setLabel(''); setProjectId(''); setForOperatorId(''); setNeededBy(''); setDraftLines([]) }
-  const addLine = () => setDraftLines((p) => [...p, { lineType: 'KIT_ITEM', categoryId: '', vehicleType: '', requestedQty: 1 }])
-  const setLine = (i: number, patch: Partial<DraftLine>) => setDraftLines((p) => p.map((l, idx) => idx === i ? { ...l, ...patch } : l))
-  const removeLine = (i: number) => setDraftLines((p) => p.filter((_, idx) => idx !== i))
-
-  const submit = async (status: 'DRAFT' | 'REQUESTED') => {
-    if (draftLines.length === 0) { showError('Add at least one item or vehicle.'); return }
-    for (const l of draftLines) {
-      if (l.lineType === 'KIT_ITEM' && !l.categoryId) { showError('Pick a category for each kit-item line.'); return }
-      if (l.lineType === 'VEHICLE' && !l.vehicleType) { showError('Pick a vehicle type for each vehicle line.'); return }
-    }
-    setSaving(true)
-    try {
-      const res = await fetch('/api/deployment-requests', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          label: label.trim() || null,
-          projectId: projectId || null,
-          forOperatorId: forOperatorId || null,
-          neededBy: neededBy ? new Date(neededBy).toISOString() : null,
-          status,
-          lines: draftLines.map((l) => l.lineType === 'KIT_ITEM'
-            ? { lineType: 'KIT_ITEM', categoryId: l.categoryId, requestedQty: l.requestedQty }
-            : { lineType: 'VEHICLE', vehicleType: l.vehicleType, requestedQty: l.requestedQty }),
-        }),
-      })
-      if (!res.ok) { const d = await res.json().catch(() => ({})); showError(typeof d.error === 'string' ? d.error : 'Could not save request'); return }
-      showToast(status === 'DRAFT' ? 'Draft saved' : 'Request submitted')
-      setOpen(false); resetForm(); load()
-    } finally { setSaving(false) }
-  }
-
-  const transition = async (id: string, action: 'submit' | 'cancel') => {
-    const res = await fetch(`/api/deployment-requests/${id}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }),
+  const filtered = React.useMemo(() => {
+    if (!requests) return []
+    return requests.filter((r) => {
+      if (filterType !== 'ALL' && r.requestType !== filterType) return false
+      if (filterStatus !== 'ALL' && r.status !== filterStatus) return false
+      if (filterHub !== 'ALL' && r.fulfillerHubId !== filterHub) return false
+      if (filterRequester && !(r.requestedByName ?? '').toLowerCase().includes(filterRequester.toLowerCase())) return false
+      return true
     })
-    if (res.ok) { showToast(action === 'submit' ? 'Submitted' : 'Cancelled'); load() }
-    else { const d = await res.json().catch(() => ({})); showError(typeof d.error === 'string' ? d.error : 'Action failed') }
-  }
-
-  const toggleExpand = async (id: string) => {
-    if (expanded === id) { setExpanded(null); return }
-    setExpanded(id)
-    if (!lines[id]) {
-      const d = await fetch(`/api/deployment-requests/${id}`).then((r) => r.ok ? r.json() : null).catch(() => null)
-      if (d?.data?.lines) setLinesState((p) => ({ ...p, [id]: d.data.lines }))
-    }
-  }
-
-  const lineLabel = (l: LineRow) =>
-    l.lineType === 'VEHICLE'
-      ? `${VEHICLE_TYPE_OPTIONS.find((v) => v.value === l.vehicleType)?.label ?? l.vehicleType ?? 'Vehicle'} ×${l.requestedQty}`
-      : `${l.categoryName ?? l.itemType ?? 'Kit item'} ×${l.requestedQty}`
+  }, [requests, filterType, filterStatus, filterHub, filterRequester])
 
   return (
     <Box>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" mb={1}>
-        <Box>
-          <Typography variant="h5">Deployment Requests</Typography>
-          <Typography variant="body2" color="text.secondary">Pre-specify the equipment a deployment needs so a hub can stage it before pickup.</Typography>
-        </Box>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => { resetForm(); setOpen(true) }}>New Request</Button>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3}>
+        <Typography variant="h5">Deployment Requests</Typography>
+        <Button size="small" variant="outlined" onClick={() => void load()}>Refresh</Button>
       </Stack>
 
-      {toast && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setToast('')}>{toast}</Alert>}
-      {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>{error}</Alert>}
+      {/* Filter bar */}
+      <Stack direction="row" spacing={1.5} mb={2} flexWrap="wrap">
+        <TextField select size="small" label="Type" value={filterType} onChange={(e) => setFilterType(e.target.value)} sx={{ minWidth: 140 }}>
+          <MenuItem value="ALL">All types</MenuItem>
+          <MenuItem value="RESERVATION">Reservation</MenuItem>
+          <MenuItem value="MATERIAL">Material</MenuItem>
+        </TextField>
+        <TextField select size="small" label="Status" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} sx={{ minWidth: 140 }}>
+          <MenuItem value="ALL">All statuses</MenuItem>
+          {['DRAFT', 'REQUESTED', 'STAGED', 'FORWARDED', 'FULFILLED', 'DENIED', 'CANCELLED'].map((s) => (
+            <MenuItem key={s} value={s}>{s.charAt(0) + s.slice(1).toLowerCase()}</MenuItem>
+          ))}
+        </TextField>
+        <TextField select size="small" label="Hub" value={filterHub} onChange={(e) => setFilterHub(e.target.value)} sx={{ minWidth: 160 }}>
+          <MenuItem value="ALL">All hubs</MenuItem>
+          {hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.name}</MenuItem>)}
+        </TextField>
+        <TextField size="small" label="Requester" value={filterRequester}
+          onChange={(e) => setFilterRequester(e.target.value)} placeholder="Filter by name…" sx={{ minWidth: 180 }} />
+      </Stack>
 
-      {rows === null ? <CircularProgress size={24} />
-        : rows.length === 0 ? <Alert severity="info">No deployment requests yet. Create one to stage gear ahead of a deployment.</Alert>
-        : (
-          <Stack spacing={1.5}>
-            {rows.map((r) => (
-              <Card key={r.id} variant="outlined">
-                <CardContent sx={{ pb: 1.5 }}>
-                  <Stack direction="row" justifyContent="space-between" alignItems="flex-start" flexWrap="wrap" useFlexGap>
-                    <Box>
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <Typography variant="subtitle1" fontWeight={600}>{r.label || 'Untitled request'}</Typography>
-                        <Chip size="small" label={r.status} color={STATUS_CHIP[r.status]?.color ?? 'default'} variant={r.status === 'CANCELLED' ? 'outlined' : 'filled'} />
-                      </Stack>
-                      <Typography variant="body2" color="text.secondary">
-                        {r.lineCount} line{r.lineCount !== 1 ? 's' : ''}
-                        {r.projectName ? ` · ${r.projectName}` : ''}
-                        {r.forOperatorName ? ` · for ${r.forOperatorName}` : ''}
-                        {r.neededBy ? ` · needed ${fmtDate(r.neededBy)}` : ''}
-                        {` · by ${r.requestedByName ?? 'Unknown'}`}
-                      </Typography>
-                    </Box>
-                    <Stack direction="row" spacing={0.5} alignItems="center">
-                      {r.status === 'DRAFT' && <Button size="small" onClick={() => transition(r.id, 'submit')}>Submit</Button>}
-                      {['DRAFT', 'REQUESTED', 'STAGED'].includes(r.status) && <Button size="small" color="error" onClick={() => setCancelId(r.id)}>Cancel</Button>}
-                      <IconButton size="small" onClick={() => toggleExpand(r.id)}>{expanded === r.id ? <ExpandLessIcon /> : <ExpandMoreIcon />}</IconButton>
-                    </Stack>
-                  </Stack>
-                  <Collapse in={expanded === r.id} unmountOnExit>
-                    <Divider sx={{ my: 1 }} />
-                    {lines[r.id] ? (
-                      lines[r.id].length === 0 ? <Typography variant="body2" color="text.secondary">No lines.</Typography>
-                        : <Stack spacing={0.25}>{lines[r.id].map((l) => <Typography key={l.id} variant="body2">• {lineLabel(l)}</Typography>)}</Stack>
-                    ) : <CircularProgress size={16} />}
-                  </Collapse>
-                </CardContent>
-              </Card>
-            ))}
-          </Stack>
-        )}
-
-      <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>New Deployment Request</DialogTitle>
-        <DialogContent>
-          <Stack spacing={2} mt={1}>
-            <TextField label="Label (optional)" value={label} onChange={(e) => setLabel(e.target.value)} fullWidth />
-            <Stack direction="row" spacing={2}>
-              <TextField select label="Project (optional)" value={projectId} onChange={(e) => setProjectId(e.target.value)} fullWidth>
-                <MenuItem value="">None</MenuItem>
-                {projects.map((p) => <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>)}
-              </TextField>
-              <TextField select label="For operator (optional)" value={forOperatorId} onChange={(e) => setForOperatorId(e.target.value)} fullWidth>
-                <MenuItem value="">Unassigned</MenuItem>
-                {operators.map((o) => <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>)}
-              </TextField>
-            </Stack>
-            <TextField type="date" label="Needed by (optional)" value={neededBy} onChange={(e) => setNeededBy(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} />
-
-            <Divider textAlign="left" sx={{ fontSize: 13, color: 'text.secondary' }}>Requested items & vehicles</Divider>
-            <TableContainer component={Paper} variant="outlined">
-              <Table size="small">
-                <TableBody>
-                  {draftLines.map((l, i) => (
-                    <TableRow key={i}>
-                      <TableCell sx={{ width: 130 }}>
-                        <TextField select size="small" value={l.lineType} onChange={(e) => setLine(i, { lineType: e.target.value as DraftLine['lineType'] })} fullWidth>
-                          <MenuItem value="KIT_ITEM">Kit item</MenuItem>
-                          <MenuItem value="VEHICLE">Vehicle</MenuItem>
-                        </TextField>
-                      </TableCell>
-                      <TableCell>
-                        {l.lineType === 'KIT_ITEM' ? (
-                          <TextField select size="small" label="Category" value={l.categoryId} onChange={(e) => setLine(i, { categoryId: e.target.value })} fullWidth>
-                            {categories.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)}
-                          </TextField>
-                        ) : (
-                          <TextField select size="small" label="Vehicle type" value={l.vehicleType} onChange={(e) => setLine(i, { vehicleType: e.target.value })} fullWidth>
-                            {VEHICLE_TYPE_OPTIONS.map((v) => <MenuItem key={v.value} value={v.value}>{v.label}</MenuItem>)}
-                          </TextField>
-                        )}
-                      </TableCell>
-                      <TableCell sx={{ width: 80 }}>
-                        <TextField size="small" type="number" label="Qty" value={l.requestedQty}
-                          onChange={(e) => setLine(i, { requestedQty: Math.max(1, parseInt(e.target.value) || 1) })} inputProps={{ min: 1 }} fullWidth />
-                      </TableCell>
-                      <TableCell sx={{ width: 40 }}><IconButton size="small" color="error" onClick={() => removeLine(i)}><DeleteIcon fontSize="small" /></IconButton></TableCell>
-                    </TableRow>
-                  ))}
-                  {draftLines.length === 0 && <TableRow><TableCell colSpan={4} align="center" sx={{ py: 2, color: 'text.secondary' }}>No lines yet.</TableCell></TableRow>}
-                </TableBody>
-              </Table>
-            </TableContainer>
-            <Button startIcon={<AddIcon />} onClick={addLine} size="small">Add line</Button>
-          </Stack>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setOpen(false)} disabled={saving}>Cancel</Button>
-          <Button onClick={() => submit('DRAFT')} disabled={saving}>Save draft</Button>
-          <Button variant="contained" onClick={() => submit('REQUESTED')} disabled={saving} startIcon={saving ? <CircularProgress size={16} color="inherit" /> : null}>
-            {saving ? 'Saving…' : 'Submit request'}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      <ConfirmDialog
-        open={!!cancelId}
-        title="Cancel this request?"
-        message="The request will be marked cancelled. This can't be undone."
-        confirmLabel="Cancel request"
-        confirmColor="error"
-        onClose={() => setCancelId(null)}
-        onConfirm={async () => { if (cancelId) await transition(cancelId, 'cancel'); setCancelId(null) }}
-      />
+      {requests === null ? (
+        <Box sx={{ display: 'flex', justifyContent: 'center', pt: 6 }}>
+          <CircularProgress />
+        </Box>
+      ) : filtered.length === 0 ? (
+        <Typography variant="body2" color="text.secondary" textAlign="center" pt={6}>
+          No requests match the current filters.
+        </Typography>
+      ) : (
+        <Stack spacing={1.5}>
+          {filtered.map((req) => (
+            <RequestCard key={req.id} req={req} hubs={hubs} operators={operators} onRefresh={load} />
+          ))}
+        </Stack>
+      )}
     </Box>
   )
 }
