@@ -132,6 +132,35 @@ export async function resyncItemTotal(itemId: string, db: RawClient = prisma): P
   `
 }
 
+/**
+ * Soft-reserve `qty` at a hub by incrementing reservedQty. Guarded: only succeeds
+ * if (quantity - reservedQty) >= qty so available stock can cover the ask.
+ * Returns true on success, false if insufficient available stock (no change made).
+ */
+export async function reserveAtHub(itemId: string, hubId: string, qty: number, db: RawClient = prisma): Promise<boolean> {
+  if (qty <= 0) return true
+  const n = await db.$executeRaw`
+    UPDATE "inventory_stock"
+    SET "reservedQty" = "reservedQty" + ${qty}, "updatedAt" = now()
+    WHERE "itemId" = ${itemId} AND "hubId" = ${hubId}
+      AND ("quantity" - "reservedQty") >= ${qty}
+  `
+  return Number(n) > 0
+}
+
+/**
+ * Release a prior reserve by decrementing reservedQty, floored at 0 to prevent
+ * negatives from any race. Always succeeds (no-op if the row is absent).
+ */
+export async function releaseAtHub(itemId: string, hubId: string, qty: number, db: RawClient = prisma): Promise<void> {
+  if (qty <= 0) return
+  await db.$executeRaw`
+    UPDATE "inventory_stock"
+    SET "reservedQty" = GREATEST("reservedQty" - ${qty}, 0), "updatedAt" = now()
+    WHERE "itemId" = ${itemId} AND "hubId" = ${hubId}
+  `
+}
+
 /** Restore `qty` to a hub's stock (creates the row if absent). For genuine good returns. */
 export async function restoreToHub(itemId: string, hubId: string, qty: number, db: RawClient = prisma): Promise<void> {
   if (qty <= 0) return

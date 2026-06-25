@@ -54,12 +54,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  const ok = await applyRequestTransition(id, action as RequestAction, result.request.requestType, extra)
-  if (!ok) {
-    const msg =
-      action === 'submit'
-        ? 'Only a draft can be submitted.'
-        : 'Transition not allowed in the current state.'
+  const transition = await applyRequestTransition(id, action as RequestAction, result.request.requestType, extra)
+  if (!transition.ok) {
+    if (transition.code === 'INSUFFICIENT_STOCK') {
+      return NextResponse.json(
+        { error: 'Insufficient available stock', shortItems: transition.shortItems ?? [] },
+        { status: 409 },
+      )
+    }
+    const msg = action === 'submit' ? 'Only a draft can be submitted.' : 'Transition not allowed in the current state.'
     return NextResponse.json({ error: msg }, { status: 409 })
   }
 

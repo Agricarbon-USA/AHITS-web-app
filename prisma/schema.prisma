@@ -948,6 +948,7 @@ model DeploymentRequest {
   decisionNote        String?
   decidedAt           DateTime?
   fulfilledAt         DateTime?
+  stockReservedAt     DateTime?
   createdAt           DateTime                @default(now())
   updatedAt           DateTime                @default(now())
 

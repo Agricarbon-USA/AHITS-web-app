@@ -62,6 +62,8 @@ afterEach(async () => {
   await prisma.maintenanceTask.deleteMany()
   await prisma.dailyCheck.deleteMany()
   await prisma.projectEquipment.deleteMany()
+  // deployment_request_lines cascade when deployment_requests is deleted
+  await prisma.deploymentRequest.deleteMany()
   await prisma.inventoryItem.deleteMany()
   await prisma.vehicle.deleteMany()
   await prisma.project.deleteMany()
