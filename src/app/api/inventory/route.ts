@@ -5,6 +5,7 @@ import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import type { EquipmentCategory, EquipmentStatus, ItemType } from '@prisma/client'
 import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions } from '@/lib/inventory'
 import { money } from '@/lib/validation'
+import { setStockAtHub } from '@/lib/inventory-stock'
 
 export async function GET(req: NextRequest) {
   const session = await requireAuth()
@@ -154,13 +155,21 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
   const { categoryId, hubId, ...rest } = parsed.data
-  const item = await prisma.inventoryItem.create({
-    data: {
-      ...rest,
-      // Only connect real CUID references, not enum-style fallbacks
-      ...(categoryId && !/^[A-Z_]+$/.test(categoryId) && { categoryId }),
-      ...(hubId && !/^[A-Z_]+$/.test(hubId) && { hubId }),
-    } as never,
+  const realHubId = hubId && !/^[A-Z_]+$/.test(hubId) ? hubId : null
+  const item = await prisma.$transaction(async (tx) => {
+    const created = await tx.inventoryItem.create({
+      data: {
+        ...rest,
+        // Only connect real CUID references, not enum-style fallbacks
+        ...(categoryId && !/^[A-Z_]+$/.test(categoryId) && { categoryId }),
+        ...(realHubId && { hubId: realHubId }),
+      } as never,
+    })
+    // Seed per-hub stock row for new CONSUMABLE items so MH-2 stock table is populated from creation
+    if (created.itemType === 'CONSUMABLE' && realHubId && (rest.quantity ?? 0) > 0) {
+      await setStockAtHub(created.id, realHubId, rest.quantity ?? 0, tx)
+    }
+    return created
   })
   return NextResponse.json({ data: item }, { status: 201 })
 }

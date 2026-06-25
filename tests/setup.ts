@@ -45,6 +45,8 @@ function assertSafeTestDatabase(rawUrl: string | undefined): void {
 assertSafeTestDatabase(process.env.DATABASE_URL)
 
 afterEach(async () => {
+  await prisma.idempotencyKey.deleteMany()
+  await prisma.rateLimitHit.deleteMany()
   await prisma.photo.deleteMany()
   await prisma.alert.deleteMany()
   await prisma.checkLog.deleteMany()
