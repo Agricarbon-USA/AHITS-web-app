@@ -96,6 +96,7 @@ interface InventoryOption {
   }
   availableQuantity: number
   availableUnits: Array<{ id: string; serialNumber: string | null; qrCodeId: string; position: number }>
+  hubStock?: Array<{ hubId: string; hubName: string | null; quantity: number; reservedQty: number; available: number }>
 }
 
 interface PendingItemEntry {
@@ -180,7 +181,30 @@ function NewDeploymentDialog({
   const [note, setNote] = React.useState('')
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState('')
-  const [sourceHubId, setSourceHubId] = React.useState('')
+  // Default to first hub on dialog open — hubs are fetched before the dialog mounts.
+  const [sourceHubId, setSourceHubId] = React.useState(() => hubs[0]?.id ?? '')
+
+  // When hub changes, re-cap consumable quantities that exceed the new hub's available.
+  React.useEffect(() => {
+    if (!sourceHubId) return
+    setKitItems((prev) => {
+      let changed = false
+      const m = new Map(prev)
+      for (const [itemId, entry] of m) {
+        if (entry.itemType !== 'CONSUMABLE') continue
+        const item = inventoryItems.find((i) => i.id === itemId)
+        if (!item) continue
+        const hubAvail = item.hubStock?.find((s) => s.hubId === sourceHubId)?.available ?? 0
+        if (hubAvail > 0 && entry.quantity > hubAvail) {
+          m.set(itemId, { ...entry, quantity: hubAvail })
+          changed = true
+        }
+      }
+      return changed ? m : prev
+    })
+  // inventoryItems is stable (fetched once); sourceHubId is the trigger.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceHubId])
 
   const unassignedVehicles = vehicles.filter((v) => !v.assignedOperatorId && v.status === 'ACTIVE')
   const availableItems = inventoryItems.filter((i) => availFor(i) > 0)
@@ -338,6 +362,12 @@ function NewDeploymentDialog({
                   const isSerialized = item.itemType === 'SERIALIZED'
                   const entry = kitItems.get(item.id)
                   const checked = !!entry
+                  // Gate consumable qty on the selected hub's available; fall back to total if no hub.
+                  const hubAvail = !isSerialized
+                    ? (sourceHubId
+                        ? (item.hubStock?.find((s) => s.hubId === sourceHubId)?.available ?? (item.availableQuantity ?? 0))
+                        : (item.availableQuantity ?? 0))
+                    : 0
                   return (
                     <Box key={item.id}>
                       <Stack direction="row" alignItems="center" spacing={1}>
@@ -362,12 +392,12 @@ function NewDeploymentDialog({
                             value={entry?.quantity ?? 1}
                             onChange={(e) => {
                               const m = new Map(kitItems)
-                              const v = Math.min(parseInt(e.target.value) || 1, item.availableQuantity ?? 0)
+                              const v = Math.min(parseInt(e.target.value) || 1, hubAvail)
                               m.set(item.id, { itemType: 'CONSUMABLE', quantity: v, inventoryUnitId: null, unitLabel: null })
                               setKitItems(m)
                             }}
-                            inputProps={{ min: 1, max: item.availableQuantity ?? 0, style: { MozAppearance: 'textfield', width: 60 } }}
-                            helperText={`${item.availableQuantity ?? 0} avail.`}
+                            inputProps={{ min: 1, max: hubAvail, style: { MozAppearance: 'textfield', width: 60 } }}
+                            helperText={`${hubAvail} avail.`}
                             sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }}
                           />
                         )}
@@ -425,20 +455,26 @@ function NewDeploymentDialog({
               </Stack>
             )}
             {hasConsumableInKit && (
-              <TextField
-                select
-                label="Source hub (required for consumables)"
-                value={sourceHubId}
-                onChange={(e) => setSourceHubId(e.target.value)}
-                fullWidth
-                size="small"
-                sx={{ mt: 2 }}
-              >
-                <MenuItem value="" disabled>Select a hub…</MenuItem>
-                {hubs.map((h) => (
-                  <MenuItem key={h.id} value={h.id}>{h.name} — {h.city}, {h.state}</MenuItem>
-                ))}
-              </TextField>
+              hubs.length === 0 ? (
+                <Alert severity="error" sx={{ mt: 2 }}>
+                  No active hubs configured — consumable checkout is unavailable. Contact an admin to set up a hub.
+                </Alert>
+              ) : (
+                <TextField
+                  select
+                  label="Source hub (required for consumables)"
+                  value={sourceHubId}
+                  onChange={(e) => setSourceHubId(e.target.value)}
+                  fullWidth
+                  size="small"
+                  sx={{ mt: 2 }}
+                >
+                  <MenuItem value="" disabled>Select a hub…</MenuItem>
+                  {hubs.map((h) => (
+                    <MenuItem key={h.id} value={h.id}>{h.name} — {h.city}, {h.state}</MenuItem>
+                  ))}
+                </TextField>
+              )
             )}
             {kitItems.size === 0 && (
               <Alert severity="warning" sx={{ mt: 1 }}>Starting with empty kit</Alert>
@@ -1150,7 +1186,7 @@ export default function MyRigPage() {
             )}
             <Stack direction="row" spacing={1}>
               <Button size="small" variant="outlined" startIcon={<AddIcon />}
-                onClick={() => setAddItemOpen(true)}>
+                onClick={() => { setAddItemOpen(true); if (!addItemSourceHubId) setAddItemSourceHubId(hubs[0]?.id ?? '') }}>
                 Add Items
               </Button>
               {kitItems.length > 0 && !removingItems && (
@@ -1398,6 +1434,11 @@ export default function MyRigPage() {
                   }
                 }
 
+                const addHubAvail = !isSerialized
+                  ? (addItemSourceHubId
+                      ? (item.hubStock?.find((s) => s.hubId === addItemSourceHubId)?.available ?? (item.availableQuantity ?? 0))
+                      : (item.availableQuantity ?? 0))
+                  : 0
                 return (
                   <Box key={item.id}>
                     <Stack direction="row" alignItems="center" spacing={1}>
@@ -1422,12 +1463,12 @@ export default function MyRigPage() {
                           value={entry?.quantity ?? 1}
                           onChange={(e) => {
                             const m = new Map(pendingItems)
-                            const v = Math.min(parseInt(e.target.value) || 1, item.availableQuantity ?? 0)
+                            const v = Math.min(parseInt(e.target.value) || 1, addHubAvail)
                             m.set(item.id, { itemType: 'CONSUMABLE', quantity: v, inventoryUnitId: null, unitLabel: null })
                             setPendingItems(m)
                           }}
-                          inputProps={{ min: 1, max: item.availableQuantity ?? 0, style: { MozAppearance: 'textfield', width: 60 } }}
-                          helperText={`${item.availableQuantity ?? 0} avail.`}
+                          inputProps={{ min: 1, max: addHubAvail, style: { MozAppearance: 'textfield', width: 60 } }}
+                          helperText={`${addHubAvail} avail.`}
                           sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }}
                         />
                       )}
@@ -1488,19 +1529,25 @@ export default function MyRigPage() {
         </DialogContent>
         {Array.from(pendingItems.values()).some((e) => e.itemType === 'CONSUMABLE') && (
           <Box sx={{ px: 3, pb: 1 }}>
-            <TextField
-              select
-              label="Source hub (required for consumables)"
-              value={addItemSourceHubId}
-              onChange={(e) => setAddItemSourceHubId(e.target.value)}
-              fullWidth
-              size="small"
-            >
-              <MenuItem value="" disabled>Select a hub…</MenuItem>
-              {hubs.map((h) => (
-                <MenuItem key={h.id} value={h.id}>{h.name} — {h.city}, {h.state}</MenuItem>
-              ))}
-            </TextField>
+            {hubs.length === 0 ? (
+              <Alert severity="error">
+                No active hubs configured — consumable checkout is unavailable. Contact an admin to set up a hub.
+              </Alert>
+            ) : (
+              <TextField
+                select
+                label="Source hub (required for consumables)"
+                value={addItemSourceHubId}
+                onChange={(e) => setAddItemSourceHubId(e.target.value)}
+                fullWidth
+                size="small"
+              >
+                <MenuItem value="" disabled>Select a hub…</MenuItem>
+                {hubs.map((h) => (
+                  <MenuItem key={h.id} value={h.id}>{h.name} — {h.city}, {h.state}</MenuItem>
+                ))}
+              </TextField>
+            )}
           </Box>
         )}
         <DialogActions sx={{ px: 3, pb: 2 }}>

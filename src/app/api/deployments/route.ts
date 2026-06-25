@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
 import { getDeploymentRosters, ensureOpenAssignment, addProjectLink } from '@/lib/deployment-assignments'
-import { drawFromHub, getStockAtHub } from '@/lib/inventory-stock'
+import { drawFromHub, getStockAtHub, totalStock, setStockAtHub } from '@/lib/inventory-stock'
 
 const RIG_INCLUDE = {
   operator: { select: { id: true, name: true } },
@@ -208,7 +208,7 @@ export async function POST(req: NextRequest) {
           const quantity = (ki as { quantity: number }).quantity
           const item = await tx.inventoryItem.findUnique({
             where: { id: ki.inventoryItemId },
-            select: { itemType: true },
+            select: { itemType: true, quantity: true },
           })
           // SERIALIZED items checked out by quantity must reserve that many real
           // AVAILABLE units. CONSUMABLE quantity is authoritative and may have no
@@ -246,6 +246,13 @@ export async function POST(req: NextRequest) {
           if (item?.itemType === 'CONSUMABLE') {
             if (!sourceHubId) {
               throw Object.assign(new Error('CONSUMABLE_NEEDS_HUB'), {})
+            }
+            // Self-heal: if this item has no stock rows at all (e.g. pre-backfill legacy
+            // item or edge case), seed a stock row from the legacy quantity so checkout
+            // succeeds. Only when totalStock === 0 to avoid inflating multi-hub totals.
+            const existingTotal = await totalStock(ki.inventoryItemId, tx)
+            if (existingTotal === 0 && (item.quantity ?? 0) >= quantity) {
+              await setStockAtHub(ki.inventoryItemId, sourceHubId, item.quantity ?? 0, tx)
             }
             const drawn = await drawFromHub(ki.inventoryItemId, sourceHubId, quantity, tx)
             if (drawn < quantity) {
