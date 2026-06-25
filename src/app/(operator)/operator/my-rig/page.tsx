@@ -94,6 +94,7 @@ interface InventoryOption {
     inoperable: number
     totalUnits: number
   }
+  availableQuantity: number
   availableUnits: Array<{ id: string; serialNumber: string | null; qrCodeId: string; position: number }>
 }
 
@@ -146,6 +147,12 @@ interface HandoffRow {
   initiatedByName: string | null
 }
 
+// Returns the available stock count for display and quantity-capping.
+// Serialized items use unitCounts.available (unit rows); consumables use
+// availableQuantity (= InventoryItem.quantity, the stored consumable count).
+const availFor = (i: { itemType: string; unitCounts?: { available?: number } | null; availableQuantity?: number }) =>
+  i.itemType === 'SERIALIZED' ? (i.unitCounts?.available ?? 0) : (i.availableQuantity ?? 0)
+
 // Transfer Dialog now lives in components/shared/TransferDialog.tsx (UX-5).
 // ── New Deployment Dialog (operator) ──────────────────────────────
 
@@ -173,7 +180,7 @@ function NewDeploymentDialog({
   const [error, setError] = React.useState('')
 
   const unassignedVehicles = vehicles.filter((v) => !v.assignedOperatorId && v.status === 'ACTIVE')
-  const availableItems = inventoryItems.filter((i) => (i.unitCounts?.available ?? 0) > 0)
+  const availableItems = inventoryItems.filter((i) => availFor(i) > 0)
 
   const hasUnselectedSerialized = Array.from(kitItems.values()).some(
     (e) => e.itemType === 'SERIALIZED' && !e.inventoryUnitId,
@@ -348,12 +355,12 @@ function NewDeploymentDialog({
                             value={entry?.quantity ?? 1}
                             onChange={(e) => {
                               const m = new Map(kitItems)
-                              const v = Math.min(parseInt(e.target.value) || 1, item.unitCounts?.available ?? 1)
+                              const v = Math.min(parseInt(e.target.value) || 1, item.availableQuantity ?? 0)
                               m.set(item.id, { itemType: 'CONSUMABLE', quantity: v, inventoryUnitId: null, unitLabel: null })
                               setKitItems(m)
                             }}
-                            inputProps={{ min: 1, max: item.unitCounts?.available ?? 1, style: { MozAppearance: 'textfield', width: 60 } }}
-                            helperText={`${item.unitCounts?.available ?? 0} avail.`}
+                            inputProps={{ min: 1, max: item.availableQuantity ?? 0, style: { MozAppearance: 'textfield', width: 60 } }}
+                            helperText={`${item.availableQuantity ?? 0} avail.`}
                             sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }}
                           />
                         )}
@@ -1307,11 +1314,11 @@ export default function MyRigPage() {
       <Dialog open={addItemOpen} onClose={() => { setAddItemOpen(false); setPendingItems(new Map()); setUnitManualQR({}) }} maxWidth="sm" fullWidth>
         <DialogTitle>Add Items</DialogTitle>
         <DialogContent>
-          {inventoryItems.filter((i) => (i.unitCounts?.available ?? 0) > 0).length === 0 ? (
+          {inventoryItems.filter((i) => availFor(i) > 0).length === 0 ? (
             <Typography variant="body2" color="text.secondary">No available items.</Typography>
           ) : (
             <Stack spacing={1.5} mt={1}>
-              {inventoryItems.filter((i) => (i.unitCounts?.available ?? 0) > 0).map((item) => {
+              {inventoryItems.filter((i) => availFor(i) > 0).map((item) => {
                 const entry = pendingItems.get(item.id)
                 const checked = !!entry
                 const isSerialized = item.itemType === 'SERIALIZED'
@@ -1389,12 +1396,12 @@ export default function MyRigPage() {
                           value={entry?.quantity ?? 1}
                           onChange={(e) => {
                             const m = new Map(pendingItems)
-                            const v = Math.min(parseInt(e.target.value) || 1, item.unitCounts?.available ?? 1)
+                            const v = Math.min(parseInt(e.target.value) || 1, item.availableQuantity ?? 0)
                             m.set(item.id, { itemType: 'CONSUMABLE', quantity: v, inventoryUnitId: null, unitLabel: null })
                             setPendingItems(m)
                           }}
-                          inputProps={{ min: 1, max: item.unitCounts?.available ?? 1, style: { MozAppearance: 'textfield', width: 60 } }}
-                          helperText={`${item.unitCounts?.available ?? 0} avail.`}
+                          inputProps={{ min: 1, max: item.availableQuantity ?? 0, style: { MozAppearance: 'textfield', width: 60 } }}
+                          helperText={`${item.availableQuantity ?? 0} avail.`}
                           sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }}
                         />
                       )}
