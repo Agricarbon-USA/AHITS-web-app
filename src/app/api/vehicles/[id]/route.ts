@@ -18,6 +18,7 @@ const vehicleUpdateSchema = z
     odometer: z.number().int().nullable(),
     status: z.nativeEnum(VehicleStatus),
     location: z.string().nullable(),
+    hubId: z.string().nullable(),
     assignedOperatorId: z.string().nullable(),
     insuranceExpires: z.coerce.date().nullable(),
     registrationExpires: z.coerce.date().nullable(),
@@ -39,7 +40,23 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
     },
   })
   if (!vehicle) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  return NextResponse.json({ data: vehicle })
+
+  // Merge hub + assigned-operator names via raw SQL (hubId newer than client).
+  let hubId: string | null = null
+  let hubName: string | null = null
+  let assignedOperatorName: string | null = null
+  try {
+    const rows = await prisma.$queryRaw<{ hubId: string | null; hubName: string | null; assignedOperatorName: string | null }[]>`
+      SELECT v."hubId", h."name" AS "hubName", u."name" AS "assignedOperatorName"
+      FROM "vehicles" v
+      LEFT JOIN "hubs" h ON h."id" = v."hubId"
+      LEFT JOIN "users" u ON u."id" = v."assignedOperatorId"
+      WHERE v."id" = ${id}
+    `
+    if (rows[0]) { hubId = rows[0].hubId; hubName = rows[0].hubName; assignedOperatorName = rows[0].assignedOperatorName }
+  } catch { /* hubId column missing pre-migration */ }
+
+  return NextResponse.json({ data: { ...vehicle, hubId, hubName, assignedOperatorName } })
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -50,9 +67,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten().fieldErrors }, { status: 400 })
   }
+  // hubId is newer than the generated client — update it via raw SQL, the rest
+  // through the typed client.
+  const { hubId, ...rest } = parsed.data
   try {
-    const vehicle = await prisma.vehicle.update({ where: { id }, data: parsed.data })
-    return NextResponse.json({ data: vehicle })
+    const vehicle = await prisma.vehicle.update({ where: { id }, data: rest })
+    if ('hubId' in parsed.data) {
+      await prisma.$executeRaw`UPDATE "vehicles" SET "hubId" = ${hubId ?? null} WHERE "id" = ${id}`
+    }
+    return NextResponse.json({ data: { ...vehicle, hubId: hubId ?? null } })
   } catch {
     return NextResponse.json({ error: 'Vehicle not found or update failed' }, { status: 404 })
   }

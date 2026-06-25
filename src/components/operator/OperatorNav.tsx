@@ -6,6 +6,7 @@ import DashboardIcon from '@mui/icons-material/Dashboard'
 import ChecklistIcon from '@mui/icons-material/Checklist'
 import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner'
+import DirectionsCarIcon from '@mui/icons-material/DirectionsCar'
 import LockResetIcon from '@mui/icons-material/LockReset'
 import LogoutIcon from '@mui/icons-material/Logout'
 import { usePathname, useRouter } from 'next/navigation'
@@ -16,6 +17,14 @@ const NAV_ITEMS = [
   { label: 'Daily Check', href: '/operator/daily-check', icon: ChecklistIcon },
   { label: 'My Rig', href: '/operator/my-rig', icon: LocalShippingIcon },
   { label: 'Scan QR', href: '/operator/scan', icon: QrCodeScannerIcon },
+]
+
+// Read-only org-wide views (workplan §6). Keep in lockstep with
+// OPERATOR_VIEW_ADMIN_PATHS in proxy.ts + OPERATOR_VIEW_HREFS in AdminNav.tsx.
+// These render the same admin page components in a read-only (canEdit=false)
+// context — one source of truth, no duplicate screens.
+const VIEW_ITEMS = [
+  { label: 'Vehicles', href: '/admin/vehicles', icon: DirectionsCarIcon },
 ]
 
 export function OperatorNav() {
@@ -66,6 +75,19 @@ export function OperatorNav() {
                 <Icon fontSize="small" />
               )}
             </ListItemIcon>
+            <ListItemText primary={label} primaryTypographyProps={{ fontSize: 14, fontWeight: pathname.startsWith(href) ? 600 : 400 }} />
+          </ListItemButton>
+        ))}
+        <Divider sx={{ my: 1 }} />
+        <Typography variant="caption" color="text.secondary" sx={{ px: 2.5, py: 0.5, display: 'block' }}>Browse (view only)</Typography>
+        {VIEW_ITEMS.map(({ label, href, icon: Icon }) => (
+          <ListItemButton
+            key={href}
+            selected={pathname.startsWith(href)}
+            onClick={() => router.push(href)}
+            sx={{ borderRadius: 2, mx: 1, mb: 0.5 }}
+          >
+            <ListItemIcon sx={{ minWidth: 36 }}><Icon fontSize="small" /></ListItemIcon>
             <ListItemText primary={label} primaryTypographyProps={{ fontSize: 14, fontWeight: pathname.startsWith(href) ? 600 : 400 }} />
           </ListItemButton>
         ))}

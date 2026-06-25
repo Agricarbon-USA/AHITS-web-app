@@ -14,6 +14,7 @@ import WarehouseIcon from '@mui/icons-material/Warehouse'
 import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck'
 import SettingsIcon from '@mui/icons-material/Settings'
 import LogoutIcon from '@mui/icons-material/Logout'
+import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuth } from '@/hooks/useAuth'
 
@@ -31,15 +32,29 @@ const NAV_ITEMS = [
   { label: 'Settings', href: '/admin/settings', icon: SettingsIcon },
 ]
 
+// Workplan §6: the read-only subset operators may view. Keep in lockstep with
+// OPERATOR_VIEW_ADMIN_PATHS in proxy.ts — a nav entry without a matching proxy
+// grant would just bounce the operator back to their dashboard.
+const OPERATOR_VIEW_HREFS = new Set<string>([
+  '/admin/vehicles',
+])
+
 export function AdminNav() {
   const pathname = usePathname()
   const router = useRouter()
-  const { logout, user } = useAuth()
+  const { logout, user, isAdmin } = useAuth()
+  const items = isAdmin ? NAV_ITEMS : NAV_ITEMS.filter((i) => OPERATOR_VIEW_HREFS.has(i.href))
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <List sx={{ flexGrow: 1, pt: 1 }}>
-        {NAV_ITEMS.map(({ label, href, icon: Icon }) => (
+        {!isAdmin && (
+          <ListItemButton onClick={() => router.push('/operator/dashboard')} sx={{ borderRadius: 2, mx: 1, mb: 0.5 }}>
+            <ListItemIcon sx={{ minWidth: 36 }}><ArrowBackIcon fontSize="small" /></ListItemIcon>
+            <ListItemText primary="My Dashboard" primaryTypographyProps={{ fontSize: 14 }} />
+          </ListItemButton>
+        )}
+        {items.map(({ label, href, icon: Icon }) => (
           <ListItemButton
             key={href}
             selected={pathname.startsWith(href)}

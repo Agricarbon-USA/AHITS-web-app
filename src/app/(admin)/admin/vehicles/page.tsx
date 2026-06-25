@@ -3,7 +3,7 @@
 import * as React from 'react'
 import {
   Box, Typography, Paper, Stack, Button, IconButton, CircularProgress, Chip, Divider,
-  Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
+  Table, TableHead, TableBody, TableRow, TableCell, TableContainer, TableSortLabel,
   Drawer, Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem, Tooltip,
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
@@ -13,6 +13,7 @@ import CloseIcon from '@mui/icons-material/Close'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { useToast } from '@/components/shared/useToast'
+import { useCanEdit, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 
 const VEHICLE_TYPES = ['TRUCK', 'TRAILER', 'POLARIS_UTV', 'CAN_AM_UTV', 'CHRISTIE_DRILL', 'ATV', 'OTHER']
 const VEHICLE_STATUSES = ['ACTIVE', 'IN_MAINTENANCE', 'OUT_OF_SERVICE', 'RETIRED']
@@ -28,11 +29,17 @@ interface VehicleRow {
   odometer: number | null
   status: string
   location: string | null
+  hubId: string | null
+  hubName: string | null
+  assignedOperatorName: string | null
   insuranceExpires: string | null
   registrationExpires: string | null
   notes: string | null
   _count?: { dailyChecks: number; maintenanceTasks: number }
 }
+
+interface HubOption { id: string; name: string; city?: string; state?: string }
+type SortKey = 'name' | 'type' | 'status' | 'hub' | 'operator' | 'odometer'
 
 interface VehicleDetail extends VehicleRow {
   dailyChecks: { id: string; date: string; operator: { name: string } | null; passed?: boolean }[]
@@ -54,13 +61,23 @@ const dateInput = (iso: string | null | undefined) => (iso ? iso.slice(0, 10) : 
 
 export default function AdminVehiclesPage() {
   const showToast = useToast()
+  const canEdit = useCanEdit()
   const [vehicles, setVehicles] = React.useState<VehicleRow[]>([])
+  const [hubs, setHubs] = React.useState<HubOption[]>([])
   const [loading, setLoading] = React.useState(true)
   const [detail, setDetail] = React.useState<VehicleDetail | null>(null)
   const [detailLoading, setDetailLoading] = React.useState(false)
   const [formOpen, setFormOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<VehicleRow | null>(null)
   const [confirmDelete, setConfirmDelete] = React.useState<VehicleRow | null>(null)
+
+  // Filters & sorting (client-side; the fleet is small).
+  const [search, setSearch] = React.useState('')
+  const [filterType, setFilterType] = React.useState('')
+  const [filterStatus, setFilterStatus] = React.useState('')
+  const [filterHub, setFilterHub] = React.useState('')
+  const [sortKey, setSortKey] = React.useState<SortKey>('name')
+  const [sortDir, setSortDir] = React.useState<'asc' | 'desc'>('asc')
 
   const load = React.useCallback(async () => {
     setLoading(true)
@@ -76,7 +93,51 @@ export default function AdminVehiclesPage() {
     }
   }, [showToast])
 
-  React.useEffect(() => { load() }, [load])
+  const loadHubs = React.useCallback(async () => {
+    try {
+      const res = await fetch('/api/hubs')
+      if (!res.ok) return
+      const d = await res.json()
+      setHubs(Array.isArray(d) ? d : (d.data ?? []))
+    } catch { /* non-fatal: form falls back to no-hub */ }
+  }, [])
+
+  React.useEffect(() => { load(); loadHubs() }, [load, loadHubs])
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    else { setSortKey(key); setSortDir('asc') }
+  }
+
+  const visibleVehicles = React.useMemo(() => {
+    const q = search.trim().toLowerCase()
+    const filtered = vehicles.filter((v) => {
+      if (filterType && v.type !== filterType) return false
+      if (filterStatus && v.status !== filterStatus) return false
+      if (filterHub && (v.hubId ?? '') !== filterHub) return false
+      if (q) {
+        const hay = `${v.name} ${v.makeModel ?? ''} ${v.licensePlate ?? ''} ${v.vin ?? ''} ${v.hubName ?? ''} ${v.assignedOperatorName ?? ''}`.toLowerCase()
+        if (!hay.includes(q)) return false
+      }
+      return true
+    })
+    const dir = sortDir === 'asc' ? 1 : -1
+    const val = (v: VehicleRow): string | number => {
+      switch (sortKey) {
+        case 'type': return v.type
+        case 'status': return v.status
+        case 'hub': return v.hubName ?? ''
+        case 'operator': return v.assignedOperatorName ?? ''
+        case 'odometer': return v.odometer ?? -1
+        default: return v.name.toLowerCase()
+      }
+    }
+    return [...filtered].sort((a, b) => {
+      const av = val(a), bv = val(b)
+      if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir
+      return String(av).localeCompare(String(bv)) * dir
+    })
+  }, [vehicles, search, filterType, filterStatus, filterHub, sortKey, sortDir])
 
   const openDetail = async (id: string) => {
     setDetailLoading(true)
@@ -114,10 +175,13 @@ export default function AdminVehiclesPage() {
   return (
     <Box>
       <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1} mb={1}>
-        <Typography variant="h5">Vehicles</Typography>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => { setEditing(null); setFormOpen(true) }}>
+        <Stack direction="row" alignItems="center" gap={1}>
+          <Typography variant="h5">Vehicles</Typography>
+          {!canEdit && <Chip size="small" label="View only" variant="outlined" />}
+        </Stack>
+        <MutationButton variant="contained" startIcon={<AddIcon />} onClick={() => { setEditing(null); setFormOpen(true) }}>
           Add Vehicle
-        </Button>
+        </MutationButton>
       </Stack>
       {expiringCount > 0 && (
         <Paper variant="outlined" sx={{ p: 1.5, mb: 2, display: 'flex', alignItems: 'center', gap: 1, borderColor: 'warning.main' }}>
@@ -128,20 +192,62 @@ export default function AdminVehiclesPage() {
         </Paper>
       )}
 
+      {!loading && vehicles.length > 0 && (
+        <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap mb={1.5} alignItems="center">
+          <TextField
+            size="small" label="Search" value={search} onChange={(e) => setSearch(e.target.value)}
+            placeholder="Name, plate, VIN, hub, operator" sx={{ minWidth: 220 }}
+          />
+          <TextField select size="small" label="Type" value={filterType} onChange={(e) => setFilterType(e.target.value)} sx={{ minWidth: 150 }}>
+            <MenuItem value="">All types</MenuItem>
+            {VEHICLE_TYPES.map((t) => <MenuItem key={t} value={t}>{t.replace(/_/g, ' ')}</MenuItem>)}
+          </TextField>
+          <TextField select size="small" label="Status" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} sx={{ minWidth: 150 }}>
+            <MenuItem value="">All statuses</MenuItem>
+            {VEHICLE_STATUSES.map((s) => <MenuItem key={s} value={s}>{s.replace(/_/g, ' ')}</MenuItem>)}
+          </TextField>
+          <TextField select size="small" label="Hub" value={filterHub} onChange={(e) => setFilterHub(e.target.value)} sx={{ minWidth: 160 }}>
+            <MenuItem value="">All hubs</MenuItem>
+            {hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.name}</MenuItem>)}
+          </TextField>
+          {(search || filterType || filterStatus || filterHub) && (
+            <Button size="small" onClick={() => { setSearch(''); setFilterType(''); setFilterStatus(''); setFilterHub('') }}>Clear</Button>
+          )}
+          <Box flexGrow={1} />
+          <Typography variant="caption" color="text.secondary">{visibleVehicles.length} of {vehicles.length}</Typography>
+        </Stack>
+      )}
+
       <Paper variant="outlined">
         {loading ? (
           <Box sx={{ p: 4, textAlign: 'center' }}><CircularProgress size={28} /></Box>
         ) : vehicles.length === 0 ? (
           <Box sx={{ p: 4 }}><Typography color="text.secondary" align="center">No vehicles yet. Add your first vehicle to start tracking.</Typography></Box>
+        ) : visibleVehicles.length === 0 ? (
+          <Box sx={{ p: 4 }}><Typography color="text.secondary" align="center">No vehicles match these filters.</Typography></Box>
         ) : (
           <TableContainer>
             <Table size="small">
               <TableHead>
                 <TableRow>
-                  <TableCell>Name</TableCell>
-                  <TableCell>Type</TableCell>
-                  <TableCell>Status</TableCell>
-                  <TableCell align="right">Odometer</TableCell>
+                  <TableCell sortDirection={sortKey === 'name' ? sortDir : false}>
+                    <TableSortLabel active={sortKey === 'name'} direction={sortKey === 'name' ? sortDir : 'asc'} onClick={() => toggleSort('name')}>Name</TableSortLabel>
+                  </TableCell>
+                  <TableCell sortDirection={sortKey === 'type' ? sortDir : false}>
+                    <TableSortLabel active={sortKey === 'type'} direction={sortKey === 'type' ? sortDir : 'asc'} onClick={() => toggleSort('type')}>Type</TableSortLabel>
+                  </TableCell>
+                  <TableCell sortDirection={sortKey === 'status' ? sortDir : false}>
+                    <TableSortLabel active={sortKey === 'status'} direction={sortKey === 'status' ? sortDir : 'asc'} onClick={() => toggleSort('status')}>Status</TableSortLabel>
+                  </TableCell>
+                  <TableCell sortDirection={sortKey === 'hub' ? sortDir : false}>
+                    <TableSortLabel active={sortKey === 'hub'} direction={sortKey === 'hub' ? sortDir : 'asc'} onClick={() => toggleSort('hub')}>Hub</TableSortLabel>
+                  </TableCell>
+                  <TableCell sortDirection={sortKey === 'operator' ? sortDir : false}>
+                    <TableSortLabel active={sortKey === 'operator'} direction={sortKey === 'operator' ? sortDir : 'asc'} onClick={() => toggleSort('operator')}>Operator</TableSortLabel>
+                  </TableCell>
+                  <TableCell align="right" sortDirection={sortKey === 'odometer' ? sortDir : false}>
+                    <TableSortLabel active={sortKey === 'odometer'} direction={sortKey === 'odometer' ? sortDir : 'asc'} onClick={() => toggleSort('odometer')}>Odometer</TableSortLabel>
+                  </TableCell>
                   <TableCell>Insurance</TableCell>
                   <TableCell>Registration</TableCell>
                   <TableCell align="right">Checks</TableCell>
@@ -150,7 +256,7 @@ export default function AdminVehiclesPage() {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {vehicles.map((v) => {
+                {visibleVehicles.map((v) => {
                   const ins = expiryMeta(v.insuranceExpires)
                   const reg = expiryMeta(v.registrationExpires)
                   return (
@@ -161,14 +267,16 @@ export default function AdminVehiclesPage() {
                       </TableCell>
                       <TableCell>{v.type.replace(/_/g, ' ')}</TableCell>
                       <TableCell><StatusChip status={v.status} kind="vehicle" /></TableCell>
+                      <TableCell>{v.hubName ?? <Typography variant="caption" color="text.secondary">{v.location || '—'}</Typography>}</TableCell>
+                      <TableCell>{v.assignedOperatorName ?? '—'}</TableCell>
                       <TableCell align="right">{v.odometer != null ? v.odometer.toLocaleString() : '—'}</TableCell>
                       <TableCell><Chip size="small" label={ins.label} color={ins.color} variant={ins.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
                       <TableCell><Chip size="small" label={reg.label} color={reg.color} variant={reg.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
                       <TableCell align="right">{v._count?.dailyChecks ?? 0}</TableCell>
                       <TableCell align="right">{v._count?.maintenanceTasks ?? 0}</TableCell>
                       <TableCell align="right" onClick={(e) => e.stopPropagation()}>
-                        <Tooltip title="Edit"><IconButton size="small" onClick={() => { setEditing(v); setFormOpen(true) }}><EditIcon fontSize="small" /></IconButton></Tooltip>
-                        <Tooltip title="Delete"><IconButton size="small" onClick={() => setConfirmDelete(v)}><DeleteIcon fontSize="small" /></IconButton></Tooltip>
+                        <MutationIconButton tooltip="Edit" size="small" onClick={() => { setEditing(v); setFormOpen(true) }}><EditIcon fontSize="small" /></MutationIconButton>
+                        <MutationIconButton tooltip="Delete" size="small" onClick={() => setConfirmDelete(v)}><DeleteIcon fontSize="small" /></MutationIconButton>
                       </TableCell>
                     </TableRow>
                   )
@@ -192,12 +300,14 @@ export default function AdminVehiclesPage() {
             <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
               <StatusChip status={detail.status} kind="vehicle" />
               <Chip size="small" label={detail.type.replace(/_/g, ' ')} variant="outlined" />
-              {detail.location && <Chip size="small" label={detail.location} variant="outlined" />}
+              {detail.hubName && <Chip size="small" label={detail.hubName} variant="outlined" />}
             </Stack>
 
             <Box>
               <Typography variant="subtitle2" gutterBottom>Details</Typography>
               <Stack spacing={0.5}>
+                <Detail label="Home hub" value={detail.hubName ?? (detail.location || '—')} />
+                <Detail label="Assigned operator" value={detail.assignedOperatorName ?? '—'} />
                 <Detail label="Make / Model" value={detail.makeModel ?? '—'} />
                 <Detail label="Year" value={detail.year != null ? String(detail.year) : '—'} />
                 <Detail label="VIN" value={detail.vin ?? '—'} />
@@ -251,8 +361,8 @@ export default function AdminVehiclesPage() {
             </Box>
 
             <Stack direction="row" spacing={1} pt={1}>
-              <Button variant="outlined" startIcon={<EditIcon />} onClick={() => { setEditing(detail); setFormOpen(true) }}>Edit</Button>
-              <Button variant="outlined" color="error" startIcon={<DeleteIcon />} onClick={() => setConfirmDelete(detail)}>Delete</Button>
+              <MutationButton variant="outlined" startIcon={<EditIcon />} onClick={() => { setEditing(detail); setFormOpen(true) }}>Edit</MutationButton>
+              <MutationButton variant="outlined" color="error" startIcon={<DeleteIcon />} onClick={() => setConfirmDelete(detail)}>Delete</MutationButton>
             </Stack>
           </Stack>
         ) : null}
@@ -261,6 +371,7 @@ export default function AdminVehiclesPage() {
       {formOpen && (
         <VehicleFormDialog
           vehicle={editing}
+          hubs={hubs}
           onClose={() => setFormOpen(false)}
           onSaved={() => { setFormOpen(false); load(); if (detail) openDetail(detail.id) }}
           showToast={showToast}
@@ -292,8 +403,9 @@ function Detail({ label, value, color }: { label: string; value: string; color?:
 
 type ShowToast = (t: { message: string; severity?: 'success' | 'error' | 'warning' | 'info' }) => void
 
-function VehicleFormDialog({ vehicle, onClose, onSaved, showToast }: {
+function VehicleFormDialog({ vehicle, hubs, onClose, onSaved, showToast }: {
   vehicle: VehicleRow | null
+  hubs: HubOption[]
   onClose: () => void
   onSaved: () => void
   showToast: ShowToast
@@ -307,6 +419,7 @@ function VehicleFormDialog({ vehicle, onClose, onSaved, showToast }: {
   const [vin, setVin] = React.useState(vehicle?.vin ?? '')
   const [licensePlate, setLicensePlate] = React.useState(vehicle?.licensePlate ?? '')
   const [odometer, setOdometer] = React.useState(vehicle?.odometer != null ? String(vehicle.odometer) : '')
+  const [hubId, setHubId] = React.useState(vehicle?.hubId ?? '')
   const [location, setLocation] = React.useState(vehicle?.location ?? '')
   const [insuranceExpires, setInsuranceExpires] = React.useState(dateInput(vehicle?.insuranceExpires))
   const [registrationExpires, setRegistrationExpires] = React.useState(dateInput(vehicle?.registrationExpires))
@@ -335,6 +448,7 @@ function VehicleFormDialog({ vehicle, onClose, onSaved, showToast }: {
             licensePlate: licensePlate || null,
             odometer: numOrNull(odometer),
             location: location || null,
+            hubId: hubId || null,
             insuranceExpires: insIso,
             registrationExpires: regIso,
             notes: notes || null,
@@ -352,6 +466,7 @@ function VehicleFormDialog({ vehicle, onClose, onSaved, showToast }: {
             ...(licensePlate ? { licensePlate } : {}),
             ...(odometer.trim() ? { odometer: parseInt(odometer, 10) } : {}),
             ...(location ? { location } : {}),
+            ...(hubId ? { hubId } : {}),
             ...(insIso ? { insuranceExpires: insIso } : {}),
             ...(regIso ? { registrationExpires: regIso } : {}),
             ...(notes ? { notes } : {}),
@@ -398,8 +513,14 @@ function VehicleFormDialog({ vehicle, onClose, onSaved, showToast }: {
           </Stack>
           <Stack direction="row" spacing={2}>
             <TextField label="Odometer" type="number" value={odometer} onChange={(e) => setOdometer(e.target.value)} fullWidth />
-            <TextField label="Location" value={location} onChange={(e) => setLocation(e.target.value)} fullWidth />
+            <TextField select label="Home hub" value={hubId} onChange={(e) => setHubId(e.target.value)} fullWidth
+              helperText={hubs.length === 0 ? 'No hubs yet — add one under Hubs' : 'Where this vehicle is based'}>
+              <MenuItem value=""><em>None</em></MenuItem>
+              {hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.name}{h.city ? ` · ${h.city}${h.state ? `, ${h.state}` : ''}` : ''}</MenuItem>)}
+            </TextField>
           </Stack>
+          <TextField label="Location notes (optional)" value={location} onChange={(e) => setLocation(e.target.value)} fullWidth
+            helperText="Free-text detail, e.g. a bay or lot. The home hub above is the primary location." />
           <Stack direction="row" spacing={2}>
             <TextField label="Insurance expires" type="date" value={insuranceExpires} onChange={(e) => setInsuranceExpires(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} />
             <TextField label="Registration expires" type="date" value={registrationExpires} onChange={(e) => setRegistrationExpires(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} />
