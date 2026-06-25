@@ -27,6 +27,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 import { useToast } from '@/components/shared/useToast'
+import { StatusChip } from '@/components/shared/StatusChip'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -69,26 +70,6 @@ interface DraftLine {
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-
-const STATUS_LABEL: Record<string, string> = {
-  DRAFT: 'Draft',
-  REQUESTED: 'Requested',
-  STAGED: 'Staged',
-  FORWARDED: 'Forwarded',
-  FULFILLED: 'Fulfilled',
-  CANCELLED: 'Cancelled',
-  DENIED: 'Denied',
-}
-
-const STATUS_COLOR: Record<string, 'default' | 'primary' | 'warning' | 'success' | 'error' | 'info'> = {
-  DRAFT: 'default',
-  REQUESTED: 'primary',
-  STAGED: 'info',
-  FORWARDED: 'warning',
-  FULFILLED: 'success',
-  CANCELLED: 'default',
-  DENIED: 'error',
-}
 
 const TERMINAL = new Set(['FULFILLED', 'CANCELLED', 'DENIED'])
 
@@ -751,11 +732,7 @@ export default function RequestsPage() {
                       mb={0.5}
                       flexWrap="wrap"
                     >
-                      <Chip
-                        size="small"
-                        label={STATUS_LABEL[req.status] ?? req.status}
-                        color={STATUS_COLOR[req.status] ?? 'default'}
-                      />
+                      <StatusChip kind="request" status={req.status} />
                       <Chip
                         size="small"
                         variant="outlined"

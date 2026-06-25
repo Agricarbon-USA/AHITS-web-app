@@ -2,11 +2,11 @@
 
 import { Chip } from '@mui/material'
 import type { ChipProps } from '@mui/material'
-import { equipmentStatusMeta, vehicleStatusMeta, maintenanceStatusMeta, priorityMeta } from '@/lib/status'
+import { equipmentStatusMeta, vehicleStatusMeta, maintenanceStatusMeta, priorityMeta, requestStatusMeta } from '@/lib/status'
 
 interface StatusChipProps {
   status: string
-  kind?: 'equipment' | 'vehicle' | 'maintenance' | 'priority'
+  kind?: 'equipment' | 'vehicle' | 'maintenance' | 'priority' | 'request'
   size?: ChipProps['size']
   variant?: ChipProps['variant']
 }
@@ -17,6 +17,7 @@ export function StatusChip({ status, kind = 'equipment', size = 'small', variant
     kind === 'vehicle' ? vehicleStatusMeta(status)
     : kind === 'maintenance' ? maintenanceStatusMeta(status)
     : kind === 'priority' ? priorityMeta(status)
+    : kind === 'request' ? requestStatusMeta(status)
     : equipmentStatusMeta(status)
   return <Chip label={meta.label} color={meta.color} size={size} variant={variant} />
 }

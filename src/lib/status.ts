@@ -80,3 +80,18 @@ export function maintenanceStatusMeta(status: string): StatusMeta {
 export function priorityMeta(priority: string): StatusMeta {
   return PRIORITY_STATUS[priority] ?? { label: priority, color: 'default' }
 }
+
+// Deployment-request status (DeploymentRequestStatus enum).
+export const REQUEST_STATUS: Record<string, StatusMeta> = {
+  DRAFT: { label: 'Draft', color: 'default' },
+  REQUESTED: { label: 'Requested', color: 'warning' },
+  STAGED: { label: 'Staged', color: 'info' },
+  FORWARDED: { label: 'Forwarded', color: 'warning' },
+  FULFILLED: { label: 'Fulfilled', color: 'success' },
+  DENIED: { label: 'Denied', color: 'error' },
+  CANCELLED: { label: 'Cancelled', color: 'default' },
+}
+
+export function requestStatusMeta(status: string): StatusMeta {
+  return REQUEST_STATUS[status] ?? { label: status, color: 'default' }
+}

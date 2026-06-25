@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { requireAuth } from '@/lib/auth/session'
 import { createRequest, listRequests, LINE_TYPES, VEHICLE_TYPES, REQUEST_TYPES } from '@/lib/deployment-requests'
+import { createAlert } from '@/lib/alerts'
+import { issueStatusLink, statusLinkUrl } from '@/lib/status-links'
+import { sendEmail } from '@/lib/email/resend'
+import { genericAlertEmail } from '@/lib/email/templates'
+import { prisma } from '@/lib/prisma'
 
 const lineSchema = z
   .object({
@@ -80,5 +85,45 @@ export async function POST(req: NextRequest) {
     },
     session.userId,
   )
+
+  // Side effects for direct-to-REQUESTED submissions (best-effort, non-blocking).
+  if (d.status === 'REQUESTED') {
+    if (d.requestType === 'MATERIAL') {
+      await createAlert('MATERIAL_REQUEST', 'deployment_requests', id, {
+        name: d.label ?? 'Material request',
+      }).catch(() => {})
+    } else if (d.requestType === 'RESERVATION' && d.fulfillerHubId) {
+      await issueReservationLink(id, d.fulfillerHubId, session.userId, d.label).catch(() => {})
+    }
+  }
+
   return NextResponse.json({ id }, { status: 201 })
+}
+
+async function issueReservationLink(requestId: string, hubId: string, createdById: string, label: string | null | undefined): Promise<void> {
+  const hubs = await prisma.$queryRaw<{ name: string; email: string | null }[]>`
+    SELECT "name", "email" FROM "hubs" WHERE "id" = ${hubId}
+  `
+  const hub = hubs[0]
+  if (!hub) return
+  const { rawToken } = await issueStatusLink({
+    type: 'RESERVATION',
+    deploymentRequestId: requestId,
+    hubId,
+    createdById,
+    recipientEmail: hub.email ?? undefined,
+    recipientName: hub.name,
+  })
+  if (!hub.email) return
+  const url = statusLinkUrl(rawToken)
+  await sendEmail({
+    to: hub.email,
+    subject: `Reservation request — ${label ?? 'Rig reservation'}`,
+    html: genericAlertEmail(
+      `Rig reservation request from Agricarbon`,
+      `A rig reservation request has been submitted and requires your confirmation.`,
+      url,
+      'Review and respond',
+    ),
+  })
 }
