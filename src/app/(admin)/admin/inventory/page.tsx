@@ -27,6 +27,7 @@ import { PhotoGallery } from '@/components/shared/PhotoGallery'
 import { RepairReviewDialog } from '@/components/shared/RepairReviewDialog'
 import { EQUIPMENT_STATUS } from '@/lib/status'
 import { MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
+import { groupBy } from '@/lib/utils'
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -1110,61 +1111,71 @@ export default function AdminInventoryPage() {
                     ))}
                   </TableRow>
                 ))
-              : items.map((item) => (
-                  <TableRow
-                    key={item.id}
-                    hover
-                    sx={{ cursor: 'pointer' }}
-                    onClick={() => setDetailRow(item)}
-                  >
-                    <TableCell>
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <Typography variant="body2" fontWeight={500}>{item.name}</Typography>
-                        {item.itemType === 'SERIALIZED' && (
-                          <Chip size="small" label="S" variant="outlined" color="primary" sx={{ fontSize: 10, height: 18 }} />
-                        )}
-                        {item.unitCounts?.inoperable > 0 && (
-                          <Tooltip title={`${item.unitCounts.inoperable} inoperable`}>
-                            <WarningAmberIcon fontSize="small" color="warning" />
+              : groupBy(
+                  items,
+                  (item) => (typeof item.category === 'object' ? item.category?.name : (item.category as unknown as string)) ?? 'Uncategorized',
+                ).flatMap(({ group, items: gi }) => [
+                  <TableRow key={`__hdr__${group}`}>
+                    <TableCell colSpan={7} sx={{ bgcolor: 'grey.50', py: 0.5, borderBottom: '1px solid', borderColor: 'divider' }}>
+                      <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1.6 }}>{group}</Typography>
+                    </TableCell>
+                  </TableRow>,
+                  ...gi.map((item) => (
+                    <TableRow
+                      key={item.id}
+                      hover
+                      sx={{ cursor: 'pointer' }}
+                      onClick={() => setDetailRow(item)}
+                    >
+                      <TableCell>
+                        <Stack direction="row" spacing={1} alignItems="center">
+                          <Typography variant="body2" fontWeight={500}>{item.name}</Typography>
+                          {item.itemType === 'SERIALIZED' && (
+                            <Chip size="small" label="S" variant="outlined" color="primary" sx={{ fontSize: 10, height: 18 }} />
+                          )}
+                          {item.unitCounts?.inoperable > 0 && (
+                            <Tooltip title={`${item.unitCounts.inoperable} inoperable`}>
+                              <WarningAmberIcon fontSize="small" color="warning" />
+                            </Tooltip>
+                          )}
+                        </Stack>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" color="text.secondary">
+                          {typeof item.category === 'object' ? item.category?.name : (item.category ?? '—')}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" color="text.secondary">
+                          {item.hub ? `${item.hub.city}, ${item.hub.state}` : '—'}
+                        </Typography>
+                      </TableCell>
+                      <TableCell align="center">
+                        <Chip size="small" label={item.itemType === 'CONSUMABLE' ? (item.availableQuantity ?? 0) : (item.unitCounts?.available ?? 0)} color="success" variant="outlined" />
+                      </TableCell>
+                      <TableCell align="center">
+                        <Chip size="small" label={item.unitCounts?.checkedOut ?? 0} color={item.unitCounts?.checkedOut > 0 ? 'info' : 'default'} variant="outlined" />
+                      </TableCell>
+                      <TableCell align="center">
+                        <Typography variant="body2">{item.itemType === 'CONSUMABLE' ? (item.derivedQuantity ?? item.quantity ?? 0) : (item.unitCounts?.totalUnits ?? 0)}</Typography>
+                      </TableCell>
+                      <TableCell align="right" onClick={(e) => e.stopPropagation()}>
+                        <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                          <Tooltip title="Edit">
+                            <IconButton size="small" onClick={() => { setFormItem(item); setFormOpen(true) }}>
+                              <EditIcon fontSize="small" />
+                            </IconButton>
                           </Tooltip>
-                        )}
-                      </Stack>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2" color="text.secondary">
-                        {typeof item.category === 'object' ? item.category?.name : (item.category ?? '—')}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2" color="text.secondary">
-                        {item.hub ? `${item.hub.city}, ${item.hub.state}` : '—'}
-                      </Typography>
-                    </TableCell>
-                    <TableCell align="center">
-                      <Chip size="small" label={item.itemType === 'CONSUMABLE' ? (item.availableQuantity ?? 0) : (item.unitCounts?.available ?? 0)} color="success" variant="outlined" />
-                    </TableCell>
-                    <TableCell align="center">
-                      <Chip size="small" label={item.unitCounts?.checkedOut ?? 0} color={item.unitCounts?.checkedOut > 0 ? 'info' : 'default'} variant="outlined" />
-                    </TableCell>
-                    <TableCell align="center">
-                      <Typography variant="body2">{item.itemType === 'CONSUMABLE' ? (item.derivedQuantity ?? item.quantity ?? 0) : (item.unitCounts?.totalUnits ?? 0)}</Typography>
-                    </TableCell>
-                    <TableCell align="right" onClick={(e) => e.stopPropagation()}>
-                      <Stack direction="row" spacing={0.5} justifyContent="flex-end">
-                        <Tooltip title="Edit">
-                          <IconButton size="small" onClick={() => { setFormItem(item); setFormOpen(true) }}>
-                            <EditIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                        <Tooltip title="Retire">
-                          <IconButton size="small" color="error" onClick={() => setRetireItem(item)}>
-                            <ArchiveIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      </Stack>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                          <Tooltip title="Retire">
+                            <IconButton size="small" color="error" onClick={() => setRetireItem(item)}>
+                              <ArchiveIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        </Stack>
+                      </TableCell>
+                    </TableRow>
+                  )),
+                ])}
             {!loading && items.length === 0 && (
               <TableRow>
                 <TableCell colSpan={7} align="center" sx={{ py: 4, color: 'text.secondary' }}>

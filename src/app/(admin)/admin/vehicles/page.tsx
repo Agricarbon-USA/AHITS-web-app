@@ -5,6 +5,7 @@ import {
   Box, Typography, Paper, Stack, Button, IconButton, CircularProgress, Chip, Divider,
   Table, TableHead, TableBody, TableRow, TableCell, TableContainer, TableSortLabel,
   Drawer, Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem, Tooltip,
+  Switch, FormControlLabel,
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
@@ -14,6 +15,7 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { useToast } from '@/components/shared/useToast'
 import { useCanEdit, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
+import { groupBy } from '@/lib/utils'
 
 const VEHICLE_TYPES = ['TRUCK', 'TRAILER', 'POLARIS_UTV', 'CAN_AM_UTV', 'CHRISTIE_DRILL', 'ATV', 'OTHER']
 const VEHICLE_STATUSES = ['ACTIVE', 'IN_MAINTENANCE', 'OUT_OF_SERVICE', 'RETIRED']
@@ -78,6 +80,7 @@ export default function AdminVehiclesPage() {
   const [filterHub, setFilterHub] = React.useState('')
   const [sortKey, setSortKey] = React.useState<SortKey>('name')
   const [sortDir, setSortDir] = React.useState<'asc' | 'desc'>('asc')
+  const [groupByType, setGroupByType] = React.useState(true)
 
   const load = React.useCallback(async () => {
     setLoading(true)
@@ -214,6 +217,10 @@ export default function AdminVehiclesPage() {
             <Button size="small" onClick={() => { setSearch(''); setFilterType(''); setFilterStatus(''); setFilterHub('') }}>Clear</Button>
           )}
           <Box flexGrow={1} />
+          <FormControlLabel
+            control={<Switch size="small" checked={groupByType} onChange={(e) => setGroupByType(e.target.checked)} />}
+            label={<Typography variant="caption">Group by type</Typography>}
+          />
           <Typography variant="caption" color="text.secondary">{visibleVehicles.length} of {vehicles.length}</Typography>
         </Stack>
       )}
@@ -256,31 +263,67 @@ export default function AdminVehiclesPage() {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {visibleVehicles.map((v) => {
-                  const ins = expiryMeta(v.insuranceExpires)
-                  const reg = expiryMeta(v.registrationExpires)
-                  return (
-                    <TableRow key={v.id} hover sx={{ cursor: 'pointer' }} onClick={() => openDetail(v.id)}>
-                      <TableCell>
-                        <Typography variant="body2" fontWeight={500}>{v.name}</Typography>
-                        {v.makeModel && <Typography variant="caption" color="text.secondary">{v.makeModel}{v.year ? ` · ${v.year}` : ''}</Typography>}
-                      </TableCell>
-                      <TableCell>{v.type.replace(/_/g, ' ')}</TableCell>
-                      <TableCell><StatusChip status={v.status} kind="vehicle" /></TableCell>
-                      <TableCell>{v.hubName ?? <Typography variant="caption" color="text.secondary">{v.location || '—'}</Typography>}</TableCell>
-                      <TableCell>{v.assignedOperatorName ?? '—'}</TableCell>
-                      <TableCell align="right">{v.odometer != null ? v.odometer.toLocaleString() : '—'}</TableCell>
-                      <TableCell><Chip size="small" label={ins.label} color={ins.color} variant={ins.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
-                      <TableCell><Chip size="small" label={reg.label} color={reg.color} variant={reg.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
-                      <TableCell align="right">{v._count?.dailyChecks ?? 0}</TableCell>
-                      <TableCell align="right">{v._count?.maintenanceTasks ?? 0}</TableCell>
-                      <TableCell align="right" onClick={(e) => e.stopPropagation()}>
-                        <MutationIconButton tooltip="Edit" size="small" onClick={() => { setEditing(v); setFormOpen(true) }}><EditIcon fontSize="small" /></MutationIconButton>
-                        <MutationIconButton tooltip="Delete" size="small" onClick={() => setConfirmDelete(v)}><DeleteIcon fontSize="small" /></MutationIconButton>
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
+                {groupByType
+                  ? groupBy(visibleVehicles, (v) => v.type, VEHICLE_TYPES).flatMap(({ group, items: gv }) => [
+                      <TableRow key={`__hdr__${group}`}>
+                        <TableCell colSpan={11} sx={{ bgcolor: 'grey.50', py: 0.5, borderBottom: '1px solid', borderColor: 'divider' }}>
+                          <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1.6 }}>
+                            {group.replace(/_/g, ' ')} ({gv.length})
+                          </Typography>
+                        </TableCell>
+                      </TableRow>,
+                      ...gv.map((v) => {
+                        const ins = expiryMeta(v.insuranceExpires)
+                        const reg = expiryMeta(v.registrationExpires)
+                        return (
+                          <TableRow key={v.id} hover sx={{ cursor: 'pointer' }} onClick={() => openDetail(v.id)}>
+                            <TableCell>
+                              <Typography variant="body2" fontWeight={500}>{v.name}</Typography>
+                              {v.makeModel && <Typography variant="caption" color="text.secondary">{v.makeModel}{v.year ? ` · ${v.year}` : ''}</Typography>}
+                            </TableCell>
+                            <TableCell>{v.type.replace(/_/g, ' ')}</TableCell>
+                            <TableCell><StatusChip status={v.status} kind="vehicle" /></TableCell>
+                            <TableCell>{v.hubName ?? <Typography variant="caption" color="text.secondary">{v.location || '—'}</Typography>}</TableCell>
+                            <TableCell>{v.assignedOperatorName ?? '—'}</TableCell>
+                            <TableCell align="right">{v.odometer != null ? v.odometer.toLocaleString() : '—'}</TableCell>
+                            <TableCell><Chip size="small" label={ins.label} color={ins.color} variant={ins.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
+                            <TableCell><Chip size="small" label={reg.label} color={reg.color} variant={reg.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
+                            <TableCell align="right">{v._count?.dailyChecks ?? 0}</TableCell>
+                            <TableCell align="right">{v._count?.maintenanceTasks ?? 0}</TableCell>
+                            <TableCell align="right" onClick={(e) => e.stopPropagation()}>
+                              <MutationIconButton tooltip="Edit" size="small" onClick={() => { setEditing(v); setFormOpen(true) }}><EditIcon fontSize="small" /></MutationIconButton>
+                              <MutationIconButton tooltip="Delete" size="small" onClick={() => setConfirmDelete(v)}><DeleteIcon fontSize="small" /></MutationIconButton>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      }),
+                    ])
+                  : visibleVehicles.map((v) => {
+                      const ins = expiryMeta(v.insuranceExpires)
+                      const reg = expiryMeta(v.registrationExpires)
+                      return (
+                        <TableRow key={v.id} hover sx={{ cursor: 'pointer' }} onClick={() => openDetail(v.id)}>
+                          <TableCell>
+                            <Typography variant="body2" fontWeight={500}>{v.name}</Typography>
+                            {v.makeModel && <Typography variant="caption" color="text.secondary">{v.makeModel}{v.year ? ` · ${v.year}` : ''}</Typography>}
+                          </TableCell>
+                          <TableCell>{v.type.replace(/_/g, ' ')}</TableCell>
+                          <TableCell><StatusChip status={v.status} kind="vehicle" /></TableCell>
+                          <TableCell>{v.hubName ?? <Typography variant="caption" color="text.secondary">{v.location || '—'}</Typography>}</TableCell>
+                          <TableCell>{v.assignedOperatorName ?? '—'}</TableCell>
+                          <TableCell align="right">{v.odometer != null ? v.odometer.toLocaleString() : '—'}</TableCell>
+                          <TableCell><Chip size="small" label={ins.label} color={ins.color} variant={ins.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
+                          <TableCell><Chip size="small" label={reg.label} color={reg.color} variant={reg.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
+                          <TableCell align="right">{v._count?.dailyChecks ?? 0}</TableCell>
+                          <TableCell align="right">{v._count?.maintenanceTasks ?? 0}</TableCell>
+                          <TableCell align="right" onClick={(e) => e.stopPropagation()}>
+                            <MutationIconButton tooltip="Edit" size="small" onClick={() => { setEditing(v); setFormOpen(true) }}><EditIcon fontSize="small" /></MutationIconButton>
+                            <MutationIconButton tooltip="Delete" size="small" onClick={() => setConfirmDelete(v)}><DeleteIcon fontSize="small" /></MutationIconButton>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })
+                }
               </TableBody>
             </Table>
           </TableContainer>
