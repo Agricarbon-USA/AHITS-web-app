@@ -74,6 +74,8 @@ interface InventoryItemRow {
   currentProject: { id: string; name: string; location: string | null } | null
   unitCounts: UnitCounts
   units: UnitRow[]
+  derivedQuantity: number
+  availableQuantity: number
 }
 
 interface CheckLogEntry {
@@ -1139,13 +1141,13 @@ export default function AdminInventoryPage() {
                       </Typography>
                     </TableCell>
                     <TableCell align="center">
-                      <Chip size="small" label={item.unitCounts?.available ?? 0} color="success" variant="outlined" />
+                      <Chip size="small" label={item.itemType === 'CONSUMABLE' ? (item.availableQuantity ?? 0) : (item.unitCounts?.available ?? 0)} color="success" variant="outlined" />
                     </TableCell>
                     <TableCell align="center">
                       <Chip size="small" label={item.unitCounts?.checkedOut ?? 0} color={item.unitCounts?.checkedOut > 0 ? 'info' : 'default'} variant="outlined" />
                     </TableCell>
                     <TableCell align="center">
-                      <Typography variant="body2">{item.unitCounts?.totalUnits ?? item.quantity ?? 0}</Typography>
+                      <Typography variant="body2">{item.itemType === 'CONSUMABLE' ? (item.derivedQuantity ?? item.quantity ?? 0) : (item.unitCounts?.totalUnits ?? 0)}</Typography>
                     </TableCell>
                     <TableCell align="right" onClick={(e) => e.stopPropagation()}>
                       <Stack direction="row" spacing={0.5} justifyContent="flex-end">
