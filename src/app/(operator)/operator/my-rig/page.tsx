@@ -5,7 +5,7 @@ import {
   Box, Typography, Button, Stack, Card, CardContent,
   Chip, CircularProgress, Checkbox, TextField, MenuItem,
   Dialog, DialogTitle, DialogContent, DialogActions, List,
-  ListItem, ListItemText, ListItemIcon, Stepper, Step, StepLabel,
+  ListItem, ListItemText, ListItemIcon, ListSubheader, Stepper, Step, StepLabel,
   Alert, Switch, FormControlLabel, Divider, IconButton, Tooltip,
 } from '@mui/material'
 import LocalShippingIcon from '@mui/icons-material/LocalShipping'
@@ -24,6 +24,9 @@ import { DispositionDialog, KitItemSummary } from '@/components/shared/Dispositi
 import { RentalVehicleForm, RentalVehicleFields } from '@/components/shared/RentalVehicleForm'
 import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
+import { groupBy } from '@/lib/utils'
+
+const VEHICLE_TYPE_ORDER = ['TRUCK', 'TRAILER', 'POLARIS_UTV', 'CAN_AM_UTV', 'CHRISTIE_DRILL', 'ATV', 'OTHER']
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -328,24 +331,35 @@ function NewDeploymentDialog({
             {unassignedVehicles.length === 0 ? (
               <Typography variant="body2" color="text.secondary">No available vehicles.</Typography>
             ) : (
-              <List dense>
-                {unassignedVehicles.map((v) => {
-                  const Icon = VEHICLE_ICON[v.type] ?? LocalShippingIcon
-                  return (
-                    <ListItem key={v.id} disablePadding>
-                      <ListItemIcon sx={{ minWidth: 36 }}>
-                        <Checkbox size="small" checked={selVehicles.has(v.id)}
-                          onChange={(e) => {
-                            const s = new Set(selVehicles)
-                            e.target.checked ? s.add(v.id) : s.delete(v.id)
-                            setSelVehicles(s)
-                          }} />
-                      </ListItemIcon>
-                      <ListItemIcon sx={{ minWidth: 32 }}><Icon fontSize="small" /></ListItemIcon>
-                      <ListItemText primary={v.name} secondary={v.type} />
-                    </ListItem>
-                  )
-                })}
+              <List dense disablePadding>
+                {groupBy(
+                  [...unassignedVehicles].sort((a, b) => a.name.localeCompare(b.name)),
+                  (v) => v.type,
+                  VEHICLE_TYPE_ORDER,
+                ).map(({ group, items: gv }) => (
+                  <React.Fragment key={group}>
+                    <ListSubheader sx={{ lineHeight: '32px', bgcolor: 'background.default' }}>
+                      {group.replace(/_/g, ' ')}
+                    </ListSubheader>
+                    {gv.map((v) => {
+                      const Icon = VEHICLE_ICON[v.type] ?? LocalShippingIcon
+                      return (
+                        <ListItem key={v.id} disablePadding sx={{ minHeight: 44 }}>
+                          <ListItemIcon sx={{ minWidth: 36 }}>
+                            <Checkbox size="small" checked={selVehicles.has(v.id)}
+                              onChange={(e) => {
+                                const s = new Set(selVehicles)
+                                e.target.checked ? s.add(v.id) : s.delete(v.id)
+                                setSelVehicles(s)
+                              }} />
+                          </ListItemIcon>
+                          <ListItemIcon sx={{ minWidth: 32 }}><Icon fontSize="small" /></ListItemIcon>
+                          <ListItemText primary={v.name} />
+                        </ListItem>
+                      )
+                    })}
+                  </React.Fragment>
+                ))}
               </List>
             )}
           </Box>
@@ -357,102 +371,114 @@ function NewDeploymentDialog({
             {availableItems.length === 0 ? (
               <Typography variant="body2" color="text.secondary">No available items.</Typography>
             ) : (
-              <Stack spacing={1}>
-                {availableItems.map((item) => {
-                  const isSerialized = item.itemType === 'SERIALIZED'
-                  const entry = kitItems.get(item.id)
-                  const checked = !!entry
-                  // Gate consumable qty on the selected hub's available; fall back to total if no hub.
-                  const hubAvail = !isSerialized
-                    ? (sourceHubId
-                        ? (item.hubStock?.find((s) => s.hubId === sourceHubId)?.available ?? (item.availableQuantity ?? 0))
-                        : (item.availableQuantity ?? 0))
-                    : 0
-                  return (
-                    <Box key={item.id}>
-                      <Stack direction="row" alignItems="center" spacing={1}>
-                        <Checkbox size="small" checked={checked}
-                          onChange={(e) => {
-                            const m = new Map(kitItems)
-                            if (e.target.checked) {
-                              m.set(item.id, { itemType: isSerialized ? 'SERIALIZED' : 'CONSUMABLE', quantity: 1, inventoryUnitId: null, unitLabel: null })
-                            } else {
-                              m.delete(item.id)
-                            }
-                            setKitItems(m)
-                          }} />
-                        <Box flexGrow={1}>
-                          <Typography variant="body2">{item.name}</Typography>
-                          <Chip size="small" label={item.category?.name ?? ''} sx={{ height: 16, fontSize: 10 }} />
-                        </Box>
-                        {checked && !isSerialized && (
-                          <TextField
-                            type="number"
-                            size="small"
-                            value={entry?.quantity ?? 1}
-                            onChange={(e) => {
-                              const m = new Map(kitItems)
-                              const v = Math.min(parseInt(e.target.value) || 1, hubAvail)
-                              m.set(item.id, { itemType: 'CONSUMABLE', quantity: v, inventoryUnitId: null, unitLabel: null })
-                              setKitItems(m)
-                            }}
-                            inputProps={{ min: 1, max: hubAvail, style: { MozAppearance: 'textfield', width: 60 } }}
-                            helperText={`${hubAvail} avail.`}
-                            sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }}
-                          />
-                        )}
-                      </Stack>
-                      {checked && isSerialized && (
-                        <Box pl={5} mt={0.5}>
-                          {entry?.inventoryUnitId ? (
-                            <Alert severity="success" sx={{ py: 0.25 }} onClose={() => {
-                              const m = new Map(kitItems)
-                              m.set(item.id, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: null, unitLabel: null })
-                              setKitItems(m)
-                            }}>
-                              Unit: {entry.unitLabel ?? entry.inventoryUnitId.slice(0, 8)}
-                            </Alert>
-                          ) : (
-                            <Stack spacing={1}>
-                              <Stack direction="row" spacing={1} alignItems="center">
-                                <Button component="label" size="small" variant="outlined" startIcon={<QrCodeScannerIcon />}
-                                  disabled={!!unitQrLoading[item.id]}>
-                                  Scan QR
-                                  <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
-                                    onChange={handleDialogQRScan(item.id)} />
-                                </Button>
-                                <TextField size="small" placeholder="Enter QR code" value={unitManualQR[item.id] ?? ''}
-                                  onChange={(e) => setUnitManualQR((p) => ({ ...p, [item.id]: e.target.value }))}
-                                  sx={{ width: 160 }} />
-                                <Button size="small" onClick={() => lookupDialogManualQR(item.id)}
-                                  disabled={!unitManualQR[item.id]?.trim() || !!unitQrLoading[item.id]}>
-                                  Look Up
-                                </Button>
-                              </Stack>
-                              <TextField select size="small" label="Pick from list"
-                                value=""
+              <Box>
+                {groupBy(
+                  [...availableItems].sort((a, b) => a.name.localeCompare(b.name)),
+                  (item) => item.category?.name ?? 'Uncategorized',
+                ).map(({ group, items: gi }) => (
+                  <React.Fragment key={group}>
+                    <Typography variant="overline" color="text.secondary"
+                      sx={{ display: 'block', px: 0.5, mt: 1.5, mb: 0.5, lineHeight: '26px', borderBottom: '1px solid', borderColor: 'divider' }}>
+                      {group}
+                    </Typography>
+                    <Stack spacing={1}>
+                      {gi.map((item) => {
+                        const isSerialized = item.itemType === 'SERIALIZED'
+                        const entry = kitItems.get(item.id)
+                        const checked = !!entry
+                        // Gate consumable qty on the selected hub's available; fall back to total if no hub.
+                        const hubAvail = !isSerialized
+                          ? (sourceHubId
+                              ? (item.hubStock?.find((s) => s.hubId === sourceHubId)?.available ?? (item.availableQuantity ?? 0))
+                              : (item.availableQuantity ?? 0))
+                          : 0
+                        return (
+                          <Box key={item.id}>
+                            <Stack direction="row" alignItems="center" spacing={1}>
+                              <Checkbox size="small" checked={checked}
                                 onChange={(e) => {
-                                  const u = item.availableUnits?.find((u) => u.id === e.target.value)
-                                  if (!u) return
                                   const m = new Map(kitItems)
-                                  m.set(item.id, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: u.id, unitLabel: u.serialNumber ?? `Unit ${u.position}` })
+                                  if (e.target.checked) {
+                                    m.set(item.id, { itemType: isSerialized ? 'SERIALIZED' : 'CONSUMABLE', quantity: 1, inventoryUnitId: null, unitLabel: null })
+                                  } else {
+                                    m.delete(item.id)
+                                  }
                                   setKitItems(m)
-                                }}>
-                                <MenuItem value="" disabled>Select a unit…</MenuItem>
-                                {(item.availableUnits ?? []).map((u) => (
-                                  <MenuItem key={u.id} value={u.id}>
-                                    {u.serialNumber ?? `Unit ${u.position}`}
-                                  </MenuItem>
-                                ))}
-                              </TextField>
+                                }} />
+                              <Box flexGrow={1}>
+                                <Typography variant="body2">{item.name}</Typography>
+                              </Box>
+                              {checked && !isSerialized && (
+                                <TextField
+                                  type="number"
+                                  size="small"
+                                  value={entry?.quantity ?? 1}
+                                  onChange={(e) => {
+                                    const m = new Map(kitItems)
+                                    const v = Math.min(parseInt(e.target.value) || 1, hubAvail)
+                                    m.set(item.id, { itemType: 'CONSUMABLE', quantity: v, inventoryUnitId: null, unitLabel: null })
+                                    setKitItems(m)
+                                  }}
+                                  inputProps={{ min: 1, max: hubAvail, style: { MozAppearance: 'textfield', width: 60 } }}
+                                  helperText={`${hubAvail} avail.`}
+                                  sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }}
+                                />
+                              )}
                             </Stack>
-                          )}
-                        </Box>
-                      )}
-                    </Box>
-                  )
-                })}
-              </Stack>
+                            {checked && isSerialized && (
+                              <Box pl={5} mt={0.5}>
+                                {entry?.inventoryUnitId ? (
+                                  <Alert severity="success" sx={{ py: 0.25 }} onClose={() => {
+                                    const m = new Map(kitItems)
+                                    m.set(item.id, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: null, unitLabel: null })
+                                    setKitItems(m)
+                                  }}>
+                                    Unit: {entry.unitLabel ?? entry.inventoryUnitId.slice(0, 8)}
+                                  </Alert>
+                                ) : (
+                                  <Stack spacing={1}>
+                                    <Stack direction="row" spacing={1} alignItems="center">
+                                      <Button component="label" size="small" variant="outlined" startIcon={<QrCodeScannerIcon />}
+                                        disabled={!!unitQrLoading[item.id]}>
+                                        Scan QR
+                                        <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
+                                          onChange={handleDialogQRScan(item.id)} />
+                                      </Button>
+                                      <TextField size="small" placeholder="Enter QR code" value={unitManualQR[item.id] ?? ''}
+                                        onChange={(e) => setUnitManualQR((p) => ({ ...p, [item.id]: e.target.value }))}
+                                        sx={{ width: 160 }} />
+                                      <Button size="small" onClick={() => lookupDialogManualQR(item.id)}
+                                        disabled={!unitManualQR[item.id]?.trim() || !!unitQrLoading[item.id]}>
+                                        Look Up
+                                      </Button>
+                                    </Stack>
+                                    <TextField select size="small" label="Pick from list"
+                                      value=""
+                                      onChange={(e) => {
+                                        const u = item.availableUnits?.find((u) => u.id === e.target.value)
+                                        if (!u) return
+                                        const m = new Map(kitItems)
+                                        m.set(item.id, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: u.id, unitLabel: u.serialNumber ?? `Unit ${u.position}` })
+                                        setKitItems(m)
+                                      }}>
+                                      <MenuItem value="" disabled>Select a unit…</MenuItem>
+                                      {(item.availableUnits ?? []).map((u) => (
+                                        <MenuItem key={u.id} value={u.id}>
+                                          {u.serialNumber ?? `Unit ${u.position}`}
+                                        </MenuItem>
+                                      ))}
+                                    </TextField>
+                                  </Stack>
+                                )}
+                              </Box>
+                            )}
+                          </Box>
+                        )
+                      })}
+                    </Stack>
+                  </React.Fragment>
+                ))}
+              </Box>
             )}
             {hasConsumableInKit && (
               hubs.length === 0 ? (
@@ -1286,24 +1312,35 @@ export default function MyRigPage() {
               {unassignedVehicles.length === 0 ? (
                 <Typography variant="body2" color="text.secondary">No available vehicles.</Typography>
               ) : (
-                <List dense>
-                  {unassignedVehicles.map((v) => {
-                    const Icon = VEHICLE_ICON[v.type] ?? LocalShippingIcon
-                    return (
-                      <ListItem key={v.id} disablePadding>
-                        <ListItemIcon sx={{ minWidth: 36 }}>
-                          <Checkbox size="small" checked={pendingVehicles.has(v.id)}
-                            onChange={(e) => {
-                              const s = new Set(pendingVehicles)
-                              e.target.checked ? s.add(v.id) : s.delete(v.id)
-                              setPendingVehicles(s)
-                            }} />
-                        </ListItemIcon>
-                        <ListItemIcon sx={{ minWidth: 32 }}><Icon fontSize="small" /></ListItemIcon>
-                        <ListItemText primary={v.name} secondary={v.type} />
-                      </ListItem>
-                    )
-                  })}
+                <List dense disablePadding>
+                  {groupBy(
+                    [...unassignedVehicles].sort((a, b) => a.name.localeCompare(b.name)),
+                    (v) => v.type,
+                    VEHICLE_TYPE_ORDER,
+                  ).map(({ group, items: gv }) => (
+                    <React.Fragment key={group}>
+                      <ListSubheader sx={{ lineHeight: '32px', bgcolor: 'background.default' }}>
+                        {group.replace(/_/g, ' ')}
+                      </ListSubheader>
+                      {gv.map((v) => {
+                        const Icon = VEHICLE_ICON[v.type] ?? LocalShippingIcon
+                        return (
+                          <ListItem key={v.id} disablePadding sx={{ minHeight: 44 }}>
+                            <ListItemIcon sx={{ minWidth: 36 }}>
+                              <Checkbox size="small" checked={pendingVehicles.has(v.id)}
+                                onChange={(e) => {
+                                  const s = new Set(pendingVehicles)
+                                  e.target.checked ? s.add(v.id) : s.delete(v.id)
+                                  setPendingVehicles(s)
+                                }} />
+                            </ListItemIcon>
+                            <ListItemIcon sx={{ minWidth: 32 }}><Icon fontSize="small" /></ListItemIcon>
+                            <ListItemText primary={v.name} />
+                          </ListItem>
+                        )
+                      })}
+                    </React.Fragment>
+                  ))}
                 </List>
               )}
             </>
@@ -1379,8 +1416,18 @@ export default function MyRigPage() {
           {inventoryItems.filter((i) => availFor(i) > 0).length === 0 ? (
             <Typography variant="body2" color="text.secondary">No available items.</Typography>
           ) : (
-            <Stack spacing={1.5} mt={1}>
-              {inventoryItems.filter((i) => availFor(i) > 0).map((item) => {
+            <Box mt={1}>
+              {groupBy(
+                [...inventoryItems.filter((i) => availFor(i) > 0)].sort((a, b) => a.name.localeCompare(b.name)),
+                (item) => item.category?.name ?? 'Uncategorized',
+              ).map(({ group, items: gi }) => (
+                <React.Fragment key={group}>
+                  <Typography variant="overline" color="text.secondary"
+                    sx={{ display: 'block', px: 0.5, mt: 1.5, mb: 0.5, lineHeight: '26px', borderBottom: '1px solid', borderColor: 'divider' }}>
+                    {group}
+                  </Typography>
+                  <Stack spacing={1.5}>
+              {gi.map((item) => {
                 const entry = pendingItems.get(item.id)
                 const checked = !!entry
                 const isSerialized = item.itemType === 'SERIALIZED'
@@ -1454,7 +1501,6 @@ export default function MyRigPage() {
                         }} />
                       <Box flexGrow={1}>
                         <Typography variant="body2">{item.name}</Typography>
-                        <Chip size="small" label={item.category?.name ?? ''} sx={{ height: 16, fontSize: 10 }} />
                       </Box>
                       {checked && !isSerialized && (
                         <TextField
@@ -1524,7 +1570,10 @@ export default function MyRigPage() {
                   </Box>
                 )
               })}
-            </Stack>
+                  </Stack>
+                </React.Fragment>
+              ))}
+            </Box>
           )}
         </DialogContent>
         {Array.from(pendingItems.values()).some((e) => e.itemType === 'CONSUMABLE') && (
