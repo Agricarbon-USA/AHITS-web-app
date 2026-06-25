@@ -13,11 +13,21 @@ export default function OperatorDashboardPage() {
   const { user } = useAuth()
   const { pending, isOffline } = useOfflineQueue()
   const router = useRouter()
+  // Hydration guard: getGreeting(), toLocaleDateString(), and user.name all produce
+  // different output on the server (UTC clock, no SWR data) vs the client (local
+  // clock, resolved user). Gate behind mounted so the server shell is a stable
+  // placeholder — no React #418 mismatch, Sign Out onClick fires reliably (S7/S8).
+  const [mounted, setMounted] = React.useState(false)
+  React.useEffect(() => setMounted(true), [])
 
   return (
     <Box>
-      <Typography variant="h5" mb={0.5}>Good {getGreeting()}, {user?.name?.split(' ')[0]}</Typography>
-      <Typography color="text.secondary" mb={3}>{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</Typography>
+      <Typography variant="h5" mb={0.5}>
+        {mounted ? `Good ${getGreeting()}, ${user?.name?.split(' ')[0] ?? ''}` : ' '}
+      </Typography>
+      <Typography color="text.secondary" mb={3}>
+        {mounted ? new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) : ' '}
+      </Typography>
 
       {isOffline && (
         <Alert severity="warning" sx={{ mb: 2 }}>
