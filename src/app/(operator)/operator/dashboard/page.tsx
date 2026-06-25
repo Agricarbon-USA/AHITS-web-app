@@ -29,7 +29,7 @@ export default function OperatorDashboardPage() {
         {mounted ? new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) : ' '}
       </Typography>
 
-      {isOffline && (
+      {mounted && isOffline && (
         <Alert severity="warning" sx={{ mb: 2 }}>
           You're offline. {pending > 0 ? `${pending} submission(s) will sync when reconnected.` : 'Submissions will queue until reconnected.'}
         </Alert>
