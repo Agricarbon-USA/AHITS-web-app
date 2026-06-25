@@ -2,15 +2,22 @@ import { AppShell } from '@/components/ui/AppShell'
 import { AdminNav } from '@/components/admin/AdminNav'
 import { NotificationBell } from '@/components/shared/NotificationBell'
 import { ToastProvider } from '@/components/shared/useToast'
+import { ReadOnlyProvider } from '@/components/shared/ReadOnly'
 import { getSession } from '@/lib/auth/session'
 import { redirect } from 'next/navigation'
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const session = await getSession()
-  if (!session || session.role !== 'ADMIN') redirect('/login')
+  // Admins get full access; operators are admitted READ-ONLY (workplan §6) and
+  // restricted to the OPERATOR_VIEW_ADMIN_PATHS subset by proxy.ts. Any other
+  // session is bounced to login.
+  if (!session || (session.role !== 'ADMIN' && session.role !== 'OPERATOR')) redirect('/login')
+  const canEdit = session.role === 'ADMIN'
   return (
-    <AppShell nav={<AdminNav />} title="AHITS Admin" headerActions={<NotificationBell />}>
-      <ToastProvider>{children}</ToastProvider>
+    <AppShell nav={<AdminNav />} title={canEdit ? 'AHITS Admin' : 'AHITS'} headerActions={<NotificationBell />}>
+      <ToastProvider>
+        <ReadOnlyProvider canEdit={canEdit}>{children}</ReadOnlyProvider>
+      </ToastProvider>
     </AppShell>
   )
 }

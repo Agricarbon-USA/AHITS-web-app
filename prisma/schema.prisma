@@ -227,6 +227,8 @@ model Hub {
   repairTasks      MaintenanceTask[] @relation("RepairHub")
   homeOperators    User[]            @relation("HubOperators")
   statusLinks      StatusLink[]
+  vehicles         Vehicle[]         @relation("HubVehicles")
+  stock            InventoryStock[]
 
   @@map("hubs")
 }
@@ -403,6 +405,7 @@ model InventoryItem {
   maintenanceTasks MaintenanceTask[]
   projectEquipment ProjectEquipment[]
   kitItems         KitItem[]
+  stock            InventoryStock[]
 
   @@index([categoryId])
   @@index([hubId])
@@ -440,6 +443,34 @@ model InventoryUnit {
   @@map("inventory_units")
 }
 
+// ── M2 / workplan §2.2: Multi-hub inventory stock — EXPAND slice ─────────────
+// Generalizes the single `InventoryItem.hubId` so one consumable item can hold
+// stock at MANY hubs (one row per item+hub). BACKFILLED in migration
+// `…_inventory_stock` from each consumable item's (hubId, quantity). The legacy
+// `InventoryItem.quantity`/`hubId` are RETAINED during the transition: this slice
+// is additive and rewires NO live reader/writer (checkout still draws from
+// `InventoryItem.quantity`). Accessed via raw SQL (lib/inventory-stock.ts) so it
+// needs no generated-client regen and the PR is deploy-safe before the migration
+// is applied. A follow-on MIGRATE slice points checkout/return/low-stock at these
+// rows (operator picks the hub each checkout — confirmed direction), then a
+// CONTRACT slice retires the single-hub assumption. SERIALIZED per-unit location
+// is a separate axis (a future InventoryUnit.hubId), out of scope here.
+model InventoryStock {
+  id        String   @id @default(cuid())
+  itemId    String
+  hubId     String
+  quantity  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  item InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  hub  Hub           @relation(fields: [hubId], references: [id], onDelete: Cascade)
+
+  @@unique([itemId, hubId])
+  @@index([hubId])
+  @@map("inventory_stock")
+}
+
 model Vehicle {
   id                  String        @id @default(cuid())
   name                String        @unique
@@ -450,7 +481,12 @@ model Vehicle {
   licensePlate        String?
   odometer            Int?
   status              VehicleStatus @default(ACTIVE)
+  // Free-text `location` is retained for backward-compat, but the primary home
+  // is now `hubId` (a Hub dropdown). See migration 20260625000000_vehicle_hub.
+  // hubId is read/written via raw SQL in /api/vehicles until the generated
+  // client is regenerated locally (matches the Hub.email pattern).
   location            String?
+  hubId               String?
   assignedOperatorId  String?
   insuranceExpires    DateTime?
   registrationExpires DateTime?
@@ -465,8 +501,10 @@ model Vehicle {
   photos           Photo[]
   rigVehicles      RigVehicle[]
   transferVehicles TransferVehicle[]
+  hub              Hub?              @relation("HubVehicles", fields: [hubId], references: [id])
 
   @@index([deletedAt])
+  @@index([hubId])
   @@map("vehicles")
 }
 

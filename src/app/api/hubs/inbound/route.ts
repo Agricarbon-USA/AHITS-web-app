@@ -1,14 +1,15 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAdmin } from '@/lib/auth/session'
+import { requireAuth } from '@/lib/auth/session'
 
-// M6: admin oversight of what's in-transit / awaiting receipt at each hub —
-// every non-terminal HUB_RETURN status link, grouped by hub, with discrepancy
-// flags. Read-only, admin-only. The external login-less hub portal is a separate
-// follow-on; this is the internal "what are we waiting on" view.
+// M6: oversight of what's in-transit / awaiting receipt at each hub — every
+// non-terminal HUB_RETURN status link, grouped by hub, with discrepancy flags.
+// Read-only. Readable by any authenticated user for operator org-wide read-only
+// visibility (workplan §6); receipt/discrepancy actions stay admin-gated. The
+// external login-less hub portal is a separate follow-on.
 export async function GET() {
-  const session = await requireAdmin()
-  if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const session = await requireAuth()
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const links = await prisma.statusLink.findMany({
     where: { type: 'HUB_RETURN', state: { in: ['ISSUED', 'VIEWED', 'ACTED'] } },

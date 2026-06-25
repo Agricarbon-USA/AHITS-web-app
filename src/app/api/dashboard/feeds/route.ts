@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { requireAdmin } from '@/lib/auth/session'
+import { requireAuth } from '@/lib/auth/session'
 
-// Operational feeds for the admin dashboard (alert-response KPI): the things an
-// admin should act on today, not just the headline counts. Read-only, admin-only.
+// Operational feeds for the dashboard (alert-response KPI): the things to act on
+// today, not just the headline counts. Read-only. Readable by any authenticated
+// user so operators get org-wide read-only visibility (workplan §6); all the
+// actions these feeds deep-link to remain admin-gated at their own routes.
 
 const MS_PER_DAY = 86_400_000
 const DUE_SOON_DAYS = 14
@@ -18,8 +20,8 @@ function dec(d: { toString(): string } | null | undefined): number {
 }
 
 export async function GET() {
-  const session = await requireAdmin()
-  if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const session = await requireAuth()
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const now = new Date()
   const startOfToday = new Date(now)
