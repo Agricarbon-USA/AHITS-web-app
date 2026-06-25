@@ -23,17 +23,27 @@ export interface ItemStockRow {
   hubId: string
   hubName: string | null
   quantity: number
+  reservedQty: number
+  available: number
 }
 
 /** Per-hub stock for one item (only hubs that have a row), hub-name sorted. */
 export async function listItemStock(itemId: string, db: RawClient = prisma): Promise<ItemStockRow[]> {
-  return db.$queryRaw<ItemStockRow[]>`
-    SELECT s."hubId", h."name" AS "hubName", s."quantity"
+  const rows = await db.$queryRaw<{ hubId: string; hubName: string | null; quantity: bigint | number; reservedQty: bigint | number; available: bigint | number }[]>`
+    SELECT s."hubId", h."name" AS "hubName", s."quantity", s."reservedQty",
+           GREATEST(s."quantity" - s."reservedQty", 0) AS "available"
     FROM "inventory_stock" s
     LEFT JOIN "hubs" h ON h."id" = s."hubId"
     WHERE s."itemId" = ${itemId}
     ORDER BY h."name" ASC NULLS LAST
   `
+  return rows.map((r) => ({
+    hubId: r.hubId,
+    hubName: r.hubName,
+    quantity: Number(r.quantity),
+    reservedQty: Number(r.reservedQty),
+    available: Number(r.available),
+  }))
 }
 
 /** Per-hub stock for many items in one query, keyed by itemId. */
@@ -43,8 +53,9 @@ export async function listStockForItems(
 ): Promise<Map<string, ItemStockRow[]>> {
   const map = new Map<string, ItemStockRow[]>()
   if (itemIds.length === 0) return map
-  const rows = await db.$queryRaw<({ itemId: string } & ItemStockRow)[]>`
-    SELECT s."itemId", s."hubId", h."name" AS "hubName", s."quantity"
+  const rows = await db.$queryRaw<({ itemId: string; hubId: string; hubName: string | null; quantity: bigint | number; reservedQty: bigint | number; available: bigint | number })[]>`
+    SELECT s."itemId", s."hubId", h."name" AS "hubName", s."quantity", s."reservedQty",
+           GREATEST(s."quantity" - s."reservedQty", 0) AS "available"
     FROM "inventory_stock" s
     LEFT JOIN "hubs" h ON h."id" = s."hubId"
     WHERE s."itemId" IN (${Prisma.join(itemIds)})
@@ -52,7 +63,7 @@ export async function listStockForItems(
   `
   for (const r of rows) {
     const list = map.get(r.itemId) ?? []
-    list.push({ hubId: r.hubId, hubName: r.hubName, quantity: r.quantity })
+    list.push({ hubId: r.hubId, hubName: r.hubName, quantity: Number(r.quantity), reservedQty: Number(r.reservedQty), available: Number(r.available) })
     map.set(r.itemId, list)
   }
   return map
@@ -104,6 +115,21 @@ export async function drawFromHub(itemId: string, hubId: string, qty: number, db
     WHERE "itemId" = ${itemId} AND "hubId" = ${hubId}
       AND "quantity" - "reservedQty" >= ${qty}`
   return Number(n) > 0 ? qty : 0
+}
+
+/**
+ * Re-sync `InventoryItem.quantity` to the SUM across all `inventory_stock` rows.
+ * Call inside the same transaction as any stock mutation to preserve the dual-write
+ * invariant (MH-2 set/move; create-gap seed).
+ */
+export async function resyncItemTotal(itemId: string, db: RawClient = prisma): Promise<void> {
+  await db.$executeRaw`
+    UPDATE "inventory_items"
+    SET "quantity" = (
+      SELECT COALESCE(SUM("quantity"), 0) FROM "inventory_stock" WHERE "itemId" = ${itemId}
+    ), "updatedAt" = now()
+    WHERE "id" = ${itemId}
+  `
 }
 
 /** Restore `qty` to a hub's stock (creates the row if absent). For genuine good returns. */
