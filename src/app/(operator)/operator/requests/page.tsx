@@ -26,6 +26,7 @@ import AddIcon from '@mui/icons-material/Add'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
+import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/components/shared/useToast'
 import { StatusChip } from '@/components/shared/StatusChip'
 
@@ -41,6 +42,7 @@ interface RequestRow {
   lineCount: number
   decisionNote: string | null
   projectName: string | null
+  fulfillerOperatorId: string | null
 }
 
 interface HubOption { id: string; name: string; city: string; state: string }
@@ -58,7 +60,7 @@ interface VehicleOption { id: string; name: string; type: string }
 
 interface DraftLine {
   key: string
-  lineType: 'KIT_ITEM' | 'VEHICLE' | 'NEW_PURCHASE' | 'SHIPPING_LABEL'
+  lineType: 'KIT_ITEM' | 'VEHICLE' | 'NEW_PURCHASE' | 'SHIPPING_LABEL' | 'CONSUMABLE'
   specificInventoryItemId: string
   specificInventoryUnitId: string
   categoryId: string
@@ -107,6 +109,7 @@ function emptyLine(lineType: DraftLine['lineType']): DraftLine {
 function isLineValid(line: DraftLine): boolean {
   switch (line.lineType) {
     case 'KIT_ITEM':
+    case 'CONSUMABLE':
       return !!(line.specificInventoryItemId || line.categoryId)
     case 'VEHICLE':
       return !!(line.specificVehicleId || line.vehicleType)
@@ -144,6 +147,7 @@ function LineEditor({
         ]
       : [
           { value: 'KIT_ITEM', label: 'Kit item' },
+          { value: 'CONSUMABLE', label: 'Consumables' },
           { value: 'NEW_PURCHASE', label: 'New purchase' },
           { value: 'SHIPPING_LABEL', label: 'Shipping label' },
         ]
@@ -181,7 +185,7 @@ function LineEditor({
         </TextField>
 
         <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-          {line.lineType === 'KIT_ITEM' && (
+          {(line.lineType === 'KIT_ITEM' || line.lineType === 'CONSUMABLE') && (
             <Stack spacing={1}>
               <TextField
                 select
@@ -200,7 +204,10 @@ function LineEditor({
                 fullWidth
               >
                 <MenuItem value="">— Category fallback —</MenuItem>
-                {inventory.map((i) => (
+                {(line.lineType === 'CONSUMABLE'
+                  ? inventory.filter((i) => i.itemType === 'CONSUMABLE')
+                  : inventory
+                ).map((i) => (
                   <MenuItem key={i.id} value={i.id}>
                     {i.name}
                     {i.itemType === 'SERIALIZED' ? ' (serialized)' : ''}
@@ -227,7 +234,7 @@ function LineEditor({
                 </TextField>
               )}
 
-              {isSerialized && (
+              {line.lineType === 'KIT_ITEM' && isSerialized && (
                 <TextField
                   select
                   size="small"
@@ -245,7 +252,7 @@ function LineEditor({
                 </TextField>
               )}
 
-              {!isSerialized && (
+              {(line.lineType === 'CONSUMABLE' || !isSerialized) && (
                 <TextField
                   size="small"
                   type="number"
@@ -412,7 +419,8 @@ function NewRequestDialog({
       projectId: projectId || null,
       fulfillerHubId: mode === 'RESERVATION' ? hubId || null : null,
       lines: lines.map((l) => ({
-        lineType: l.lineType,
+        lineType: l.lineType === 'CONSUMABLE' ? 'KIT_ITEM' : l.lineType,
+        itemType: l.lineType === 'CONSUMABLE' ? 'CONSUMABLE' : null,
         categoryId: l.categoryId || null,
         specificInventoryItemId: l.specificInventoryItemId || null,
         specificInventoryUnitId: l.specificInventoryUnitId || null,
@@ -450,6 +458,7 @@ function NewRequestDialog({
         ]
       : [
           { type: 'KIT_ITEM', label: 'Kit item' },
+          { type: 'CONSUMABLE', label: 'Consumables' },
           { type: 'NEW_PURCHASE', label: 'New purchase' },
           { type: 'SHIPPING_LABEL', label: 'Shipping label' },
         ]
@@ -466,6 +475,7 @@ function NewRequestDialog({
             setMode(val as 'RESERVATION' | 'MATERIAL')
             setLines([emptyLine('KIT_ITEM')])
             setHubId('')
+            setProjectId('')
           }}
           size="small"
           sx={{ width: '100%' }}
@@ -554,6 +564,20 @@ function NewRequestDialog({
               placeholder="e.g. Running low on sampling vials at site 4"
               fullWidth
             />
+            <TextField
+              select
+              label="Project (optional)"
+              value={projectId}
+              onChange={(e) => setProjectId(e.target.value)}
+              fullWidth
+            >
+              <MenuItem value="">— None —</MenuItem>
+              {projects.map((p) => (
+                <MenuItem key={p.id} value={p.id}>
+                  {p.name}
+                </MenuItem>
+              ))}
+            </TextField>
           </Stack>
         )}
 
@@ -625,8 +649,11 @@ export default function RequestsPage() {
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const [dialogDataLoaded, setDialogDataLoaded] = React.useState(false)
   const [cancellingId, setCancellingId] = React.useState<string | null>(null)
+  const [fulfillingId, setFulfillingId] = React.useState<string | null>(null)
+  const [activeTab, setActiveTab] = React.useState<'ACTIVE' | 'CLOSED'>('ACTIVE')
   const showToast = useToast()
   const { mutate } = useOfflineQueue()
+  const { user } = useAuth()
 
   const load = React.useCallback(async () => {
     const res = await fetch('/api/deployment-requests')
@@ -687,6 +714,29 @@ export default function RequestsPage() {
     }
   }
 
+  const handleFulfill = async (id: string) => {
+    setFulfillingId(id)
+    const result = await mutate({
+      endpoint: `/api/deployment-requests/${id}`,
+      method: 'PATCH',
+      body: { action: 'complete' },
+      label: 'Mark fulfilled',
+    })
+    setFulfillingId(null)
+    if (result.ok && result.queued) {
+      showToast({ message: 'Fulfillment queued — will sync when online.', severity: 'info' })
+    } else if (result.ok) {
+      showToast({ message: 'Request marked fulfilled.', severity: 'success' })
+      await load()
+    } else {
+      showToast({ message: result.error, severity: 'error' })
+    }
+  }
+
+  const displayed = (requests ?? []).filter((r) =>
+    activeTab === 'ACTIVE' ? !TERMINAL.has(r.status) : TERMINAL.has(r.status),
+  )
+
   return (
     <Box>
       <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3}>
@@ -714,71 +764,107 @@ export default function RequestsPage() {
           </Button>
         </Box>
       ) : (
-        <Stack spacing={1.5}>
-          {requests.map((req) => (
-            <Card key={req.id} variant="outlined">
-              <CardContent sx={{ pb: '12px !important' }}>
-                <Stack
-                  direction="row"
-                  justifyContent="space-between"
-                  alignItems="flex-start"
-                  spacing={1}
-                >
-                  <Box sx={{ minWidth: 0 }}>
+        <>
+          <ToggleButtonGroup
+            value={activeTab}
+            exclusive
+            onChange={(_e, v) => { if (v) setActiveTab(v as 'ACTIVE' | 'CLOSED') }}
+            size="small"
+            sx={{ mb: 2 }}
+          >
+            <ToggleButton value="ACTIVE">Active</ToggleButton>
+            <ToggleButton value="CLOSED">Closed</ToggleButton>
+          </ToggleButtonGroup>
+          {displayed.length === 0 ? (
+            <Typography variant="body2" color="text.secondary" textAlign="center" pt={4}>
+              No {activeTab === 'ACTIVE' ? 'active' : 'closed'} requests.
+            </Typography>
+          ) : (
+            <Stack spacing={1.5}>
+              {displayed.map((req) => (
+                <Card key={req.id} variant="outlined">
+                  <CardContent sx={{ pb: '12px !important' }}>
                     <Stack
                       direction="row"
+                      justifyContent="space-between"
+                      alignItems="flex-start"
                       spacing={1}
-                      alignItems="center"
-                      mb={0.5}
-                      flexWrap="wrap"
                     >
-                      <StatusChip kind="request" status={req.status} />
-                      <Chip
-                        size="small"
-                        variant="outlined"
-                        label={req.requestType === 'RESERVATION' ? 'Reservation' : 'Material'}
-                      />
+                      <Box sx={{ minWidth: 0 }}>
+                        <Stack
+                          direction="row"
+                          spacing={1}
+                          alignItems="center"
+                          mb={0.5}
+                          flexWrap="wrap"
+                        >
+                          <StatusChip kind="request" status={req.status} />
+                          <Chip
+                            size="small"
+                            variant="outlined"
+                            label={req.requestType === 'RESERVATION' ? 'Reservation' : 'Material'}
+                          />
+                        </Stack>
+                        <Typography variant="body2" fontWeight={600} noWrap>
+                          {req.label ||
+                            (req.requestType === 'RESERVATION'
+                              ? 'Rig Reservation'
+                              : 'Material Request')}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {req.lineCount} line{req.lineCount !== 1 ? 's' : ''}
+                          {req.neededBy &&
+                            ` · Needed ${new Date(req.neededBy).toLocaleDateString()}`}
+                          {req.projectName && ` · ${req.projectName}`}
+                        </Typography>
+                        {req.decisionNote && (
+                          <Typography variant="caption" display="block" color="text.secondary">
+                            Admin note: {req.decisionNote}
+                          </Typography>
+                        )}
+                      </Box>
+                      {!TERMINAL.has(req.status) && (
+                        req.status === 'FORWARDED' && req.fulfillerOperatorId === user?.userId ? (
+                          <Button
+                            size="small"
+                            color="success"
+                            variant="contained"
+                            disabled={fulfillingId === req.id}
+                            startIcon={
+                              fulfillingId === req.id ? (
+                                <CircularProgress size={12} color="inherit" />
+                              ) : null
+                            }
+                            onClick={() => void handleFulfill(req.id)}
+                            sx={{ flexShrink: 0 }}
+                          >
+                            Mark Fulfilled
+                          </Button>
+                        ) : (
+                          <Button
+                            size="small"
+                            color="error"
+                            variant="outlined"
+                            disabled={cancellingId === req.id}
+                            startIcon={
+                              cancellingId === req.id ? (
+                                <CircularProgress size={12} color="inherit" />
+                              ) : null
+                            }
+                            onClick={() => void handleCancel(req.id)}
+                            sx={{ flexShrink: 0 }}
+                          >
+                            Cancel
+                          </Button>
+                        )
+                      )}
                     </Stack>
-                    <Typography variant="body2" fontWeight={600} noWrap>
-                      {req.label ||
-                        (req.requestType === 'RESERVATION'
-                          ? 'Rig Reservation'
-                          : 'Material Request')}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      {req.lineCount} line{req.lineCount !== 1 ? 's' : ''}
-                      {req.neededBy &&
-                        ` · Needed ${new Date(req.neededBy).toLocaleDateString()}`}
-                      {req.projectName && ` · ${req.projectName}`}
-                    </Typography>
-                    {req.decisionNote && (
-                      <Typography variant="caption" display="block" color="text.secondary">
-                        Admin note: {req.decisionNote}
-                      </Typography>
-                    )}
-                  </Box>
-                  {!TERMINAL.has(req.status) && (
-                    <Button
-                      size="small"
-                      color="error"
-                      variant="outlined"
-                      disabled={cancellingId === req.id}
-                      startIcon={
-                        cancellingId === req.id ? (
-                          <CircularProgress size={12} color="inherit" />
-                        ) : null
-                      }
-                      onClick={() => void handleCancel(req.id)}
-                      sx={{ flexShrink: 0 }}
-                    >
-                      Cancel
-                    </Button>
-                  )}
-                </Stack>
-              </CardContent>
-            </Card>
-          ))}
-        </Stack>
+                  </CardContent>
+                </Card>
+              ))}
+            </Stack>
+          )}
+        </>
       )}
 
       {dialogOpen && (
