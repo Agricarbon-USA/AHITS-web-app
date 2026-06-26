@@ -11,6 +11,7 @@ import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
 import CloseIcon from '@mui/icons-material/Close'
 import { useToast } from '@/components/shared/useToast'
+import { useCanEdit, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 
 const PROJECT_TYPES = ['CROPLAND', 'RANGELAND', 'FORESTRY', 'OTHER']
 const PROJECT_STATUSES = ['PLANNED', 'ACTIVE', 'ON_HOLD', 'COMPLETED', 'CANCELLED']
@@ -49,6 +50,7 @@ function StatusPill({ status }: { status: string }) {
 }
 
 export default function AdminProjectsPage() {
+  const canEdit = useCanEdit()
   const showToast = useToast()
   const [projects, setProjects] = React.useState<ProjectRow[]>([])
   const [loading, setLoading] = React.useState(true)
@@ -106,10 +108,13 @@ export default function AdminProjectsPage() {
   return (
     <Box>
       <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1} mb={2}>
-        <Typography variant="h5">Projects</Typography>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => { setEditing(null); setFormOpen(true) }}>
+        <Stack direction="row" alignItems="center" spacing={1}>
+          <Typography variant="h5">Projects</Typography>
+          {!canEdit && <Chip size="small" label="View only" variant="outlined" />}
+        </Stack>
+        <MutationButton variant="contained" startIcon={<AddIcon />} onClick={() => { setEditing(null); setFormOpen(true) }}>
           Add Project
-        </Button>
+        </MutationButton>
       </Stack>
 
       <Paper variant="outlined">
@@ -143,8 +148,8 @@ export default function AdminProjectsPage() {
                     <TableCell>{p.lead?.name ?? '—'}</TableCell>
                     <TableCell align="right">{p._count?.rigs ?? 0}</TableCell>
                     <TableCell align="right" onClick={(e) => e.stopPropagation()}>
-                      <Tooltip title="Edit"><IconButton size="small" onClick={() => { setEditing(p); setFormOpen(true) }}><EditIcon fontSize="small" /></IconButton></Tooltip>
-                      <Tooltip title="Delete"><IconButton size="small" onClick={() => setConfirmDelete(p)}><DeleteIcon fontSize="small" /></IconButton></Tooltip>
+                      <MutationIconButton size="small" tooltip="Edit" onClick={() => { setEditing(p); setFormOpen(true) }}><EditIcon fontSize="small" /></MutationIconButton>
+                      <MutationIconButton size="small" tooltip="Delete" onClick={() => setConfirmDelete(p)}><DeleteIcon fontSize="small" /></MutationIconButton>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -199,8 +204,8 @@ export default function AdminProjectsPage() {
             </Box>
 
             <Stack direction="row" spacing={1} pt={1}>
-              <Button variant="outlined" startIcon={<EditIcon />} onClick={() => { setEditing(detail); setFormOpen(true) }}>Edit</Button>
-              <Button variant="outlined" color="error" startIcon={<DeleteIcon />} onClick={() => setConfirmDelete(detail)}>Delete</Button>
+              <MutationButton variant="outlined" startIcon={<EditIcon />} onClick={() => { setEditing(detail); setFormOpen(true) }}>Edit</MutationButton>
+              <MutationButton variant="outlined" color="error" startIcon={<DeleteIcon />} onClick={() => setConfirmDelete(detail)}>Delete</MutationButton>
             </Stack>
           </Stack>
         ) : null}
@@ -222,7 +227,7 @@ export default function AdminProjectsPage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setConfirmDelete(null)}>Cancel</Button>
-          <Button color="error" variant="contained" onClick={doDelete}>Delete</Button>
+          <MutationButton color="error" variant="contained" onClick={doDelete}>Delete</MutationButton>
         </DialogActions>
       </Dialog>
     </Box>

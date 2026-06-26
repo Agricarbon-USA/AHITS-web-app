@@ -15,6 +15,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import { useRouter } from 'next/navigation'
 import { useToast } from '@/components/shared/useToast'
 import { alertLabel, alertLink } from '@/lib/alert-display'
+import { useCanEdit, MutationButton } from '@/components/shared/ReadOnly'
 import type { DashboardStats } from '@/types'
 
 interface AlertRow {
@@ -48,6 +49,7 @@ function relativeTime(iso: string) {
 const fmtDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString() : '—')
 
 export default function AdminDashboardPage() {
+  const canEdit = useCanEdit()
   const [stats, setStats] = React.useState<DashboardStats | null>(null)
   const [statsLoading, setStatsLoading] = React.useState(true)
   const [alerts, setAlerts] = React.useState<AlertRow[]>([])
@@ -95,7 +97,10 @@ export default function AdminDashboardPage() {
 
   return (
     <Box>
-      <Typography variant="h5" mb={2}>Overview</Typography>
+      <Stack direction="row" alignItems="center" spacing={1} mb={2}>
+        <Typography variant="h5">Overview</Typography>
+        {!canEdit && <Chip size="small" label="View only" variant="outlined" />}
+      </Stack>
 
       {/* Pinned red-alert banner — surfaces unresolved alerts above the fold. */}
       {!alertsLoading && alerts.length > 0 && (
@@ -218,14 +223,14 @@ export default function AdminDashboardPage() {
                             View
                           </Button>
                         )}
-                        <Button
+                        <MutationButton
                           size="small"
                           onClick={() => handleResolve(alert.id)}
                           disabled={resolving === alert.id}
                           startIcon={resolving === alert.id ? <CircularProgress size={12} /> : null}
                         >
                           Resolve
-                        </Button>
+                        </MutationButton>
                       </Box>
                     }
                   >

@@ -13,6 +13,7 @@ import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { useCanEdit, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -62,6 +63,7 @@ const STATE_CHIP: Record<InboundUnit['state'], { label: string; color: 'warning'
 // ── Page ───────────────────────────────────────────────────────────
 
 export default function AdminHubsPage() {
+  const canEdit = useCanEdit()
   const [tab, setTab] = React.useState(0)
 
   // Hub CRUD state
@@ -142,7 +144,10 @@ export default function AdminHubsPage() {
   return (
     <Box>
       <Box mb={3}>
-        <Typography variant="h5">Hubs</Typography>
+        <Stack direction="row" alignItems="center" spacing={1}>
+          <Typography variant="h5">Hubs</Typography>
+          {!canEdit && <Chip size="small" label="View only" variant="outlined" />}
+        </Stack>
         <Typography variant="body2" color="text.secondary">
           Manage hub locations and view inbound equipment.
         </Typography>
@@ -159,9 +164,9 @@ export default function AdminHubsPage() {
       {tab === 0 && (
         <Box>
           <Stack direction="row" justifyContent="flex-end" mb={2}>
-            <Button variant="contained" startIcon={<AddIcon />} onClick={openAddHub}>
+            <MutationButton variant="contained" startIcon={<AddIcon />} onClick={openAddHub}>
               Add Hub
-            </Button>
+            </MutationButton>
           </Stack>
           {hubsLoading ? (
             <CircularProgress size={24} />
@@ -190,16 +195,12 @@ export default function AdminHubsPage() {
                           </TableCell>
                           <TableCell align="right">
                             <Stack direction="row" spacing={0.5} justifyContent="flex-end">
-                              <Tooltip title="Edit">
-                                <IconButton size="small" onClick={() => openEditHub(hub)}>
-                                  <EditIcon fontSize="small" />
-                                </IconButton>
-                              </Tooltip>
-                              <Tooltip title="Deactivate">
-                                <IconButton size="small" color="error" onClick={() => setDeleteHub(hub)}>
-                                  <DeleteIcon fontSize="small" />
-                                </IconButton>
-                              </Tooltip>
+                              <MutationIconButton size="small" tooltip="Edit" onClick={() => openEditHub(hub)}>
+                                <EditIcon fontSize="small" />
+                              </MutationIconButton>
+                              <MutationIconButton size="small" tooltip="Deactivate" color="error" onClick={() => setDeleteHub(hub)}>
+                                <DeleteIcon fontSize="small" />
+                              </MutationIconButton>
                             </Stack>
                           </TableCell>
                         </TableRow>

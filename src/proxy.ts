@@ -26,6 +26,12 @@ const OPERATOR_PATHS = ['/operator']
 // stays admin-only. Reads for these are requireAuth; writes stay requireAdmin.
 const OPERATOR_VIEW_ADMIN_PATHS = [
   '/admin/vehicles',
+  '/admin/inventory',
+  '/admin/deployments',
+  '/admin/maintenance',
+  '/admin/hubs',
+  '/admin/projects',
+  '/admin/dashboard',
 ]
 
 function getSecret() {
