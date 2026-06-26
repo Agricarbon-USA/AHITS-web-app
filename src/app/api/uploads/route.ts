@@ -64,6 +64,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Upload failed: ' + error.message }, { status: 500 })
   }
 
-  const { data: { publicUrl } } = supabase.storage.from(BUCKET).getPublicUrl(data.path)
-  return NextResponse.json({ url: publicUrl })
+  // UR-005b: the bucket is private — return the auth-gated proxy ref instead of a
+  // public URL. `/api/photos/<object-path>` streams the object only for a signed-in
+  // session (see src/app/api/photos/[...path]/route.ts).
+  const proxyUrl = `/api/photos/${data.path.split('/').map(encodeURIComponent).join('/')}`
+  return NextResponse.json({ url: proxyUrl })
 }

@@ -8,6 +8,7 @@ import { compressImage } from '@/lib/imageCompress'
 import {
   storeLocalPhoto, getLocalPhoto, deleteLocalPhoto, uploadPhotoBlob, isLocalPhotoRef,
 } from '@/lib/photoStore'
+import { toPhotoSrc } from '@/lib/photo-security'
 
 interface PhotoCaptureProps {
   /** Current photo references — a mix of real URLs and `localphoto:` keys. */
@@ -46,7 +47,8 @@ export function PhotoCapture({
           setPreviews((p) => ({ ...p, [ref]: url }))
         })
       } else {
-        setPreviews((p) => ({ ...p, [ref]: ref }))
+        // Uploaded ref → render through the auth-gated proxy (UR-005b).
+        setPreviews((p) => ({ ...p, [ref]: toPhotoSrc(ref) }))
       }
     })
     return () => { cancelled = true }

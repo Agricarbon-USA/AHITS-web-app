@@ -257,14 +257,6 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
         {s.problem && <Row label="Problem" value={s.problem} />}
         {s.shipToHub && <Row label="Return to" value={s.shipToHub} />}
         {s.hub && <Row label="Hub" value={s.hub} />}
-        {!!s.photos?.length && (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
-            {s.photos.map((u, i) => (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img key={i} src={u} alt={`photo ${i + 1}`} style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 8, border: '1px solid #e0e0e0' }} />
-            ))}
-          </div>
-        )}
       </div>
 
       {!ctx.actionable ? (

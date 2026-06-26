@@ -151,7 +151,7 @@ const RESOLVE_INCLUDE = {
       item: { select: { name: true } },
       unit: { select: { serialNumber: true } },
       repairHub: { select: { name: true, city: true, state: true } },
-      photos: { select: { url: true } },
+      // UR-005b: photos intentionally not resolved for the login-less status link.
     },
   },
   inventoryUnit: { include: { inventoryItem: { select: { name: true } } } },

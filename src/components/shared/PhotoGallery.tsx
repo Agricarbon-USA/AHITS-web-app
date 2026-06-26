@@ -6,6 +6,7 @@ import CloseIcon from '@mui/icons-material/Close'
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'
 import ChevronRightIcon from '@mui/icons-material/ChevronRight'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
+import { toPhotoSrc } from '@/lib/photo-security'
 
 export interface GalleryPhoto {
   id?: string
@@ -56,7 +57,7 @@ export function PhotoGallery({ photos, size = 80 }: { photos: GalleryPhoto[]; si
           >
             <Box
               component="img"
-              src={p.thumbnailUrl || p.url}
+              src={toPhotoSrc(p.thumbnailUrl || p.url)}
               alt={isDamage(p) ? 'damage photo' : 'photo'}
               sx={{ width: size, height: size, objectFit: 'cover', borderRadius: 1, border: '1px solid', borderColor: 'divider', display: 'block' }}
             />
@@ -89,7 +90,7 @@ export function PhotoGallery({ photos, size = 80 }: { photos: GalleryPhoto[]; si
                 </IconButton>
               </>
             )}
-            <Box component="img" src={current.url} alt="" sx={{ maxWidth: '92vw', maxHeight: '82vh', objectFit: 'contain', display: 'block' }} />
+            <Box component="img" src={toPhotoSrc(current.url)} alt="" sx={{ maxWidth: '92vw', maxHeight: '82vh', objectFit: 'contain', display: 'block' }} />
             <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1} sx={{ p: 1, color: 'common.white' }}>
               <Typography variant="caption">{photos.length > 1 ? `${(openIdx ?? 0) + 1} / ${photos.length}` : ''}</Typography>
               {isDamage(current) && <Chip icon={<WarningAmberIcon sx={{ fontSize: 14 }} />} label="Damage" size="small" color="error" />}
