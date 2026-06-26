@@ -37,6 +37,12 @@ const NAV_ITEMS = [
 // grant would just bounce the operator back to their dashboard.
 const OPERATOR_VIEW_HREFS = new Set<string>([
   '/admin/vehicles',
+  '/admin/inventory',
+  '/admin/deployments',
+  '/admin/maintenance',
+  '/admin/hubs',
+  '/admin/projects',
+  '/admin/dashboard',
 ])
 
 export function AdminNav() {

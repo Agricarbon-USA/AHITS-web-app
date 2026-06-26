@@ -26,7 +26,7 @@ import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { PhotoGallery } from '@/components/shared/PhotoGallery'
 import { RepairReviewDialog } from '@/components/shared/RepairReviewDialog'
 import { EQUIPMENT_STATUS } from '@/lib/status'
-import { MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
+import { useCanEdit, EditGuard, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 import { groupBy } from '@/lib/utils'
 
 // ── Types ─────────────────────────────────────────────────────────
@@ -500,6 +500,7 @@ function DetailDrawer({
   onRetire: (item: InventoryItemRow) => void
   onUpdated: () => void
 }) {
+  const canEdit = useCanEdit()
   const [detail, setDetail] = React.useState<ItemDetail | null>(null)
   const [loading, setLoading] = React.useState(false)
   const [activeTab, setActiveTab] = React.useState(0)
@@ -750,6 +751,7 @@ function DetailDrawer({
                                 onBlur={() => handleSerialBlur(unit.id)}
                                 sx={{ width: 120 }}
                                 inputProps={{ style: { fontSize: 13 } }}
+                                disabled={!canEdit}
                               />
                             </TableCell>
                             <TableCell>
@@ -761,6 +763,7 @@ function DetailDrawer({
                                 onChange={(e) => handleUnitStatusChange(unit.id, e.target.value)}
                                 sx={{ minWidth: 130 }}
                                 SelectProps={{ style: { fontSize: 13 } }}
+                                disabled={!canEdit}
                               >
                                 {Object.entries(EQUIPMENT_STATUS).map(([v, m]) => (
                                   <MenuItem key={v} value={v}>{m.label}</MenuItem>
@@ -776,16 +779,12 @@ function DetailDrawer({
                                 </Tooltip>
                                 {unit.status === 'INOPERABLE' && (
                                   <>
-                                    <Tooltip title="Retire this unit">
-                                      <IconButton size="small" color="error" onClick={() => setRetireUnitId(unit.id)}>
-                                        <ArchiveIcon fontSize="small" />
-                                      </IconButton>
-                                    </Tooltip>
-                                    <Tooltip title="Send for repair">
-                                      <IconButton size="small" onClick={() => setRepairUnitId(unit.id)}>
-                                        <EditIcon fontSize="small" />
-                                      </IconButton>
-                                    </Tooltip>
+                                    <MutationIconButton size="small" tooltip="Retire this unit" color="error" onClick={() => setRetireUnitId(unit.id)}>
+                                      <ArchiveIcon fontSize="small" />
+                                    </MutationIconButton>
+                                    <MutationIconButton size="small" tooltip="Send for repair" onClick={() => setRepairUnitId(unit.id)}>
+                                      <EditIcon fontSize="small" />
+                                    </MutationIconButton>
                                   </>
                                 )}
                               </Stack>
@@ -837,38 +836,40 @@ function DetailDrawer({
                     </TableBody>
                   </Table>
                 </TableContainer>
-                <Stack spacing={1.5} sx={{ mt: 1, maxWidth: 420 }}>
-                  <Typography variant="caption" color="text.secondary">
-                    Add a unit and (optionally) register its existing QR label by scanning
-                    or typing the code.
-                  </Typography>
-                  <QrScanField
-                    value={newUnitQr}
-                    onChange={(c) => { setNewUnitQr(c); setAddUnitError('') }}
-                    label="QR label code (optional)"
-                    helperText="Leave blank to auto-generate an internal id"
-                  />
-                  <TextField
-                    size="small"
-                    label="Serial number (optional)"
-                    value={newUnitSerial}
-                    onChange={(e) => setNewUnitSerial(e.target.value)}
-                    fullWidth
-                  />
-                  {addUnitError && (
-                    <Alert severity="error" onClose={() => setAddUnitError('')}>{addUnitError}</Alert>
-                  )}
-                  <Button
-                    size="small"
-                    startIcon={addingUnit ? <CircularProgress size={14} /> : <AddIcon />}
-                    onClick={handleAddUnit}
-                    disabled={addingUnit}
-                    variant="outlined"
-                    sx={{ alignSelf: 'flex-start' }}
-                  >
-                    {addingUnit ? 'Adding…' : '+ Add Unit'}
-                  </Button>
-                </Stack>
+                <EditGuard>
+                  <Stack spacing={1.5} sx={{ mt: 1, maxWidth: 420 }}>
+                    <Typography variant="caption" color="text.secondary">
+                      Add a unit and (optionally) register its existing QR label by scanning
+                      or typing the code.
+                    </Typography>
+                    <QrScanField
+                      value={newUnitQr}
+                      onChange={(c) => { setNewUnitQr(c); setAddUnitError('') }}
+                      label="QR label code (optional)"
+                      helperText="Leave blank to auto-generate an internal id"
+                    />
+                    <TextField
+                      size="small"
+                      label="Serial number (optional)"
+                      value={newUnitSerial}
+                      onChange={(e) => setNewUnitSerial(e.target.value)}
+                      fullWidth
+                    />
+                    {addUnitError && (
+                      <Alert severity="error" onClose={() => setAddUnitError('')}>{addUnitError}</Alert>
+                    )}
+                    <Button
+                      size="small"
+                      startIcon={addingUnit ? <CircularProgress size={14} /> : <AddIcon />}
+                      onClick={handleAddUnit}
+                      disabled={addingUnit}
+                      variant="outlined"
+                      sx={{ alignSelf: 'flex-start' }}
+                    >
+                      {addingUnit ? 'Adding…' : '+ Add Unit'}
+                    </Button>
+                  </Stack>
+                </EditGuard>
               </>
             )}
 
@@ -900,15 +901,15 @@ function DetailDrawer({
           <Stack direction="row" spacing={1} px={3} py={2} justifyContent="flex-end">
             <Button onClick={onClose}>Close</Button>
             {detail.unitCounts.available > 0 && (
-              <Button variant="outlined" color="error" startIcon={<ArchiveIcon />}
+              <MutationButton variant="outlined" color="error" startIcon={<ArchiveIcon />}
                 onClick={() => { onClose(); onRetire(detail) }}>
                 Retire
-              </Button>
+              </MutationButton>
             )}
-            <Button variant="contained" startIcon={<EditIcon />}
+            <MutationButton variant="contained" startIcon={<EditIcon />}
               onClick={() => { onClose(); onEdit(detail) }}>
               Edit
-            </Button>
+            </MutationButton>
           </Stack>
         </Box>
       )}
@@ -942,6 +943,7 @@ function DetailDrawer({
 // ── Main Page ─────────────────────────────────────────────────────
 
 export default function AdminInventoryPage() {
+  const canEdit = useCanEdit()
   const showToast = useToast()
   const [items, setItems] = React.useState<InventoryItemRow[]>([])
   const [total, setTotal] = React.useState(0)
@@ -1006,10 +1008,13 @@ export default function AdminInventoryPage() {
     <Box>
       {/* Header */}
       <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2}>
-        <Typography variant="h5" fontWeight={700}>Inventory</Typography>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => { setFormItem(null); setFormOpen(true) }}>
+        <Stack direction="row" alignItems="center" spacing={1}>
+          <Typography variant="h5" fontWeight={700}>Inventory</Typography>
+          {!canEdit && <Chip size="small" label="View only" variant="outlined" />}
+        </Stack>
+        <MutationButton variant="contained" startIcon={<AddIcon />} onClick={() => { setFormItem(null); setFormOpen(true) }}>
           Add Item
-        </Button>
+        </MutationButton>
       </Stack>
 
       {/* Filters */}
@@ -1167,16 +1172,12 @@ export default function AdminInventoryPage() {
                       </TableCell>
                       <TableCell align="right" onClick={(e) => e.stopPropagation()}>
                         <Stack direction="row" spacing={0.5} justifyContent="flex-end">
-                          <Tooltip title="Edit">
-                            <IconButton size="small" onClick={() => { setFormItem(item); setFormOpen(true) }}>
-                              <EditIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                          <Tooltip title="Retire">
-                            <IconButton size="small" color="error" onClick={() => setRetireItem(item)}>
-                              <ArchiveIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
+                          <MutationIconButton size="small" tooltip="Edit" onClick={() => { setFormItem(item); setFormOpen(true) }}>
+                            <EditIcon fontSize="small" />
+                          </MutationIconButton>
+                          <MutationIconButton size="small" tooltip="Retire" color="error" onClick={() => setRetireItem(item)}>
+                            <ArchiveIcon fontSize="small" />
+                          </MutationIconButton>
                         </Stack>
                       </TableCell>
                     </TableRow>

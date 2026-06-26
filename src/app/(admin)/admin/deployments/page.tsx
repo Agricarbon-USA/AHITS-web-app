@@ -22,6 +22,7 @@ import { TransferDialog } from '@/components/shared/TransferDialog'
 import { KitItemSelectRow } from '@/components/admin/KitItemSelectRow'
 import { DispositionDialog } from '@/components/shared/DispositionDialog'
 import type { HubOption, UserOption } from '@/components/shared/DispositionDialog'
+import { useCanEdit, EditGuard, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -629,7 +630,7 @@ function DeploymentDrawer({
                             <Typography variant="caption" color="text.secondary" display="block">{tr.note}</Typography>
                             <Typography variant="caption" color="text.secondary">{new Date(tr.createdAt).toLocaleDateString()}</Typography>
                           </Box>
-                          <Button size="small" color="error" onClick={() => setCancelTransferId(tr.id)}>Cancel</Button>
+                          <MutationButton size="small" color="error" onClick={() => setCancelTransferId(tr.id)}>Cancel</MutationButton>
                         </Stack>
                       </Box>
                     )
@@ -644,12 +645,12 @@ function DeploymentDrawer({
               <Typography variant="subtitle2" fontWeight={600}>Rig</Typography>
               {isActive && (
                 <Stack direction="row" spacing={1}>
-                  <Button size="small" variant="outlined" onClick={() => setAddVehicleOpen(true)}>Add Vehicles</Button>
+                  <MutationButton size="small" variant="outlined" onClick={() => setAddVehicleOpen(true)}>Add Vehicles</MutationButton>
                   {rig.vehicles.length > 0 && !removingVehicles && (
-                    <Button size="small" variant="outlined" color="error" onClick={() => setRemovingVehicles(true)}>Remove</Button>
+                    <MutationButton size="small" variant="outlined" color="error" onClick={() => setRemovingVehicles(true)}>Remove</MutationButton>
                   )}
                   {removingVehicles && selVehicles.size > 0 && (
-                    <Button size="small" variant="contained" color="error" onClick={() => {
+                    <MutationButton size="small" variant="contained" color="error" onClick={() => {
                       // Initialize each selected vehicle with default disposition
                       const m = new Map<string, { dispositionType: string; toOperatorId?: string }>()
                       for (const vid of selVehicles) m.set(vid, { dispositionType: 'AVAILABLE' })
@@ -658,7 +659,7 @@ function DeploymentDrawer({
                       setNoteDialog('removeVehicles')
                     }}>
                       Remove ({selVehicles.size})
-                    </Button>
+                    </MutationButton>
                   )}
                   {removingVehicles && (
                     <Button size="small" onClick={() => { setRemovingVehicles(false); setSelVehicles(new Set()) }}>Cancel</Button>
@@ -694,14 +695,14 @@ function DeploymentDrawer({
               <Typography variant="subtitle2" fontWeight={600}>Kit</Typography>
               {isActive && (
                 <Stack direction="row" spacing={1}>
-                  <Button size="small" variant="outlined" onClick={() => setAddItemOpen(true)}>Add Items</Button>
+                  <MutationButton size="small" variant="outlined" onClick={() => setAddItemOpen(true)}>Add Items</MutationButton>
                   {kitItems.length > 0 && !removingItems && (
-                    <Button size="small" variant="outlined" color="error" onClick={() => setRemovingItems(true)}>Remove</Button>
+                    <MutationButton size="small" variant="outlined" color="error" onClick={() => setRemovingItems(true)}>Remove</MutationButton>
                   )}
                   {removingItems && selItems.size > 0 && (
-                    <Button size="small" variant="contained" color="error" onClick={() => setNoteDialog('removeItems')}>
+                    <MutationButton size="small" variant="contained" color="error" onClick={() => setNoteDialog('removeItems')}>
                       Remove ({selItems.size})
-                    </Button>
+                    </MutationButton>
                   )}
                   {removingItems && (
                     <Button size="small" onClick={() => { setRemovingItems(false); setSelItems(new Set()) }}>Cancel</Button>
@@ -730,16 +731,14 @@ function DeploymentDrawer({
                     <Chip size="small" label={ki.item.categoryRef?.name ?? ki.item.itemType} sx={{ height: 18, fontSize: 10 }} />
                     <Typography variant="body2" color="text.secondary">×{ki.quantity}</Typography>
                     {isActive && !removingItems && (
-                      <Tooltip title="Return item">
-                        <IconButton size="small" color="error"
-                          onClick={() => {
-                            setRemoveDialog({ open: true, kitItem: ki })
-                            setRemoveQty(ki.quantity)
-                            setRemoveCondition('GOOD')
-                          }}>
-                          <RemoveCircleOutlineIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
+                      <MutationIconButton size="small" tooltip="Return item" color="error"
+                        onClick={() => {
+                          setRemoveDialog({ open: true, kitItem: ki })
+                          setRemoveQty(ki.quantity)
+                          setRemoveCondition('GOOD')
+                        }}>
+                        <RemoveCircleOutlineIcon fontSize="small" />
+                      </MutationIconButton>
                     )}
                   </Stack>
                 ))}
@@ -760,9 +759,9 @@ function DeploymentDrawer({
                   <Stack key={ro.id} direction="row" justifyContent="space-between" alignItems="center">
                     <Typography variant="body2">{ro.operator.name}</Typography>
                     {isActive && (
-                      <IconButton size="small" onClick={() => handleRemoveOperator(rig.id, ro.operatorId)}>
+                      <MutationIconButton size="small" tooltip="Remove operator" onClick={() => handleRemoveOperator(rig.id, ro.operatorId)}>
                         <CloseIcon fontSize="small" />
-                      </IconButton>
+                      </MutationIconButton>
                     )}
                   </Stack>
                 ))}
@@ -777,18 +776,18 @@ function DeploymentDrawer({
                       .filter((u) => u.role === 'OPERATOR' && u.id !== rig.operator.id && !rig.secondaryOperators?.some((ro) => ro.operatorId === u.id))
                       .map((u) => <MenuItem key={u.id} value={u.id}>{u.name}</MenuItem>)}
                   </TextField>
-                  <Button size="small" variant="contained" disabled={!operatorToAdd}
-                    onClick={() => handleAddOperator(rig.id)}>Add</Button>
+                  <MutationButton size="small" variant="contained" disabled={!operatorToAdd}
+                    onClick={() => handleAddOperator(rig.id)}>Add</MutationButton>
                   <Button size="small" onClick={() => { setAddingOperator(false); setOperatorToAdd('') }}>Cancel</Button>
                 </Stack>
               ) : (
                 <Stack direction="row" spacing={1} mt={0.5}>
-                  <Button size="small" onClick={() => setAddingOperator(true)}>
+                  <MutationButton size="small" onClick={() => setAddingOperator(true)}>
                     + Add Operator
-                  </Button>
-                  <Button size="small" color="warning" onClick={() => { setReassignOpen(true); setReassignTargetId(''); setReassignNote('') }}>
+                  </MutationButton>
+                  <MutationButton size="small" color="warning" onClick={() => { setReassignOpen(true); setReassignTargetId(''); setReassignNote('') }}>
                     Reassign Primary…
-                  </Button>
+                  </MutationButton>
                 </Stack>
               ))}
             </Box>
@@ -824,11 +823,11 @@ function DeploymentDrawer({
             <>
               <Divider />
               <Stack direction="row" spacing={1} px={3} py={2}>
-                <Button variant="outlined" startIcon={<SwapHorizIcon />} onClick={() => setTransferOpen(true)}>Transfer…</Button>
+                <MutationButton variant="outlined" startIcon={<SwapHorizIcon />} onClick={() => setTransferOpen(true)}>Transfer…</MutationButton>
                 <Box flexGrow={1} />
-                <Button variant="outlined" color="error" startIcon={<StopCircleIcon />} onClick={() => setNoteDialog('end')}>
+                <MutationButton variant="outlined" color="error" startIcon={<StopCircleIcon />} onClick={() => setNoteDialog('end')}>
                   End Deployment
-                </Button>
+                </MutationButton>
               </Stack>
             </>
           )}
@@ -1002,7 +1001,7 @@ function DeploymentDrawer({
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => setRemoveDialog({ open: false, kitItem: null })}>Cancel</Button>
-          <Button variant="contained" color="error" onClick={handleRemoveItem}>Return</Button>
+          <MutationButton variant="contained" color="error" onClick={handleRemoveItem}>Return</MutationButton>
         </DialogActions>
       </Dialog>
 
@@ -1056,10 +1055,10 @@ function DeploymentDrawer({
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => setCancelTransferId(null)} disabled={cancelLoading}>Keep</Button>
-          <Button variant="contained" color="error" onClick={handleCancelTransfer} disabled={cancelLoading}
+          <MutationButton variant="contained" color="error" onClick={handleCancelTransfer} disabled={cancelLoading}
             startIcon={cancelLoading ? <CircularProgress size={16} color="inherit" /> : null}>
             {cancelLoading ? 'Cancelling…' : 'Cancel Transfer'}
-          </Button>
+          </MutationButton>
         </DialogActions>
       </Dialog>
 
@@ -1088,12 +1087,12 @@ function DeploymentDrawer({
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => setReassignOpen(false)} disabled={reassignLoading}>Cancel</Button>
-          <Button variant="contained" color="warning"
+          <MutationButton variant="contained" color="warning"
             disabled={!reassignTargetId || !reassignNote.trim() || reassignLoading}
             onClick={handleReassignPrimary}
             startIcon={reassignLoading ? <CircularProgress size={16} color="inherit" /> : null}>
             {reassignLoading ? 'Reassigning…' : 'Reassign Primary'}
-          </Button>
+          </MutationButton>
         </DialogActions>
       </Dialog>
     </>
@@ -1103,6 +1102,7 @@ function DeploymentDrawer({
 // ── Main Page ─────────────────────────────────────────────────────
 
 export default function AdminDeploymentsPage() {
+  const canEdit = useCanEdit()
   const [rigs, setRigs] = React.useState<Rig[]>([])
   const [loading, setLoading] = React.useState(true)
   const [toast, setToast] = React.useState('')
@@ -1192,12 +1192,15 @@ export default function AdminDeploymentsPage() {
     <Box>
       <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3}>
         <Box>
-          <Typography variant="h5">Deployments</Typography>
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <Typography variant="h5">Deployments</Typography>
+            {!canEdit && <Chip size="small" label="View only" variant="outlined" />}
+          </Stack>
           <Typography variant="body2" color="text.secondary">{activeCount} active</Typography>
         </Box>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => setNewOpen(true)}>
+        <MutationButton variant="contained" startIcon={<AddIcon />} onClick={() => setNewOpen(true)}>
           New Deployment
-        </Button>
+        </MutationButton>
       </Stack>
 
       {toast && <Alert severity={toastSeverity} sx={{ mb: 2 }} onClose={() => setToast('')}>{toast}</Alert>}
@@ -1217,14 +1220,14 @@ export default function AdminDeploymentsPage() {
                 <Alert key={tr.id} severity="warning" icon={false}
                   action={
                     <Stack direction="row" spacing={1} sx={{ mt: -0.5 }}>
-                      <Button size="small" color="error" variant="outlined"
+                      <MutationButton size="small" color="error" variant="outlined"
                         onClick={() => { setRespondDialog({ transfer: tr, action: 'decline' }); setResponseNote('') }}>
                         Decline
-                      </Button>
-                      <Button size="small" color="success" variant="contained"
+                      </MutationButton>
+                      <MutationButton size="small" color="success" variant="contained"
                         onClick={() => { setRespondDialog({ transfer: tr, action: 'accept' }); setResponseNote('') }}>
                         Accept
-                      </Button>
+                      </MutationButton>
                     </Stack>
                   }
                 >
@@ -1300,29 +1303,33 @@ export default function AdminDeploymentsPage() {
                       <TableCell><Typography variant="body2">{relativeDate(rig.startedAt)}</Typography></TableCell>
                       <TableCell align="right" onClick={(e) => e.stopPropagation()}>
                         <Stack direction="row" spacing={0.5} justifyContent="flex-end">
-                          <Tooltip title="Transfer">
-                            <span>
-                              <IconButton
-                                size="small"
-                                disabled={!!rig.endedAt}
-                                onClick={(e) => { e.stopPropagation(); setDrawerAction('transfer'); setDrawerRig(rig) }}
-                              >
-                                <SwapHorizIcon fontSize="small" />
-                              </IconButton>
-                            </span>
-                          </Tooltip>
-                          <Tooltip title="End deployment">
-                            <span>
-                              <IconButton
-                                size="small"
-                                color="error"
-                                disabled={!!rig.endedAt}
-                                onClick={(e) => { e.stopPropagation(); setDrawerAction('end'); setDrawerRig(rig) }}
-                              >
-                                <StopCircleIcon fontSize="small" />
-                              </IconButton>
-                            </span>
-                          </Tooltip>
+                          <EditGuard>
+                            <Tooltip title="Transfer">
+                              <span>
+                                <IconButton
+                                  size="small"
+                                  disabled={!!rig.endedAt}
+                                  onClick={(e) => { e.stopPropagation(); setDrawerAction('transfer'); setDrawerRig(rig) }}
+                                >
+                                  <SwapHorizIcon fontSize="small" />
+                                </IconButton>
+                              </span>
+                            </Tooltip>
+                          </EditGuard>
+                          <EditGuard>
+                            <Tooltip title="End deployment">
+                              <span>
+                                <IconButton
+                                  size="small"
+                                  color="error"
+                                  disabled={!!rig.endedAt}
+                                  onClick={(e) => { e.stopPropagation(); setDrawerAction('end'); setDrawerRig(rig) }}
+                                >
+                                  <StopCircleIcon fontSize="small" />
+                                </IconButton>
+                              </span>
+                            </Tooltip>
+                          </EditGuard>
                         </Stack>
                       </TableCell>
                     </TableRow>
@@ -1381,7 +1388,7 @@ export default function AdminDeploymentsPage() {
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => setRespondDialog(null)} disabled={respondLoading}>Cancel</Button>
-          <Button
+          <MutationButton
             variant="contained"
             color={respondDialog?.action === 'accept' ? 'success' : 'error'}
             onClick={handleRespond}
@@ -1389,7 +1396,7 @@ export default function AdminDeploymentsPage() {
             startIcon={respondLoading ? <CircularProgress size={16} color="inherit" /> : null}
           >
             {respondLoading ? 'Saving…' : respondDialog?.action === 'accept' ? 'Accept' : 'Decline'}
-          </Button>
+          </MutationButton>
         </DialogActions>
       </Dialog>
     </Box>

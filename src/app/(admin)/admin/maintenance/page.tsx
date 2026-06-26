@@ -14,6 +14,7 @@ import { useToast } from '@/components/shared/useToast'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { RepairReviewDialog } from '@/components/shared/RepairReviewDialog'
 import { PhotoGallery } from '@/components/shared/PhotoGallery'
+import { useCanEdit, MutationButton } from '@/components/shared/ReadOnly'
 
 interface InoperableUnit {
   id: string
@@ -124,6 +125,7 @@ function woChip(state?: string) {
 }
 
 export default function AdminMaintenancePage() {
+  const canEdit = useCanEdit()
   const showToast = useToast()
   const [tasks, setTasks] = React.useState<MaintenanceTask[]>([])
   const [hubs, setHubs] = React.useState<HubOption[]>([])
@@ -388,6 +390,7 @@ export default function AdminMaintenancePage() {
       <Stack direction="row" alignItems="center" spacing={1.5} mb={0.5}>
         <BuildIcon color="action" />
         <Typography variant="h5">Maintenance</Typography>
+        {!canEdit && <Chip size="small" label="View only" variant="outlined" />}
       </Stack>
       <Typography color="text.secondary" mb={2} variant="body2">
         Damage reports from the field and scheduled vehicle/equipment service. Assign a shop or hub, track the repair, and close it out.
@@ -408,8 +411,8 @@ export default function AdminMaintenancePage() {
                     {u.inoperableNotes ? u.inoperableNotes : 'Reported inoperable'}{u.reportedAt ? ` · ${fmtDate(u.reportedAt)}` : ''}
                   </Typography>
                 </Box>
-                <Button size="small" variant="outlined" onClick={() => setRepairUnit(u)}>Send for repair</Button>
-                <Button size="small" variant="outlined" color="error" onClick={() => { setRetireUnit(u); setRetireNote('') }}>Retire</Button>
+                <MutationButton size="small" variant="outlined" onClick={() => setRepairUnit(u)}>Send for repair</MutationButton>
+                <MutationButton size="small" variant="outlined" color="error" onClick={() => { setRetireUnit(u); setRetireNote('') }}>Retire</MutationButton>
               </Stack>
             ))}
           </Stack>
@@ -519,32 +522,32 @@ export default function AdminMaintenancePage() {
               <Typography variant="subtitle2" mb={1.5}>Repair details</Typography>
               <Stack spacing={2}>
                 <TextField select size="small" label="Repair type" value={draft.repairType}
-                  onChange={(e) => setD({ repairType: e.target.value })}>
+                  onChange={(e) => setD({ repairType: e.target.value })} disabled={!canEdit}>
                   <MenuItem value="">— Not set —</MenuItem>
                   {REPAIR_TYPES.map((r) => <MenuItem key={r.value} value={r.value}>{r.label}</MenuItem>)}
                 </TextField>
                 <TextField select size="small" label="Repair hub (optional)" value={draft.repairHubId}
-                  onChange={(e) => setD({ repairHubId: e.target.value })}>
+                  onChange={(e) => setD({ repairHubId: e.target.value })} disabled={!canEdit}>
                   <MenuItem value="">— None —</MenuItem>
                   {hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.name} — {h.city}, {h.state}</MenuItem>)}
                 </TextField>
-                <TextField size="small" label="Shop name" value={draft.shopName} onChange={(e) => setD({ shopName: e.target.value })} />
-                <TextField size="small" label="Shop address" value={draft.shopAddress} onChange={(e) => setD({ shopAddress: e.target.value })} />
+                <TextField size="small" label="Shop name" value={draft.shopName} onChange={(e) => setD({ shopName: e.target.value })} disabled={!canEdit} />
+                <TextField size="small" label="Shop address" value={draft.shopAddress} onChange={(e) => setD({ shopAddress: e.target.value })} disabled={!canEdit} />
                 <Stack direction="row" spacing={2}>
-                  <TextField size="small" label="PO #" value={draft.purchaseOrder} onChange={(e) => setD({ purchaseOrder: e.target.value })} fullWidth />
-                  <TextField size="small" label="Invoice #" value={draft.invoiceNumber} onChange={(e) => setD({ invoiceNumber: e.target.value })} fullWidth />
+                  <TextField size="small" label="PO #" value={draft.purchaseOrder} onChange={(e) => setD({ purchaseOrder: e.target.value })} fullWidth disabled={!canEdit} />
+                  <TextField size="small" label="Invoice #" value={draft.invoiceNumber} onChange={(e) => setD({ invoiceNumber: e.target.value })} fullWidth disabled={!canEdit} />
                 </Stack>
                 <TextField size="small" type="date" label="Date delivered" InputLabelProps={{ shrink: true }}
-                  value={draft.dateDelivered} onChange={(e) => setD({ dateDelivered: e.target.value })} />
+                  value={draft.dateDelivered} onChange={(e) => setD({ dateDelivered: e.target.value })} disabled={!canEdit} />
                 <Stack direction="row" spacing={2}>
                   <TextField size="small" label="Est. cost" value={draft.estimatedCost} onChange={(e) => setD({ estimatedCost: e.target.value })} fullWidth
-                    InputProps={{ startAdornment: <Typography color="text.secondary" mr={0.5}>$</Typography> }} />
+                    InputProps={{ startAdornment: <Typography color="text.secondary" mr={0.5}>$</Typography> }} disabled={!canEdit} />
                   <TextField size="small" label="Actual cost" value={draft.actualCost} onChange={(e) => setD({ actualCost: e.target.value })} fullWidth
-                    InputProps={{ startAdornment: <Typography color="text.secondary" mr={0.5}>$</Typography> }} />
+                    InputProps={{ startAdornment: <Typography color="text.secondary" mr={0.5}>$</Typography> }} disabled={!canEdit} />
                 </Stack>
                 <TextField size="small" label="Location note" value={draft.locationNote} onChange={(e) => setD({ locationNote: e.target.value })}
-                  helperText="Where the item physically is right now" />
-                <TextField size="small" label="Notes" value={draft.notes} onChange={(e) => setD({ notes: e.target.value })} multiline rows={3} />
+                  helperText="Where the item physically is right now" disabled={!canEdit} />
+                <TextField size="small" label="Notes" value={draft.notes} onChange={(e) => setD({ notes: e.target.value })} multiline rows={3} disabled={!canEdit} />
               </Stack>
             </Box>
 
@@ -561,10 +564,10 @@ export default function AdminMaintenancePage() {
               )}
               <Stack direction="row" spacing={1}>
                 {selected.status !== 'IN_PROGRESS' && selected.status !== 'COMPLETED' && (
-                  <Button variant="outlined" fullWidth disabled={saving} onClick={() => setStatus(selected, 'IN_PROGRESS')}>Start repair</Button>
+                  <MutationButton variant="outlined" fullWidth disabled={saving} onClick={() => setStatus(selected, 'IN_PROGRESS')}>Start repair</MutationButton>
                 )}
                 {selected.status !== 'COMPLETED' ? (
-                  <Button
+                  <MutationButton
                     variant="outlined"
                     color="success"
                     fullWidth
@@ -575,15 +578,15 @@ export default function AdminMaintenancePage() {
                     }}
                   >
                     {selected.isDamageReport ? 'Close repair…' : 'Complete & reschedule'}
-                  </Button>
+                  </MutationButton>
                 ) : (
-                  <Button variant="outlined" fullWidth disabled={saving} onClick={() => setStatus(selected, 'IN_PROGRESS')}>Reopen</Button>
+                  <MutationButton variant="outlined" fullWidth disabled={saving} onClick={() => setStatus(selected, 'IN_PROGRESS')}>Reopen</MutationButton>
                 )}
               </Stack>
-              <Button variant="contained" fullWidth disabled={saving} onClick={saveDraft}
+              <MutationButton variant="contained" fullWidth disabled={saving} onClick={saveDraft}
                 startIcon={saving ? <CircularProgress size={16} /> : undefined}>
                 {saving ? 'Saving…' : 'Save repair details'}
-              </Button>
+              </MutationButton>
 
               <Divider textAlign="left" sx={{ fontSize: 12, color: 'text.secondary', pt: 1 }}>Send to shop</Divider>
               <Typography variant="caption" color="text.secondary">
@@ -592,10 +595,10 @@ export default function AdminMaintenancePage() {
               </Typography>
               <Stack direction="row" spacing={1}>
                 <TextField size="small" type="email" label="Shop email" value={shopEmail} fullWidth
-                  onChange={(e) => setShopEmail(e.target.value)} placeholder="repairs@shop.com" />
-                <Button variant="outlined" disabled={saving || !shopEmail.trim()} onClick={sendToShop} sx={{ whiteSpace: 'nowrap' }}>
+                  onChange={(e) => setShopEmail(e.target.value)} placeholder="repairs@shop.com" disabled={!canEdit} />
+                <MutationButton variant="outlined" disabled={saving || !shopEmail.trim()} onClick={sendToShop} sx={{ whiteSpace: 'nowrap' }}>
                   {woLinks.has(selected.id) ? 'Resend' : 'Send WO'}
-                </Button>
+                </MutationButton>
               </Stack>
               {lastLink && (
                 <Box sx={{ bgcolor: 'action.hover', borderRadius: 1, p: 1 }}>
@@ -636,9 +639,9 @@ export default function AdminMaintenancePage() {
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => setRetireUnit(null)} disabled={retiring}>Cancel</Button>
-          <Button color="error" variant="contained" onClick={submitRetire} disabled={retiring || !retireNote.trim()}>
+          <MutationButton color="error" variant="contained" onClick={submitRetire} disabled={retiring || !retireNote.trim()}>
             {retiring ? 'Retiring…' : 'Retire'}
-          </Button>
+          </MutationButton>
         </DialogActions>
       </Dialog>
 
@@ -664,7 +667,7 @@ export default function AdminMaintenancePage() {
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => setCloseOpen(false)} disabled={saving}>Cancel</Button>
-          <Button
+          <MutationButton
             color="success"
             variant="contained"
             disabled={saving || !closeHubId}
@@ -679,7 +682,7 @@ export default function AdminMaintenancePage() {
             }}
           >
             {saving ? 'Closing…' : 'Complete repair'}
-          </Button>
+          </MutationButton>
         </DialogActions>
       </Dialog>
     </Box>
