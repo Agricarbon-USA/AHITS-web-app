@@ -71,6 +71,8 @@ interface DraftLine {
   vehicleType: string
   description: string
   reorderUrl: string
+  shipToHubId: string
+  shipToAddress: string
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -105,6 +107,8 @@ function emptyLine(lineType: DraftLine['lineType']): DraftLine {
     vehicleType: '',
     description: '',
     reorderUrl: '',
+    shipToHubId: '',
+    shipToAddress: '',
   }
 }
 
@@ -130,6 +134,8 @@ function LineEditor({
   inventory,
   vehicles,
   categories,
+  hubs,
+  homeHubId,
   onChange,
   onRemove,
 }: {
@@ -138,6 +144,8 @@ function LineEditor({
   inventory: InventoryOption[]
   vehicles: VehicleOption[]
   categories: CategoryOption[]
+  hubs: HubOption[]
+  homeHubId?: string | null
   onChange: (patch: Partial<DraftLine>) => void
   onRemove: () => void
 }) {
@@ -165,9 +173,13 @@ function LineEditor({
           size="small"
           label="Type"
           value={line.lineType}
-          onChange={(e) =>
+          onChange={(e) => {
+            const newType = e.target.value as DraftLine['lineType']
+            const defaultShipTo = newType === 'SHIPPING_LABEL'
+              ? (homeHubId && hubs.some((h) => h.id === homeHubId) ? homeHubId : hubs[0]?.id) ?? ''
+              : ''
             onChange({
-              lineType: e.target.value as DraftLine['lineType'],
+              lineType: newType,
               specificInventoryItemId: '',
               specificInventoryUnitId: '',
               categoryId: '',
@@ -175,8 +187,10 @@ function LineEditor({
               vehicleType: '',
               description: '',
               reorderUrl: '',
+              shipToHubId: defaultShipTo,
+              shipToAddress: '',
             })
-          }
+          }}
           sx={{ minWidth: 140, flexShrink: 0 }}
         >
           {lineTypeOptions.map((o) => (
@@ -343,14 +357,50 @@ function LineEditor({
           )}
 
           {line.lineType === 'SHIPPING_LABEL' && (
-            <TextField
-              size="small"
-              label="Details (required)"
-              value={line.description}
-              onChange={(e) => onChange({ description: e.target.value })}
-              placeholder="e.g. Return broken GPS unit to hub"
-              fullWidth
-            />
+            <Stack spacing={1}>
+              <TextField
+                size="small"
+                label="Details (required)"
+                value={line.description}
+                onChange={(e) => onChange({ description: e.target.value })}
+                placeholder="e.g. Return broken GPS unit to hub"
+                fullWidth
+              />
+              <Stack direction="row" spacing={1}>
+                <TextField
+                  size="small"
+                  type="number"
+                  label="Qty"
+                  value={line.requestedQty}
+                  inputProps={{ min: 1, max: 999 }}
+                  onChange={(e) => onChange({ requestedQty: Math.max(1, parseInt(e.target.value) || 1) })}
+                  sx={{ width: 80 }}
+                />
+                <TextField
+                  select
+                  size="small"
+                  label="Ship to hub"
+                  value={line.shipToHubId}
+                  onChange={(e) => onChange({ shipToHubId: e.target.value, shipToAddress: '' })}
+                  sx={{ flex: 1 }}
+                >
+                  <MenuItem value="">— Other / see address below —</MenuItem>
+                  {hubs.map((h) => (
+                    <MenuItem key={h.id} value={h.id}>{h.name} · {h.city}, {h.state}</MenuItem>
+                  ))}
+                </TextField>
+              </Stack>
+              {!line.shipToHubId && (
+                <TextField
+                  size="small"
+                  label="Ship-to address (if not a hub)"
+                  value={line.shipToAddress}
+                  onChange={(e) => onChange({ shipToAddress: e.target.value })}
+                  placeholder="e.g. 123 Main St, Denver CO 80203"
+                  fullWidth
+                />
+              )}
+            </Stack>
           )}
         </Box>
 
@@ -370,6 +420,7 @@ interface NewRequestDialogProps {
   inventory: InventoryOption[]
   vehicles: VehicleOption[]
   categories: CategoryOption[]
+  homeHubId?: string | null
   onClose: () => void
   onSuccess: () => Promise<void>
 }
@@ -380,6 +431,7 @@ function NewRequestDialog({
   inventory,
   vehicles,
   categories,
+  homeHubId,
   onClose,
   onSuccess,
 }: NewRequestDialogProps) {
@@ -400,7 +452,13 @@ function NewRequestDialog({
 
   const removeLine = (key: string) => setLines((ls) => ls.filter((l) => l.key !== key))
 
-  const addLine = (type: DraftLine['lineType']) => setLines((ls) => [...ls, emptyLine(type)])
+  const addLine = (type: DraftLine['lineType']) => {
+    const line = emptyLine(type)
+    if (type === 'SHIPPING_LABEL') {
+      line.shipToHubId = (homeHubId && hubs.some((h) => h.id === homeHubId) ? homeHubId : hubs[0]?.id) ?? ''
+    }
+    setLines((ls) => [...ls, line])
+  }
 
   const canSubmit =
     !submitting &&
@@ -431,6 +489,8 @@ function NewRequestDialog({
         description: l.description || null,
         reorderUrl: l.reorderUrl || null,
         requestedQty: l.requestedQty || 1,
+        shipToHubId: l.shipToHubId || null,
+        shipToAddress: l.shipToAddress || null,
       })),
     }
     const result = await mutate({
@@ -601,6 +661,8 @@ function NewRequestDialog({
               inventory={inventory}
               vehicles={vehicles}
               categories={categories}
+              hubs={hubs}
+              homeHubId={homeHubId}
               onChange={(patch) => updateLine(line.key, patch)}
               onRemove={() => removeLine(line.key)}
             />
@@ -881,6 +943,7 @@ export default function RequestsPage() {
           inventory={inventory}
           vehicles={vehicles}
           categories={categories}
+          homeHubId={user?.homeHubId}
           onClose={() => setDialogOpen(false)}
           onSuccess={load}
         />

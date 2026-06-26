@@ -22,6 +22,10 @@ interface Hub {
   city: string
   state: string
   email?: string | null
+  street1?: string | null
+  street2?: string | null
+  zip?: string | null
+  country?: string | null
   isActive: boolean
 }
 
@@ -65,7 +69,7 @@ export default function AdminHubsPage() {
   const [hubsLoading, setHubsLoading] = React.useState(true)
   const [addHubOpen, setAddHubOpen] = React.useState(false)
   const [editHub, setEditHub] = React.useState<Hub | null>(null)
-  const [hubForm, setHubForm] = React.useState({ name: '', city: '', state: '', email: '' })
+  const [hubForm, setHubForm] = React.useState({ name: '', city: '', state: '', email: '', street1: '', street2: '', zip: '', country: 'US' })
   const [savingHub, setSavingHub] = React.useState(false)
   const [deleteHub, setDeleteHub] = React.useState<Hub | null>(null)
   const [toast, setToast] = React.useState('')
@@ -94,10 +98,10 @@ export default function AdminHubsPage() {
       .catch(() => setInboundData([]))
   }, [loadHubs])
 
-  const openAddHub = () => { setHubForm({ name: '', city: '', state: '', email: '' }); setAddHubOpen(true) }
+  const openAddHub = () => { setHubForm({ name: '', city: '', state: '', email: '', street1: '', street2: '', zip: '', country: 'US' }); setAddHubOpen(true) }
   const openEditHub = (hub: Hub) => {
     setEditHub(hub)
-    setHubForm({ name: hub.name, city: hub.city, state: hub.state, email: hub.email ?? '' })
+    setHubForm({ name: hub.name, city: hub.city, state: hub.state, email: hub.email ?? '', street1: hub.street1 ?? '', street2: hub.street2 ?? '', zip: hub.zip ?? '', country: hub.country ?? 'US' })
   }
 
   const saveHub = async () => {
@@ -345,6 +349,37 @@ export default function AdminHubsPage() {
               fullWidth
               helperText="If set, return-to-hub confirmation links are emailed here automatically."
             />
+            <TextField
+              label="Street address (optional)"
+              value={hubForm.street1}
+              onChange={(e) => setHubForm((f) => ({ ...f, street1: e.target.value }))}
+              fullWidth
+              placeholder="e.g. 123 Main St"
+            />
+            <TextField
+              label="Street 2 (optional)"
+              value={hubForm.street2}
+              onChange={(e) => setHubForm((f) => ({ ...f, street2: e.target.value }))}
+              fullWidth
+              placeholder="e.g. Suite 200"
+            />
+            <Stack direction="row" spacing={1}>
+              <TextField
+                label="Zip"
+                value={hubForm.zip}
+                onChange={(e) => setHubForm((f) => ({ ...f, zip: e.target.value }))}
+                sx={{ flex: 1 }}
+                helperText={hubForm.street1 ? 'Required with address' : undefined}
+              />
+              <TextField
+                label="Country"
+                value={hubForm.country}
+                onChange={(e) => setHubForm((f) => ({ ...f, country: e.target.value.toUpperCase().slice(0, 2) }))}
+                inputProps={{ maxLength: 2 }}
+                sx={{ width: 90 }}
+                helperText="2-letter"
+              />
+            </Stack>
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
