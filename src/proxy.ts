@@ -69,6 +69,26 @@ export async function proxy(request: NextRequest) {
     const { payload } = await jwtVerify(token, getSecret())
     const role = payload.role as string
 
+    // UR-004: a forced-PIN-reset operator (mustChangePin, carried in the JWT)
+    // must set a new PIN before doing anything else — enforced SERVER-SIDE here,
+    // not just by the client PinChangeGate. Block all mutating API calls (except
+    // the change-pin + logout endpoints) and funnel every page to the change-pin
+    // screen. GET/read APIs stay allowed so the change-pin screen can load.
+    if (payload.mustChangePin === true) {
+      if (pathname.startsWith('/api/')) {
+        const mutating = !['GET', 'HEAD', 'OPTIONS'].includes(request.method)
+        const allowed = pathname === '/api/auth/change-pin' || pathname === '/api/auth/logout'
+        if (mutating && !allowed) {
+          return NextResponse.json(
+            { error: 'You must set a new PIN before continuing.' },
+            { status: 403 },
+          )
+        }
+      } else if (!pathname.startsWith('/operator/change-pin')) {
+        return NextResponse.redirect(new URL('/operator/change-pin', request.url))
+      }
+    }
+
     // Role-based path guard
     if (pathname.startsWith(ADMIN_PATHS[0]) && role !== 'ADMIN') {
       // Operators may view the read-only subset (workplan §6); everything else
