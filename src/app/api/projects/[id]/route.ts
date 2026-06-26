@@ -34,6 +34,10 @@ const updateSchema = z
     status: z.nativeEnum(ProjectStatus),
     leadId: z.string().nullable(),
     notes: z.string().nullable(),
+    customer: z.string().nullable(),
+    code: z.string().nullable(),
+    sizeHa: z.number().nonnegative().nullable(),
+    sampleCount: z.number().int().nonnegative().nullable(),
   })
   .partial()
   .strict()

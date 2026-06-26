@@ -125,11 +125,12 @@ function relativeDate(iso: string) {
 // ── New Deployment Dialog ─────────────────────────────────────────
 
 function NewDeploymentDialog({
-  operators, vehicles, inventoryItems, onClose, onSuccess,
+  operators, vehicles, inventoryItems, hubs, onClose, onSuccess,
 }: {
   operators: UserOption[]
   vehicles: VehicleOption[]
   inventoryItems: InventoryOption[]
+  hubs: HubOption[]
   onClose: () => void
   onSuccess: () => void
 }) {
@@ -139,6 +140,10 @@ function NewDeploymentDialog({
   const [label, setLabel] = React.useState('')
   const [selVehicles, setSelVehicles] = React.useState<Set<string>>(new Set())
   const [kitItems, setKitItems] = React.useState<Map<string, AdminKitEntry>>(new Map())
+  // NEW-4: consumables must be drawn from a specific hub; without a sourceHubId the
+  // create fails on the consumable draw. Mirror the operator flow: require a hub
+  // when the kit contains any consumable.
+  const [sourceHubId, setSourceHubId] = React.useState('')
   const [note, setNote] = React.useState('')
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState('')
@@ -148,8 +153,9 @@ function NewDeploymentDialog({
   const availableItems = inventoryItems.filter((i) =>
     i.itemType === 'SERIALIZED' ? i.unitCounts.available > 0 : i.quantity > 0
   )
-  // No unresolved state possible — serialized units are added fully or not at all
-  const hasUnresolved = false
+  const hasConsumableInKit = Array.from(kitItems.values()).some((e) => e.itemType === 'CONSUMABLE')
+  // Block launch when a consumable is packed but no source hub is chosen.
+  const hasUnresolved = hasConsumableInKit && !sourceHubId
 
   const launch = async () => {
     if (!note.trim()) { setError('A deployment note is required.'); return }
@@ -159,6 +165,7 @@ function NewDeploymentDialog({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         operatorId, projectId: projectId || undefined, label: label || undefined, note,
+        sourceHubId: sourceHubId || undefined,
         vehicleIds: Array.from(selVehicles),
         kitItems: Array.from(kitItems.values()).map((entry) =>
           entry.itemType === 'SERIALIZED'
@@ -250,6 +257,24 @@ function NewDeploymentDialog({
         {step === 2 && (
           <Box>
             <Typography variant="body2" color="text.secondary" mb={2}>Select items to pack into this kit</Typography>
+            <TextField
+              select
+              label="Source hub for consumables"
+              value={sourceHubId}
+              onChange={(e) => setSourceHubId(e.target.value)}
+              fullWidth
+              size="small"
+              sx={{ mb: 2 }}
+              required={hasConsumableInKit}
+              error={hasConsumableInKit && !sourceHubId}
+              helperText={hasConsumableInKit
+                ? 'Consumables are drawn from this hub.'
+                : 'Required only when the kit includes a consumable.'}
+            >
+              {hubs.map((h) => (
+                <MenuItem key={h.id} value={h.id}>{h.name} — {h.city}, {h.state}</MenuItem>
+              ))}
+            </TextField>
             {availableItems.length === 0 ? (
               <Typography variant="body2" color="text.secondary">No available items.</Typography>
             ) : (
@@ -282,6 +307,11 @@ function NewDeploymentDialog({
           <Stack spacing={2}>
             <TextField label="Deployment note (required)" value={note} onChange={(e) => setNote(e.target.value)}
               multiline rows={3} fullWidth placeholder="e.g. Starting TX deployment with Truck 01 and Christie Drill kit" required />
+            {hasUnresolved && (
+              <Alert severity="warning">
+                This kit includes a consumable — go back to “Build Kit” and choose a source hub before launching.
+              </Alert>
+            )}
           </Stack>
         )}
       </DialogContent>
@@ -1365,6 +1395,7 @@ export default function AdminDeploymentsPage() {
           operators={operators.filter((o) => o.role === 'OPERATOR')}
           vehicles={vehicles}
           inventoryItems={inventoryItems}
+          hubs={hubs}
           onClose={() => setNewOpen(false)}
           onSuccess={() => { showToast('Deployment created'); load() }}
         />
