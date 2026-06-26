@@ -26,6 +26,11 @@ type SignedClaims = {
   name: string
   email: string
   tokenVersion: number
+  // UR-004: signed so the edge middleware (proxy.ts, no DB access) can block a
+  // forced-PIN-reset operator from mutating API routes server-side. Kept FRESH
+  // because an admin PIN reset bumps tokenVersion (forcing re-login → a new token
+  // carrying mustChangePin=true), and the change-pin route re-mints with false.
+  mustChangePin?: boolean
 }
 
 function getSecret() {
@@ -35,7 +40,7 @@ function getSecret() {
 }
 
 export async function createSession(payload: SignedClaims): Promise<string> {
-  return new SignJWT({ ...payload })
+  return new SignJWT({ ...payload, mustChangePin: payload.mustChangePin === true })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('24h')
@@ -91,7 +96,7 @@ export async function getSessionClaims(): Promise<SessionPayload | null> {
   try {
     const { payload } = await jwtVerify(token, getSecret())
     const c = payload as unknown as SignedClaims
-    return { userId: c.userId, role: c.role, name: c.name, email: c.email, mustChangePin: false }
+    return { userId: c.userId, role: c.role, name: c.name, email: c.email, mustChangePin: c.mustChangePin === true }
   } catch {
     return null
   }

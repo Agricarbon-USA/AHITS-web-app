@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
-import { requireAuth } from '@/lib/auth/session'
+import { requireAuth, createSession, setSessionCookie } from '@/lib/auth/session'
 import { verifyPin, hashPin } from '@/lib/auth/pin'
 import { pinSchema } from '@/lib/validation'
 
@@ -34,10 +34,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Current PIN is incorrect.' }, { status: 400 })
   }
 
-  await prisma.user.update({
+  const updated = await prisma.user.update({
     where: { id: session.userId },
     data: { pinHash: await hashPin(newPin), mustChangePin: false, failedPinAttempts: 0, pinLockedAt: null },
+    select: { role: true, name: true, email: true, tokenVersion: true },
   })
+
+  // UR-004: re-mint the session token with mustChangePin=false so the proxy.ts
+  // gate stops blocking immediately (the flag is carried in the JWT). Without
+  // this the user would stay gated until their next login.
+  const token = await createSession({
+    userId: session.userId,
+    role: updated.role,
+    name: updated.name,
+    email: updated.email,
+    tokenVersion: updated.tokenVersion,
+    mustChangePin: false,
+  })
+  await setSessionCookie(token)
 
   return NextResponse.json({ ok: true })
 }
