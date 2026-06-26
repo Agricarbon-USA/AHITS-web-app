@@ -24,6 +24,7 @@ import { DispositionDialog, KitItemSummary } from '@/components/shared/Dispositi
 import { RentalVehicleForm, RentalVehicleFields } from '@/components/shared/RentalVehicleForm'
 import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
+import { newPlaceholderId } from '@/lib/offline-remap'
 import { useAuth } from '@/hooks/useAuth'
 import { groupBy } from '@/lib/utils'
 
@@ -178,6 +179,8 @@ function NewDeploymentDialog({
   onClose: () => void
   onSuccess: () => void
 }) {
+  const { mutate } = useOfflineQueue()
+  const showToast = useToast()
   const [step, setStep] = React.useState(0)
   const [label, setLabel] = React.useState('')
   const [selVehicles, setSelVehicles] = React.useState<Set<string>>(new Set())
@@ -278,10 +281,16 @@ function NewDeploymentDialog({
     if (hasConsumableInKit && !sourceHubId) { setError('Select a source hub for consumable items.'); return }
     setLoading(true)
     setError('')
-    const res = await fetch('/api/deployments', {
+    // UR-006: route the create through the durable offline queue so an offline
+    // launch is queued (idempotency-keyed, exactly-once) and replays on
+    // reconnect instead of being silently lost. The placeholderId lets the queue
+    // remap dependent writes made against this rig before it has a real id.
+    const result = await mutate({
+      endpoint: '/api/deployments',
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      label: 'Start deployment',
+      placeholderId: newPlaceholderId(),
+      body: {
         label: label || undefined,
         note,
         vehicleIds: Array.from(selVehicles),
@@ -291,10 +300,17 @@ function NewDeploymentDialog({
             : { inventoryItemId, quantity: entry.quantity }
         ),
         ...(sourceHubId && { sourceHubId }),
-      }),
+      },
     })
-    if (res.status === 409) {
-      const d = await res.json()
+    setLoading(false)
+    if (result.ok && result.queued) {
+      showToast({ message: 'No network — deployment queued, will start when you reconnect.', severity: 'info' })
+      onClose()
+    } else if (result.ok) {
+      onSuccess(); onClose()
+    } else if (result.status === 409) {
+      // A serialized unit was just taken by someone else — drop serialized picks
+      // and send the operator back to reselect.
       const m = new Map(kitItems)
       m.forEach((entry, itemId) => {
         if (entry.itemType === 'SERIALIZED') {
@@ -303,13 +319,10 @@ function NewDeploymentDialog({
       })
       setKitItems(m)
       setStep(2)
-      setError(d.error ?? 'A unit was just taken. Please reselect.')
-      setLoading(false)
-      return
+      setError(result.error ?? 'A unit was just taken. Please reselect.')
+    } else {
+      setError(result.error ?? 'Failed')
     }
-    setLoading(false)
-    if (res.ok) { onSuccess(); onClose() }
-    else { const d = await res.json(); setError(d.error?.formErrors?.[0] ?? d.error ?? 'Failed') }
   }
 
   return (

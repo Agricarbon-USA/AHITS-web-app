@@ -34,7 +34,7 @@ interface ActiveRig {
 
 export default function OperatorDailyCheckPage() {
   const showToast = useToast()
-  const { enqueue, pending, isOffline } = useOfflineQueue()
+  const { mutate, pending, isOffline } = useOfflineQueue()
 
   const [rig, setRig] = React.useState<ActiveRig | null>(null)
   const [vehicleId, setVehicleId] = React.useState('')
@@ -111,32 +111,25 @@ export default function OperatorDailyCheckPage() {
     if (!passFail && !issues.trim()) { setError('Describe the issue(s) that caused a fail'); return }
     setSubmitting(true)
     setError('')
-    try {
-      const res = await fetch('/api/daily-check', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildPayload()),
-      })
-      if (res.ok) {
-        setSubmitted(true)
-        showToast({ message: `Daily check submitted — ${passFail ? 'Pass ✓' : 'Fail ✗ — admin notified'}`, severity: passFail ? 'success' : 'warning' })
-      } else {
-        const d = await res.json().catch(() => ({}))
-        const fieldErr = d.error?.fieldErrors
-          ? Object.values(d.error.fieldErrors).flat()[0] as string | undefined
-          : undefined
-        setError(
-          d.error?.formErrors?.[0] ??
-          fieldErr ??
-          (typeof d.error === 'string' ? d.error : 'Submission failed')
-        )
-      }
-    } catch {
-      await enqueue({ endpoint: '/api/daily-check', method: 'POST', body: buildPayload() })
+    // UR-007: route through the durable offline queue (idempotency-keyed) instead
+    // of a raw fetch + manual enqueue. Offline → queued exactly-once; online →
+    // confirmed; a server-reached error is surfaced (the DB upsert on
+    // vehicle+date+operator makes any retry safe).
+    const result = await mutate({
+      endpoint: '/api/daily-check',
+      method: 'POST',
+      body: buildPayload(),
+      label: 'Daily check',
+    })
+    setSubmitting(false)
+    if (result.ok && result.queued) {
       setSubmitted(true)
       showToast({ message: 'No network — check queued, will sync when online', severity: 'info' })
-    } finally {
-      setSubmitting(false)
+    } else if (result.ok) {
+      setSubmitted(true)
+      showToast({ message: `Daily check submitted — ${passFail ? 'Pass ✓' : 'Fail ✗ — admin notified'}`, severity: passFail ? 'success' : 'warning' })
+    } else {
+      setError(result.error)
     }
   }
 
