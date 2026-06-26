@@ -2,6 +2,9 @@
   "name": "ahits-web-app",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22 <25"
+  },
   "scripts": {
     "dev": "next dev --webpack",
     "build": "next build --webpack",
