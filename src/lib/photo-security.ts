@@ -88,3 +88,9 @@ export function sniffImageMime(buf: Buffer): string | null {
 export function extForImageMime(mime: string): string {
   return IMAGE_EXT_BY_MIME[mime] ?? 'img'
 }
+
+/** True if the buffer is a real PDF (magic bytes "%PDF-"). Used for document
+ *  uploads (e.g. rental agreements) where PDF is allowed alongside images. */
+export function isPdf(buf: Buffer): boolean {
+  return buf.length >= 5 && buf.toString('ascii', 0, 5) === '%PDF-'
+}

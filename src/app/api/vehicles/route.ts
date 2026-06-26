@@ -71,6 +71,18 @@ const createSchema = z.object({
   insuranceExpires: z.string().datetime().optional(),
   registrationExpires: z.string().datetime().optional(),
   notes: z.string().optional(),
+  // NEW-5: rental metadata (a rental is a Vehicle with isRental + this block).
+  isRental: z.boolean().optional(),
+  rentalCompany: z.string().optional(),
+  rentalAgreementNumber: z.string().optional(),
+  rentalAgreementUrl: z.string().optional(),
+  rentalStartDate: z.coerce.date().optional(),
+  rentalEndDate: z.coerce.date().optional(),
+  rentalLocation: z.string().optional(),
+  rentalReturnLocation: z.string().optional(),
+  rentalCostAmount: z.number().nonnegative().optional(),
+  rentalCostPeriod: z.enum(['DAY', 'WEEK', 'MONTH', 'FLAT']).optional(),
+  rentalOneWay: z.boolean().optional(),
   // QR association-on-create (PRD §7.7): register the existing physical label's
   // code as this vehicle's QR id. Omit to auto-generate one.
   qrCodeId: z.string().trim().min(1).optional(),

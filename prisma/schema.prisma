@@ -33,6 +33,14 @@ enum VehicleStatus {
   RETIRED
 }
 
+// NEW-5: how a rental's cost is quoted, for cost-to-date analysis in Reports.
+enum RentalCostPeriod {
+  DAY
+  WEEK
+  MONTH
+  FLAT
+}
+
 enum EquipmentCategory {
   SAMPLING_EQUIPMENT
   POWER_TOOLS
@@ -506,6 +514,20 @@ model Vehicle {
   assignedOperatorId  String?
   insuranceExpires    DateTime?
   registrationExpires DateTime?
+  // NEW-5: rental vehicles are modeled as Vehicles (reusing daily-checks,
+  // maintenance, deployment assignment, transfers, reports) with this extra
+  // rental block. All nullable; isRental flags the row.
+  isRental              Boolean           @default(false)
+  rentalCompany         String?
+  rentalAgreementNumber String?
+  rentalAgreementUrl    String?
+  rentalStartDate       DateTime?         @db.Date
+  rentalEndDate         DateTime?         @db.Date
+  rentalLocation        String?
+  rentalReturnLocation  String?
+  rentalCostAmount      Decimal?          @db.Decimal(10, 2)
+  rentalCostPeriod      RentalCostPeriod?
+  rentalOneWay          Boolean           @default(false)
   qrCodeId            String        @unique @default(cuid())
   notes               String?
   deletedAt           DateTime? // CR-8: soft-delete so history isn't orphaned

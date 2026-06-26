@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/auth/session'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { sniffImageMime, extForImageMime } from '@/lib/photo-security'
+import { sniffImageMime, extForImageMime, isPdf } from '@/lib/photo-security'
 
 const BUCKET = 'photos'
 const MAX_SIZE_BYTES = 10 * 1024 * 1024 // 10 MB
@@ -25,23 +25,34 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'File exceeds 10 MB limit' }, { status: 413 })
   }
 
+  // `kind=document` (e.g. a rental agreement) additionally allows PDF; the
+  // default is image-only. PDFs are never images, so they can't be an SVG-style
+  // stored-XSS vector, and we still gate on magic bytes (never the client MIME).
+  const kind = formData.get('kind') === 'document' ? 'document' : 'image'
+
   const bytes = await file.arrayBuffer()
   const buffer = Buffer.from(bytes)
 
   // UR-005: authoritative content-type from magic bytes, never the client's
   // `file.type` claim. Rejects SVG / mislabeled non-images (stored-XSS vector).
-  const mime = sniffImageMime(buffer)
+  const imageMime = sniffImageMime(buffer)
+  const mime = imageMime ?? (kind === 'document' && isPdf(buffer) ? 'application/pdf' : null)
   if (!mime) {
     return NextResponse.json(
-      { error: 'Only real image files are allowed (JPEG, PNG, WebP, GIF, or HEIC).' },
+      {
+        error: kind === 'document'
+          ? 'Only real images (JPEG, PNG, WebP, GIF, HEIC) or a PDF are allowed.'
+          : 'Only real image files are allowed (JPEG, PNG, WebP, GIF, or HEIC).',
+      },
       { status: 415 },
     )
   }
 
   // Force the extension to match the sniffed type so a mislabeled name (e.g.
   // "photo.svg") can never end up in the stored path.
-  const base = file.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 64) || 'photo'
-  const path = `rig-events/${session.userId}/${Date.now()}-${base}.${extForImageMime(mime)}`
+  const ext = mime === 'application/pdf' ? 'pdf' : extForImageMime(mime)
+  const base = file.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 64) || 'upload'
+  const path = `rig-events/${session.userId}/${Date.now()}-${base}.${ext}`
 
   const supabase = createAdminClient()
   const { data, error } = await supabase.storage
