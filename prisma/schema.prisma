@@ -630,17 +630,22 @@ model MaintenanceTask {
 }
 
 model Project {
-  id        String        @id @default(cuid())
-  name      String
-  type      ProjectType   @default(CROPLAND)
-  location  String?
-  startDate DateTime?     @db.Date
-  endDate   DateTime?     @db.Date
-  status    ProjectStatus @default(PLANNED)
-  leadId    String?
-  notes     String?
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
+  id          String        @id @default(cuid())
+  name        String
+  type        ProjectType   @default(CROPLAND)
+  location    String?
+  startDate   DateTime?     @db.Date
+  endDate     DateTime?     @db.Date
+  status      ProjectStatus @default(PLANNED)
+  leadId      String?
+  notes       String?
+  // NEW-2: real-world project metadata
+  customer    String?
+  code        String?
+  sizeHa      Float?
+  sampleCount Int?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
   lead      User?              @relation("ProjectLead", fields: [leadId], references: [id])
   checkLogs CheckLog[]
