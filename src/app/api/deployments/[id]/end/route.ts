@@ -26,6 +26,13 @@ const dispositionSchema = z.object({
   repairHubId: z.string().optional(),
   inoperableNotes: z.string().optional(),
   photoUrls: z.array(z.string()).default([]),
+}).superRefine((v, ctx) => {
+  // G1: a "Return to Hub" disposition must name a destination hub. Without it the
+  // server skips the per-hub stock credit and the quantity vanishes from hub
+  // views ("disappeared"/"HQ"). Required at the boundary so no path can lose stock.
+  if (v.type === 'HUB' && !v.hubId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'A return hub is required', path: ['hubId'] })
+  }
 })
 
 const schema = z.object({
@@ -94,9 +101,10 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       if (disp.type === 'HUB') {
         if (kitItem.item.itemType === 'CONSUMABLE' && (disp.returnCondition ?? 'GOOD') === 'GOOD') {
           // Restore exactly the stock drawn at check-out (CR-1a / N-2).
-          // Dual-write: per-hub row (MH-1) + cross-hub total (always, so no
-          // stock is lost even for legacy null drawnHubId items).
-          const hubForRestore = kitItem.drawnHubId ?? kitItem.item.hubId
+          // G1: the operator-chosen destination hub wins, then the drawn hub,
+          // then the item's home hub. hubId is required for HUB (schema refine),
+          // so this is never null and the per-hub credit always lands somewhere.
+          const hubForRestore = disp.hubId ?? kitItem.drawnHubId ?? kitItem.item.hubId
           if (hubForRestore && kitItem.drawnQuantity > 0) {
             await restoreToHub(inventoryItemId, hubForRestore, kitItem.drawnQuantity, tx)
           }

@@ -67,7 +67,7 @@ describe('UR-001: bulk consumable return restores PER-HUB stock, not just the to
     const delRes = await bulkReturn(
       jsonReq(`http://localhost/api/deployments/${rig.id}/items`, 'DELETE', {
         note: 'return',
-        itemDispositions: [{ kitItemId: ki!.id, type: 'HUB', quantity: 3, returnCondition: 'GOOD' }],
+        itemDispositions: [{ kitItemId: ki!.id, type: 'HUB', quantity: 3, returnCondition: 'GOOD', hubId: hub.id }],
       }),
       { params: Promise.resolve({ id: rig.id }) },
     )

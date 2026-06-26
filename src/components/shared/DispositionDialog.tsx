@@ -78,20 +78,39 @@ export function DispositionDialog({
   const [note, setNote] = React.useState('')
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  // G1: rig-level final destination. Every "Return to Hub" item must land in a
+  // real hub — otherwise the server skips the per-hub stock credit and the
+  // quantity vanishes from hub views ("disappeared"/"HQ"). Default to the first
+  // hub; the per-item picker can override.
+  const [finalHubId, setFinalHubId] = React.useState('')
   const { mutate, isOffline } = useOfflineQueue()
 
   // Reset state when dialog opens with new items
   React.useEffect(() => {
     if (open) {
+      const defaultHub = hubs[0]?.id ?? ''
       const m = new Map<string, ItemDisposition>()
       for (const item of items) {
-        m.set(item.kitItemId, { kitItemId: item.kitItemId, type: 'HUB', photoUrls: [] })
+        m.set(item.kitItemId, { kitItemId: item.kitItemId, type: 'HUB', hubId: defaultHub || undefined, photoUrls: [] })
       }
       setDispositions(m)
+      setFinalHubId(defaultHub)
       setNote('')
       setError(null)
     }
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Apply the rig-level destination to every HUB item (overridable per item below).
+  function applyFinalHub(hubId: string) {
+    setFinalHubId(hubId)
+    setDispositions((prev) => {
+      const next = new Map(prev)
+      for (const [k, d] of next) if (d.type === 'HUB') next.set(k, { ...d, hubId: hubId || undefined })
+      return next
+    })
+  }
+
+  const missingHub = Array.from(dispositions.values()).some((d) => d.type === 'HUB' && !d.hubId)
 
   function setDisp(kitItemId: string, patch: Partial<ItemDisposition>) {
     setDispositions((prev) => {
@@ -143,8 +162,26 @@ export function DispositionDialog({
           fullWidth
           multiline
           rows={2}
-          sx={{ mb: 3, mt: 1 }}
+          sx={{ mb: 2, mt: 1 }}
         />
+        <TextField
+          select
+          label="Final destination (hub)"
+          value={finalHubId}
+          onChange={(e) => applyFinalHub(e.target.value)}
+          fullWidth
+          required
+          disabled={hubs.length === 0}
+          error={hubs.length > 0 && !finalHubId}
+          helperText={hubs.length === 0
+            ? 'No hubs available — add a hub before returning items here'
+            : 'Where the rig returns to. Applies to every item below (override per item if needed).'}
+          sx={{ mb: 3 }}
+        >
+          {hubs.map((h) => (
+            <MenuItem key={h.id} value={h.id}>{h.name} — {h.city}, {h.state}</MenuItem>
+          ))}
+        </TextField>
         <Stack spacing={2} divider={<Divider />}>
           {items.map((item) => {
             const disp = dispositions.get(item.kitItemId)!
@@ -195,12 +232,14 @@ export function DispositionDialog({
                 {disp.type === 'HUB' && (
                   <TextField
                     select
-                    label="Return hub (optional)"
+                    label="Return hub"
                     size="small"
+                    required
                     value={disp.hubId ?? ''}
+                    error={!disp.hubId}
                     onChange={(e) => setDisp(item.kitItemId, { hubId: e.target.value || undefined })}
+                    helperText={!disp.hubId ? 'Pick a hub so this item isn’t lost' : undefined}
                   >
-                    <MenuItem value="">— No specific hub —</MenuItem>
                     {hubs.map((h) => (
                       <MenuItem key={h.id} value={h.id}>{h.name} — {h.city}, {h.state}</MenuItem>
                     ))}
@@ -270,10 +309,10 @@ export function DispositionDialog({
           variant="contained"
           color={mode === 'end-deployment' ? 'error' : 'primary'}
           onClick={handleSubmit}
-          disabled={loading}
+          disabled={loading || missingHub}
           startIcon={loading ? <CircularProgress size={16} /> : undefined}
         >
-          {loading ? 'Working…' : mode === 'end-deployment' ? 'End Deployment' : 'Return Items'}
+          {loading ? 'Working…' : missingHub ? 'Choose a return hub' : mode === 'end-deployment' ? 'End Deployment' : 'Return Items'}
         </Button>
       </DialogActions>
     </Dialog>

@@ -71,7 +71,7 @@ describe('CR-1: consumable stock accounting', () => {
     const delRes = await bulkReturn(
       jsonReq(`http://localhost/api/deployments/${rig.id}/items`, 'DELETE', {
         note: 'return',
-        itemDispositions: [{ kitItemId, type: 'HUB', quantity: 3, returnCondition: 'GOOD' }],
+        itemDispositions: [{ kitItemId, type: 'HUB', quantity: 3, returnCondition: 'GOOD', hubId: hub.id }],
       }),
       { params: Promise.resolve({ id: rig.id }) },
     )
