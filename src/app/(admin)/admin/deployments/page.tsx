@@ -23,6 +23,8 @@ import { KitItemSelectRow } from '@/components/admin/KitItemSelectRow'
 import { DispositionDialog } from '@/components/shared/DispositionDialog'
 import type { HubOption, UserOption } from '@/components/shared/DispositionDialog'
 import { useCanEdit, EditGuard, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
+import { ConditionSelect } from '@/components/shared/ConditionSelect'
+import type { ReturnCondition } from '@/lib/status'
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -353,7 +355,7 @@ function DeploymentDrawer({
   const [selItems, setSelItems] = React.useState<Set<string>>(new Set())
   const [removeDialog, setRemoveDialog] = React.useState<{ open: boolean; kitItem: KitItemRow | null }>({ open: false, kitItem: null })
   const [removeQty, setRemoveQty] = React.useState(1)
-  const [removeCondition, setRemoveCondition] = React.useState('GOOD')
+  const [removeCondition, setRemoveCondition] = React.useState<ReturnCondition>('GOOD')
   const [addVehicleOpen, setAddVehicleOpen] = React.useState(false)
   const [pendingVehicles, setPendingVehicles] = React.useState<Set<string>>(new Set())
   const [addItemOpen, setAddItemOpen] = React.useState(false)
@@ -698,7 +700,7 @@ function DeploymentDrawer({
               )}
             </Stack>
             {rig.vehicles.length === 0 ? (
-              <Typography variant="body2" color="text.secondary" mb={2}>No vehicles in this rig.</Typography>
+              <Typography variant="body2" color="text.secondary" mb={2}>No vehicles in this deployment.</Typography>
             ) : (
               <Stack spacing={0.5} mb={2}>
                 {rig.vehicles.map((rv) => {
@@ -1023,11 +1025,7 @@ function DeploymentDrawer({
               sx={{ mb: 2 }}
             />
           )}
-          <TextField select label="Condition" value={removeCondition} onChange={(e) => setRemoveCondition(e.target.value)} fullWidth>
-            <MenuItem value="GOOD">Good</MenuItem>
-            <MenuItem value="IN_MAINTENANCE">Needs Maintenance</MenuItem>
-            <MenuItem value="INOPERABLE">Inoperable</MenuItem>
-          </TextField>
+          <ConditionSelect label="Condition" value={removeCondition} onChange={setRemoveCondition} />
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => setRemoveDialog({ open: false, kitItem: null })}>Cancel</Button>

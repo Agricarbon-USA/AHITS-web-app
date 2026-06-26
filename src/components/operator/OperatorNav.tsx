@@ -20,7 +20,7 @@ import { useAuth } from '@/hooks/useAuth'
 const NAV_ITEMS = [
   { label: 'My Dashboard', href: '/operator/dashboard', icon: DashboardIcon },
   { label: 'Daily Check', href: '/operator/daily-check', icon: ChecklistIcon },
-  { label: 'My Rig', href: '/operator/my-rig', icon: LocalShippingIcon },
+  { label: 'My Deployment', href: '/operator/my-rig', icon: LocalShippingIcon },
   { label: 'Scan QR', href: '/operator/scan', icon: QrCodeScannerIcon },
   { label: 'Requests', href: '/operator/requests', icon: PlaylistAddCheckIcon },
 ]

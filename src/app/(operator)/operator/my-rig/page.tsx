@@ -1088,7 +1088,7 @@ export default function MyRigPage() {
 
       <Stack direction="row" justifyContent="space-between" alignItems="flex-start" mb={3}>
         <Box>
-          <Typography variant="h5">My Rig</Typography>
+          <Typography variant="h5">My Deployment</Typography>
           <Stack direction="row" spacing={1} mt={0.5} alignItems="center">
             {rig.project && <Chip size="small" label={rig.project.name} color="primary" />}
             <Typography variant="body2" color="text.secondary">
@@ -1099,10 +1099,10 @@ export default function MyRigPage() {
       </Stack>
 
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} mb={2}>
-        {/* My Rig Card */}
+        {/* Vehicles card */}
         <Card sx={{ flex: 1 }}>
           <CardContent>
-            <Typography variant="subtitle1" fontWeight={600} mb={1.5}>My Rig</Typography>
+            <Typography variant="subtitle1" fontWeight={600} mb={1.5}>Vehicles</Typography>
             {rig.vehicles.length === 0 ? (
               <Typography variant="body2" color="text.secondary" mb={1}>No vehicles.</Typography>
             ) : (
