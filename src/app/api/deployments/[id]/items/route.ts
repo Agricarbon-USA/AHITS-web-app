@@ -7,7 +7,7 @@ import { createAlert } from '@/lib/alerts'
 import { withIdempotency } from '@/lib/idempotency'
 import { issueHubReturnLinks } from '@/lib/status-links'
 import { filterAllowedPhotoUrls } from '@/lib/photo-security'
-import { drawFromHub, getStockAtHub } from '@/lib/inventory-stock'
+import { drawFromHub, getStockAtHub, restoreToHub } from '@/lib/inventory-stock'
 
 const RIG_INCLUDE = {
   operator: { select: { id: true, name: true } },
@@ -304,7 +304,7 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
   const kitItems = await prisma.kitItem.findMany({
     where: { id: { in: kitItemIds }, removedAt: null },
     include: {
-      item: { select: { id: true, name: true, itemType: true } },
+      item: { select: { id: true, name: true, itemType: true, hubId: true } },
       inventoryUnit: true,
     },
   })
@@ -342,9 +342,21 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
           // the stock drawn at check-out, capped at what's left to restore, so
           // on-hand can't overshoot the true total (CR-1a / N-2). Damaged/
           // maintenance returns are not restored (the stock isn't usable).
+          // Dual-write (UR-001): restore the per-hub `inventory_stock` row (MH-1)
+          // AND the cross-hub `inventory_items.quantity` total — exactly like the
+          // end-of-deployment and single-item return paths. Restoring only the
+          // total (the previous behaviour) silently drifted per-hub stock down on
+          // every bulk return. Legacy null drawnHubId falls back to item.hubId;
+          // if still null, skip the hub row but always restore the total so no
+          // stock is lost.
+          const restoreQty = Math.min(removeQty, kitItem.drawnQuantity)
+          const hubForRestore = kitItem.drawnHubId ?? kitItem.item.hubId
+          if (hubForRestore && restoreQty > 0) {
+            await restoreToHub(inventoryItemId, hubForRestore, restoreQty, tx)
+          }
           await tx.inventoryItem.update({
             where: { id: inventoryItemId },
-            data: { quantity: { increment: Math.min(removeQty, kitItem.drawnQuantity) } },
+            data: { quantity: { increment: restoreQty } },
           })
         }
         await tx.checkLog.create({
@@ -418,6 +430,9 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
           const task = await tx.maintenanceTask.create({
             data: {
               itemId: inventoryItemId,
+              // UR-029: link the specific unit so completing the repair returns
+              // THIS unit to service (the complete route keys off task.unit).
+              inventoryUnitId: targetUnit?.id ?? null,
               taskName: `Damage repair: ${kitItem.item.name}`,
               isDamageReport: true,
               repairType: disp.repairType ?? null,

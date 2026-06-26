@@ -69,6 +69,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       // One-off repair → terminal. Return the unit to service if it was pulled.
       if (task.unit && task.unit.status === 'IN_MAINTENANCE') {
         await tx.inventoryUnit.update({ where: { id: task.unit.id }, data: { status: 'AVAILABLE' } })
+      } else if (!task.inventoryUnitId && task.itemId) {
+        // UR-029 fallback for legacy tasks created before the unit was linked at
+        // creation: if exactly one unit of this item is in maintenance, it's
+        // unambiguously the one this repair covers — return it. Skip when
+        // ambiguous (0 or >1 in maintenance) to avoid freeing the wrong unit.
+        const inMaint = await tx.inventoryUnit.findMany({
+          where: { inventoryItemId: task.itemId, status: 'IN_MAINTENANCE' },
+          select: { id: true },
+          take: 2,
+        })
+        if (inMaint.length === 1) {
+          await tx.inventoryUnit.update({ where: { id: inMaint[0].id }, data: { status: 'AVAILABLE' } })
+        }
       }
       const data: Prisma.MaintenanceTaskUpdateInput = {
         status: 'COMPLETED',

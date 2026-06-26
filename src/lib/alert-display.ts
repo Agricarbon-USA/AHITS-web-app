@@ -15,6 +15,7 @@ export const ALERT_LABELS: Record<string, string> = {
   REGISTRATION_EXPIRING: 'Registration expiring',
   PIN_LOCKED: 'Operator PIN locked',
   MATERIAL_REQUEST: 'Material request',
+  DAILY_CHECK_FAILED: 'Daily check failed',
 }
 
 export function alertLabel(type: string): string {
@@ -27,6 +28,7 @@ export function alertLink(sourceTable: string | null, sourceId: string | null, t
   if (type === 'LOW_INVENTORY') return '/admin/inventory'
   if (type === 'EQUIPMENT_NOT_RETURNED') return '/admin/deployments'
   if (type === 'INSURANCE_EXPIRING' || type === 'REGISTRATION_EXPIRING') return '/admin/vehicles'
+  if (type === 'DAILY_CHECK_FAILED') return '/admin/vehicles'
   if (type === 'PIN_LOCKED') return '/admin/users'
   if (type === 'MATERIAL_REQUEST') return '/admin/requests'
   return null
