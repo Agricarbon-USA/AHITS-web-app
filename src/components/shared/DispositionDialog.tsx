@@ -111,6 +111,8 @@ export function DispositionDialog({
   }
 
   const missingHub = Array.from(dispositions.values()).some((d) => d.type === 'HUB' && !d.hubId)
+  // §11.10 / Phase-2: a damage (INOPERABLE) disposition REQUIRES at least one photo.
+  const missingDamagePhoto = Array.from(dispositions.values()).some((d) => d.type === 'INOPERABLE' && d.photoUrls.length === 0)
 
   function setDisp(kitItemId: string, patch: Partial<ItemDisposition>) {
     setDispositions((prev) => {
@@ -280,8 +282,8 @@ export function DispositionDialog({
                       multiline
                       rows={2}
                     />
-                    <Typography variant="caption" color="text.secondary">
-                      Damage photos (recommended)
+                    <Typography variant="caption" color={disp.photoUrls.length === 0 ? 'error.main' : 'text.secondary'}>
+                      Damage photos (required) — at least one
                     </Typography>
                     <PhotoCapture
                       value={disp.photoUrls}
@@ -309,10 +311,10 @@ export function DispositionDialog({
           variant="contained"
           color={mode === 'end-deployment' ? 'error' : 'primary'}
           onClick={handleSubmit}
-          disabled={loading || missingHub}
+          disabled={loading || missingHub || missingDamagePhoto}
           startIcon={loading ? <CircularProgress size={16} /> : undefined}
         >
-          {loading ? 'Working…' : missingHub ? 'Choose a return hub' : mode === 'end-deployment' ? 'End Deployment' : 'Return Items'}
+          {loading ? 'Working…' : missingHub ? 'Choose a return hub' : missingDamagePhoto ? 'Add a damage photo' : mode === 'end-deployment' ? 'End Deployment' : 'Return Items'}
         </Button>
       </DialogActions>
     </Dialog>
