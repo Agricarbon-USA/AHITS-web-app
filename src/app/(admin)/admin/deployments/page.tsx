@@ -24,6 +24,11 @@ import { DispositionDialog } from '@/components/shared/DispositionDialog'
 import type { HubOption, UserOption } from '@/components/shared/DispositionDialog'
 import { useCanEdit, EditGuard, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 import { ConditionSelect } from '@/components/shared/ConditionSelect'
+import { useToast } from '@/components/shared/useToast'
+import {
+  RentalVehicleForm, rentalFieldsToVehiclePayload, isRentalFormValid,
+  type RentalVehicleFields,
+} from '@/components/shared/RentalVehicleForm'
 import type { ReturnCondition } from '@/lib/status'
 
 // ── Types ─────────────────────────────────────────────────────────
@@ -43,7 +48,7 @@ interface RigVehicleRow {
   addNote: string
   photoUrls: string[]
   addedAt: string
-  vehicle: { id: string; name: string; type: string }
+  vehicle: { id: string; name: string; type: string; isRental?: boolean; rentalAgreementUrl?: string | null }
 }
 
 interface KitItemRow {
@@ -358,6 +363,10 @@ function DeploymentDrawer({
   const [removeCondition, setRemoveCondition] = React.useState<ReturnCondition>('GOOD')
   const [addVehicleOpen, setAddVehicleOpen] = React.useState(false)
   const [pendingVehicles, setPendingVehicles] = React.useState<Set<string>>(new Set())
+  const [isRentalToggle, setIsRentalToggle] = React.useState(false)
+  const [rentalFields, setRentalFields] = React.useState<Partial<RentalVehicleFields>>({})
+  const [rentalSubmitLoading, setRentalSubmitLoading] = React.useState(false)
+  const [rentalError, setRentalError] = React.useState('')
   const [addItemOpen, setAddItemOpen] = React.useState(false)
   const [pendingItems, setPendingItems] = React.useState<Map<string, AdminKitEntry>>(new Map())
   const [noteDialog, setNoteDialog] = React.useState<null | 'addVehicles' | 'removeVehicles' | 'addItems' | 'removeItems' | 'end'>(null)
@@ -527,6 +536,41 @@ function DeploymentDrawer({
     setAddVehicleOpen(false)
     setPendingVehicles(new Set())
     await refresh()
+  }
+
+  // NEW-5: create a rental vehicle and add it to this deployment in one step.
+  const handleAddRental = async () => {
+    setRentalError('')
+    setRentalSubmitLoading(true)
+    try {
+      const vRes = await fetch('/api/vehicles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(rentalFieldsToVehiclePayload(rentalFields)),
+      })
+      const vJson = await vRes.json().catch(() => ({}))
+      if (!vRes.ok) {
+        setRentalError(vJson.error?.formErrors?.[0] ?? (typeof vJson.error === 'string' ? vJson.error : 'Failed to create vehicle'))
+        return
+      }
+      const vehicleId: string = vJson.data.id
+      const addRes = await fetch(`/api/deployments/${rig.id}/vehicles`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vehicleIds: [vehicleId], note: 'Added rental vehicle', photoUrls: [] }),
+      })
+      if (!addRes.ok) {
+        const d = await addRes.json().catch(() => ({}))
+        setRentalError(typeof d.error === 'string' ? d.error : 'Failed to add vehicle to deployment')
+        return
+      }
+      setAddVehicleOpen(false)
+      setIsRentalToggle(false)
+      setRentalFields({})
+      await refresh()
+    } finally {
+      setRentalSubmitLoading(false)
+    }
   }
 
   const handleRemoveVehicles = async () => {
@@ -713,6 +757,12 @@ function DeploymentDrawer({
                       )}
                       <Icon fontSize="small" color="action" />
                       <Typography variant="body2">{rv.vehicle.name}</Typography>
+                      {rv.vehicle.isRental && (
+                        <Chip label="Rental" size="small" color="warning" variant="outlined" sx={{ height: 18, fontSize: 10 }} />
+                      )}
+                      {rv.vehicle.isRental && !rv.vehicle.rentalAgreementUrl && (
+                        <Chip label="Agreement needed" size="small" color="error" variant="outlined" sx={{ height: 18, fontSize: 10 }} />
+                      )}
                       <Chip size="small" label={rv.vehicle.type} variant="outlined" sx={{ ml: 'auto !important', height: 18, fontSize: 10 }} />
                     </Stack>
                   )
@@ -867,33 +917,63 @@ function DeploymentDrawer({
       </Drawer>
 
       {/* Add Vehicles picker */}
-      <Dialog open={addVehicleOpen} onClose={() => { setAddVehicleOpen(false); setPendingVehicles(new Set()) }} maxWidth="xs" fullWidth>
+      <Dialog open={addVehicleOpen} onClose={() => {
+        setAddVehicleOpen(false); setPendingVehicles(new Set())
+        setIsRentalToggle(false); setRentalFields({}); setRentalError('')
+      }} maxWidth={isRentalToggle ? 'sm' : 'xs'} fullWidth>
         <DialogTitle>Add Vehicles</DialogTitle>
         <DialogContent>
-          {unassignedVehicles.length === 0 ? (
-            <Typography variant="body2" color="text.secondary">No available vehicles.</Typography>
+          <FormControlLabel
+            control={<Switch checked={isRentalToggle} onChange={(e) => { setIsRentalToggle(e.target.checked); setRentalFields({}); setRentalError('') }} />}
+            label="This is a rental vehicle"
+            sx={{ mb: 1 }}
+          />
+          {isRentalToggle ? (
+            <>
+              {rentalError && <Alert severity="error" sx={{ mb: 1 }}>{rentalError}</Alert>}
+              <RentalVehicleForm value={rentalFields} onChange={setRentalFields} disabled={rentalSubmitLoading} />
+            </>
           ) : (
-            <List dense>
-              {unassignedVehicles.map((v) => {
-                const Icon = VEHICLE_ICON[v.type] ?? LocalShippingIcon
-                return (
-                  <ListItem key={v.id} disablePadding>
-                    <ListItemIcon sx={{ minWidth: 36 }}>
-                      <Checkbox size="small" checked={pendingVehicles.has(v.id)}
-                        onChange={(e) => { const s = new Set(pendingVehicles); e.target.checked ? s.add(v.id) : s.delete(v.id); setPendingVehicles(s) }} />
-                    </ListItemIcon>
-                    <ListItemIcon sx={{ minWidth: 32 }}><Icon fontSize="small" /></ListItemIcon>
-                    <ListItemText primary={v.name} />
-                  </ListItem>
-                )
-              })}
-            </List>
+            <>
+              <Divider sx={{ mb: 1 }} />
+              {unassignedVehicles.length === 0 ? (
+                <Typography variant="body2" color="text.secondary">No available vehicles.</Typography>
+              ) : (
+                <List dense>
+                  {unassignedVehicles.map((v) => {
+                    const Icon = VEHICLE_ICON[v.type] ?? LocalShippingIcon
+                    return (
+                      <ListItem key={v.id} disablePadding>
+                        <ListItemIcon sx={{ minWidth: 36 }}>
+                          <Checkbox size="small" checked={pendingVehicles.has(v.id)}
+                            onChange={(e) => { const s = new Set(pendingVehicles); e.target.checked ? s.add(v.id) : s.delete(v.id); setPendingVehicles(s) }} />
+                        </ListItemIcon>
+                        <ListItemIcon sx={{ minWidth: 32 }}><Icon fontSize="small" /></ListItemIcon>
+                        <ListItemText primary={v.name} />
+                      </ListItem>
+                    )
+                  })}
+                </List>
+              )}
+            </>
           )}
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => { setAddVehicleOpen(false); setPendingVehicles(new Set()) }}>Cancel</Button>
-          <Button variant="contained" disabled={pendingVehicles.size === 0}
-            onClick={() => { setAddVehicleOpen(false); setNoteDialog('addVehicles') }}>Continue</Button>
+          <Button onClick={() => {
+            setAddVehicleOpen(false); setPendingVehicles(new Set())
+            setIsRentalToggle(false); setRentalFields({}); setRentalError('')
+          }}>Cancel</Button>
+          {isRentalToggle ? (
+            <Button variant="contained"
+              disabled={rentalSubmitLoading || !isRentalFormValid(rentalFields)}
+              startIcon={rentalSubmitLoading ? <CircularProgress size={16} color="inherit" /> : null}
+              onClick={handleAddRental}>
+              {rentalSubmitLoading ? 'Adding…' : 'Add Rental Vehicle'}
+            </Button>
+          ) : (
+            <Button variant="contained" disabled={pendingVehicles.size === 0}
+              onClick={() => { setAddVehicleOpen(false); setNoteDialog('addVehicles') }}>Continue</Button>
+          )}
         </DialogActions>
       </Dialog>
 
@@ -1133,8 +1213,7 @@ export default function AdminDeploymentsPage() {
   const canEdit = useCanEdit()
   const [rigs, setRigs] = React.useState<Rig[]>([])
   const [loading, setLoading] = React.useState(true)
-  const [toast, setToast] = React.useState('')
-  const [toastSeverity, setToastSeverity] = React.useState<'success' | 'error'>('success')
+  const toast = useToast()
   const [showEnded, setShowEnded] = React.useState(false)
   const [filterOperator, setFilterOperator] = React.useState('')
   const [filterProject, setFilterProject] = React.useState('')
@@ -1187,7 +1266,12 @@ export default function AdminDeploymentsPage() {
     fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(d ?? [])).catch(() => {})
   }, [])
 
-  const showToast = (msg: string, severity: 'success' | 'error' = 'success') => { setToast(msg); setToastSeverity(severity); setTimeout(() => setToast(''), 4000) }
+  // UR-017: route through the shared bottom-center Snackbar; keep the
+  // (msg, severity) signature so the drawer/dialog call sites are unchanged.
+  const showToast = React.useCallback(
+    (msg: string, severity: 'success' | 'error' = 'success') => toast({ message: msg, severity }),
+    [toast],
+  )
   const activeCount = rigs.filter((r) => !r.endedAt).length
 
   const handleRespond = async () => {
@@ -1231,7 +1315,6 @@ export default function AdminDeploymentsPage() {
         </MutationButton>
       </Stack>
 
-      {toast && <Alert severity={toastSeverity} sx={{ mb: 2 }} onClose={() => setToast('')}>{toast}</Alert>}
 
       {/* Pending transfers — admin accept / decline */}
       {pendingTransfers.length > 0 && (
