@@ -63,6 +63,24 @@ jobs:
           make docker-build TAG=pr-${{ steps.pr.outputs.sha }} GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }} DISABLE_SW=true
           make docker-push  TAG=pr-${{ steps.pr.outputs.sha }} GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }}
 
+      # Apply pending Prisma migrations to staging BEFORE the new revision serves,
+      # so a PR preview never runs code against an unmigrated schema (this gap let
+      # a DAILY_CHECK_FAILED enum migration ship un-applied on a preview deploy).
+      # Mirrors the migrate job in deploy.yml: reads AHITS_MIGRATE_URL (Supabase
+      # session pooler) via make cloud-run-migrate. Migrations must be
+      # backward-compatible — the old revision is still serving while this runs.
+      - name: Set up Node (for prisma migrate)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install deps (for prisma migrate)
+        run: npm ci
+
+      - name: Apply pending migrations to staging
+        run: make cloud-run-migrate GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }}
+
       - name: Deploy to staging
         run: |
           make cloud-run-deploy \
