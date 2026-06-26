@@ -52,6 +52,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       await tx.maintenanceTask.create({
         data: {
           itemId: id,
+          // UR-029: link the specific unit so completing the repair returns THIS
+          // unit to service (the complete route keys off task.unit).
+          inventoryUnitId: unitId,
           taskName: `Admin repair decision: unit ${unit.serialNumber ?? unitId}`,
           isDamageReport: true,
           repairType: repairType ?? null,

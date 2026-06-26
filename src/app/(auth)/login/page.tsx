@@ -7,9 +7,11 @@ import {
 } from '@mui/material'
 import AgricultureIcon from '@mui/icons-material/Agriculture'
 import { useRouter } from 'next/navigation'
+import { useSWRConfig } from 'swr'
 
 export default function LoginPage() {
   const router = useRouter()
+  const { mutate } = useSWRConfig()
   const [tab, setTab] = React.useState(0) // 0 = Operator PIN, 1 = Admin
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState('')
@@ -21,6 +23,21 @@ export default function LoginPage() {
   // Admin state
   const [adminEmail, setAdminEmail] = React.useState('')
   const [password, setPassword] = React.useState('')
+
+  // UR-027: if already signed in, skip the form and send the user to their role
+  // home rather than rendering a login form to an authenticated session.
+  React.useEffect(() => {
+    let active = true
+    fetch('/api/auth/me')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (active && d?.role) {
+          router.replace(d.role === 'ADMIN' ? '/admin/dashboard' : '/operator/dashboard')
+        }
+      })
+      .catch(() => {})
+    return () => { active = false }
+  }, [router])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -38,6 +55,9 @@ export default function LoginPage() {
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? 'Login failed'); return }
+      // UR-003: refresh the cached identity to the new user before navigating so
+      // the dashboard never flashes the previous user's name on a shared device.
+      await mutate('/api/auth/me')
       router.push(data.role === 'ADMIN' ? '/admin/dashboard' : '/operator/dashboard')
     } catch {
       setError('Network error. Please try again.')

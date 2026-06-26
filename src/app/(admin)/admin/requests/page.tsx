@@ -4,14 +4,23 @@ import * as React from 'react'
 import {
   Box, Typography, Button, Card, CardContent, Stack, Chip, Alert, CircularProgress,
   MenuItem, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Collapse,
-  Divider, Tooltip, IconButton,
+  Divider, Tooltip, IconButton, ToggleButtonGroup, ToggleButton,
 } from '@mui/material'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ExpandLessIcon from '@mui/icons-material/ExpandLess'
-import ContentCopyIcon from '@mui/icons-material/ContentCopy'
 import SendIcon from '@mui/icons-material/Send'
+import AddIcon from '@mui/icons-material/Add'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { useToast } from '@/components/shared/useToast'
+import { MutationButton } from '@/components/shared/ReadOnly'
+import { FulfillmentChecklist, type ChecklistLine, type LineActionData } from '@/components/shared/FulfillmentChecklist'
+import {
+  RequestComposer,
+  type ProjectOption,
+  type InventoryOption,
+  type VehicleOption,
+  type CategoryOption,
+} from '@/components/shared/RequestComposer'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -42,6 +51,19 @@ interface LineRow {
   specificVehicleName: string | null
   specificUnitSerial: string | null
   description: string | null
+  // F3 fulfillment fields
+  fulfillmentStatus?: string
+  fulfilledQty?: number | null
+  substitutedItemId?: string | null
+  substitutedName?: string | null
+  resolvedUnitId?: string | null
+  denyReason?: string | null
+  availableUnits?: { id: string; serialNumber: string | null }[]
+  substitutableItems?: { id: string; name: string; availableAtHub: boolean }[]
+  // F2 ship-to fields
+  shipToHubId?: string | null
+  shipToAddress?: string | null
+  shipToHubName?: string | null
 }
 
 interface HubOption { id: string; name: string; city: string; state: string }
@@ -69,6 +91,21 @@ function lineDisplayName(l: LineRow): string {
 
 async function patchRequest(id: string, body: Record<string, unknown>): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(`/api/deployment-requests/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) return { ok: false, error: data.error ?? 'Action failed.' }
+  return { ok: true }
+}
+
+async function patchLine(
+  requestId: string,
+  lineId: string,
+  body: Record<string, unknown>,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`/api/deployment-requests/${requestId}/lines/${lineId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -198,6 +235,7 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
 }) {
   const [expanded, setExpanded] = React.useState(false)
   const [lines, setLines] = React.useState<LineRow[] | null>(null)
+  const [progress, setProgress] = React.useState<{ checked: number; total: number } | null>(null)
   const [linesLoading, setLinesLoading] = React.useState(false)
   const [dialog, setDialog] = React.useState<'hub' | 'operator' | 'decline' | null>(null)
   const [busy, setBusy] = React.useState<string | null>(null)
@@ -210,6 +248,18 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
     if (res.ok) {
       const d = await res.json()
       setLines((d.data?.lines as LineRow[]) ?? [])
+      setProgress(d.data?.progress ?? null)
+    }
+    setLinesLoading(false)
+  }
+
+  const reloadLines = async () => {
+    setLinesLoading(true)
+    const res = await fetch(`/api/deployment-requests/${req.id}`)
+    if (res.ok) {
+      const d = await res.json()
+      setLines((d.data?.lines as LineRow[]) ?? [])
+      setProgress(d.data?.progress ?? null)
     }
     setLinesLoading(false)
   }
@@ -246,6 +296,38 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
   const isReservation = req.requestType === 'RESERVATION'
   const isTerminal = TERMINAL.has(req.status)
 
+  // Build checklist lines from loaded LineRow data (RESERVATION only)
+  const checklistLines: ChecklistLine[] = React.useMemo(() => {
+    if (!lines || !isReservation) return []
+    return lines.map((l) => ({
+      id: l.id,
+      name: lineDisplayName(l),
+      requestedQty: l.requestedQty,
+      itemType: l.itemType ?? null,
+      fulfillmentStatus: l.fulfillmentStatus ?? 'PENDING',
+      fulfilledQty: l.fulfilledQty ?? null,
+      substitutedItemId: l.substitutedItemId ?? null,
+      substitutedName: l.substitutedName ?? null,
+      resolvedUnitId: l.resolvedUnitId ?? null,
+      denyReason: l.denyReason ?? null,
+      availableUnits: l.availableUnits ?? [],
+      substitutableItems: l.substitutableItems ?? [],
+    }))
+  }, [lines, isReservation])
+
+  const onLineAction = async (lineId: string, lineAction: 'confirm' | 'edit' | 'deny', data: LineActionData) => {
+    return patchLine(req.id, lineId, { action: lineAction, ...data })
+  }
+
+  const onStage = async () => {
+    const r = await patchRequest(req.id, { action: 'confirm' })
+    if (r.ok) {
+      showToast({ message: 'Reservation staged.', severity: 'success' })
+      onRefresh()
+    }
+    return r
+  }
+
   return (
     <>
       <Card variant="outlined">
@@ -275,7 +357,6 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
               )}
             </Box>
             <Stack direction="row" spacing={0.5} alignItems="center" flexShrink={0}>
-              {/* Lines toggle */}
               <Tooltip title={expanded ? 'Hide lines' : 'Show lines'}>
                 <IconButton size="small" onClick={toggleExpand}>
                   {expanded ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
@@ -284,20 +365,40 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
             </Stack>
           </Stack>
 
-          {/* Lines panel */}
+          {/* Lines / checklist panel */}
           <Collapse in={expanded}>
             <Box sx={{ mt: 1.5, pl: 0.5 }}>
               {linesLoading ? (
                 <CircularProgress size={18} />
               ) : lines && lines.length > 0 ? (
-                <Stack spacing={0.5}>
-                  {lines.map((l) => (
-                    <Stack key={l.id} direction="row" justifyContent="space-between" sx={{ fontSize: 13, color: 'text.secondary' }}>
-                      <span>{lineDisplayName(l)}</span>
-                      <span>×{l.requestedQty}</span>
-                    </Stack>
-                  ))}
-                </Stack>
+                isReservation && req.status === 'REQUESTED' ? (
+                  // F3: per-line fulfillment checklist for active reservations
+                  <FulfillmentChecklist
+                    lines={checklistLines}
+                    progress={progress ?? { checked: 0, total: checklistLines.length }}
+                    onLineAction={onLineAction}
+                    onStage={onStage}
+                    isActionable
+                    stageLabel="Stage (admin)"
+                  />
+                ) : (
+                  // Read-only line list for non-REQUESTED or non-RESERVATION
+                  <Stack spacing={0.5}>
+                    {lines.map((l) => (
+                      <Stack key={l.id} direction="row" justifyContent="space-between" sx={{ fontSize: 13, color: 'text.secondary' }}>
+                        <Box sx={{ minWidth: 0 }}>
+                          <span>{lineDisplayName(l)}</span>
+                          {l.lineType === 'SHIPPING_LABEL' && (l.shipToHubName ?? l.shipToAddress) && (
+                            <Typography variant="caption" display="block" color="text.secondary">
+                              Ship to: {l.shipToHubName ?? l.shipToAddress}
+                            </Typography>
+                          )}
+                        </Box>
+                        <span style={{ flexShrink: 0, marginLeft: 8 }}>×{l.requestedQty}</span>
+                      </Stack>
+                    ))}
+                  </Stack>
+                )
               ) : (
                 <Typography variant="caption" color="text.secondary">No lines.</Typography>
               )}
@@ -342,9 +443,10 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
 
                 {isReservation && req.status === 'REQUESTED' && (
                   <>
-                    <Button size="small" variant="contained" color="success"
-                      disabled={!!busy} onClick={() => void action('confirm')}>
-                      {busy === 'confirm' ? <CircularProgress size={14} color="inherit" /> : 'Stage (admin)'}
+                    <Button size="small" variant="outlined"
+                      disabled={!!busy}
+                      onClick={() => { if (!expanded) void loadLines(); setExpanded(true) }}>
+                      {expanded ? 'Hide checklist' : 'Open checklist'}
                     </Button>
                     <Button size="small" variant="outlined" color="error" disabled={!!busy}
                       onClick={() => setDialog('decline')}>
@@ -374,7 +476,6 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
                   </>
                 )}
 
-                {/* Cancel is available for DRAFT on both types */}
                 {req.status === 'DRAFT' && (
                   <Button size="small" variant="outlined" color="error" disabled={!!busy}
                     onClick={() => void action('cancel')}>
@@ -409,10 +510,17 @@ export default function AdminRequestsPage() {
   const [requests, setRequests] = React.useState<ReqRow[] | null>(null)
   const [hubs, setHubs] = React.useState<HubOption[]>([])
   const [operators, setOperators] = React.useState<OperatorOption[]>([])
+  const [projects, setProjects] = React.useState<ProjectOption[]>([])
+  const [inventory, setInventory] = React.useState<InventoryOption[]>([])
+  const [vehicles, setVehicles] = React.useState<VehicleOption[]>([])
+  const [categories, setCategories] = React.useState<CategoryOption[]>([])
+  const [composerOpen, setComposerOpen] = React.useState(false)
+  const [composerDataLoaded, setComposerDataLoaded] = React.useState(false)
   const [filterType, setFilterType] = React.useState('ALL')
   const [filterStatus, setFilterStatus] = React.useState('ALL')
   const [filterHub, setFilterHub] = React.useState('ALL')
   const [filterRequester, setFilterRequester] = React.useState('')
+  const [activeTab, setActiveTab] = React.useState<'ACTIVE' | 'CLOSED'>('ACTIVE')
   const showToast = useToast()
 
   const load = React.useCallback(async () => {
@@ -438,23 +546,59 @@ export default function AdminRequestsPage() {
     void loadMeta()
   }, [load])
 
+  // Lazy-load the data the composer needs (hubs/operators are already loaded above).
+  const openComposer = async () => {
+    setComposerOpen(true)
+    if (composerDataLoaded) return
+    const [projectsRes, inventoryRes, vehiclesRes, categoriesRes] = await Promise.all([
+      fetch('/api/projects'),
+      fetch('/api/inventory?pageSize=200'),
+      fetch('/api/vehicles'),
+      fetch('/api/categories'),
+    ])
+    if (projectsRes.ok) { const d = await projectsRes.json(); setProjects((d.data as ProjectOption[]) ?? []) }
+    if (inventoryRes.ok) { const d = await inventoryRes.json(); setInventory((d.data as InventoryOption[]) ?? []) }
+    if (vehiclesRes.ok) { const d = await vehiclesRes.json(); setVehicles((d.data as VehicleOption[]) ?? []) }
+    if (categoriesRes.ok) setCategories((await categoriesRes.json()) as CategoryOption[])
+    setComposerDataLoaded(true)
+  }
+
   const filtered = React.useMemo(() => {
     if (!requests) return []
     return requests.filter((r) => {
+      const isTerminal = TERMINAL.has(r.status)
+      if (activeTab === 'ACTIVE' && isTerminal) return false
+      if (activeTab === 'CLOSED' && !isTerminal) return false
       if (filterType !== 'ALL' && r.requestType !== filterType) return false
       if (filterStatus !== 'ALL' && r.status !== filterStatus) return false
       if (filterHub !== 'ALL' && r.fulfillerHubId !== filterHub) return false
       if (filterRequester && !(r.requestedByName ?? '').toLowerCase().includes(filterRequester.toLowerCase())) return false
       return true
     })
-  }, [requests, filterType, filterStatus, filterHub, filterRequester])
+  }, [requests, activeTab, filterType, filterStatus, filterHub, filterRequester])
 
   return (
     <Box>
       <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h5">Deployment Requests</Typography>
-        <Button size="small" variant="outlined" onClick={() => void load()}>Refresh</Button>
+        <Stack direction="row" spacing={1}>
+          <MutationButton size="small" variant="contained" startIcon={<AddIcon />} onClick={() => void openComposer()}>
+            New Request
+          </MutationButton>
+          <Button size="small" variant="outlined" onClick={() => void load()}>Refresh</Button>
+        </Stack>
       </Stack>
+
+      <ToggleButtonGroup
+        value={activeTab}
+        exclusive
+        onChange={(_e, v) => { if (v) setActiveTab(v as 'ACTIVE' | 'CLOSED') }}
+        size="small"
+        sx={{ mb: 2 }}
+      >
+        <ToggleButton value="ACTIVE">Active</ToggleButton>
+        <ToggleButton value="CLOSED">Closed</ToggleButton>
+      </ToggleButtonGroup>
 
       {/* Filter bar */}
       <Stack direction="row" spacing={1.5} mb={2} flexWrap="wrap">
@@ -491,6 +635,32 @@ export default function AdminRequestsPage() {
             <RequestCard key={req.id} req={req} hubs={hubs} operators={operators} onRefresh={load} />
           ))}
         </Stack>
+      )}
+
+      {composerOpen && (
+        <RequestComposer
+          hubs={hubs}
+          projects={projects}
+          inventory={inventory}
+          vehicles={vehicles}
+          categories={categories}
+          operators={operators}
+          onClose={() => setComposerOpen(false)}
+          onSubmit={async (body) => {
+            const res = await fetch('/api/deployment-requests', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            })
+            if (res.ok) {
+              showToast({ message: 'Request created.', severity: 'success' })
+              await load()
+              return { ok: true }
+            }
+            const d = await res.json().catch(() => ({}))
+            return { ok: false, error: typeof d.error === 'string' ? d.error : 'Failed to create request.' }
+          }}
+        />
       )}
     </Box>
   )

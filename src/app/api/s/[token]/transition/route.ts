@@ -2,9 +2,25 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { rateLimit, clientIp } from '@/lib/rate-limit'
 import { withIdempotency } from '@/lib/idempotency'
-import { resolveStatusLink, applyTransition } from '@/lib/status-links'
+import { resolveStatusLink, applyTransition, hashToken } from '@/lib/status-links'
+import { setLineFulfillment } from '@/lib/deployment-requests'
+import { prisma } from '@/lib/prisma'
 
-const schema = z.object({
+// Per-line checklist action: Confirm / Edit / Deny one line.
+const lineActionSchema = z.object({
+  lineId: z.string().min(1),
+  action: z.enum(['confirm', 'edit', 'deny']),
+  actorLabel: z.string().min(1, 'Please enter your name'),
+  fulfilledQty: z.number().int().positive().optional(),
+  resolvedUnitId: z.string().optional(),
+  substitutedItemId: z.string().optional(),
+  denyReason: z.string().optional(),
+  stagedCondition: z.string().optional(),
+  note: z.string().optional(),
+})
+
+// Whole-request action: Stage (PREPARED) or Decline the request.
+const requestActionSchema = z.object({
   action: z.string().min(1),
   actorLabel: z.string().min(1, 'Please enter your name'),
   note: z.string().optional(),
@@ -23,7 +39,47 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ token: st
   const rl = await rateLimit(`statuslink:${ip}`, 60, 5 * 60 * 1000)
   if (!rl.allowed) return NextResponse.json({ error: 'Too many requests.' }, { status: 429 })
 
-  const parsed = schema.safeParse(await req.json().catch(() => ({})))
+  const body = await req.json().catch(() => ({}))
+
+  // Route on lineId: per-line checklist action vs. whole-request action.
+  if (body.lineId) {
+    const parsed = lineActionSchema.safeParse(body)
+    if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
+
+    const { lineId, action, actorLabel, ...lineFields } = parsed.data
+
+    // Token-scoped ownership check: lineId must belong to the request this token controls.
+    const tokenHash = hashToken(token)
+    const ownership = await prisma.$queryRaw<{ cnt: bigint }[]>`
+      SELECT COUNT(*)::bigint AS cnt
+      FROM "deployment_request_lines" drl
+      JOIN "status_links" sl ON sl."deploymentRequestId" = drl."requestId"
+      WHERE drl."id" = ${lineId} AND sl."tokenHash" = ${tokenHash}
+    `
+    if (Number(ownership[0]?.cnt ?? 0) === 0) {
+      return NextResponse.json({ error: 'Line not found.' }, { status: 404 })
+    }
+
+    const status: 'CONFIRMED' | 'EDITED' | 'DENIED' =
+      action === 'confirm' ? 'CONFIRMED' : action === 'edit' ? 'EDITED' : 'DENIED'
+
+    const result = await setLineFulfillment(lineId, {
+      status,
+      fulfilledQty: lineFields.fulfilledQty,
+      resolvedUnitId: lineFields.resolvedUnitId,
+      substitutedItemId: lineFields.substitutedItemId,
+      denyReason: lineFields.denyReason,
+      stagedCondition: lineFields.stagedCondition,
+      note: lineFields.note,
+      actor: { label: actorLabel },
+    })
+
+    if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 })
+    return NextResponse.json({ ok: true })
+  }
+
+  // Whole-request action (PREPARED = stage, DECLINED = decline).
+  const parsed = requestActionSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
   const link = await resolveStatusLink(token)

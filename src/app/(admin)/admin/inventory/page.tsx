@@ -26,7 +26,8 @@ import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { PhotoGallery } from '@/components/shared/PhotoGallery'
 import { RepairReviewDialog } from '@/components/shared/RepairReviewDialog'
 import { EQUIPMENT_STATUS } from '@/lib/status'
-import { MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
+import { useCanEdit, EditGuard, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
+import { groupBy } from '@/lib/utils'
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -72,6 +73,7 @@ interface InventoryItemRow {
   updatedAt: string
   currentOperator: { id: string; name: string } | null
   currentProject: { id: string; name: string; location: string | null } | null
+  activeProjects?: { id: string; name: string }[]
   unitCounts: UnitCounts
   units: UnitRow[]
   derivedQuantity: number
@@ -498,6 +500,7 @@ function DetailDrawer({
   onRetire: (item: InventoryItemRow) => void
   onUpdated: () => void
 }) {
+  const canEdit = useCanEdit()
   const [detail, setDetail] = React.useState<ItemDetail | null>(null)
   const [loading, setLoading] = React.useState(false)
   const [activeTab, setActiveTab] = React.useState(0)
@@ -708,7 +711,12 @@ function DetailDrawer({
                   <Box mb={2}>
                     <Typography variant="subtitle2" fontWeight={600} mb={0.5}>Current Status</Typography>
                     {row?.currentOperator && <Typography variant="body2">Currently with <strong>{row.currentOperator.name}</strong></Typography>}
-                    {row?.currentProject && <Typography variant="body2">Checked out to <strong>{row.currentProject.name}</strong></Typography>}
+                    {(row?.activeProjects ?? []).length > 0
+                      ? <Stack direction="row" spacing={0.5} flexWrap="wrap" mt={0.5}>
+                          <Typography variant="body2" color="text.secondary" sx={{ mr: 0.5 }}>Projects:</Typography>
+                          {(row?.activeProjects ?? []).map((p) => <Chip key={p.id} size="small" label={p.name} variant="outlined" />)}
+                        </Stack>
+                      : row?.currentProject && <Typography variant="body2">Checked out to <strong>{row.currentProject.name}</strong></Typography>}
                   </Box>
                 )}
               </>
@@ -743,6 +751,7 @@ function DetailDrawer({
                                 onBlur={() => handleSerialBlur(unit.id)}
                                 sx={{ width: 120 }}
                                 inputProps={{ style: { fontSize: 13 } }}
+                                disabled={!canEdit}
                               />
                             </TableCell>
                             <TableCell>
@@ -754,6 +763,7 @@ function DetailDrawer({
                                 onChange={(e) => handleUnitStatusChange(unit.id, e.target.value)}
                                 sx={{ minWidth: 130 }}
                                 SelectProps={{ style: { fontSize: 13 } }}
+                                disabled={!canEdit}
                               >
                                 {Object.entries(EQUIPMENT_STATUS).map(([v, m]) => (
                                   <MenuItem key={v} value={v}>{m.label}</MenuItem>
@@ -769,16 +779,12 @@ function DetailDrawer({
                                 </Tooltip>
                                 {unit.status === 'INOPERABLE' && (
                                   <>
-                                    <Tooltip title="Retire this unit">
-                                      <IconButton size="small" color="error" onClick={() => setRetireUnitId(unit.id)}>
-                                        <ArchiveIcon fontSize="small" />
-                                      </IconButton>
-                                    </Tooltip>
-                                    <Tooltip title="Send for repair">
-                                      <IconButton size="small" onClick={() => setRepairUnitId(unit.id)}>
-                                        <EditIcon fontSize="small" />
-                                      </IconButton>
-                                    </Tooltip>
+                                    <MutationIconButton size="small" tooltip="Retire this unit" color="error" onClick={() => setRetireUnitId(unit.id)}>
+                                      <ArchiveIcon fontSize="small" />
+                                    </MutationIconButton>
+                                    <MutationIconButton size="small" tooltip="Send for repair" onClick={() => setRepairUnitId(unit.id)}>
+                                      <EditIcon fontSize="small" />
+                                    </MutationIconButton>
                                   </>
                                 )}
                               </Stack>
@@ -830,38 +836,40 @@ function DetailDrawer({
                     </TableBody>
                   </Table>
                 </TableContainer>
-                <Stack spacing={1.5} sx={{ mt: 1, maxWidth: 420 }}>
-                  <Typography variant="caption" color="text.secondary">
-                    Add a unit and (optionally) register its existing QR label by scanning
-                    or typing the code.
-                  </Typography>
-                  <QrScanField
-                    value={newUnitQr}
-                    onChange={(c) => { setNewUnitQr(c); setAddUnitError('') }}
-                    label="QR label code (optional)"
-                    helperText="Leave blank to auto-generate an internal id"
-                  />
-                  <TextField
-                    size="small"
-                    label="Serial number (optional)"
-                    value={newUnitSerial}
-                    onChange={(e) => setNewUnitSerial(e.target.value)}
-                    fullWidth
-                  />
-                  {addUnitError && (
-                    <Alert severity="error" onClose={() => setAddUnitError('')}>{addUnitError}</Alert>
-                  )}
-                  <Button
-                    size="small"
-                    startIcon={addingUnit ? <CircularProgress size={14} /> : <AddIcon />}
-                    onClick={handleAddUnit}
-                    disabled={addingUnit}
-                    variant="outlined"
-                    sx={{ alignSelf: 'flex-start' }}
-                  >
-                    {addingUnit ? 'Adding…' : '+ Add Unit'}
-                  </Button>
-                </Stack>
+                <EditGuard>
+                  <Stack spacing={1.5} sx={{ mt: 1, maxWidth: 420 }}>
+                    <Typography variant="caption" color="text.secondary">
+                      Add a unit and (optionally) register its existing QR label by scanning
+                      or typing the code.
+                    </Typography>
+                    <QrScanField
+                      value={newUnitQr}
+                      onChange={(c) => { setNewUnitQr(c); setAddUnitError('') }}
+                      label="QR label code (optional)"
+                      helperText="Leave blank to auto-generate an internal id"
+                    />
+                    <TextField
+                      size="small"
+                      label="Serial number (optional)"
+                      value={newUnitSerial}
+                      onChange={(e) => setNewUnitSerial(e.target.value)}
+                      fullWidth
+                    />
+                    {addUnitError && (
+                      <Alert severity="error" onClose={() => setAddUnitError('')}>{addUnitError}</Alert>
+                    )}
+                    <Button
+                      size="small"
+                      startIcon={addingUnit ? <CircularProgress size={14} /> : <AddIcon />}
+                      onClick={handleAddUnit}
+                      disabled={addingUnit}
+                      variant="outlined"
+                      sx={{ alignSelf: 'flex-start' }}
+                    >
+                      {addingUnit ? 'Adding…' : '+ Add Unit'}
+                    </Button>
+                  </Stack>
+                </EditGuard>
               </>
             )}
 
@@ -893,15 +901,15 @@ function DetailDrawer({
           <Stack direction="row" spacing={1} px={3} py={2} justifyContent="flex-end">
             <Button onClick={onClose}>Close</Button>
             {detail.unitCounts.available > 0 && (
-              <Button variant="outlined" color="error" startIcon={<ArchiveIcon />}
+              <MutationButton variant="outlined" color="error" startIcon={<ArchiveIcon />}
                 onClick={() => { onClose(); onRetire(detail) }}>
                 Retire
-              </Button>
+              </MutationButton>
             )}
-            <Button variant="contained" startIcon={<EditIcon />}
+            <MutationButton variant="contained" startIcon={<EditIcon />}
               onClick={() => { onClose(); onEdit(detail) }}>
               Edit
-            </Button>
+            </MutationButton>
           </Stack>
         </Box>
       )}
@@ -935,6 +943,7 @@ function DetailDrawer({
 // ── Main Page ─────────────────────────────────────────────────────
 
 export default function AdminInventoryPage() {
+  const canEdit = useCanEdit()
   const showToast = useToast()
   const [items, setItems] = React.useState<InventoryItemRow[]>([])
   const [total, setTotal] = React.useState(0)
@@ -999,10 +1008,13 @@ export default function AdminInventoryPage() {
     <Box>
       {/* Header */}
       <Stack direction="row" justifyContent="space-between" alignItems="center" mb={2}>
-        <Typography variant="h5" fontWeight={700}>Inventory</Typography>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => { setFormItem(null); setFormOpen(true) }}>
+        <Stack direction="row" alignItems="center" spacing={1}>
+          <Typography variant="h5" fontWeight={700}>Inventory</Typography>
+          {!canEdit && <Chip size="small" label="View only" variant="outlined" />}
+        </Stack>
+        <MutationButton variant="contained" startIcon={<AddIcon />} onClick={() => { setFormItem(null); setFormOpen(true) }}>
           Add Item
-        </Button>
+        </MutationButton>
       </Stack>
 
       {/* Filters */}
@@ -1110,61 +1122,67 @@ export default function AdminInventoryPage() {
                     ))}
                   </TableRow>
                 ))
-              : items.map((item) => (
-                  <TableRow
-                    key={item.id}
-                    hover
-                    sx={{ cursor: 'pointer' }}
-                    onClick={() => setDetailRow(item)}
-                  >
-                    <TableCell>
-                      <Stack direction="row" spacing={1} alignItems="center">
-                        <Typography variant="body2" fontWeight={500}>{item.name}</Typography>
-                        {item.itemType === 'SERIALIZED' && (
-                          <Chip size="small" label="S" variant="outlined" color="primary" sx={{ fontSize: 10, height: 18 }} />
-                        )}
-                        {item.unitCounts?.inoperable > 0 && (
-                          <Tooltip title={`${item.unitCounts.inoperable} inoperable`}>
-                            <WarningAmberIcon fontSize="small" color="warning" />
-                          </Tooltip>
-                        )}
-                      </Stack>
+              : groupBy(
+                  items,
+                  (item) => (typeof item.category === 'object' ? item.category?.name : (item.category as unknown as string)) ?? 'Uncategorized',
+                ).flatMap(({ group, items: gi }) => [
+                  <TableRow key={`__hdr__${group}`}>
+                    <TableCell colSpan={7} sx={{ bgcolor: 'grey.50', py: 0.5, borderBottom: '1px solid', borderColor: 'divider' }}>
+                      <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1.6 }}>{group}</Typography>
                     </TableCell>
-                    <TableCell>
-                      <Typography variant="body2" color="text.secondary">
-                        {typeof item.category === 'object' ? item.category?.name : (item.category ?? '—')}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2" color="text.secondary">
-                        {item.hub ? `${item.hub.city}, ${item.hub.state}` : '—'}
-                      </Typography>
-                    </TableCell>
-                    <TableCell align="center">
-                      <Chip size="small" label={item.itemType === 'CONSUMABLE' ? (item.availableQuantity ?? 0) : (item.unitCounts?.available ?? 0)} color="success" variant="outlined" />
-                    </TableCell>
-                    <TableCell align="center">
-                      <Chip size="small" label={item.unitCounts?.checkedOut ?? 0} color={item.unitCounts?.checkedOut > 0 ? 'info' : 'default'} variant="outlined" />
-                    </TableCell>
-                    <TableCell align="center">
-                      <Typography variant="body2">{item.itemType === 'CONSUMABLE' ? (item.derivedQuantity ?? item.quantity ?? 0) : (item.unitCounts?.totalUnits ?? 0)}</Typography>
-                    </TableCell>
-                    <TableCell align="right" onClick={(e) => e.stopPropagation()}>
-                      <Stack direction="row" spacing={0.5} justifyContent="flex-end">
-                        <Tooltip title="Edit">
-                          <IconButton size="small" onClick={() => { setFormItem(item); setFormOpen(true) }}>
+                  </TableRow>,
+                  ...gi.map((item) => (
+                    <TableRow
+                      key={item.id}
+                      hover
+                      sx={{ cursor: 'pointer' }}
+                      onClick={() => setDetailRow(item)}
+                    >
+                      <TableCell>
+                        <Stack direction="row" spacing={1} alignItems="center">
+                          <Typography variant="body2" fontWeight={500}>{item.name}</Typography>
+                          {item.itemType === 'SERIALIZED' && (
+                            <Chip size="small" label="S" variant="outlined" color="primary" sx={{ fontSize: 10, height: 18 }} />
+                          )}
+                          {item.unitCounts?.inoperable > 0 && (
+                            <Tooltip title={`${item.unitCounts.inoperable} inoperable`}>
+                              <WarningAmberIcon fontSize="small" color="warning" />
+                            </Tooltip>
+                          )}
+                        </Stack>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" color="text.secondary">
+                          {typeof item.category === 'object' ? item.category?.name : (item.category ?? '—')}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" color="text.secondary">
+                          {item.hub ? `${item.hub.city}, ${item.hub.state}` : '—'}
+                        </Typography>
+                      </TableCell>
+                      <TableCell align="center">
+                        <Chip size="small" label={item.itemType === 'CONSUMABLE' ? (item.availableQuantity ?? 0) : (item.unitCounts?.available ?? 0)} color="success" variant="outlined" />
+                      </TableCell>
+                      <TableCell align="center">
+                        <Chip size="small" label={item.unitCounts?.checkedOut ?? 0} color={item.unitCounts?.checkedOut > 0 ? 'info' : 'default'} variant="outlined" />
+                      </TableCell>
+                      <TableCell align="center">
+                        <Typography variant="body2">{item.itemType === 'CONSUMABLE' ? (item.derivedQuantity ?? item.quantity ?? 0) : (item.unitCounts?.totalUnits ?? 0)}</Typography>
+                      </TableCell>
+                      <TableCell align="right" onClick={(e) => e.stopPropagation()}>
+                        <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                          <MutationIconButton size="small" tooltip="Edit" onClick={() => { setFormItem(item); setFormOpen(true) }}>
                             <EditIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                        <Tooltip title="Retire">
-                          <IconButton size="small" color="error" onClick={() => setRetireItem(item)}>
+                          </MutationIconButton>
+                          <MutationIconButton size="small" tooltip="Retire" color="error" onClick={() => setRetireItem(item)}>
                             <ArchiveIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      </Stack>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                          </MutationIconButton>
+                        </Stack>
+                      </TableCell>
+                    </TableRow>
+                  )),
+                ])}
             {!loading && items.length === 0 && (
               <TableRow>
                 <TableCell colSpan={7} align="center" sx={{ py: 4, color: 'text.secondary' }}>

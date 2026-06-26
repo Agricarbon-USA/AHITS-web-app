@@ -5,6 +5,7 @@ import {
   Box, Typography, Paper, Stack, Button, IconButton, CircularProgress, Chip, Divider,
   Table, TableHead, TableBody, TableRow, TableCell, TableContainer, TableSortLabel,
   Drawer, Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem, Tooltip,
+  Switch, FormControlLabel,
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
@@ -14,6 +15,7 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { useToast } from '@/components/shared/useToast'
 import { useCanEdit, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
+import { groupBy } from '@/lib/utils'
 
 const VEHICLE_TYPES = ['TRUCK', 'TRAILER', 'POLARIS_UTV', 'CAN_AM_UTV', 'CHRISTIE_DRILL', 'ATV', 'OTHER']
 const VEHICLE_STATUSES = ['ACTIVE', 'IN_MAINTENANCE', 'OUT_OF_SERVICE', 'RETIRED']
@@ -32,6 +34,7 @@ interface VehicleRow {
   hubId: string | null
   hubName: string | null
   assignedOperatorName: string | null
+  activeProjects: { id: string; name: string }[]
   insuranceExpires: string | null
   registrationExpires: string | null
   notes: string | null
@@ -76,8 +79,11 @@ export default function AdminVehiclesPage() {
   const [filterType, setFilterType] = React.useState('')
   const [filterStatus, setFilterStatus] = React.useState('')
   const [filterHub, setFilterHub] = React.useState('')
+  const [filterProject, setFilterProject] = React.useState('')
+  const [projects, setProjects] = React.useState<{ id: string; name: string }[]>([])
   const [sortKey, setSortKey] = React.useState<SortKey>('name')
   const [sortDir, setSortDir] = React.useState<'asc' | 'desc'>('asc')
+  const [groupByType, setGroupByType] = React.useState(true)
 
   const load = React.useCallback(async () => {
     setLoading(true)
@@ -104,6 +110,10 @@ export default function AdminVehiclesPage() {
 
   React.useEffect(() => { load(); loadHubs() }, [load, loadHubs])
 
+  React.useEffect(() => {
+    fetch('/api/projects').then((r) => r.json()).then((d) => setProjects(d.data ?? d ?? [])).catch(() => {})
+  }, [])
+
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
     else { setSortKey(key); setSortDir('asc') }
@@ -115,6 +125,7 @@ export default function AdminVehiclesPage() {
       if (filterType && v.type !== filterType) return false
       if (filterStatus && v.status !== filterStatus) return false
       if (filterHub && (v.hubId ?? '') !== filterHub) return false
+      if (filterProject && !v.activeProjects?.some((p) => p.id === filterProject)) return false
       if (q) {
         const hay = `${v.name} ${v.makeModel ?? ''} ${v.licensePlate ?? ''} ${v.vin ?? ''} ${v.hubName ?? ''} ${v.assignedOperatorName ?? ''}`.toLowerCase()
         if (!hay.includes(q)) return false
@@ -137,7 +148,7 @@ export default function AdminVehiclesPage() {
       if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir
       return String(av).localeCompare(String(bv)) * dir
     })
-  }, [vehicles, search, filterType, filterStatus, filterHub, sortKey, sortDir])
+  }, [vehicles, search, filterType, filterStatus, filterHub, filterProject, sortKey, sortDir])
 
   const openDetail = async (id: string) => {
     setDetailLoading(true)
@@ -210,10 +221,20 @@ export default function AdminVehiclesPage() {
             <MenuItem value="">All hubs</MenuItem>
             {hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.name}</MenuItem>)}
           </TextField>
-          {(search || filterType || filterStatus || filterHub) && (
-            <Button size="small" onClick={() => { setSearch(''); setFilterType(''); setFilterStatus(''); setFilterHub('') }}>Clear</Button>
+          {projects.length > 0 && (
+            <TextField select size="small" label="Project" value={filterProject} onChange={(e) => setFilterProject(e.target.value)} sx={{ minWidth: 160 }}>
+              <MenuItem value="">All projects</MenuItem>
+              {projects.map((p) => <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>)}
+            </TextField>
+          )}
+          {(search || filterType || filterStatus || filterHub || filterProject) && (
+            <Button size="small" onClick={() => { setSearch(''); setFilterType(''); setFilterStatus(''); setFilterHub(''); setFilterProject('') }}>Clear</Button>
           )}
           <Box flexGrow={1} />
+          <FormControlLabel
+            control={<Switch size="small" checked={groupByType} onChange={(e) => setGroupByType(e.target.checked)} />}
+            label={<Typography variant="caption">Group by type</Typography>}
+          />
           <Typography variant="caption" color="text.secondary">{visibleVehicles.length} of {vehicles.length}</Typography>
         </Stack>
       )}
@@ -245,6 +266,7 @@ export default function AdminVehiclesPage() {
                   <TableCell sortDirection={sortKey === 'operator' ? sortDir : false}>
                     <TableSortLabel active={sortKey === 'operator'} direction={sortKey === 'operator' ? sortDir : 'asc'} onClick={() => toggleSort('operator')}>Operator</TableSortLabel>
                   </TableCell>
+                  <TableCell>Project</TableCell>
                   <TableCell align="right" sortDirection={sortKey === 'odometer' ? sortDir : false}>
                     <TableSortLabel active={sortKey === 'odometer'} direction={sortKey === 'odometer' ? sortDir : 'asc'} onClick={() => toggleSort('odometer')}>Odometer</TableSortLabel>
                   </TableCell>
@@ -256,31 +278,81 @@ export default function AdminVehiclesPage() {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {visibleVehicles.map((v) => {
-                  const ins = expiryMeta(v.insuranceExpires)
-                  const reg = expiryMeta(v.registrationExpires)
-                  return (
-                    <TableRow key={v.id} hover sx={{ cursor: 'pointer' }} onClick={() => openDetail(v.id)}>
-                      <TableCell>
-                        <Typography variant="body2" fontWeight={500}>{v.name}</Typography>
-                        {v.makeModel && <Typography variant="caption" color="text.secondary">{v.makeModel}{v.year ? ` · ${v.year}` : ''}</Typography>}
-                      </TableCell>
-                      <TableCell>{v.type.replace(/_/g, ' ')}</TableCell>
-                      <TableCell><StatusChip status={v.status} kind="vehicle" /></TableCell>
-                      <TableCell>{v.hubName ?? <Typography variant="caption" color="text.secondary">{v.location || '—'}</Typography>}</TableCell>
-                      <TableCell>{v.assignedOperatorName ?? '—'}</TableCell>
-                      <TableCell align="right">{v.odometer != null ? v.odometer.toLocaleString() : '—'}</TableCell>
-                      <TableCell><Chip size="small" label={ins.label} color={ins.color} variant={ins.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
-                      <TableCell><Chip size="small" label={reg.label} color={reg.color} variant={reg.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
-                      <TableCell align="right">{v._count?.dailyChecks ?? 0}</TableCell>
-                      <TableCell align="right">{v._count?.maintenanceTasks ?? 0}</TableCell>
-                      <TableCell align="right" onClick={(e) => e.stopPropagation()}>
-                        <MutationIconButton tooltip="Edit" size="small" onClick={() => { setEditing(v); setFormOpen(true) }}><EditIcon fontSize="small" /></MutationIconButton>
-                        <MutationIconButton tooltip="Delete" size="small" onClick={() => setConfirmDelete(v)}><DeleteIcon fontSize="small" /></MutationIconButton>
-                      </TableCell>
-                    </TableRow>
-                  )
-                })}
+                {groupByType
+                  ? groupBy(visibleVehicles, (v) => v.type, VEHICLE_TYPES).flatMap(({ group, items: gv }) => [
+                      <TableRow key={`__hdr__${group}`}>
+                        <TableCell colSpan={12} sx={{ bgcolor: 'grey.50', py: 0.5, borderBottom: '1px solid', borderColor: 'divider' }}>
+                          <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1.6 }}>
+                            {group.replace(/_/g, ' ')} ({gv.length})
+                          </Typography>
+                        </TableCell>
+                      </TableRow>,
+                      ...gv.map((v) => {
+                        const ins = expiryMeta(v.insuranceExpires)
+                        const reg = expiryMeta(v.registrationExpires)
+                        return (
+                          <TableRow key={v.id} hover sx={{ cursor: 'pointer' }} onClick={() => openDetail(v.id)}>
+                            <TableCell>
+                              <Typography variant="body2" fontWeight={500}>{v.name}</Typography>
+                              {v.makeModel && <Typography variant="caption" color="text.secondary">{v.makeModel}{v.year ? ` · ${v.year}` : ''}</Typography>}
+                            </TableCell>
+                            <TableCell>{v.type.replace(/_/g, ' ')}</TableCell>
+                            <TableCell><StatusChip status={v.status} kind="vehicle" /></TableCell>
+                            <TableCell>{v.hubName ?? <Typography variant="caption" color="text.secondary">{v.location || '—'}</Typography>}</TableCell>
+                            <TableCell>{v.assignedOperatorName ?? '—'}</TableCell>
+                            <TableCell>
+                              <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                                {(v.activeProjects ?? []).length === 0
+                                  ? <Typography variant="caption" color="text.secondary">—</Typography>
+                                  : (v.activeProjects ?? []).map((p) => <Chip key={p.id} size="small" label={p.name} variant="outlined" />)}
+                              </Stack>
+                            </TableCell>
+                            <TableCell align="right">{v.odometer != null ? v.odometer.toLocaleString() : '—'}</TableCell>
+                            <TableCell><Chip size="small" label={ins.label} color={ins.color} variant={ins.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
+                            <TableCell><Chip size="small" label={reg.label} color={reg.color} variant={reg.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
+                            <TableCell align="right">{v._count?.dailyChecks ?? 0}</TableCell>
+                            <TableCell align="right">{v._count?.maintenanceTasks ?? 0}</TableCell>
+                            <TableCell align="right" onClick={(e) => e.stopPropagation()}>
+                              <MutationIconButton tooltip="Edit" size="small" onClick={() => { setEditing(v); setFormOpen(true) }}><EditIcon fontSize="small" /></MutationIconButton>
+                              <MutationIconButton tooltip="Delete" size="small" onClick={() => setConfirmDelete(v)}><DeleteIcon fontSize="small" /></MutationIconButton>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      }),
+                    ])
+                  : visibleVehicles.map((v) => {
+                      const ins = expiryMeta(v.insuranceExpires)
+                      const reg = expiryMeta(v.registrationExpires)
+                      return (
+                        <TableRow key={v.id} hover sx={{ cursor: 'pointer' }} onClick={() => openDetail(v.id)}>
+                          <TableCell>
+                            <Typography variant="body2" fontWeight={500}>{v.name}</Typography>
+                            {v.makeModel && <Typography variant="caption" color="text.secondary">{v.makeModel}{v.year ? ` · ${v.year}` : ''}</Typography>}
+                          </TableCell>
+                          <TableCell>{v.type.replace(/_/g, ' ')}</TableCell>
+                          <TableCell><StatusChip status={v.status} kind="vehicle" /></TableCell>
+                          <TableCell>{v.hubName ?? <Typography variant="caption" color="text.secondary">{v.location || '—'}</Typography>}</TableCell>
+                          <TableCell>{v.assignedOperatorName ?? '—'}</TableCell>
+                          <TableCell>
+                            <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                              {(v.activeProjects ?? []).length === 0
+                                ? <Typography variant="caption" color="text.secondary">—</Typography>
+                                : (v.activeProjects ?? []).map((p) => <Chip key={p.id} size="small" label={p.name} variant="outlined" />)}
+                            </Stack>
+                          </TableCell>
+                          <TableCell align="right">{v.odometer != null ? v.odometer.toLocaleString() : '—'}</TableCell>
+                          <TableCell><Chip size="small" label={ins.label} color={ins.color} variant={ins.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
+                          <TableCell><Chip size="small" label={reg.label} color={reg.color} variant={reg.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
+                          <TableCell align="right">{v._count?.dailyChecks ?? 0}</TableCell>
+                          <TableCell align="right">{v._count?.maintenanceTasks ?? 0}</TableCell>
+                          <TableCell align="right" onClick={(e) => e.stopPropagation()}>
+                            <MutationIconButton tooltip="Edit" size="small" onClick={() => { setEditing(v); setFormOpen(true) }}><EditIcon fontSize="small" /></MutationIconButton>
+                            <MutationIconButton tooltip="Delete" size="small" onClick={() => setConfirmDelete(v)}><DeleteIcon fontSize="small" /></MutationIconButton>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })
+                }
               </TableBody>
             </Table>
           </TableContainer>

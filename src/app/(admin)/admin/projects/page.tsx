@@ -11,6 +11,7 @@ import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
 import CloseIcon from '@mui/icons-material/Close'
 import { useToast } from '@/components/shared/useToast'
+import { useCanEdit, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 
 const PROJECT_TYPES = ['CROPLAND', 'RANGELAND', 'FORESTRY', 'OTHER']
 const PROJECT_STATUSES = ['PLANNED', 'ACTIVE', 'ON_HOLD', 'COMPLETED', 'CANCELLED']
@@ -33,6 +34,10 @@ interface ProjectRow {
   endDate: string | null
   status: string
   notes: string | null
+  customer: string | null
+  code: string | null
+  sizeHa: number | null
+  sampleCount: number | null
   lead: { id: string; name: string } | null
   _count?: { rigs: number }
 }
@@ -49,6 +54,7 @@ function StatusPill({ status }: { status: string }) {
 }
 
 export default function AdminProjectsPage() {
+  const canEdit = useCanEdit()
   const showToast = useToast()
   const [projects, setProjects] = React.useState<ProjectRow[]>([])
   const [loading, setLoading] = React.useState(true)
@@ -106,10 +112,13 @@ export default function AdminProjectsPage() {
   return (
     <Box>
       <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1} mb={2}>
-        <Typography variant="h5">Projects</Typography>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={() => { setEditing(null); setFormOpen(true) }}>
+        <Stack direction="row" alignItems="center" spacing={1}>
+          <Typography variant="h5">Projects</Typography>
+          {!canEdit && <Chip size="small" label="View only" variant="outlined" />}
+        </Stack>
+        <MutationButton variant="contained" startIcon={<AddIcon />} onClick={() => { setEditing(null); setFormOpen(true) }}>
           Add Project
-        </Button>
+        </MutationButton>
       </Stack>
 
       <Paper variant="outlined">
@@ -125,7 +134,11 @@ export default function AdminProjectsPage() {
                   <TableCell>Name</TableCell>
                   <TableCell>Type</TableCell>
                   <TableCell>Status</TableCell>
+                  <TableCell>Customer</TableCell>
+                  <TableCell>Code</TableCell>
                   <TableCell>Location</TableCell>
+                  <TableCell align="right">Size (ha)</TableCell>
+                  <TableCell align="right"># Samples</TableCell>
                   <TableCell>Dates</TableCell>
                   <TableCell>Lead</TableCell>
                   <TableCell align="right">Deployments</TableCell>
@@ -138,13 +151,17 @@ export default function AdminProjectsPage() {
                     <TableCell><Typography variant="body2" fontWeight={500}>{p.name}</Typography></TableCell>
                     <TableCell>{p.type.replace(/_/g, ' ')}</TableCell>
                     <TableCell><StatusPill status={p.status} /></TableCell>
+                    <TableCell>{p.customer ?? '—'}</TableCell>
+                    <TableCell>{p.code ?? '—'}</TableCell>
                     <TableCell>{p.location ?? '—'}</TableCell>
+                    <TableCell align="right">{p.sizeHa ?? '—'}</TableCell>
+                    <TableCell align="right">{p.sampleCount ?? '—'}</TableCell>
                     <TableCell>{p.startDate || p.endDate ? `${fmt(p.startDate)} – ${fmt(p.endDate)}` : '—'}</TableCell>
                     <TableCell>{p.lead?.name ?? '—'}</TableCell>
                     <TableCell align="right">{p._count?.rigs ?? 0}</TableCell>
                     <TableCell align="right" onClick={(e) => e.stopPropagation()}>
-                      <Tooltip title="Edit"><IconButton size="small" onClick={() => { setEditing(p); setFormOpen(true) }}><EditIcon fontSize="small" /></IconButton></Tooltip>
-                      <Tooltip title="Delete"><IconButton size="small" onClick={() => setConfirmDelete(p)}><DeleteIcon fontSize="small" /></IconButton></Tooltip>
+                      <MutationIconButton size="small" tooltip="Edit" onClick={() => { setEditing(p); setFormOpen(true) }}><EditIcon fontSize="small" /></MutationIconButton>
+                      <MutationIconButton size="small" tooltip="Delete" onClick={() => setConfirmDelete(p)}><DeleteIcon fontSize="small" /></MutationIconButton>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -170,6 +187,10 @@ export default function AdminProjectsPage() {
             </Stack>
 
             <Stack spacing={0.5}>
+              <Row label="Customer" value={detail.customer ?? '—'} />
+              <Row label="Code" value={detail.code ?? '—'} />
+              <Row label="Size (ha)" value={detail.sizeHa != null ? String(detail.sizeHa) : '—'} />
+              <Row label="# Samples" value={detail.sampleCount != null ? String(detail.sampleCount) : '—'} />
               <Row label="Lead" value={detail.lead?.name ?? '—'} />
               <Row label="Start" value={fmt(detail.startDate)} />
               <Row label="End" value={fmt(detail.endDate)} />
@@ -199,8 +220,8 @@ export default function AdminProjectsPage() {
             </Box>
 
             <Stack direction="row" spacing={1} pt={1}>
-              <Button variant="outlined" startIcon={<EditIcon />} onClick={() => { setEditing(detail); setFormOpen(true) }}>Edit</Button>
-              <Button variant="outlined" color="error" startIcon={<DeleteIcon />} onClick={() => setConfirmDelete(detail)}>Delete</Button>
+              <MutationButton variant="outlined" startIcon={<EditIcon />} onClick={() => { setEditing(detail); setFormOpen(true) }}>Edit</MutationButton>
+              <MutationButton variant="outlined" color="error" startIcon={<DeleteIcon />} onClick={() => setConfirmDelete(detail)}>Delete</MutationButton>
             </Stack>
           </Stack>
         ) : null}
@@ -222,7 +243,7 @@ export default function AdminProjectsPage() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setConfirmDelete(null)}>Cancel</Button>
-          <Button color="error" variant="contained" onClick={doDelete}>Delete</Button>
+          <MutationButton color="error" variant="contained" onClick={doDelete}>Delete</MutationButton>
         </DialogActions>
       </Dialog>
     </Box>
@@ -254,6 +275,10 @@ function ProjectFormDialog({ project, onClose, onSaved, showToast }: {
   const [startDate, setStartDate] = React.useState(dateInput(project?.startDate))
   const [endDate, setEndDate] = React.useState(dateInput(project?.endDate))
   const [notes, setNotes] = React.useState(project?.notes ?? '')
+  const [customer, setCustomer] = React.useState(project?.customer ?? '')
+  const [code, setCode] = React.useState(project?.code ?? '')
+  const [sizeHa, setSizeHa] = React.useState(project?.sizeHa != null ? String(project.sizeHa) : '')
+  const [sampleCount, setSampleCount] = React.useState(project?.sampleCount != null ? String(project.sampleCount) : '')
   const [saving, setSaving] = React.useState(false)
 
   const save = async () => {
@@ -271,6 +296,10 @@ function ProjectFormDialog({ project, onClose, onSaved, showToast }: {
             startDate: startDate || null,
             endDate: endDate || null,
             notes: notes || null,
+            customer: customer || null,
+            code: code || null,
+            sizeHa: sizeHa.trim() ? Number(sizeHa) : null,
+            sampleCount: sampleCount.trim() ? Number(sampleCount) : null,
           }),
         })
       } else {
@@ -283,6 +312,10 @@ function ProjectFormDialog({ project, onClose, onSaved, showToast }: {
             ...(startDate ? { startDate } : {}),
             ...(endDate ? { endDate } : {}),
             ...(notes ? { notes } : {}),
+            ...(customer ? { customer } : {}),
+            ...(code ? { code } : {}),
+            ...(sizeHa.trim() ? { sizeHa: Number(sizeHa) } : {}),
+            ...(sampleCount.trim() ? { sampleCount: Number(sampleCount) } : {}),
           }),
         })
       }
@@ -315,6 +348,16 @@ function ProjectFormDialog({ project, onClose, onSaved, showToast }: {
             </TextField>
           </Stack>
           <TextField label="Location" value={location} onChange={(e) => setLocation(e.target.value)} fullWidth />
+          <Stack direction="row" spacing={2}>
+            <TextField label="Customer" value={customer} onChange={(e) => setCustomer(e.target.value)} fullWidth />
+            <TextField label="Code" value={code} onChange={(e) => setCode(e.target.value)} fullWidth />
+          </Stack>
+          <Stack direction="row" spacing={2}>
+            <TextField label="Size (ha)" type="number" value={sizeHa} onChange={(e) => setSizeHa(e.target.value)}
+              fullWidth inputProps={{ min: 0, step: 'any' }} />
+            <TextField label="# Samples" type="number" value={sampleCount} onChange={(e) => setSampleCount(e.target.value)}
+              fullWidth inputProps={{ min: 0, step: 1 }} />
+          </Stack>
           <Stack direction="row" spacing={2}>
             <TextField label="Start date" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} />
             <TextField label="End date" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} />

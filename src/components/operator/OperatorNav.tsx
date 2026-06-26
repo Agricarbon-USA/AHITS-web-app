@@ -8,6 +8,10 @@ import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner'
 import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck'
 import DirectionsCarIcon from '@mui/icons-material/DirectionsCar'
+import InventoryIcon from '@mui/icons-material/Inventory'
+import BuildIcon from '@mui/icons-material/Build'
+import WarehouseIcon from '@mui/icons-material/Warehouse'
+import FolderIcon from '@mui/icons-material/Folder'
 import LockResetIcon from '@mui/icons-material/LockReset'
 import LogoutIcon from '@mui/icons-material/Logout'
 import { usePathname, useRouter } from 'next/navigation'
@@ -16,7 +20,7 @@ import { useAuth } from '@/hooks/useAuth'
 const NAV_ITEMS = [
   { label: 'My Dashboard', href: '/operator/dashboard', icon: DashboardIcon },
   { label: 'Daily Check', href: '/operator/daily-check', icon: ChecklistIcon },
-  { label: 'My Rig', href: '/operator/my-rig', icon: LocalShippingIcon },
+  { label: 'My Deployment', href: '/operator/my-rig', icon: LocalShippingIcon },
   { label: 'Scan QR', href: '/operator/scan', icon: QrCodeScannerIcon },
   { label: 'Requests', href: '/operator/requests', icon: PlaylistAddCheckIcon },
 ]
@@ -26,6 +30,12 @@ const NAV_ITEMS = [
 // These render the same admin page components in a read-only (canEdit=false)
 // context — one source of truth, no duplicate screens.
 const VIEW_ITEMS = [
+  { label: 'Dashboard', href: '/admin/dashboard', icon: DashboardIcon },
+  { label: 'Inventory', href: '/admin/inventory', icon: InventoryIcon },
+  { label: 'Deployments', href: '/admin/deployments', icon: LocalShippingIcon },
+  { label: 'Maintenance', href: '/admin/maintenance', icon: BuildIcon },
+  { label: 'Hubs', href: '/admin/hubs', icon: WarehouseIcon },
+  { label: 'Projects', href: '/admin/projects', icon: FolderIcon },
   { label: 'Vehicles', href: '/admin/vehicles', icon: DirectionsCarIcon },
 ]
 

@@ -143,11 +143,15 @@ describe('Wave A — correctness blockers', () => {
     })
   })
 
-  describe('H4 — daily check requires the operator to actually operate the vehicle', () => {
+  // UR-033 (product): the ownership gate was removed; any operator may submit a
+  // daily check for any active vehicle (manual select or QR scan), including
+  // ones assigned to other operators. H4's original "must operate the vehicle"
+  // rule is superseded by this product decision.
+  describe('H4 — daily check vehicle access (UR-033: any active vehicle allowed)', () => {
     const today = new Date().toISOString().slice(0, 10)
     const checklist = [{ key: 'tires', label: 'Tires', value: 'yes' as const }]
 
-    it('rejects a daily check for a vehicle not in the operator’s active deployment', async () => {
+    it('accepts a daily check for a vehicle assigned to another operator (UR-033)', async () => {
       const someoneElsesVehicle = await createVehicle({ name: 'Truck-WA-3', assignedOperatorId: op2.id })
 
       mockSession = operatorSession(op1.id)
@@ -158,12 +162,12 @@ describe('Wave A — correctness blockers', () => {
         passFail: true,
       }))
 
-      expect(res.status).toBe(403)
-      const count = await prisma.dailyCheck.count({ where: { vehicleId: someoneElsesVehicle.id } })
-      expect(count).toBe(0)
+      expect(res.status).toBe(201)
+      const count = await prisma.dailyCheck.count({ where: { vehicleId: someoneElsesVehicle.id, operatorId: op1.id } })
+      expect(count).toBe(1)
     })
 
-    it('accepts a daily check for a vehicle in the operator’s active deployment', async () => {
+    it("accepts a daily check for a vehicle in the operator's active deployment", async () => {
       const vehicle = await createVehicle({ name: 'Truck-WA-4' })
       const { rig } = await createRig(op1.id)
       await addVehicleToRig(rig.id, vehicle.id)

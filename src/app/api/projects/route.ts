@@ -30,6 +30,10 @@ const createSchema = z
     status: z.nativeEnum(ProjectStatus).optional(),
     leadId: z.string().optional(),
     notes: z.string().optional(),
+    customer: z.string().optional(),
+    code: z.string().optional(),
+    sizeHa: z.number().nonnegative().optional(),
+    sampleCount: z.number().int().nonnegative().optional(),
   })
   .strict()
 

@@ -98,10 +98,21 @@ export async function GET(req: NextRequest) {
 
   const operatorId = session.role === 'OPERATOR' ? session.userId : (operatorIdParam ?? undefined)
 
+  // Resolve matching rigIds via deployment_projects so the filter reads the
+  // authoritative M2M table, not the legacy Rig.projectId column.
+  let projectRigIds: string[] | undefined
+  if (projectId) {
+    const rows = await prisma.$queryRaw<{ rigId: string }[]>`
+      SELECT "rigId" FROM "deployment_projects"
+      WHERE "projectId" = ${projectId} AND "removedAt" IS NULL
+    `
+    projectRigIds = rows.map((r) => r.rigId)
+  }
+
   const rigs = await prisma.rig.findMany({
     where: {
       ...(active ? { endedAt: null } : { endedAt: { not: null } }),
-      ...(projectId && { projectId }),
+      ...(projectRigIds !== undefined && { id: { in: projectRigIds } }),
       // Operators see deployments where they are primary OR secondary
       ...(session.role === 'OPERATOR'
         ? { OR: [{ operatorId: session.userId }, { secondaryOperators: { some: { operatorId: session.userId } } }] }

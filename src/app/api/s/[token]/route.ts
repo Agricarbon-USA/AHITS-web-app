@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { rateLimit, clientIp } from '@/lib/rate-limit'
 import { resolveStatusLink, markViewed, isLinkActionable, ALLOWED_ACTIONS } from '@/lib/status-links'
-import { getRequest } from '@/lib/deployment-requests'
+import { getRequest, getLineChecklist } from '@/lib/deployment-requests'
 
 // Public, login-less context for a tokenized status link. Token-gated and
 // rate-limited (the token IS the credential). Returns only the scoped fields
@@ -46,18 +46,32 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
   } else if (link.type === 'RESERVATION' && link.deploymentRequestId) {
     const result = await getRequest(link.deploymentRequestId)
     if (result) {
-      const { request, lines } = result
+      const { request } = result
+      const { lines, progress } = await getLineChecklist(
+        link.deploymentRequestId,
+        request.fulfillerHubId,
+      )
       subject = {
         kind: 'reservation',
         label: request.label,
         neededBy: request.neededBy?.toISOString() ?? null,
         requester: request.requestedByName,
         project: request.projectName,
+        progress,
         lines: lines.map((l) => ({
-          name: l.specificItemName ?? l.specificVehicleName ?? l.categoryName ?? l.itemType ?? l.vehicleType ?? l.description ?? 'Item',
-          qty: l.requestedQty,
+          id: l.id,
+          name: l.specificItemName ?? l.categoryName ?? l.itemType ?? l.vehicleType ?? l.description ?? 'Item',
+          requestedQty: l.requestedQty,
           kind: l.lineType,
-          serial: l.specificUnitSerial ?? null,
+          itemType: l.itemType,
+          fulfillmentStatus: l.fulfillmentStatus,
+          fulfilledQty: l.fulfilledQty,
+          substitutedItemId: l.substitutedItemId,
+          substitutedName: l.substitutedName,
+          resolvedUnitId: l.resolvedUnitId,
+          denyReason: l.denyReason,
+          availableUnits: l.availableUnits,
+          substitutableItems: l.substitutableItems,
         })),
       }
     }

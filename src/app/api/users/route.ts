@@ -5,6 +5,7 @@ import { requireAdmin } from '@/lib/auth/session'
 import { hashPin } from '@/lib/auth/pin'
 import { writeAudit } from '@/lib/audit'
 import { pinSchema, money } from '@/lib/validation'
+import { getActiveProjectsForOperators } from '@/lib/project-associations'
 
 export async function GET() {
   const session = await requireAdmin()
@@ -18,7 +19,14 @@ export async function GET() {
     },
     orderBy: { name: 'asc' },
   })
-  return NextResponse.json({ data: users })
+  const operatorIds = users.filter((u) => u.role === 'OPERATOR').map((u) => u.id)
+  const projectMap = await getActiveProjectsForOperators(operatorIds)
+  return NextResponse.json({
+    data: users.map((u) => ({
+      ...u,
+      activeProjects: u.role === 'OPERATOR' ? (projectMap.get(u.id) ?? []) : [],
+    })),
+  })
 }
 
 const createSchema = z.object({

@@ -335,23 +335,29 @@ async function applyReservationTransition(
   if (action === 'CONFIRMED' || action === 'PREPARED') {
     // RESERVATION → confirm (REQUESTED→STAGED); MATERIAL → complete (FORWARDED→FULFILLED)
     const transitionAction = reqInfo.requestType === 'MATERIAL' ? 'complete' : 'confirm'
-    ok = await applyRequestTransition(requestId, transitionAction, reqInfo.requestType, { decisionNote: note })
+    const confirmResult = await applyRequestTransition(requestId, transitionAction, reqInfo.requestType, { decisionNote: note })
+    ok = confirmResult.ok
     if (ok) {
       await prisma.statusLink.update({
         where: { id: link.id },
         data: { state: 'COMPLETED', completedAt: now, actedAt: now },
       })
-      const title = reqInfo.requestType === 'MATERIAL' ? 'Material request fulfilled' : 'Reservation staged'
-      const body = reqInfo.requestType === 'MATERIAL'
-        ? 'Your material request has been fulfilled by the hub.'
-        : 'Your rig reservation has been staged by the hub.'
-      await notifyRequester(reqInfo.requestedById, title, body)
+      // For MATERIAL, notify the requester (RESERVATION notification is created
+      // inside applyRequestTransition so it's atomic with the stage and includes the diff).
+      if (reqInfo.requestType === 'MATERIAL') {
+        await notifyRequester(
+          reqInfo.requestedById,
+          'Material request fulfilled',
+          'Your material request has been fulfilled by the hub.',
+        )
+      }
     }
   } else if (action === 'DECLINED') {
     // RESERVATION → decline (REQUESTED→DENIED); MATERIAL → cancel (FORWARDED→CANCELLED).
     // NOTE: for MATERIAL the hub is declining a forwarded order; we cancel it so admin can re-route.
     const transitionAction = reqInfo.requestType === 'MATERIAL' ? 'cancel' : 'decline'
-    ok = await applyRequestTransition(requestId, transitionAction, reqInfo.requestType, { decisionNote: note })
+    const declineResult = await applyRequestTransition(requestId, transitionAction, reqInfo.requestType, { decisionNote: note })
+    ok = declineResult.ok
     if (ok) {
       await prisma.statusLink.update({
         where: { id: link.id },

@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { requireAuth } from '@/lib/auth/session'
-import { getRequest, applyRequestTransition, type RequestAction } from '@/lib/deployment-requests'
+import { getRequest, getLineChecklist, applyRequestTransition, type RequestAction } from '@/lib/deployment-requests'
 import { createAlert } from '@/lib/alerts'
 import { issueStatusLink, statusLinkUrl } from '@/lib/status-links'
 import { sendEmail } from '@/lib/email/resend'
 import { genericAlertEmail } from '@/lib/email/templates'
 import { prisma } from '@/lib/prisma'
 
-const ADMIN_ONLY_ACTIONS = ['confirm', 'prepare', 'decline', 'fulfill', 'forward', 'complete'] as const
+const ADMIN_ONLY_ACTIONS = ['confirm', 'prepare', 'decline', 'fulfill', 'forward'] as const
 
 const patchSchema = z.object({
   action: z.enum(['submit', 'cancel', 'confirm', 'prepare', 'decline', 'fulfill', 'forward', 'complete']),
@@ -24,9 +24,14 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   const result = await getRequest(id)
   if (!result) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  // Operators may only read their own requests.
-  if (session.role !== 'ADMIN' && result.requestedById !== session.userId) {
+  // Operators may only read their own requests or ones forwarded to them.
+  if (session.role !== 'ADMIN' && result.requestedById !== session.userId && result.request.fulfillerOperatorId !== session.userId) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+  // For RESERVATION requests, return full checklist data (includes availableUnits + substitutableItems).
+  if (result.request.requestType === 'RESERVATION') {
+    const { lines: checklistLines, progress } = await getLineChecklist(id, result.request.fulfillerHubId)
+    return NextResponse.json({ data: { request: result.request, lines: checklistLines, progress } })
   }
   return NextResponse.json({ data: { request: result.request, lines: result.lines } })
 }
@@ -49,17 +54,35 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const result = await getRequest(id)
   if (!result) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  // Operators without admin role may only act on their own requests.
-  if (!isAdminOnly && session.role !== 'ADMIN' && result.requestedById !== session.userId) {
+  // Operators may only act on their own requests or ones forwarded to them.
+  if (!isAdminOnly && session.role !== 'ADMIN' &&
+      result.requestedById !== session.userId &&
+      result.request.fulfillerOperatorId !== session.userId) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  const ok = await applyRequestTransition(id, action as RequestAction, result.request.requestType, extra)
-  if (!ok) {
-    const msg =
-      action === 'submit'
-        ? 'Only a draft can be submitted.'
-        : 'Transition not allowed in the current state.'
+  // complete: operator must be the designated fulfiller for a MATERIAL request
+  if (action === 'complete' && session.role !== 'ADMIN') {
+    if (result.request.fulfillerOperatorId !== session.userId || result.request.requestType !== 'MATERIAL') {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+  }
+
+  const transition = await applyRequestTransition(id, action as RequestAction, result.request.requestType, extra)
+  if (!transition.ok) {
+    if (transition.code === 'INSUFFICIENT_STOCK') {
+      return NextResponse.json(
+        { error: 'Insufficient available stock', shortItems: transition.shortItems ?? [] },
+        { status: 409 },
+      )
+    }
+    if (transition.code === 'PENDING_LINES') {
+      return NextResponse.json(
+        { error: 'All lines must be checked off before staging.' },
+        { status: 409 },
+      )
+    }
+    const msg = action === 'submit' ? 'Only a draft can be submitted.' : 'Transition not allowed in the current state.'
     return NextResponse.json({ error: msg }, { status: 409 })
   }
 
@@ -82,6 +105,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         },
       }).catch(() => {})
     }
+  } else if (action === 'complete') {
+    await prisma.notification.create({
+      data: {
+        userId: result.requestedById,
+        type: 'RESERVATION_UPDATE',
+        title: 'Your material request was fulfilled',
+        body: result.request.label
+          ? `"${result.request.label}" has been marked fulfilled.`
+          : 'Your material request has been marked fulfilled.',
+        link: '/operator/requests',
+      },
+    }).catch(() => {})
   }
 
   return NextResponse.json({ ok: true })
