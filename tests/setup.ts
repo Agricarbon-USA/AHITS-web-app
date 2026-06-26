@@ -58,6 +58,9 @@ afterEach(async () => {
   await prisma.rigVehicle.deleteMany()
   await prisma.rigOperator.deleteMany()
   await prisma.rig.deleteMany()
+  // StatusLink references inventoryUnit, maintenanceTask, deploymentRequest, hub, and user —
+  // must be cleared before any of those tables are deleted. StatusLinkEvent cascades.
+  await prisma.statusLink.deleteMany()
   await prisma.inventoryUnit.deleteMany()
   await prisma.maintenanceTask.deleteMany()
   await prisma.dailyCheck.deleteMany()
