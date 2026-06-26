@@ -76,6 +76,12 @@ const dispositionSchema = z.object({
   repairHubId: z.string().optional(),
   inoperableNotes: z.string().optional(),
   photoUrls: z.array(z.string()).default([]),
+}).superRefine((v, ctx) => {
+  // G1: a "Return to Hub" disposition must name a destination hub, else the
+  // per-hub stock credit is skipped and the quantity vanishes from hub views.
+  if (v.type === 'HUB' && !v.hubId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'A return hub is required', path: ['hubId'] })
+  }
 })
 
 const removeSchema = z.object({
@@ -350,7 +356,8 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
           // if still null, skip the hub row but always restore the total so no
           // stock is lost.
           const restoreQty = Math.min(removeQty, kitItem.drawnQuantity)
-          const hubForRestore = kitItem.drawnHubId ?? kitItem.item.hubId
+          // G1: chosen destination hub wins, then drawn hub, then home hub.
+          const hubForRestore = disp.hubId ?? kitItem.drawnHubId ?? kitItem.item.hubId
           if (hubForRestore && restoreQty > 0) {
             await restoreToHub(inventoryItemId, hubForRestore, restoreQty, tx)
           }
