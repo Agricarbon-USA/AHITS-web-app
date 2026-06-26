@@ -16,6 +16,12 @@ import { StatusChip } from '@/components/shared/StatusChip'
 import { useToast } from '@/components/shared/useToast'
 import { useCanEdit, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 import { groupBy } from '@/lib/utils'
+import { uploadDocument } from '@/lib/photoStore'
+
+const RENTAL_PERIODS: { value: 'DAY' | 'WEEK' | 'MONTH' | 'FLAT'; label: string }[] = [
+  { value: 'DAY', label: '/ day' }, { value: 'WEEK', label: '/ week' },
+  { value: 'MONTH', label: '/ month' }, { value: 'FLAT', label: 'flat' },
+]
 
 const VEHICLE_TYPES = ['TRUCK', 'TRAILER', 'POLARIS_UTV', 'CAN_AM_UTV', 'CHRISTIE_DRILL', 'ATV', 'OTHER']
 const VEHICLE_STATUSES = ['ACTIVE', 'IN_MAINTENANCE', 'OUT_OF_SERVICE', 'RETIRED']
@@ -38,6 +44,17 @@ interface VehicleRow {
   insuranceExpires: string | null
   registrationExpires: string | null
   notes: string | null
+  isRental: boolean
+  rentalCompany: string | null
+  rentalAgreementNumber: string | null
+  rentalAgreementUrl: string | null
+  rentalStartDate: string | null
+  rentalEndDate: string | null
+  rentalLocation: string | null
+  rentalReturnLocation: string | null
+  rentalCostAmount: string | null
+  rentalCostPeriod: 'DAY' | 'WEEK' | 'MONTH' | 'FLAT' | null
+  rentalOneWay: boolean
   _count?: { dailyChecks: number; maintenanceTasks: number }
 }
 
@@ -80,6 +97,7 @@ export default function AdminVehiclesPage() {
   const [filterStatus, setFilterStatus] = React.useState('')
   const [filterHub, setFilterHub] = React.useState('')
   const [filterProject, setFilterProject] = React.useState('')
+  const [filterRental, setFilterRental] = React.useState('') // '' = all, 'RENTAL', 'OWNED'
   const [projects, setProjects] = React.useState<{ id: string; name: string }[]>([])
   const [sortKey, setSortKey] = React.useState<SortKey>('name')
   const [sortDir, setSortDir] = React.useState<'asc' | 'desc'>('asc')
@@ -126,6 +144,8 @@ export default function AdminVehiclesPage() {
       if (filterStatus && v.status !== filterStatus) return false
       if (filterHub && (v.hubId ?? '') !== filterHub) return false
       if (filterProject && !v.activeProjects?.some((p) => p.id === filterProject)) return false
+      if (filterRental === 'RENTAL' && !v.isRental) return false
+      if (filterRental === 'OWNED' && v.isRental) return false
       if (q) {
         const hay = `${v.name} ${v.makeModel ?? ''} ${v.licensePlate ?? ''} ${v.vin ?? ''} ${v.hubName ?? ''} ${v.assignedOperatorName ?? ''}`.toLowerCase()
         if (!hay.includes(q)) return false
@@ -148,7 +168,7 @@ export default function AdminVehiclesPage() {
       if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir
       return String(av).localeCompare(String(bv)) * dir
     })
-  }, [vehicles, search, filterType, filterStatus, filterHub, filterProject, sortKey, sortDir])
+  }, [vehicles, search, filterType, filterStatus, filterHub, filterProject, filterRental, sortKey, sortDir])
 
   const openDetail = async (id: string) => {
     setDetailLoading(true)
@@ -227,8 +247,13 @@ export default function AdminVehiclesPage() {
               {projects.map((p) => <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>)}
             </TextField>
           )}
-          {(search || filterType || filterStatus || filterHub || filterProject) && (
-            <Button size="small" onClick={() => { setSearch(''); setFilterType(''); setFilterStatus(''); setFilterHub(''); setFilterProject('') }}>Clear</Button>
+          <TextField select size="small" label="Ownership" value={filterRental} onChange={(e) => setFilterRental(e.target.value)} sx={{ minWidth: 140 }}>
+            <MenuItem value="">All</MenuItem>
+            <MenuItem value="RENTAL">Rentals</MenuItem>
+            <MenuItem value="OWNED">Owned</MenuItem>
+          </TextField>
+          {(search || filterType || filterStatus || filterHub || filterProject || filterRental) && (
+            <Button size="small" onClick={() => { setSearch(''); setFilterType(''); setFilterStatus(''); setFilterHub(''); setFilterProject(''); setFilterRental('') }}>Clear</Button>
           )}
           <Box flexGrow={1} />
           <FormControlLabel
@@ -293,7 +318,11 @@ export default function AdminVehiclesPage() {
                         return (
                           <TableRow key={v.id} hover sx={{ cursor: 'pointer' }} onClick={() => openDetail(v.id)}>
                             <TableCell>
-                              <Typography variant="body2" fontWeight={500}>{v.name}</Typography>
+                              <Stack direction="row" spacing={0.5} alignItems="center">
+                                <Typography variant="body2" fontWeight={500}>{v.name}</Typography>
+                                {v.isRental && <Chip label="Rental" size="small" color="warning" variant="outlined" sx={{ height: 18, fontSize: 10 }} />}
+                                {v.isRental && !v.rentalAgreementUrl && <Chip label="Agreement needed" size="small" color="error" variant="outlined" sx={{ height: 18, fontSize: 10 }} />}
+                              </Stack>
                               {v.makeModel && <Typography variant="caption" color="text.secondary">{v.makeModel}{v.year ? ` · ${v.year}` : ''}</Typography>}
                             </TableCell>
                             <TableCell>{v.type.replace(/_/g, ' ')}</TableCell>
@@ -389,6 +418,45 @@ export default function AdminVehiclesPage() {
                 <Detail label="Registration expires" value={expiryMeta(detail.registrationExpires).label} color={expiryMeta(detail.registrationExpires).color} />
               </Stack>
             </Box>
+
+            {detail.isRental && (
+              <>
+                <Divider />
+                <Box>
+                  <Stack direction="row" spacing={1} alignItems="center" mb={0.5}>
+                    <Typography variant="subtitle2">Rental</Typography>
+                    {!detail.rentalAgreementUrl && <Chip label="Agreement needed" size="small" color="error" variant="outlined" sx={{ height: 18, fontSize: 10 }} />}
+                  </Stack>
+                  <Stack spacing={0.5}>
+                    <Detail label="Company" value={detail.rentalCompany ?? '—'} />
+                    <Detail label="Agreement #" value={detail.rentalAgreementNumber ?? '—'} />
+                    <Detail
+                      label="Agreement file"
+                      value={detail.rentalAgreementUrl ? 'Attached' : 'Not uploaded'}
+                      color={detail.rentalAgreementUrl ? 'default' : 'error'}
+                    />
+                    <Detail label="Rental dates" value={
+                      detail.rentalStartDate || detail.rentalEndDate
+                        ? `${detail.rentalStartDate ? new Date(detail.rentalStartDate).toLocaleDateString() : '—'} → ${detail.rentalEndDate ? new Date(detail.rentalEndDate).toLocaleDateString() : '—'}`
+                        : '—'
+                    } />
+                    <Detail label="Pickup location" value={detail.rentalLocation ?? '—'} />
+                    {detail.rentalOneWay && <Detail label="Return location" value={detail.rentalReturnLocation ?? '—'} />}
+                    <Detail label="Cost basis" value={
+                      detail.rentalCostAmount != null && detail.rentalCostPeriod
+                        ? `$${Number(detail.rentalCostAmount).toLocaleString()} ${detail.rentalCostPeriod === 'FLAT' ? 'flat' : `/ ${detail.rentalCostPeriod.toLowerCase()}`}`
+                        : '—'
+                    } />
+                    <Detail label="One-way" value={detail.rentalOneWay ? 'Yes' : 'No'} />
+                  </Stack>
+                  {detail.rentalAgreementUrl && (
+                    <Button size="small" variant="outlined" component="a" href={detail.rentalAgreementUrl} target="_blank" rel="noopener" sx={{ mt: 1 }}>
+                      View agreement
+                    </Button>
+                  )}
+                </Box>
+              </>
+            )}
 
             {detail.notes && (
               <Box><Typography variant="subtitle2" gutterBottom>Notes</Typography><Typography variant="body2" color="text.secondary">{detail.notes}</Typography></Box>
@@ -498,6 +566,34 @@ function VehicleFormDialog({ vehicle, hubs, onClose, onSaved, showToast }: {
   const [notes, setNotes] = React.useState(vehicle?.notes ?? '')
   const [saving, setSaving] = React.useState(false)
 
+  // NEW-5: rental metadata (lets an admin edit a rental — incl. attaching a
+  // late agreement to clear the "Agreement needed" flag).
+  const [isRental, setIsRental] = React.useState(vehicle?.isRental ?? false)
+  const [rentalCompany, setRentalCompany] = React.useState(vehicle?.rentalCompany ?? '')
+  const [rentalAgreementNumber, setRentalAgreementNumber] = React.useState(vehicle?.rentalAgreementNumber ?? '')
+  const [rentalAgreementUrl, setRentalAgreementUrl] = React.useState(vehicle?.rentalAgreementUrl ?? '')
+  const [rentalStartDate, setRentalStartDate] = React.useState(dateInput(vehicle?.rentalStartDate))
+  const [rentalEndDate, setRentalEndDate] = React.useState(dateInput(vehicle?.rentalEndDate))
+  const [rentalLocation, setRentalLocation] = React.useState(vehicle?.rentalLocation ?? '')
+  const [rentalReturnLocation, setRentalReturnLocation] = React.useState(vehicle?.rentalReturnLocation ?? '')
+  const [rentalCostAmount, setRentalCostAmount] = React.useState(vehicle?.rentalCostAmount != null ? String(vehicle.rentalCostAmount) : '')
+  const [rentalCostPeriod, setRentalCostPeriod] = React.useState<string>(vehicle?.rentalCostPeriod ?? '')
+  const [rentalOneWay, setRentalOneWay] = React.useState(vehicle?.rentalOneWay ?? false)
+  const [agreementUploading, setAgreementUploading] = React.useState(false)
+
+  const uploadAgreement = async (file: File | undefined) => {
+    if (!file) return
+    setAgreementUploading(true)
+    try {
+      const url = await uploadDocument(file)
+      setRentalAgreementUrl(url)
+    } catch (e) {
+      showToast({ message: e instanceof Error ? e.message : 'Upload failed', severity: 'error' })
+    } finally {
+      setAgreementUploading(false)
+    }
+  }
+
   const toIso = (d: string) => (d ? new Date(d).toISOString() : null)
   const numOrNull = (s: string) => (s.trim() === '' ? null : parseInt(s, 10))
 
@@ -524,6 +620,18 @@ function VehicleFormDialog({ vehicle, hubs, onClose, onSaved, showToast }: {
             insuranceExpires: insIso,
             registrationExpires: regIso,
             notes: notes || null,
+            // NEW-5 rental block (PATCH schema is nullable).
+            isRental,
+            rentalCompany: isRental ? (rentalCompany || null) : null,
+            rentalAgreementNumber: isRental ? (rentalAgreementNumber || null) : null,
+            rentalAgreementUrl: isRental ? (rentalAgreementUrl || null) : null,
+            rentalStartDate: isRental && rentalStartDate ? rentalStartDate : null,
+            rentalEndDate: isRental && rentalEndDate ? rentalEndDate : null,
+            rentalLocation: isRental ? (rentalLocation || null) : null,
+            rentalReturnLocation: isRental && rentalOneWay ? (rentalReturnLocation || null) : null,
+            rentalCostAmount: isRental && rentalCostAmount.trim() !== '' && !Number.isNaN(Number(rentalCostAmount)) ? Number(rentalCostAmount) : null,
+            rentalCostPeriod: isRental && rentalCostPeriod ? rentalCostPeriod : null,
+            rentalOneWay: isRental ? rentalOneWay : false,
           }),
         })
       } else {
@@ -542,6 +650,20 @@ function VehicleFormDialog({ vehicle, hubs, onClose, onSaved, showToast }: {
             ...(insIso ? { insuranceExpires: insIso } : {}),
             ...(regIso ? { registrationExpires: regIso } : {}),
             ...(notes ? { notes } : {}),
+            // NEW-5 rental block (POST schema is optional — omit empties, don't send null).
+            ...(isRental ? {
+              isRental: true,
+              rentalOneWay,
+              ...(rentalCompany ? { rentalCompany } : {}),
+              ...(rentalAgreementNumber ? { rentalAgreementNumber } : {}),
+              ...(rentalAgreementUrl ? { rentalAgreementUrl } : {}),
+              ...(rentalStartDate ? { rentalStartDate } : {}),
+              ...(rentalEndDate ? { rentalEndDate } : {}),
+              ...(rentalLocation ? { rentalLocation } : {}),
+              ...(rentalOneWay && rentalReturnLocation ? { rentalReturnLocation } : {}),
+              ...(rentalCostAmount.trim() !== '' && !Number.isNaN(Number(rentalCostAmount)) ? { rentalCostAmount: Number(rentalCostAmount) } : {}),
+              ...(rentalCostPeriod ? { rentalCostPeriod } : {}),
+            } : {}),
           }),
         })
       }
@@ -598,6 +720,55 @@ function VehicleFormDialog({ vehicle, hubs, onClose, onSaved, showToast }: {
             <TextField label="Registration expires" type="date" value={registrationExpires} onChange={(e) => setRegistrationExpires(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} />
           </Stack>
           <TextField label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} fullWidth multiline rows={2} />
+
+          <Divider />
+          <FormControlLabel
+            control={<Switch checked={isRental} onChange={(e) => setIsRental(e.target.checked)} />}
+            label="This is a rental vehicle"
+          />
+          {isRental && (
+            <Stack spacing={2}>
+              <TextField label="Rental company" value={rentalCompany} onChange={(e) => setRentalCompany(e.target.value)} fullWidth
+                helperText="e.g. Enterprise, United Rentals" />
+              <Stack direction="row" spacing={2}>
+                <TextField label="Rental start" type="date" value={rentalStartDate} onChange={(e) => setRentalStartDate(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} />
+                <TextField label="Rental end" type="date" value={rentalEndDate} onChange={(e) => setRentalEndDate(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} />
+              </Stack>
+              <TextField label="Pickup location" value={rentalLocation} onChange={(e) => setRentalLocation(e.target.value)} fullWidth />
+              <FormControlLabel
+                control={<Switch checked={rentalOneWay} onChange={(e) => setRentalOneWay(e.target.checked)} />}
+                label="One-way rental"
+              />
+              {rentalOneWay && (
+                <TextField label="Return location" value={rentalReturnLocation} onChange={(e) => setRentalReturnLocation(e.target.value)} fullWidth />
+              )}
+              <Stack direction="row" spacing={2}>
+                <TextField label="Cost" value={rentalCostAmount} onChange={(e) => setRentalCostAmount(e.target.value)} sx={{ flex: 1 }} inputProps={{ inputMode: 'decimal' }} />
+                <TextField select label="Per" value={rentalCostPeriod} onChange={(e) => setRentalCostPeriod(e.target.value)} sx={{ width: 130 }}>
+                  {RENTAL_PERIODS.map((p) => <MenuItem key={p.value} value={p.value}>{p.label}</MenuItem>)}
+                </TextField>
+              </Stack>
+              <TextField label="Agreement number" value={rentalAgreementNumber} onChange={(e) => setRentalAgreementNumber(e.target.value)} fullWidth />
+              <Box>
+                <input id="admin-rental-agreement" type="file" accept="image/*,application/pdf" hidden
+                  onChange={(e) => uploadAgreement(e.target.files?.[0])} />
+                {rentalAgreementUrl ? (
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <Button size="small" variant="outlined" component="a" href={rentalAgreementUrl} target="_blank" rel="noopener">View agreement</Button>
+                    <Button size="small" color="error" onClick={() => setRentalAgreementUrl('')}>Remove</Button>
+                  </Stack>
+                ) : (
+                  <Stack spacing={0.5}>
+                    <Button size="small" variant="outlined" disabled={agreementUploading}
+                      onClick={() => document.getElementById('admin-rental-agreement')?.click()}>
+                      {agreementUploading ? 'Uploading…' : 'Upload agreement (PDF or image)'}
+                    </Button>
+                    <Typography variant="caption" color="warning.main">No agreement attached — the rental will be flagged until one is uploaded.</Typography>
+                  </Stack>
+                )}
+              </Box>
+            </Stack>
+          )}
         </Stack>
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>

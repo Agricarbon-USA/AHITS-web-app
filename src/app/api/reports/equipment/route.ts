@@ -45,6 +45,45 @@ interface ReportRow {
   maintenanceEvents: number
   maintenanceSpend: number
   downtimeDays: number
+  // NEW-5: rental cost analysis (vehicles only; units are never rentals).
+  isRental: boolean
+  rentalCompany: string | null
+  rentalCostBasis: string | null
+  rentalCost: number
+}
+
+type RentalPeriod = 'DAY' | 'WEEK' | 'MONTH' | 'FLAT'
+
+function money(n: number): string {
+  return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+/** Human-readable cost basis, e.g. "$1,200.00 / week" or "$500.00 flat". */
+function rentalBasisLabel(amount: number, period: RentalPeriod): string {
+  return period === 'FLAT' ? `${money(amount)} flat` : `${money(amount)} / ${period.toLowerCase()}`
+}
+
+/**
+ * Rental cost accrued within the report window = rate × duration.
+ * Duration uses the rental contract dates when present, else falls back to the
+ * asset's deployed days in the window. FLAT is a one-time fee counted when the
+ * rental's span (or any deployment) falls in the window.
+ */
+function rentalCostInWindow(
+  v: { isRental: boolean; rentalCostAmount: { toString(): string } | null; rentalCostPeriod: string | null; rentalStartDate: Date | null; rentalEndDate: Date | null },
+  from: Date, to: Date, fallbackDays: number,
+): number {
+  if (!v.isRental || v.rentalCostAmount == null || !v.rentalCostPeriod) return 0
+  const amount = dec(v.rentalCostAmount)
+  const period = v.rentalCostPeriod as RentalPeriod
+  const hasDates = v.rentalStartDate != null && v.rentalEndDate != null
+  if (period === 'FLAT') {
+    if (hasDates) return overlapDays(v.rentalStartDate as Date, v.rentalEndDate as Date, from, to) > 0 ? amount : 0
+    return fallbackDays > 0 ? amount : 0
+  }
+  const days = hasDates ? overlapDays(v.rentalStartDate as Date, v.rentalEndDate as Date, from, to) : fallbackDays
+  const perDay = period === 'DAY' ? amount : period === 'WEEK' ? amount / 7 : amount / 30
+  return perDay * days
 }
 
 function maintInWindow(t: { createdAt: Date; completedAt: Date | null }, from: Date, to: Date): boolean {
@@ -99,6 +138,7 @@ export async function GET(req: NextRequest) {
     const downtimeDays = tasks
       .filter((t) => t.isDamageReport || t.status === 'IN_PROGRESS' || t.status === 'OVERDUE')
       .reduce((sum, t) => sum + overlapDays(t.createdAt, t.completedAt ?? now, from, to), 0)
+    const rentalCost = rentalCostInWindow(v, from, to, daysDeployed)
     rows.push({
       assetType: 'VEHICLE',
       id: v.id,
@@ -112,6 +152,12 @@ export async function GET(req: NextRequest) {
       maintenanceEvents: tasks.length,
       maintenanceSpend: round(maintenanceSpend, 2),
       downtimeDays: round(downtimeDays),
+      isRental: v.isRental,
+      rentalCompany: v.rentalCompany ?? null,
+      rentalCostBasis: v.isRental && v.rentalCostAmount != null && v.rentalCostPeriod
+        ? rentalBasisLabel(dec(v.rentalCostAmount), v.rentalCostPeriod as RentalPeriod)
+        : null,
+      rentalCost: round(rentalCost, 2),
     })
   }
 
@@ -136,6 +182,10 @@ export async function GET(req: NextRequest) {
       maintenanceEvents: tasks.length,
       maintenanceSpend: round(maintenanceSpend, 2),
       downtimeDays: round(downtimeDays),
+      isRental: false,
+      rentalCompany: null,
+      rentalCostBasis: null,
+      rentalCost: 0,
     })
   }
 
@@ -151,15 +201,18 @@ export async function GET(req: NextRequest) {
     totalMaintenanceEvents: rows.reduce((s, r) => s + r.maintenanceEvents, 0),
     avgUtilizationPct: rows.length ? round(rows.reduce((s, r) => s + r.utilizationPct, 0) / rows.length) : 0,
     totalDowntimeDays: round(rows.reduce((s, r) => s + r.downtimeDays, 0)),
+    rentalCount: rows.filter((r) => r.isRental).length,
+    totalRentalCost: round(rows.reduce((s, r) => s + r.rentalCost, 0), 2),
   }
 
   if (searchParams.get('format') === 'csv') {
-    const headers = ['Asset Type', 'Name', 'Identifier', 'Kind', 'Status', 'Deployments', 'Days Deployed', 'Utilization %', 'Maintenance Events', 'Maintenance Spend', 'Downtime Days']
+    const headers = ['Asset Type', 'Name', 'Identifier', 'Kind', 'Status', 'Deployments', 'Days Deployed', 'Utilization %', 'Maintenance Events', 'Maintenance Spend', 'Downtime Days', 'Rental', 'Rental Company', 'Rental Cost Basis', 'Rental Cost (window)']
     const lines = [headers.join(',')]
     for (const r of rows) {
       lines.push([
         r.assetType, r.name, r.identifier, r.kind, r.status, r.deployments,
         r.daysDeployed, r.utilizationPct, r.maintenanceEvents, r.maintenanceSpend, r.downtimeDays,
+        r.isRental ? 'Yes' : 'No', r.rentalCompany, r.rentalCostBasis, r.isRental ? r.rentalCost : '',
       ].map(csvCell).join(','))
     }
     const csv = lines.join('\n')
