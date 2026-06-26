@@ -3,11 +3,15 @@ import { AdminNav } from '@/components/admin/AdminNav'
 import { NotificationBell } from '@/components/shared/NotificationBell'
 import { ToastProvider } from '@/components/shared/useToast'
 import { ReadOnlyProvider } from '@/components/shared/ReadOnly'
-import { getSession } from '@/lib/auth/session'
+import { getSessionClaims } from '@/lib/auth/session'
 import { redirect } from 'next/navigation'
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  const session = await getSession()
+  // Option A (UR-007/026): verify the JWT locally (no DB) so the shell renders
+  // offline. `canEdit` here is presentational only — every mutating admin API
+  // route still calls requireAdmin() (DB-backed), so a demoted/ revoked user sees
+  // the shell from their token but cannot actually mutate.
+  const session = await getSessionClaims()
   // Admins get full access; operators are admitted READ-ONLY (workplan §6) and
   // restricted to the OPERATOR_VIEW_ADMIN_PATHS subset by proxy.ts. Any other
   // session is bounced to login.

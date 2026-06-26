@@ -73,6 +73,31 @@ export async function getSession(): Promise<SessionPayload | null> {
 }
 
 /**
+ * Verify the session JWT LOCALLY (no DB) and return its signed claims, or null
+ * if there is no valid/unexpired token.
+ *
+ * UR-007/026 (Option A): used ONLY by the server layout shell gate so a valid,
+ * unexpired token renders the app **offline** (the DB is unreachable, but the
+ * token is cryptographically verifiable on its own). It is deliberately NOT the
+ * authority for revocation/suspension/role/PIN — `getSession()` (DB-backed)
+ * stays the gate on every API route, so a revoked or demoted user is rejected on
+ * the next online action. `mustChangePin` is DB-only, reported false here; the
+ * PinChangeGate re-checks via /api/auth/me when online.
+ */
+export async function getSessionClaims(): Promise<SessionPayload | null> {
+  const cookieStore = await cookies()
+  const token = cookieStore.get(SESSION_COOKIE)?.value
+  if (!token) return null
+  try {
+    const { payload } = await jwtVerify(token, getSecret())
+    const c = payload as unknown as SignedClaims
+    return { userId: c.userId, role: c.role, name: c.name, email: c.email, mustChangePin: false }
+  } catch {
+    return null
+  }
+}
+
+/**
  * The current session, or null if unauthenticated. A named alias of
  * `getSession()` for route handlers whose only gate is "must be logged in" —
  * callers return 401 on null.

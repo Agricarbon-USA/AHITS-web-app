@@ -38,7 +38,10 @@ const serwist = new Serwist({
       // (NetworkFirst) but valid for up to the PRD's 7 days without a sync.
       matcher: ({ sameOrigin, url: { pathname } }) =>
         sameOrigin &&
-        (pathname === '/api/dashboard' ||
+        // UR-007/026: cache the identity endpoint so useAuth resolves offline
+        // from cache (operator stays "logged in") instead of a hard fetch error.
+        (pathname === '/api/auth/me' ||
+          pathname === '/api/dashboard' ||
           pathname.startsWith('/api/deployments') ||
           pathname.startsWith('/api/inventory') ||
           pathname.startsWith('/api/vehicles') ||
@@ -56,16 +59,19 @@ const serwist = new Serwist({
         ],
       }),
     },
-    // Operator navigations: serve the cached shell when the network is slow/absent
-    // so the app opens cold offline.
+    // App navigations: serve the cached shell when the network is slow/absent so
+    // the app opens cold offline. UR-026: include /admin too — operators browse
+    // admin pages read-only, and without a cached shell those navigations hit the
+    // offline server and bounce to /login.
     {
       matcher: ({ request, url: { pathname } }) =>
-        request.mode === 'navigate' && pathname.startsWith('/operator'),
+        request.mode === 'navigate' &&
+        (pathname.startsWith('/operator') || pathname.startsWith('/admin')),
       handler: new NetworkFirst({
-        cacheName: 'ahits-operator-pages',
+        cacheName: 'ahits-app-pages',
         networkTimeoutSeconds: 3,
         plugins: [
-          new ExpirationPlugin({ maxEntries: 32, maxAgeSeconds: 7 * 24 * 60 * 60 }),
+          new ExpirationPlugin({ maxEntries: 48, maxAgeSeconds: 7 * 24 * 60 * 60 }),
         ],
       }),
     },
