@@ -9,9 +9,18 @@ import {
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import ExpandLessIcon from '@mui/icons-material/ExpandLess'
 import SendIcon from '@mui/icons-material/Send'
+import AddIcon from '@mui/icons-material/Add'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { useToast } from '@/components/shared/useToast'
+import { MutationButton } from '@/components/shared/ReadOnly'
 import { FulfillmentChecklist, type ChecklistLine, type LineActionData } from '@/components/shared/FulfillmentChecklist'
+import {
+  RequestComposer,
+  type ProjectOption,
+  type InventoryOption,
+  type VehicleOption,
+  type CategoryOption,
+} from '@/components/shared/RequestComposer'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -501,6 +510,12 @@ export default function AdminRequestsPage() {
   const [requests, setRequests] = React.useState<ReqRow[] | null>(null)
   const [hubs, setHubs] = React.useState<HubOption[]>([])
   const [operators, setOperators] = React.useState<OperatorOption[]>([])
+  const [projects, setProjects] = React.useState<ProjectOption[]>([])
+  const [inventory, setInventory] = React.useState<InventoryOption[]>([])
+  const [vehicles, setVehicles] = React.useState<VehicleOption[]>([])
+  const [categories, setCategories] = React.useState<CategoryOption[]>([])
+  const [composerOpen, setComposerOpen] = React.useState(false)
+  const [composerDataLoaded, setComposerDataLoaded] = React.useState(false)
   const [filterType, setFilterType] = React.useState('ALL')
   const [filterStatus, setFilterStatus] = React.useState('ALL')
   const [filterHub, setFilterHub] = React.useState('ALL')
@@ -531,6 +546,23 @@ export default function AdminRequestsPage() {
     void loadMeta()
   }, [load])
 
+  // Lazy-load the data the composer needs (hubs/operators are already loaded above).
+  const openComposer = async () => {
+    setComposerOpen(true)
+    if (composerDataLoaded) return
+    const [projectsRes, inventoryRes, vehiclesRes, categoriesRes] = await Promise.all([
+      fetch('/api/projects'),
+      fetch('/api/inventory?pageSize=200'),
+      fetch('/api/vehicles'),
+      fetch('/api/categories'),
+    ])
+    if (projectsRes.ok) { const d = await projectsRes.json(); setProjects((d.data as ProjectOption[]) ?? []) }
+    if (inventoryRes.ok) { const d = await inventoryRes.json(); setInventory((d.data as InventoryOption[]) ?? []) }
+    if (vehiclesRes.ok) { const d = await vehiclesRes.json(); setVehicles((d.data as VehicleOption[]) ?? []) }
+    if (categoriesRes.ok) setCategories((await categoriesRes.json()) as CategoryOption[])
+    setComposerDataLoaded(true)
+  }
+
   const filtered = React.useMemo(() => {
     if (!requests) return []
     return requests.filter((r) => {
@@ -549,7 +581,12 @@ export default function AdminRequestsPage() {
     <Box>
       <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h5">Deployment Requests</Typography>
-        <Button size="small" variant="outlined" onClick={() => void load()}>Refresh</Button>
+        <Stack direction="row" spacing={1}>
+          <MutationButton size="small" variant="contained" startIcon={<AddIcon />} onClick={() => void openComposer()}>
+            New Request
+          </MutationButton>
+          <Button size="small" variant="outlined" onClick={() => void load()}>Refresh</Button>
+        </Stack>
       </Stack>
 
       <ToggleButtonGroup
@@ -598,6 +635,32 @@ export default function AdminRequestsPage() {
             <RequestCard key={req.id} req={req} hubs={hubs} operators={operators} onRefresh={load} />
           ))}
         </Stack>
+      )}
+
+      {composerOpen && (
+        <RequestComposer
+          hubs={hubs}
+          projects={projects}
+          inventory={inventory}
+          vehicles={vehicles}
+          categories={categories}
+          operators={operators}
+          onClose={() => setComposerOpen(false)}
+          onSubmit={async (body) => {
+            const res = await fetch('/api/deployment-requests', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            })
+            if (res.ok) {
+              showToast({ message: 'Request created.', severity: 'success' })
+              await load()
+              return { ok: true }
+            }
+            const d = await res.json().catch(() => ({}))
+            return { ok: false, error: typeof d.error === 'string' ? d.error : 'Failed to create request.' }
+          }}
+        />
       )}
     </Box>
   )
