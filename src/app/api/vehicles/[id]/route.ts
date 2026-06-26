@@ -23,6 +23,19 @@ const vehicleUpdateSchema = z
     insuranceExpires: z.coerce.date().nullable(),
     registrationExpires: z.coerce.date().nullable(),
     notes: z.string().nullable(),
+    // NEW-5: rental metadata. isRental/rentalOneWay are NOT NULL columns, so they
+    // can be set but not nulled; the rest are clearable.
+    isRental: z.boolean(),
+    rentalCompany: z.string().nullable(),
+    rentalAgreementNumber: z.string().nullable(),
+    rentalAgreementUrl: z.string().nullable(),
+    rentalStartDate: z.coerce.date().nullable(),
+    rentalEndDate: z.coerce.date().nullable(),
+    rentalLocation: z.string().nullable(),
+    rentalReturnLocation: z.string().nullable(),
+    rentalCostAmount: z.number().nonnegative().nullable(),
+    rentalCostPeriod: z.enum(['DAY', 'WEEK', 'MONTH', 'FLAT']).nullable(),
+    rentalOneWay: z.boolean(),
   })
   .partial()
   .strict()
