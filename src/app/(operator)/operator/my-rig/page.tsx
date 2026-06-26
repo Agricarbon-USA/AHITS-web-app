@@ -523,6 +523,16 @@ function NewDeploymentDialog({
             {kitItems.size === 0 && (
               <Alert severity="warning" sx={{ mt: 1 }}>Starting with empty kit</Alert>
             )}
+            {/* UR-006: surface exactly what blocks launch HERE (on the kit step),
+                so the operator isn't left staring at a greyed-out Launch button on
+                the next step with no explanation. */}
+            {(hasUnselectedSerialized || (hasConsumableInKit && !sourceHubId)) && (
+              <Alert severity="info" sx={{ mt: 2 }}>
+                Before you can launch:
+                {hasUnselectedSerialized && <div>• Pick a unit for each selected serialized item above.</div>}
+                {hasConsumableInKit && !sourceHubId && <div>• Choose a source hub for the consumable items.</div>}
+              </Alert>
+            )}
           </Box>
         )}
 
@@ -543,11 +553,17 @@ function NewDeploymentDialog({
         <Button onClick={onClose} disabled={loading}>Cancel</Button>
         {step > 0 && <Button onClick={() => setStep((s) => s - 1)} disabled={loading}>Back</Button>}
         {step < 3 ? (
-          <Button variant="contained" onClick={() => setStep((s) => s + 1)}>Next</Button>
+          // UR-006: block leaving the kit step until serialized units are picked
+          // and a source hub is chosen — so the user can never reach the note step
+          // (and the Launch button) in a state that leaves Launch silently disabled.
+          <Button variant="contained" onClick={() => setStep((s) => s + 1)}
+            disabled={loading || (step === 2 && (hasUnselectedSerialized || (hasConsumableInKit && !sourceHubId)))}>
+            Next
+          </Button>
         ) : (
           <Button variant="contained" onClick={launch} disabled={!note.trim() || loading || hasUnselectedSerialized || (hasConsumableInKit && !sourceHubId)}
             startIcon={loading ? <CircularProgress size={16} color="inherit" /> : null}>
-            {loading ? 'Launching…' : 'Launch Deployment'}
+            {loading ? 'Launching…' : !note.trim() ? 'Enter a note to launch' : 'Launch Deployment'}
           </Button>
         )}
       </DialogActions>
@@ -1390,9 +1406,17 @@ export default function MyRigPage() {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload),
                   })
-                  const vJson = await vRes.json()
-                  if (!vRes.ok) { setRentalError(vJson.error?.formErrors?.[0] ?? vJson.error ?? 'Failed to create vehicle'); return }
-                  const vehicleId: string = vJson.data.id
+                  // Guard .json() — a non-JSON response (auth redirect, 502) must
+                  // surface an error, not throw past the catch and leave the dialog
+                  // looking like nothing happened.
+                  const vJson = await vRes.json().catch(() => ({} as { data?: { id: string }; error?: unknown }))
+                  if (!vRes.ok) {
+                    const e = (vJson as { error?: { formErrors?: string[] } | string }).error
+                    setRentalError((typeof e === 'object' && e?.formErrors?.[0]) || (typeof e === 'string' ? e : '') || 'Failed to create vehicle')
+                    return
+                  }
+                  const vehicleId: string | undefined = (vJson as { data?: { id: string } }).data?.id
+                  if (!vehicleId) { setRentalError('Failed to create vehicle'); return }
                   const addRes = await fetch(`/api/deployments/${rig.id}/vehicles`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1407,6 +1431,8 @@ export default function MyRigPage() {
                   setIsRentalToggle(false)
                   setRentalFields({})
                   await load()
+                } catch (e) {
+                  setRentalError(e instanceof Error ? e.message : 'Failed to add rental vehicle')
                 } finally {
                   setRentalSubmitLoading(false)
                 }

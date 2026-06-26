@@ -89,11 +89,18 @@ const createSchema = z.object({
 })
 
 export async function POST(req: NextRequest) {
-  const session = await requireAdmin()
-  if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const session = await requireAuth()
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const parsed = createSchema.safeParse(await req.json())
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
+
+  // G2/rental: an operator may create ONLY a rental vehicle (for their own active
+  // rig) — the operator + admin "Add Rental" flows both POST here. Non-rental
+  // fleet vehicles remain admin-only.
+  if (session.role !== 'ADMIN' && parsed.data.isRental !== true) {
+    return NextResponse.json({ error: 'Only admins can add fleet vehicles.' }, { status: 403 })
+  }
 
   // hubId is newer than the generated client; create with the typed fields, then
   // set hubId via raw SQL so this works pre- and post-regeneration.
