@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/auth/session'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { sniffImageMime, extForImageMime } from '@/lib/photo-security'
 
 const BUCKET = 'photos'
 const MAX_SIZE_BYTES = 10 * 1024 * 1024 // 10 MB
@@ -23,19 +24,29 @@ export async function POST(req: NextRequest) {
   if (file.size > MAX_SIZE_BYTES) {
     return NextResponse.json({ error: 'File exceeds 10 MB limit' }, { status: 413 })
   }
-  if (!file.type.startsWith('image/')) {
-    return NextResponse.json({ error: 'Only image files are allowed' }, { status: 415 })
-  }
 
   const bytes = await file.arrayBuffer()
   const buffer = Buffer.from(bytes)
-  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '-')
-  const path = `rig-events/${session.userId}/${Date.now()}-${safeName}`
+
+  // UR-005: authoritative content-type from magic bytes, never the client's
+  // `file.type` claim. Rejects SVG / mislabeled non-images (stored-XSS vector).
+  const mime = sniffImageMime(buffer)
+  if (!mime) {
+    return NextResponse.json(
+      { error: 'Only real image files are allowed (JPEG, PNG, WebP, GIF, or HEIC).' },
+      { status: 415 },
+    )
+  }
+
+  // Force the extension to match the sniffed type so a mislabeled name (e.g.
+  // "photo.svg") can never end up in the stored path.
+  const base = file.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 64) || 'photo'
+  const path = `rig-events/${session.userId}/${Date.now()}-${base}.${extForImageMime(mime)}`
 
   const supabase = createAdminClient()
   const { data, error } = await supabase.storage
     .from(BUCKET)
-    .upload(path, buffer, { contentType: file.type, upsert: false })
+    .upload(path, buffer, { contentType: mime, upsert: false })
 
   if (error) {
     console.error('[uploads] Supabase storage error:', error.message)
