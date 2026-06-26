@@ -1398,6 +1398,13 @@ export default function MyRigPage() {
               onClick={async () => {
                 if (!rig) return
                 setRentalError('')
+                // P2-D: adding a rental is a two-step dependent create (vehicle →
+                // attach) that isn't safely queueable, so require connectivity and
+                // tell the operator plainly — mirrors the transfer/handoff guards.
+                if (typeof navigator !== 'undefined' && !navigator.onLine) {
+                  setRentalError('Adding a rental needs an internet connection. Try again when you’re back online.')
+                  return
+                }
                 setRentalSubmitLoading(true)
                 try {
                   const payload = rentalFieldsToVehiclePayload(rentalFields)
