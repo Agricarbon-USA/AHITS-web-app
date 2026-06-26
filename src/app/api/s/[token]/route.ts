@@ -35,7 +35,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
       serialNumber: t.unit?.serialNumber ?? null,
       problem: t.notes ?? null,
       shipToHub: t.repairHub ? `${t.repairHub.name} — ${t.repairHub.city}, ${t.repairHub.state}` : null,
-      photos: t.photos.map((p: { url: string }) => p.url),
+      // UR-005b: photos are NOT exposed on the login-less status page — they live
+      // in a private bucket served only through the auth-gated proxy. Cost and
+      // status are communicated in-app; external image sharing is deprioritized.
     }
   } else if (link.type === 'HUB_RETURN' && link.inventoryUnit) {
     subject = {
