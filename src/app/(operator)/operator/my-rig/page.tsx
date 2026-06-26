@@ -21,7 +21,7 @@ import GroupIcon from '@mui/icons-material/Group'
 import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
 import { TransferDialog } from '@/components/shared/TransferDialog'
 import { DispositionDialog, KitItemSummary } from '@/components/shared/DispositionDialog'
-import { RentalVehicleForm, RentalVehicleFields } from '@/components/shared/RentalVehicleForm'
+import { RentalVehicleForm, RentalVehicleFields, rentalFieldsToVehiclePayload, isRentalFormValid } from '@/components/shared/RentalVehicleForm'
 import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 import { newPlaceholderId } from '@/lib/offline-remap'
@@ -44,7 +44,7 @@ const VEHICLE_ICON: Record<string, React.ElementType> = {
 
 interface RigVehicleRow {
   id: string
-  vehicle: { id: string; name: string; type: string; isRental: boolean }
+  vehicle: { id: string; name: string; type: string; isRental: boolean; rentalAgreementUrl?: string | null }
 }
 
 interface KitItemRow {
@@ -1137,6 +1137,10 @@ export default function MyRigPage() {
                       {rv.vehicle.isRental && (
                         <Chip label="Rental" size="small" color="warning" variant="outlined" sx={{ ml: 0.5, height: 18, fontSize: 10 }} />
                       )}
+                      {rv.vehicle.isRental && !rv.vehicle.rentalAgreementUrl && (
+                        <Chip label="Agreement needed" size="small" color="error" variant="outlined"
+                          sx={{ height: 18, fontSize: 10 }} />
+                      )}
                     </Stack>
                   )
                 })}
@@ -1373,25 +1377,14 @@ export default function MyRigPage() {
           }}>Cancel</Button>
           {isRentalToggle ? (
             <Button variant="contained"
-              disabled={rentalSubmitLoading || !rentalFields.name || !rentalFields.type}
+              disabled={rentalSubmitLoading || !isRentalFormValid(rentalFields)}
               startIcon={rentalSubmitLoading ? <CircularProgress size={16} color="inherit" /> : null}
               onClick={async () => {
                 if (!rig) return
                 setRentalError('')
                 setRentalSubmitLoading(true)
                 try {
-                  const payload = {
-                    isRental: true,
-                    name: rentalFields.name,
-                    type: rentalFields.type,
-                    rentalMake: rentalFields.rentalMake || undefined,
-                    rentalModel: rentalFields.rentalModel || undefined,
-                    rentalYear: rentalFields.rentalYear ? parseInt(rentalFields.rentalYear) : undefined,
-                    rentalLength: rentalFields.rentalLength || undefined,
-                    rentalAgreementUrl: rentalFields.rentalAgreementUrl || undefined,
-                    rentalPickupLocation: rentalFields.rentalPickupLocation || undefined,
-                    rentalDropoffLocation: rentalFields.rentalDropoffLocation || undefined,
-                  }
+                  const payload = rentalFieldsToVehiclePayload(rentalFields)
                   const vRes = await fetch('/api/vehicles', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
