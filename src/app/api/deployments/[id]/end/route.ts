@@ -175,6 +175,9 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           const task = await tx.maintenanceTask.create({
             data: {
               itemId: inventoryItemId,
+              // UR-029: link the specific unit so completing the repair returns
+              // THIS unit to service (the complete route keys off task.unit).
+              inventoryUnitId: targetUnit?.id ?? null,
               taskName: `Damage repair: ${kitItem.item.name}`,
               isDamageReport: true,
               repairType: disp.repairType ?? null,

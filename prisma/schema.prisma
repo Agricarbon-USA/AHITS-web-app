@@ -141,6 +141,7 @@ enum AlertType {
   REGISTRATION_EXPIRING
   PIN_LOCKED
   MATERIAL_REQUEST
+  DAILY_CHECK_FAILED
 }
 
 enum PhotoContext {

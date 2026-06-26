@@ -2,9 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
-import { sendEmail } from '@/lib/email/resend'
-import { dailyCheckFailedEmail } from '@/lib/email/templates'
-import { createAlert } from '@/lib/alerts'
+import { createAlert, resolveActiveAlert } from '@/lib/alerts'
 import { applyOdometerReading } from '@/lib/maintenance'
 
 const schema = z.object({
@@ -73,41 +71,18 @@ export async function POST(req: NextRequest) {
 
   const { vehicleId, date, checklistJson, passFail, issues, odometer, site } = parsed.data
 
-  // An operator may only submit a daily check for a vehicle they actually operate:
-  // one assigned to them or in an active deployment they are on (primary or secondary).
-  // Without this, any operator could pollute another vehicle's check history and
-  // trigger admin "check failed" alerts for vehicles they have nothing to do with.
-  if (session.role === 'OPERATOR') {
-    const owns = await prisma.vehicle.findFirst({
-      where: {
-        id: vehicleId,
-        deletedAt: null,
-        OR: [
-          { assignedOperatorId: session.userId },
-          {
-            rigVehicles: {
-              some: {
-                removedAt: null,
-                rig: {
-                  endedAt: null,
-                  OR: [
-                    { operatorId: session.userId },
-                    { secondaryOperators: { some: { operatorId: session.userId } } },
-                  ],
-                },
-              },
-            },
-          },
-        ],
-      },
-      select: { id: true },
-    })
-    if (!owns) {
-      return NextResponse.json(
-        { error: 'You can only submit a daily check for a vehicle in your active deployment.' },
-        { status: 403 }
-      )
-    }
+  // Daily checks may be performed on ANY active vehicle/equipment — not just
+  // items in the operator's deployment. Operators routinely inspect a vehicle
+  // (selecting it manually or scanning its QR code) before it is ever attached
+  // to a deployment; a "complete a check before operating any vehicle" workflow
+  // requires that freedom (product decision; resolves UR-033). We only require
+  // that the vehicle exists and isn't deleted — ownership is not required.
+  const vehicleExists = await prisma.vehicle.findFirst({
+    where: { id: vehicleId, deletedAt: null },
+    select: { id: true },
+  })
+  if (!vehicleExists) {
+    return NextResponse.json({ error: 'Vehicle not found.' }, { status: 404 })
   }
 
   const check = await prisma.dailyCheck.upsert({
@@ -174,14 +149,28 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Notify admin on fail
-  if (!passFail && process.env.ADMIN_EMAIL) {
-    const vehicle = await prisma.vehicle.findFirst({ where: { id: vehicleId, deletedAt: null } })
-    await sendEmail({
-      to: process.env.ADMIN_EMAIL,
-      subject: `Daily Check Failed — ${vehicle?.name}`,
-      html: dailyCheckFailedEmail(vehicle?.name ?? vehicleId, session.name, issues ?? 'No details provided'),
-    }).catch(console.error)
+  // UR-034: surface a failed check IN-APP, not only via email. Raise an alert
+  // (deduped per vehicle via activeKey) so it shows in the admin Active Alerts
+  // list immediately and the notification dispatcher delivers the bell +
+  // (config-permitting) admin email — the same path every other alert uses.
+  // A later passing check self-clears it, like LOW_INVENTORY. Wrapped so an
+  // alert failure can never fail the check submission.
+  try {
+    if (!passFail) {
+      const vehicle = await prisma.vehicle.findFirst({
+        where: { id: vehicleId, deletedAt: null },
+        select: { name: true },
+      })
+      await createAlert('DAILY_CHECK_FAILED', 'vehicles', vehicleId, {
+        name: vehicle?.name ?? vehicleId,
+        operatorName: session.name,
+        issues: issues ?? 'No details provided',
+      })
+    } else {
+      await resolveActiveAlert('DAILY_CHECK_FAILED', 'vehicles', vehicleId)
+    }
+  } catch (err) {
+    console.error('[POST /api/daily-check] daily-check-failed alert failed', err)
   }
 
   return NextResponse.json({ data: check }, { status: 201 })
