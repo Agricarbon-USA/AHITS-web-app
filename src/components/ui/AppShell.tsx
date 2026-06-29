@@ -20,9 +20,11 @@ interface AppShellProps {
   title?: string
   /** Optional header controls (e.g. the admin notification bell), shown left of the sync indicator. */
   headerActions?: React.ReactNode
+  /** Optional mobile bottom tab bar (operator shell). Rendered only on mobile. */
+  bottomNav?: React.ReactNode
 }
 
-export function AppShell({ nav, children, title = 'AHITS', headerActions }: AppShellProps) {
+export function AppShell({ nav, children, title = 'AHITS', headerActions, bottomNav }: AppShellProps) {
   const theme = useTheme()
   const isMobile = useMediaQuery(theme.breakpoints.down('md'))
   const [drawerOpen, setDrawerOpen] = React.useState(false)
@@ -112,13 +114,18 @@ export function AppShell({ nav, children, title = 'AHITS', headerActions }: AppS
           // UR-008: clear the (now inset-padded) fixed AppBar at the top and the
           // iOS home indicator at the bottom; respect landscape side insets.
           mt: 'calc(64px + env(safe-area-inset-top, 0px))',
-          pb: 'calc(24px + env(safe-area-inset-bottom, 0px))',
+          // Extra bottom space when the mobile tab bar is present so content
+          // isn't hidden behind it (the bar carries its own safe-area inset).
+          pb: effectiveIsMobile && bottomNav
+            ? 'calc(80px + env(safe-area-inset-bottom, 0px))'
+            : 'calc(24px + env(safe-area-inset-bottom, 0px))',
           pl: 'calc(24px + env(safe-area-inset-left, 0px))',
           pr: 'calc(24px + env(safe-area-inset-right, 0px))',
         }}
       >
         {children}
       </Box>
+      {effectiveIsMobile && bottomNav}
       <ServiceWorkerUpdater />
     </Box>
   )
