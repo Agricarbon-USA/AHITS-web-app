@@ -38,6 +38,10 @@ export default function OperatorDailyCheckPage() {
 
   const [rig, setRig] = React.useState<ActiveRig | null>(null)
   const [vehicleId, setVehicleId] = React.useState('')
+  // P2-C: a vehicle scanned via QR may not be on the operator's active rig
+  // (UR-033 allows daily-checking any vehicle). Hold its details so it shows in
+  // the picker + name + checklist-type resolution instead of rendering as "—".
+  const [scannedVehicle, setScannedVehicle] = React.useState<{ id: string; name: string; type: string } | null>(null)
   const [date, setDate] = React.useState(() => new Date().toISOString().slice(0, 10))
   const [odometer, setOdometer] = React.useState('')
   const [site, setSite] = React.useState('')
@@ -50,6 +54,16 @@ export default function OperatorDailyCheckPage() {
   const [error, setError] = React.useState('')
   const [step, setStep] = React.useState(0)
 
+  // The selectable vehicles: the active-rig vehicles, plus a scanned vehicle that
+  // isn't on the rig (so QR-scanning any vehicle opens a usable daily check).
+  const vehicles = React.useMemo<RigVehicle[]>(() => {
+    const base = rig?.vehicles ?? []
+    if (scannedVehicle && !base.some((rv) => rv.vehicle.id === scannedVehicle.id)) {
+      return [{ id: scannedVehicle.id, vehicle: { id: scannedVehicle.id, name: scannedVehicle.name, type: scannedVehicle.type } }, ...base]
+    }
+    return base
+  }, [rig, scannedVehicle])
+
   React.useEffect(() => {
     // A scan of a vehicle label routes here as ?vehicleId=<id> (PRD §7.7) —
     // preselect it when present.
@@ -57,7 +71,18 @@ export default function OperatorDailyCheckPage() {
       typeof window !== 'undefined'
         ? new URLSearchParams(window.location.search).get('vehicleId')
         : null
-    if (preselect) setVehicleId(preselect)
+    if (preselect) {
+      setVehicleId(preselect)
+      // Fetch the scanned vehicle's details so it renders even if it's not on
+      // the operator's active rig (any-vehicle daily check, UR-033).
+      fetch(`/api/vehicles/${preselect}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          const v = d?.data
+          if (v?.id) setScannedVehicle({ id: v.id, name: v.name, type: v.type })
+        })
+        .catch(() => { /* offline / not found — fall back to rig vehicles */ })
+    }
     fetch('/api/deployments')
       .then((r) => r.json())
       .then((json) => {
@@ -73,7 +98,7 @@ export default function OperatorDailyCheckPage() {
   // operator switches vehicles. Offline / no template → keep the default list.
   React.useEffect(() => {
     if (!vehicleId) return
-    const vt = rig?.vehicles?.find((rv) => rv.vehicle.id === vehicleId)?.vehicle.type ?? ''
+    const vt = vehicles.find((rv) => rv.vehicle.id === vehicleId)?.vehicle.type ?? ''
     let active = true
     fetch(`/api/checklist-templates?vehicleType=${encodeURIComponent(vt)}`)
       .then((r) => (r.ok ? r.json() : null))
@@ -85,7 +110,7 @@ export default function OperatorDailyCheckPage() {
       })
       .catch(() => { /* offline — keep the current (default) list */ })
     return () => { active = false }
-  }, [vehicleId, rig])
+  }, [vehicleId, vehicles])
 
   const passFail = checklist.every((item) => item.value !== 'no')
   const failingItems = checklist.filter((item) => item.value === 'no')
@@ -93,7 +118,7 @@ export default function OperatorDailyCheckPage() {
   // overall summary. Enforced client-side here and again server-side.
   const missingItemNote = failingItems.some((item) => !item.note.trim())
   const selectedVehicleName =
-    rig?.vehicles?.find((rv) => rv.vehicle.id === vehicleId)?.vehicle.name ?? ''
+    vehicles.find((rv) => rv.vehicle.id === vehicleId)?.vehicle.name ?? ''
 
   const buildPayload = () => ({
     vehicleId,
@@ -181,7 +206,6 @@ export default function OperatorDailyCheckPage() {
     )
   }
 
-  const vehicles = rig?.vehicles ?? []
 
   return (
     <Box maxWidth={560}>

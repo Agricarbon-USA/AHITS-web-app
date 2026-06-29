@@ -10,6 +10,7 @@ import WifiOffIcon from '@mui/icons-material/WifiOff'
 import CloudSyncIcon from '@mui/icons-material/CloudSync'
 import AgricultureIcon from '@mui/icons-material/Agriculture'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
+import { ServiceWorkerUpdater } from '@/components/shared/ServiceWorkerUpdater'
 
 const DRAWER_WIDTH = 240
 
@@ -48,7 +49,17 @@ export function AppShell({ nav, children, title = 'AHITS', headerActions }: AppS
 
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh' }}>
-      <AppBar position="fixed" sx={{ zIndex: theme.zIndex.drawer + 1 }}>
+      <AppBar
+        position="fixed"
+        sx={{
+          zIndex: theme.zIndex.drawer + 1,
+          // UR-008: with viewport-fit=cover + a translucent iOS status bar, the
+          // bar must clear the notch / Dynamic Island and the landscape insets.
+          pt: 'env(safe-area-inset-top, 0px)',
+          pl: 'env(safe-area-inset-left, 0px)',
+          pr: 'env(safe-area-inset-right, 0px)',
+        }}
+      >
         <Toolbar>
           {effectiveIsMobile && (
             <IconButton color="inherit" edge="start" onClick={() => setDrawerOpen(true)} sx={{ mr: 2 }}>
@@ -92,9 +103,23 @@ export function AppShell({ nav, children, title = 'AHITS', headerActions }: AppS
         </Drawer>
       )}
 
-      <Box component="main" sx={{ flexGrow: 1, p: 3, mt: 8, minWidth: 0 }}>
+      <Box
+        component="main"
+        sx={{
+          flexGrow: 1,
+          p: 3,
+          minWidth: 0,
+          // UR-008: clear the (now inset-padded) fixed AppBar at the top and the
+          // iOS home indicator at the bottom; respect landscape side insets.
+          mt: 'calc(64px + env(safe-area-inset-top, 0px))',
+          pb: 'calc(24px + env(safe-area-inset-bottom, 0px))',
+          pl: 'calc(24px + env(safe-area-inset-left, 0px))',
+          pr: 'calc(24px + env(safe-area-inset-right, 0px))',
+        }}
+      >
         {children}
       </Box>
+      <ServiceWorkerUpdater />
     </Box>
   )
 }
