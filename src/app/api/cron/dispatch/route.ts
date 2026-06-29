@@ -9,11 +9,16 @@ import { allHubStockForScan } from '@/lib/inventory-stock'
 // GCP Cloud Scheduler). It is NOT behind the session auth — it is gated by a
 // shared secret instead. Provide it as `Authorization: Bearer <CRON_SECRET>`.
 function authorized(req: NextRequest): boolean {
-  const secret = process.env.CRON_SECRET
+  // .trim() both sides: a secret created with `echo` (or pasted in a console)
+  // often carries a trailing newline, which would make `Bearer <secret>` never
+  // match a clean header the scheduler sends — a 401 that's impossible to fix
+  // from the header box. Trimming surrounding whitespace removes that footgun
+  // without weakening the constant-time comparison of the high-entropy value.
+  const secret = process.env.CRON_SECRET?.trim()
   if (!secret) return false // refuse if unconfigured rather than running open
   // Header-only (never a query param, which would leak the secret into access
   // logs / URLs), compared in constant time.
-  const provided = Buffer.from(req.headers.get('authorization') ?? '')
+  const provided = Buffer.from((req.headers.get('authorization') ?? '').trim())
   const expected = Buffer.from(`Bearer ${secret}`)
   return provided.length === expected.length && timingSafeEqual(provided, expected)
 }
