@@ -50,7 +50,9 @@ describe('UR-034 / UR-033: failed daily check raises an in-app alert; checks all
 
     expect(res.status).toBe(201) // allowed despite no active deployment (UR-033)
     expect(createAlert).toHaveBeenCalledWith('DAILY_CHECK_FAILED', 'vehicles', veh.id, expect.anything())
-    expect(resolveActiveAlert).not.toHaveBeenCalled()
+    // DAILY_CHECK_MISSED is cleared unconditionally on any submit; DAILY_CHECK_FAILED is NOT cleared on a fail
+    expect(resolveActiveAlert).toHaveBeenCalledTimes(1)
+    expect(resolveActiveAlert).toHaveBeenCalledWith('DAILY_CHECK_MISSED', 'operators', op.id)
   })
 
   it('clears the alert on a subsequent passing check', async () => {
@@ -67,6 +69,7 @@ describe('UR-034 / UR-033: failed daily check raises an in-app alert; checks all
 
     expect(res.status).toBe(201)
     expect(resolveActiveAlert).toHaveBeenCalledWith('DAILY_CHECK_FAILED', 'vehicles', veh.id)
+    expect(resolveActiveAlert).toHaveBeenCalledWith('DAILY_CHECK_MISSED', 'operators', op.id)
     expect(createAlert).not.toHaveBeenCalled()
   })
 })
