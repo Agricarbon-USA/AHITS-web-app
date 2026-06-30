@@ -4,6 +4,7 @@ import { IntervalType, Priority, MaintenanceStatus, RepairType } from '@prisma/c
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
 import { money } from '@/lib/validation'
+import { writeOr404 } from '@/lib/api-errors'
 
 // Whitelist of admin-editable fields. Excludes id/vehicleId/itemId (the task's
 // subject) and isDamageReport (system-set) to prevent mass-assignment.
@@ -57,6 +58,7 @@ export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id:
   if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const { id } = await params
   // Soft-delete (CR-8): preserve the repair/damage record rather than hard-delete.
-  await prisma.maintenanceTask.update({ where: { id }, data: { deletedAt: new Date() } })
+  const notFound = await writeOr404(() => prisma.maintenanceTask.update({ where: { id }, data: { deletedAt: new Date() } }), 'Task not found')
+  if (notFound) return notFound
   return NextResponse.json({ ok: true })
 }
