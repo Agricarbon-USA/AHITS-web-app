@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/auth/session'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { extractStoragePath, PHOTO_PROXY_PREFIX, STORAGE_BUCKET } from '@/lib/photo-security'
+import { rateLimit } from '@/lib/rate-limit'
 
 // UR-005b: auth-gated photo proxy for the PRIVATE `photos` bucket.
 //
@@ -14,6 +15,9 @@ import { extractStoragePath, PHOTO_PROXY_PREFIX, STORAGE_BUCKET } from '@/lib/ph
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
   const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const rl = await rateLimit(`photos:${session.userId}`, 120, 60_000)
+  if (!rl.allowed) return NextResponse.json({ error: 'Too many photo requests.' }, { status: 429 })
 
   const { path } = await params
   const objectPath = extractStoragePath(PHOTO_PROXY_PREFIX + path.map(encodeURIComponent).join('/'))
