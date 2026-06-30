@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { createAlert, resolveActiveAlert } from '@/lib/alerts'
 import { dispatchPendingAlerts } from '@/lib/notifications'
 import { allHubStockForScan } from '@/lib/inventory-stock'
+import { getNotificationConfig } from '@/lib/notification-config'
 
 // Notification dispatcher, hit on a schedule by an external scheduler (e.g.
 // GCP Cloud Scheduler). It is NOT behind the session auth — it is gated by a
@@ -108,9 +109,44 @@ async function run() {
     }
   }
 
-  // 5) Dispatch: email admins + create in-app notifications for un-notified alerts.
+  // 5) Scan: per-operator DAILY_CHECK_MISSED alert. Raised once per day, after
+  // the configured cutoff, when an operator with an active rig hasn't submitted
+  // any daily check for today (UTC date matches the client's toISOString slice).
+  // Self-clears when the operator submits any check (see /api/daily-check POST).
+  const { dailyCheckCutoff } = await getNotificationConfig()
+  const [cutoffHour, cutoffMinute] = dailyCheckCutoff.split(':').map(Number)
+  const pastCutoff =
+    now.getUTCHours() > cutoffHour ||
+    (now.getUTCHours() === cutoffHour && now.getUTCMinutes() >= cutoffMinute)
+  const todayUtc = now.toISOString().slice(0, 10) // "YYYY-MM-DD", matches client
+  let missedFlagged = 0
+
+  const activeRigs = await prisma.rig.findMany({
+    where: { endedAt: null },
+    select: { operatorId: true, operator: { select: { name: true } } },
+    distinct: ['operatorId'],
+  })
+
+  for (const rig of activeRigs) {
+    const checkedToday = await prisma.dailyCheck.findFirst({
+      where: { operatorId: rig.operatorId, date: new Date(todayUtc) },
+      select: { id: true },
+    })
+    if (checkedToday) {
+      await resolveActiveAlert('DAILY_CHECK_MISSED', 'operators', rig.operatorId)
+    } else if (pastCutoff) {
+      await createAlert('DAILY_CHECK_MISSED', 'operators', rig.operatorId, {
+        operatorName: rig.operator.name,
+        date: todayUtc,
+        cutoff: dailyCheckCutoff,
+      })
+      missedFlagged++
+    }
+  }
+
+  // 6) Dispatch: email admins + create in-app notifications for un-notified alerts.
   const dispatch = await dispatchPendingAlerts()
-  return { overdueFlagged: due.length, idempotencyReaped, lowInventoryFlagged: lowFlagged, expiryFlagged, ...dispatch }
+  return { overdueFlagged: due.length, idempotencyReaped, lowInventoryFlagged: lowFlagged, expiryFlagged, missedFlagged, ...dispatch }
 }
 
 export async function POST(req: NextRequest) {
