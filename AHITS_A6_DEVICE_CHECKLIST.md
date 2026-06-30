@@ -2,6 +2,8 @@
 
 _The pilot gate. Run on the five targets below; tick each cell. Every fix this pass depends on is merged to `development` (offline-auth, G1 data-loss, UR-006 launch, UR-008 ergonomics, durable-queue flows). Staging URL: `https://ahits-web-app-staging-vdz5yvke2a-uc.a.run.app`._
 
+> **⚠️ Known issue on step 3 (offline navigation) — fix in flight (UR-038).** The first run showed offline tab-switching reverting to `/login` (Android) / freezing on the offline page (iOS) on all platforms. Root-caused and fixed on branch `feature/20260629/max-slater-offline-rsc-nav` (SW now caches RSC navigations + prefetches routes online; authed pages no longer precached). **Before re-running step 3:** deploy that fix, then on each device **fully drop the old service worker** (uninstall+reinstall the PWA, or DevTools → Unregister + Clear storage), open the app **online and wait ~10 s** (so routes prefetch), **then** go offline. If it still fails, note which screen + which platforms + whether you did the online-warm step.
+
 ## Targets & how to install
 - **Desktop** (Chrome/Edge) — control. No install needed.
 - **iOS web** — open the URL in **Safari** (browser tab, not installed).
@@ -42,6 +44,7 @@ Legend: ✅ pass · ❌ fail (note it) · — n/a
 | 16 | **Update prompt (UR-008)** — after a new staging deploy lands while the app is open → a **"new version available — Reload"** snackbar appears (no silent swap mid-form) | ☐ | ☐ | ☐ | ☐ | ☐ |
 | 17 | **PIN-reset gate (UR-004)** — have an admin reset this operator's PIN → on next use the operator is **forced to the change-PIN screen** and can't perform other actions until they set a new PIN | ☐ | ☐ | ☐ | ☐ | ☐ |
 | 18 | **Private photos (UR-005b)** — desktop: copy a raw Supabase `…/object/public/photos/…` URL, open in an **incognito** window → **403/denied** (while in-app photos still load) | ☐ | — | — | — | — |
+| 19 | **Offline queued state (C1)** — after row 6 offline launch, stay on the My Deployment tab → shows **"Deployment Queued"** (not the empty "Start Deployment" screen); the **Start Deployment button is absent** (can't double-launch); reconnect → **My Deployment view** appears with Add Vehicles / Add Items available | ☐ | ☐ | ☐ | ☐ | ☐ |
 
 ## iOS-specific watch-items (note if seen)
 - ☐ Installed PWA keeps you **logged in across an app close/reopen** (cookie-jar check).

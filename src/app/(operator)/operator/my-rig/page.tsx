@@ -581,7 +581,7 @@ export default function MyRigPage() {
   const [hubs, setHubs] = React.useState<HubOption[]>([])
 
   const showToast = useToast()
-  const { mutate } = useOfflineQueue()
+  const { mutate, pendingDeployCreate, refresh: refreshQueue } = useOfflineQueue()
   const { user } = useAuth()
   const [newOpen, setNewOpen] = React.useState(false)
   const [transferOpen, setTransferOpen] = React.useState(false)
@@ -1020,25 +1020,35 @@ export default function MyRigPage() {
             </Alert>
           )
         })}
-        <LocalShippingIcon sx={{ fontSize: 72, color: 'text.disabled', mb: 2 }} />
-        <Typography variant="h6" color="text.secondary">No active deployment</Typography>
-        <Typography variant="body2" color="text.secondary" mb={3}>
-          Start a deployment when you pick up a rig or kit from a hub.
-        </Typography>
-        <Button variant="contained" size="large" startIcon={<AddIcon />} onClick={() => setNewOpen(true)}>
-          Start Deployment
-        </Button>
-
-        {newOpen && (
-          <NewDeploymentDialog
-            vehicles={vehicles}
-            inventoryItems={inventoryItems}
-            operators={operators}
-            hubs={hubs}
-            homeHubId={user?.homeHubId}
-            onClose={() => setNewOpen(false)}
-            onSuccess={load}
-          />
+        <LocalShippingIcon sx={{ fontSize: 72, color: pendingDeployCreate ? 'warning.main' : 'text.disabled', mb: 2 }} />
+        {pendingDeployCreate ? (
+          <>
+            <Typography variant="h6" color="text.secondary" mb={0.5}>Deployment Queued</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 340, textAlign: 'center' }}>
+              Your deployment is saved and will start automatically when you&apos;re back online — you can add vehicles and items once it syncs.
+            </Typography>
+          </>
+        ) : (
+          <>
+            <Typography variant="h6" color="text.secondary">No active deployment</Typography>
+            <Typography variant="body2" color="text.secondary" mb={3}>
+              Start a deployment when you pick up a rig or kit from a hub.
+            </Typography>
+            <Button variant="contained" size="large" startIcon={<AddIcon />} onClick={() => setNewOpen(true)}>
+              Start Deployment
+            </Button>
+            {newOpen && (
+              <NewDeploymentDialog
+                vehicles={vehicles}
+                inventoryItems={inventoryItems}
+                operators={operators}
+                hubs={hubs}
+                homeHubId={user?.homeHubId}
+                onClose={() => { setNewOpen(false); void refreshQueue() }}
+                onSuccess={load}
+              />
+            )}
+          </>
         )}
 
         {/* Handoff respond dialog (accessible when operator has no rig — they're the recipient) */}
