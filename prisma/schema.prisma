@@ -270,6 +270,7 @@ model Rig {
 
   @@index([operatorId])
   @@index([endedAt])
+  @@index([projectId])
   @@map("rigs")
 }
 
@@ -312,6 +313,7 @@ model Kit {
 
   items KitItem[]
 
+  @@index([rigId])
   @@map("kits")
 }
 
@@ -364,6 +366,8 @@ model TransferRequest {
   vehicles TransferVehicle[]
   items    TransferItem[]
 
+  @@index([toOperatorId, status])
+  @@index([fromRigId])
   @@map("transfer_requests")
 }
 
@@ -374,6 +378,7 @@ model TransferVehicle {
   transferRequest   TransferRequest @relation(fields: [transferRequestId], references: [id])
   vehicle           Vehicle         @relation(fields: [vehicleId], references: [id])
 
+  @@index([transferRequestId])
   @@map("transfer_vehicles")
 }
 
@@ -387,6 +392,7 @@ model TransferItem {
   kitItem           KitItem         @relation(fields: [kitItemId], references: [id])
   inventoryUnit     InventoryUnit?  @relation(fields: [inventoryUnitId], references: [id])
 
+  @@index([transferRequestId])
   @@map("transfer_items")
 }
 
@@ -565,6 +571,8 @@ model DailyCheck {
   photos   Photo[]
 
   @@unique([vehicleId, date, operatorId])
+  @@index([operatorId])
+  @@index([submittedAt])
   @@map("daily_checks")
 }
 
@@ -647,6 +655,9 @@ model MaintenanceTask {
   photos    Photo[]
   statusLinks StatusLink[]
 
+  @@index([vehicleId])
+  @@index([itemId])
+  @@index([status, nextDue])
   @@index([inventoryUnitId])
   @@index([deletedAt])
   @@map("maintenance_tasks")
@@ -710,6 +721,8 @@ model Alert {
 
   admin User? @relation(fields: [adminId], references: [id])
 
+  @@index([resolved, triggeredAt])
+  @@index([sourceTable, sourceId])
   @@map("alerts")
 }
 
@@ -990,6 +1003,7 @@ model DeploymentRequest {
 
   @@index([status])
   @@index([requestType])
+  @@index([fulfillerHubId])
   @@map("deployment_requests")
 }
 
