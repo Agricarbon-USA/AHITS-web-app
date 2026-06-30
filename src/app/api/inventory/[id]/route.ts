@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { EquipmentCategory, EquipmentStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
+import { writeOr404 } from '@/lib/api-errors'
 import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions } from '@/lib/inventory'
 import { money } from '@/lib/validation'
 
@@ -126,6 +127,10 @@ export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id:
   if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const { id } = await params
   // Soft-delete (CR-8): preserve kit/check history instead of FK-erroring.
-  await prisma.inventoryItem.update({ where: { id }, data: { deletedAt: new Date() } })
+  const notFound = await writeOr404(
+    () => prisma.inventoryItem.update({ where: { id }, data: { deletedAt: new Date() } }),
+    'Item not found',
+  )
+  if (notFound) return notFound
   return NextResponse.json({ ok: true })
 }
