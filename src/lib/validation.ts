@@ -9,6 +9,21 @@ import { z } from 'zod'
 export const PIN_REGEX = /^\d{6}$/
 export const pinSchema = z.string().length(6).regex(PIN_REGEX, 'PIN must be 6 digits')
 
+const TRIVIAL_PIN_DENYLIST = new Set(['123456', '654321', '121212', '112233', '123123', '696969'])
+
+function isNonTrivialPin(pin: string): boolean {
+  if (/^(.)\1{5}$/.test(pin)) return false
+  const digits = pin.split('').map(Number)
+  const ascending = digits.every((d, i) => i === 0 || d === digits[i - 1] + 1)
+  const descending = digits.every((d, i) => i === 0 || d === digits[i - 1] - 1)
+  if (ascending || descending) return false
+  if (TRIVIAL_PIN_DENYLIST.has(pin)) return false
+  return true
+}
+
+/** Use at PIN SET time only (change-pin, invite/complete) — not at login. */
+export const newPinSchema = pinSchema.refine(isNonTrivialPin, 'Choose a less guessable PIN')
+
 /**
  * Monetary amount. Stored as Postgres NUMERIC(10,2); validate at the API
  * boundary as a non-negative number with at most two decimal places so a

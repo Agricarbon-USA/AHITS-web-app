@@ -3,14 +3,14 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, createSession, setSessionCookie } from '@/lib/auth/session'
 import { verifyPin, hashPin } from '@/lib/auth/pin'
-import { pinSchema } from '@/lib/validation'
+import { pinSchema, newPinSchema } from '@/lib/validation'
 
 // Operator self-service PIN change (N-PIN). Also the screen that satisfies a
 // forced reset: setting a new PIN clears mustChangePin. Authenticated — the
 // caller changes their OWN PIN; admins reset others via the users API.
 const schema = z.object({
   currentPin: z.string().min(1, 'Enter your current PIN'),
-  newPin: pinSchema,
+  newPin: newPinSchema,
 })
 
 export async function POST(req: NextRequest) {

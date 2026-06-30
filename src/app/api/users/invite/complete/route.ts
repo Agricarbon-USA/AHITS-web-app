@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { hashPin } from '@/lib/auth/pin'
+import { newPinSchema } from '@/lib/validation'
 import { rateLimit, clientIp } from '@/lib/rate-limit'
 import { hashInviteToken } from '@/lib/invite-token'
 import bcrypt from 'bcryptjs'
@@ -33,8 +34,11 @@ export async function POST(req: NextRequest) {
   }
 
   // Validate credential format
-  if (invite.role === 'OPERATOR' && !/^\d{6}$/.test(credential)) {
-    return NextResponse.json({ error: 'PIN must be exactly 6 digits' }, { status: 400 })
+  if (invite.role === 'OPERATOR') {
+    const pinResult = newPinSchema.safeParse(credential)
+    if (!pinResult.success) {
+      return NextResponse.json({ error: pinResult.error.issues[0]?.message ?? 'Invalid PIN' }, { status: 400 })
+    }
   }
   if (invite.role === 'ADMIN' && credential.length < 8) {
     return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 })
