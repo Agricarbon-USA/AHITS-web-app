@@ -1,6 +1,7 @@
 import { AppShell } from '@/components/ui/AppShell'
 import { OperatorNav } from '@/components/operator/OperatorNav'
 import { OperatorBottomNav } from '@/components/operator/OperatorBottomNav'
+import { RoutePrefetcher } from '@/components/operator/RoutePrefetcher'
 import { OfflineBanner } from '@/components/operator/OfflineBanner'
 import { PinChangeGate } from '@/components/operator/PinChangeGate'
 import { NotificationBell } from '@/components/shared/NotificationBell'
@@ -18,6 +19,7 @@ export default async function OperatorLayout({ children }: { children: React.Rea
   return (
     <AppShell nav={<OperatorNav />} title="AHITS Field" headerActions={<NotificationBell />} bottomNav={<OperatorBottomNav />}>
       <ToastProvider>
+        <RoutePrefetcher />
         <PinChangeGate />
         <OfflineBanner />
         {children}
