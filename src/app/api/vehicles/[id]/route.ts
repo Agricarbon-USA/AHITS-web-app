@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { VehicleType, VehicleStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
+import { writeOr404 } from '@/lib/api-errors'
 
 // Whitelist of admin-editable fields. Excludes id/createdAt/updatedAt and
 // qrCodeId (QR association is set on create, not via a generic edit) to prevent
@@ -100,6 +101,10 @@ export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id:
   const { id } = await params
   // Soft-delete (CR-8): never hard-delete a vehicle with check/maintenance
   // history — set the tombstone so reads hide it but history is preserved.
-  await prisma.vehicle.update({ where: { id }, data: { deletedAt: new Date() } })
+  const notFound = await writeOr404(
+    () => prisma.vehicle.update({ where: { id }, data: { deletedAt: new Date() } }),
+    'Vehicle not found',
+  )
+  if (notFound) return notFound
   return NextResponse.json({ ok: true })
 }
