@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
 import { createAlert, resolveActiveAlert } from '@/lib/alerts'
 import { applyOdometerReading } from '@/lib/maintenance'
+import { parsePagination } from '@/lib/validation'
 
 const schema = z.object({
   vehicleId: z.string(),
@@ -39,8 +40,7 @@ export async function GET(req: NextRequest) {
   const vehicleId = searchParams.get('vehicleId')
   const date = searchParams.get('date')
   const operatorId = session.role === 'OPERATOR' ? session.userId : searchParams.get('operatorId')
-  const page = parseInt(searchParams.get('page') ?? '1')
-  const pageSize = parseInt(searchParams.get('pageSize') ?? '25')
+  const { page, pageSize } = parsePagination(searchParams)
 
   const where = {
     ...(vehicleId && { vehicleId }),

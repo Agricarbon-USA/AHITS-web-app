@@ -984,6 +984,42 @@ export default function MyRigPage() {
             <Typography variant="caption" color="text.secondary">&ldquo;{h.note}&rdquo;</Typography>
           </Alert>
         ))}
+        {/* Incoming transfer banners — also shown with no active deployment (B3): a
+            transferred-to operator must be able to review/accept a transfer even
+            before starting a rig. Accepting auto-creates a destination deployment
+            server-side (transfers/[id]/accept), so this is not a dead end. */}
+        {incomingTransfers.map((tr) => {
+          const vehicleNames = tr.vehicles.map((tv) => tv.vehicle.name).join(', ')
+          const itemNames = tr.items.map((ti) => `${ti.kitItem.item.name} ×${ti.quantity ?? ti.kitItem.quantity}`).join(', ')
+          const summary = [vehicleNames, itemNames].filter(Boolean).join(', ')
+          return (
+            <Alert
+              key={tr.id}
+              severity="info"
+              sx={{ mb: 1.5, width: '100%', alignItems: 'flex-start' }}
+              action={
+                <Stack direction="row" spacing={1} sx={{ mt: -0.5 }}>
+                  <Button size="small" color="error" variant="outlined"
+                    onClick={() => { setRespondDialog({ transfer: tr, action: 'decline' }); setResponseNote('') }}>
+                    Decline
+                  </Button>
+                  <Button size="small" color="success" variant="contained"
+                    onClick={() => { setRespondDialog({ transfer: tr, action: 'accept' }); setResponseNote('') }}>
+                    Accept
+                  </Button>
+                </Stack>
+              }
+            >
+              <Typography variant="body2" fontWeight={600}>
+                Incoming Transfer from {tr.fromRig.operator.name}
+              </Typography>
+              <Typography variant="body2">{summary}</Typography>
+              <Typography variant="caption" color="text.secondary">
+                &ldquo;{tr.note}&rdquo; · Accepting starts a new deployment for you.
+              </Typography>
+            </Alert>
+          )
+        })}
         <LocalShippingIcon sx={{ fontSize: 72, color: 'text.disabled', mb: 2 }} />
         <Typography variant="h6" color="text.secondary">No active deployment</Typography>
         <Typography variant="body2" color="text.secondary" mb={3}>
@@ -1031,6 +1067,35 @@ export default function MyRigPage() {
               startIcon={handoffRespondLoading ? <CircularProgress size={16} color="inherit" /> : null}
             >
               {handoffRespondLoading ? 'Saving…' : handoffRespondDialog?.action === 'accept' ? 'Accept' : 'Decline'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+        {/* Transfer accept/decline dialog — needed here so a rig-less recipient can respond (B3) */}
+        <Dialog open={!!respondDialog} onClose={() => setRespondDialog(null)} maxWidth="xs" fullWidth>
+          <DialogTitle>{respondDialog?.action === 'accept' ? 'Accept Transfer' : 'Decline Transfer'}</DialogTitle>
+          <DialogContent>
+            {respondDialog?.action === 'accept' && (
+              <Typography variant="body2" color="text.secondary" mb={1.5}>
+                Accepting will start a new deployment for you and add the transferred equipment to it.
+              </Typography>
+            )}
+            <TextField
+              label="Response note (optional)"
+              value={responseNote}
+              onChange={(e) => setResponseNote(e.target.value)}
+              multiline rows={2} fullWidth sx={{ mt: 1 }}
+            />
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2 }}>
+            <Button onClick={() => setRespondDialog(null)} disabled={respondLoading}>Cancel</Button>
+            <Button
+              variant="contained"
+              color={respondDialog?.action === 'accept' ? 'success' : 'error'}
+              onClick={handleRespond}
+              disabled={respondLoading}
+              startIcon={respondLoading ? <CircularProgress size={16} color="inherit" /> : null}
+            >
+              {respondLoading ? 'Saving…' : respondDialog?.action === 'accept' ? 'Accept' : 'Decline'}
             </Button>
           </DialogActions>
         </Dialog>

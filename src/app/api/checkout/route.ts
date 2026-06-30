@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
+import { parsePagination } from '@/lib/validation'
 
 const schema = z.object({
   action: z.enum(['CHECK_OUT', 'CHECK_IN']),
@@ -27,8 +28,7 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = req.nextUrl
   const itemId = searchParams.get('itemId')
-  const page = parseInt(searchParams.get('page') ?? '1')
-  const pageSize = parseInt(searchParams.get('pageSize') ?? '25')
+  const { page, pageSize } = parsePagination(searchParams)
 
   const where = {
     ...(itemId && { itemId }),
