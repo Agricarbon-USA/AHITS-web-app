@@ -169,6 +169,9 @@ export async function POST(req: NextRequest) {
     } else {
       await resolveActiveAlert('DAILY_CHECK_FAILED', 'vehicles', vehicleId)
     }
+    // Any submitted check (pass or fail) clears the MISSED alert — the operator
+    // checked in for the day regardless of outcome.
+    await resolveActiveAlert('DAILY_CHECK_MISSED', 'operators', session.userId)
   } catch (err) {
     console.error('[POST /api/daily-check] daily-check-failed alert failed', err)
   }

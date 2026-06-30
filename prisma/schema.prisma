@@ -150,6 +150,7 @@ enum AlertType {
   PIN_LOCKED
   MATERIAL_REQUEST
   DAILY_CHECK_FAILED
+  DAILY_CHECK_MISSED
 }
 
 enum PhotoContext {
