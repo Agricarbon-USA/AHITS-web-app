@@ -123,12 +123,33 @@ export async function GET(req: NextRequest) {
   })
 
   const rosters = await getDeploymentRosters(rigs.map((r) => r.id))
+
+  // The roster only returns OPEN (un-ended) assignments, so ENDED deployments have
+  // operator:null. Hydrate those from the retained legacy Rig.operatorId (schema
+  // NOT NULL; users are soft-deleted, never removed) so (a) historical attribution
+  // still displays and (b) the admin "Show ended" list can't crash on a null
+  // operator. Batched single lookup, only for rigs whose roster operator is absent.
+  // (Fixes B1; pairs with the UR-032 ended-deployment attribution work.)
+  const fallbackOperatorIds = Array.from(
+    new Set(rigs.filter((r) => !rosters.get(r.id)?.operator).map((r) => r.operatorId)),
+  )
+  const fallbackOperators = fallbackOperatorIds.length
+    ? await prisma.user.findMany({
+        where: { id: { in: fallbackOperatorIds } },
+        select: { id: true, name: true },
+      })
+    : []
+  const fallbackOperatorMap = new Map(fallbackOperators.map((u) => [u.id, u]))
+
   const out = rigs.map((r) => {
     const ro = rosters.get(r.id) ?? { operator: null, operatorId: null, secondaryOperators: [], projects: [] }
+    const operator = ro.operator
+      ? { id: ro.operator.id, name: ro.operator.name }
+      : fallbackOperatorMap.get(r.operatorId) ?? { id: r.operatorId, name: 'Unknown operator' }
     return {
       ...r,
       operatorId: ro.operatorId ?? r.operatorId,
-      operator: ro.operator ? { id: ro.operator.id, name: ro.operator.name } : null,
+      operator,
       project: ro.projects[0] ?? null,
       secondaryOperators: ro.secondaryOperators,
     }
