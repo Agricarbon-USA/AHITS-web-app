@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
+import { writeOr404 } from '@/lib/api-errors'
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAdmin()
@@ -47,6 +48,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   const { id } = await params
 
   // Soft-delete: mark inactive rather than hard delete
-  await prisma.hub.update({ where: { id }, data: { isActive: false } })
+  const notFound = await writeOr404(() => prisma.hub.update({ where: { id }, data: { isActive: false } }), 'Hub not found')
+  if (notFound) return notFound
   return new NextResponse(null, { status: 204 })
 }
