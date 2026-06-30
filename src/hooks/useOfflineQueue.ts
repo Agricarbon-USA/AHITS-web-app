@@ -75,6 +75,7 @@ function extractError(body: unknown): string {
 export function useOfflineQueue() {
   const [pending, setPending] = React.useState(0)
   const [failed, setFailed] = React.useState(0)
+  const [pendingDeployCreate, setPendingDeployCreate] = React.useState(false)
   const [syncing, setSyncing] = React.useState(false)
   const [isOffline, setIsOffline] = React.useState(
     typeof navigator !== 'undefined' && !navigator.onLine
@@ -88,6 +89,9 @@ export function useOfflineQueue() {
       const items = await getAllItems(db)
       setPending(items.filter((i) => i.status !== 'failed').length)
       setFailed(items.filter((i) => i.status === 'failed').length)
+      setPendingDeployCreate(
+        items.some((i) => i.status !== 'failed' && i.endpoint === '/api/deployments' && i.method === 'POST')
+      )
     } catch {
       /* IDB unavailable (private mode / SSR) — leave counts as-is */
     }
@@ -288,6 +292,7 @@ export function useOfflineQueue() {
     // Honest indicators:
     pending,
     failed,
+    pendingDeployCreate,
     syncing,
     isOffline,
   }
