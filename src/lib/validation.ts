@@ -22,3 +22,22 @@ export const money = () =>
     .refine((n) => Number.isFinite(n) && Math.abs(n * 100 - Math.round(n * 100)) < 1e-9, {
       message: 'Must be a monetary value with at most 2 decimal places',
     })
+
+/**
+ * Parse and clamp list pagination from query params. Guards against NaN,
+ * non-positive pages, and an unbounded `pageSize` — without a cap a client can
+ * request `pageSize=1000000` and force a heavy, deep-include unbounded read
+ * (DoS/latency). Use on EVERY paginated GET so the rule can't drift per route.
+ * Returns a ready-to-spread `{ page, pageSize, skip }` for Prisma `skip`/`take`.
+ */
+export function parsePagination(
+  searchParams: URLSearchParams,
+  opts: { defaultSize?: number; maxSize?: number } = {},
+): { page: number; pageSize: number; skip: number } {
+  const { defaultSize = 25, maxSize = 100 } = opts
+  const rawPage = Number.parseInt(searchParams.get('page') ?? '', 10)
+  const rawSize = Number.parseInt(searchParams.get('pageSize') ?? '', 10)
+  const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1
+  const pageSize = Number.isFinite(rawSize) && rawSize > 0 ? Math.min(rawSize, maxSize) : defaultSize
+  return { page, pageSize, skip: (page - 1) * pageSize }
+}

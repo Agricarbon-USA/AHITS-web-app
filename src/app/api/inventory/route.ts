@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import type { EquipmentCategory, EquipmentStatus, ItemType } from '@prisma/client'
 import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions } from '@/lib/inventory'
-import { money } from '@/lib/validation'
+import { money, parsePagination } from '@/lib/validation'
 import { setStockAtHub, resyncItemTotal, listStockForItems } from '@/lib/inventory-stock'
 import type { ItemStockRow } from '@/lib/inventory-stock'
 import { getActiveProjectsForItems } from '@/lib/project-associations'
@@ -14,8 +14,7 @@ export async function GET(req: NextRequest) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = req.nextUrl
-  const page = parseInt(searchParams.get('page') ?? '1')
-  const pageSize = parseInt(searchParams.get('pageSize') ?? '25')
+  const { page, pageSize } = parsePagination(searchParams)
   const status = searchParams.get('status') as EquipmentStatus | null
   const category = searchParams.get('category') as EquipmentCategory | null
   const categoryId = searchParams.get('categoryId')
