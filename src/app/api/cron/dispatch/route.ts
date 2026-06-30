@@ -111,14 +111,29 @@ async function run() {
 
   // 5) Scan: per-operator DAILY_CHECK_MISSED alert. Raised once per day, after
   // the configured cutoff, when an operator with an active rig hasn't submitted
-  // any daily check for today (UTC date matches the client's toISOString slice).
+  // any daily check for today (local date in APP_TIMEZONE — must agree with how
+  // the client builds its date string; see UR-026 for the full alignment).
   // Self-clears when the operator submits any check (see /api/daily-check POST).
   const { dailyCheckCutoff } = await getNotificationConfig()
   const [cutoffHour, cutoffMinute] = dailyCheckCutoff.split(':').map(Number)
+
+  // Derive tz-local date and wall-clock time using Intl so we don't need a
+  // date-fns/luxon dependency. 'en-CA' gives zero-padded ISO-style parts.
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: process.env.APP_TIMEZONE ?? 'America/Chicago',
+      hour12: false,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit',
+    }).formatToParts(now).map((x) => [x.type, x.value]),
+  )
+  const today = `${p.year}-${p.month}-${p.day}` // tz-local date, e.g. "2026-06-30"
+  const localHour = Number(p.hour)
+  const localMinute = Number(p.minute)
+
   const pastCutoff =
-    now.getUTCHours() > cutoffHour ||
-    (now.getUTCHours() === cutoffHour && now.getUTCMinutes() >= cutoffMinute)
-  const todayUtc = now.toISOString().slice(0, 10) // "YYYY-MM-DD", matches client
+    localHour > cutoffHour ||
+    (localHour === cutoffHour && localMinute >= cutoffMinute)
   let missedFlagged = 0
 
   const activeRigs = await prisma.rig.findMany({
@@ -129,7 +144,7 @@ async function run() {
 
   for (const rig of activeRigs) {
     const checkedToday = await prisma.dailyCheck.findFirst({
-      where: { operatorId: rig.operatorId, date: new Date(todayUtc) },
+      where: { operatorId: rig.operatorId, date: new Date(today) },
       select: { id: true },
     })
     if (checkedToday) {
@@ -137,7 +152,7 @@ async function run() {
     } else if (pastCutoff) {
       await createAlert('DAILY_CHECK_MISSED', 'operators', rig.operatorId, {
         operatorName: rig.operator.name,
-        date: todayUtc,
+        date: today,
         cutoff: dailyCheckCutoff,
       })
       missedFlagged++
