@@ -45,6 +45,9 @@ Legend: ✅ pass · ❌ fail (note it) · — n/a
 | 17 | **PIN-reset gate (UR-004)** — have an admin reset this operator's PIN → on next use the operator is **forced to the change-PIN screen** and can't perform other actions until they set a new PIN | ☐ | ☐ | ☐ | ☐ | ☐ |
 | 18 | **Private photos (UR-005b)** — desktop: copy a raw Supabase `…/object/public/photos/…` URL, open in an **incognito** window → **403/denied** (while in-app photos still load) | ☐ | — | — | — | — |
 | 19 | **Offline queued state (C1)** — after row 6 offline launch, stay on the My Deployment tab → shows **"Deployment Queued"** (not the empty "Start Deployment" screen); the **Start Deployment button is absent** (can't double-launch); reconnect → **My Deployment view** appears with Add Vehicles / Add Items available | ☐ | ☐ | ☐ | ☐ | ☐ |
+| 20 | **IDB write-failure banner** — open a **Safari Private Browsing** tab, log in, go offline, attempt any offline action (e.g. daily check) → the banner shows **"This device can't save offline actions"** and the action returns an error ("Couldn't save…"), NOT a "saved offline" confirmation | — | ☐ | — | ☐ | — |
+| 21 | **Quota-pressure warning** — on a device with near-full storage (or simulated via DevTools → Application → Storage → "Simulate" quota), go offline and try an action → the **"Device storage is nearly full"** warning banner appears **before** writes start failing | ☐ | ☐ | ☐ | ☐ | ☐ |
+| 22 | **Eviction-detection banner** — on iOS Safari, queue ≥1 offline action, note the app shows a pending count, then force-quit the app and wait 7+ days (or manually clear IDB via DevTools while preserving localStorage) → on next open the banner shows **"Your device may have deleted queued offline actions"** | — | ☐ | — | ☐ | — |
 
 ## iOS-specific watch-items (note if seen)
 - ☐ Installed PWA keeps you **logged in across an app close/reopen** (cookie-jar check).
