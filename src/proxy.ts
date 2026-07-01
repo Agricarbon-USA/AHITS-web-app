@@ -60,9 +60,13 @@ function buildCsp(nonce: string): string {
 // Sets the CSP on both the forwarded request (so Next.js renderer reads the
 // nonce for its bootstrap <script> tags) and the response (so the browser
 // enforces it). Both sides must carry the same nonce string.
-function nextWithCsp(request: NextRequest, csp: string): NextResponse {
+// x-nonce carries the bare nonce value for the root layout to read — that
+// `headers()` call opts the entire app into per-request dynamic rendering,
+// which is required for Next.js to stamp the nonce on generated <script> tags.
+function nextWithCsp(request: NextRequest, csp: string, nonce: string): NextResponse {
   const requestHeaders = new Headers(request.headers)
   requestHeaders.set('content-security-policy', csp)
+  requestHeaders.set('x-nonce', nonce)
   const response = NextResponse.next({ request: { headers: requestHeaders } })
   response.headers.set('Content-Security-Policy', csp)
   return response
@@ -75,7 +79,7 @@ export async function proxy(request: NextRequest) {
 
   // Public paths render HTML (login, invite, /s/* token pages) — need the nonce.
   if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
-    return nextWithCsp(request, csp)
+    return nextWithCsp(request, csp, nonce)
   }
 
   // Static assets that bypass auth — no HTML body, nonce not needed.
@@ -149,7 +153,7 @@ export async function proxy(request: NextRequest) {
       )
     }
 
-    return nextWithCsp(request, csp)
+    return nextWithCsp(request, csp, nonce)
   } catch {
     return NextResponse.redirect(new URL('/login', request.url))
   }
