@@ -162,6 +162,7 @@ describe('FND-2 — consumable stock survives a transfer round-trip', () => {
     expect(destKi.drawnQuantity).toBe(2)
 
     await returnToHub(destRig.id, destKi.id, 2, hub.id)
+    mockSession = operatorSession(op1.id)
     await returnToHub(rigA.id, srcAfter.id, 3, hub.id)
     expect(await stockAtHub(item.id, hub.id)).toBe(10)
     expect(await total(item.id)).toBe(10)
