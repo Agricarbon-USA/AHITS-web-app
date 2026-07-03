@@ -63,7 +63,7 @@ beforeEach(() => {
 describe('Invite completion — single-use account minting', () => {
   it('creates the account with the role FROM THE INVITE and marks the invite used', async () => {
     const invite = await createInvite({ role: 'OPERATOR' })
-    const res = await completeInvite(postReq({ token: invite.token, credential: '123456' }))
+    const res = await completeInvite(postReq({ token: invite.token, credential: '284910' }))
     expect(res.status).toBe(200)
     const user = await prisma.user.findUnique({ where: { email: invite.email } })
     expect(user?.role).toBe('OPERATOR')
@@ -74,22 +74,30 @@ describe('Invite completion — single-use account minting', () => {
 
   it('rejects a second use of the same invite (single-use claim)', async () => {
     const invite = await createInvite({ role: 'OPERATOR' })
-    const first = await completeInvite(postReq({ token: invite.token, credential: '123456' }))
+    const first = await completeInvite(postReq({ token: invite.token, credential: '284910' }))
     expect(first.status).toBe(200)
-    const second = await completeInvite(postReq({ token: invite.token, credential: '654321' }))
+    const second = await completeInvite(postReq({ token: invite.token, credential: '175294' }))
     expect(second.status).toBe(410)
     expect(await prisma.user.count({ where: { email: invite.email } })).toBe(1)
   })
 
   it('rejects an expired invite', async () => {
     const invite = await createInvite({ role: 'OPERATOR', expiresAt: new Date(Date.now() - 1000) })
-    const res = await completeInvite(postReq({ token: invite.token, credential: '123456' }))
+    const res = await completeInvite(postReq({ token: invite.token, credential: '284910' }))
     expect(res.status).toBe(410)
   })
 
   it('rejects an unknown token', async () => {
-    const res = await completeInvite(postReq({ token: 'does-not-exist', credential: '123456' }))
+    const res = await completeInvite(postReq({ token: 'does-not-exist', credential: '284910' }))
     expect(res.status).toBe(410)
+  })
+
+  it('rejects a trivial PIN (sequential, repeated, or denylisted)', async () => {
+    for (const trivial of ['123456', '654321', '111111', '121212']) {
+      const invite = await createInvite({ role: 'OPERATOR' })
+      const res = await completeInvite(postReq({ token: invite.token, credential: trivial }))
+      expect(res.status, `expected 400 for trivial PIN ${trivial}`).toBe(400)
+    }
   })
 
   it('enforces the operator PIN format (exactly 6 digits)', async () => {
