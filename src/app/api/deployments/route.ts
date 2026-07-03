@@ -3,7 +3,9 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
 import { getDeploymentRosters, ensureOpenAssignment, addProjectLink } from '@/lib/deployment-assignments'
-import { drawFromHub, getStockAtHub, totalStock, setStockAtHub } from '@/lib/inventory-stock'
+import { drawFromHub, getStockAtHub, totalStock, setStockAtHub, resyncItemTotal } from '@/lib/inventory-stock'
+import { claimHeldStock } from '@/lib/deployment-requests'
+import { withIdempotency } from '@/lib/idempotency'
 
 const RIG_INCLUDE = {
   operator: { select: { id: true, name: true } },
@@ -157,7 +159,15 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(out)
 }
 
+// UR-010 (C1): wrap create in withIdempotency so a replayed offline checkout
+// (the durable queue re-POSTs with the same Idempotency-Key) returns the first
+// committed rig instead of creating a second deployment and double-claiming the
+// operator's held stock. Body-hash bound; 5xx/409 are not cached (see idempotency.ts).
 export async function POST(req: NextRequest) {
+  return withIdempotency(req, 'deployments.POST', () => _POST(req))
+}
+
+async function _POST(req: NextRequest) {
   const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
@@ -286,22 +296,29 @@ export async function POST(req: NextRequest) {
             if (existingTotal === 0 && (item.quantity ?? 0) >= quantity) {
               await setStockAtHub(ki.inventoryItemId, sourceHubId, item.quantity ?? 0, tx)
             }
-            const drawn = await drawFromHub(ki.inventoryItemId, sourceHubId, quantity, tx)
-            if (drawn < quantity) {
-              const atHub = await getStockAtHub(ki.inventoryItemId, sourceHubId, tx)
-              const hubRow = await tx.hub.findUnique({ where: { id: sourceHubId }, select: { name: true } })
-              throw Object.assign(new Error('INSUFFICIENT_HUB_STOCK'), {
-                available: atHub,
-                requested: quantity,
-                hubName: hubRow?.name ?? sourceHubId,
-              })
+            // UR-010: claim this operator's own HELD (reserved) stock at this hub first
+            // — converts reserve→draw — then draw any remainder from free hub stock.
+            // Normal reservation checkout: claimed === quantity, no free draw. Direct
+            // (no-reservation) checkout: claimed === 0, it all comes from free stock.
+            const claimed = await claimHeldStock(operatorId, ki.inventoryItemId, sourceHubId, quantity, tx)
+            const remainder = quantity - claimed
+            if (remainder > 0) {
+              const drawn = await drawFromHub(ki.inventoryItemId, sourceHubId, remainder, tx)
+              if (drawn < remainder) {
+                const atHub = await getStockAtHub(ki.inventoryItemId, sourceHubId, tx)
+                const hubRow = await tx.hub.findUnique({ where: { id: sourceHubId }, select: { name: true } })
+                throw Object.assign(new Error('INSUFFICIENT_HUB_STOCK'), {
+                  available: claimed + atHub,
+                  requested: quantity,
+                  hubName: hubRow?.name ?? sourceHubId,
+                })
+              }
             }
-            drawnQuantity = drawn
+            // Recompute the cross-hub total from stock rows — covers both the claimed
+            // reserve→draw and the free-stock draw in one authoritative pass.
+            await resyncItemTotal(ki.inventoryItemId, tx)
+            drawnQuantity = quantity
             drawnHubId = sourceHubId
-            await tx.inventoryItem.update({
-              where: { id: ki.inventoryItemId },
-              data: { quantity: { decrement: drawn } },
-            })
           }
           await tx.kitItem.create({
             data: { kitId: kit.id, inventoryItemId: ki.inventoryItemId, quantity, inventoryUnitId: null, drawnQuantity, drawnHubId },

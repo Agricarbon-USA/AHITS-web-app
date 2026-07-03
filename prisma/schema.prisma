@@ -1039,9 +1039,16 @@ model DeploymentRequestLine {
   // F2: shipping-label ship-to (raw SQL — no generated-client coupling).
   shipToHubId             String?
   shipToAddress           String?
+  // UR-010 (R4 hold-through-claim): raw SQL only — mirrors the migration columns.
+  heldQty                 Int             @default(0)
+  heldItemId              String?
+  heldHubId               String?
+  claimedQty              Int             @default(0)
+  releasedAt              DateTime?
   createdAt               DateTime        @default(now())
 
   @@index([requestId])
+  @@index([heldItemId, heldHubId])
   @@map("deployment_request_lines")
 }
 

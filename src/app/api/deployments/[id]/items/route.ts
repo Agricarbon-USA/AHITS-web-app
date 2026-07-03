@@ -7,7 +7,8 @@ import { createAlert } from '@/lib/alerts'
 import { withIdempotency } from '@/lib/idempotency'
 import { issueHubReturnLinks } from '@/lib/status-links'
 import { filterAllowedPhotoUrls } from '@/lib/photo-security'
-import { drawFromHub, getStockAtHub, restoreToHub } from '@/lib/inventory-stock'
+import { drawFromHub, getStockAtHub, restoreToHub, resyncItemTotal } from '@/lib/inventory-stock'
+import { claimHeldStock } from '@/lib/deployment-requests'
 
 const RIG_INCLUDE = {
   operator: { select: { id: true, name: true } },
@@ -204,22 +205,29 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
             if (!sourceHubId) {
               throw Object.assign(new Error('CONSUMABLE_NEEDS_HUB'), {})
             }
-            const drawn = await drawFromHub(entry.inventoryItemId, sourceHubId, entry.quantity, tx)
-            if (drawn < entry.quantity) {
-              const atHub = await getStockAtHub(entry.inventoryItemId, sourceHubId, tx)
-              const hubRow = await tx.hub.findUnique({ where: { id: sourceHubId }, select: { name: true } })
-              throw Object.assign(new Error('INSUFFICIENT_HUB_STOCK'), {
-                available: atHub,
-                requested: entry.quantity,
-                hubName: hubRow?.name ?? sourceHubId,
-              })
+            // UR-010: claim this rig operator's own HELD (reserved) stock at this hub
+            // first — converts reserve→draw — then draw any remainder from free stock.
+            // Normal reservation checkout: claimed === quantity, no free draw. Direct
+            // (no-reservation) add: claimed === 0, it all comes from free stock.
+            const claimed = await claimHeldStock(rig.operatorId, entry.inventoryItemId, sourceHubId, entry.quantity, tx)
+            const remainder = entry.quantity - claimed
+            if (remainder > 0) {
+              const drawn = await drawFromHub(entry.inventoryItemId, sourceHubId, remainder, tx)
+              if (drawn < remainder) {
+                const atHub = await getStockAtHub(entry.inventoryItemId, sourceHubId, tx)
+                const hubRow = await tx.hub.findUnique({ where: { id: sourceHubId }, select: { name: true } })
+                throw Object.assign(new Error('INSUFFICIENT_HUB_STOCK'), {
+                  available: claimed + atHub,
+                  requested: entry.quantity,
+                  hubName: hubRow?.name ?? sourceHubId,
+                })
+              }
             }
-            drawnQuantity = drawn
+            // Recompute the cross-hub total from stock rows — covers both the claimed
+            // reserve→draw and the free-stock draw in one authoritative pass.
+            await resyncItemTotal(entry.inventoryItemId, tx)
+            drawnQuantity = entry.quantity
             drawnHubId = sourceHubId
-            await tx.inventoryItem.update({
-              where: { id: entry.inventoryItemId },
-              data: { quantity: { decrement: drawn } },
-            })
           }
           await tx.kitItem.create({
             data: {
