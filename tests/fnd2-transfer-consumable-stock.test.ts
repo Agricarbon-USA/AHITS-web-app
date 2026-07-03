@@ -108,7 +108,7 @@ describe('FND-2 — consumable stock survives a transfer round-trip', () => {
       }),
       { params: Promise.resolve({ id: rigA.id }) },
     )
-    expect(tRes.status).toBe(200)
+    expect(tRes.status).toBe(201)
     const transfer = await prisma.transferRequest.findFirstOrThrow({ where: { toOperatorId: op2.id } })
 
     mockSession = operatorSession(op2.id)
@@ -144,7 +144,7 @@ describe('FND-2 — consumable stock survives a transfer round-trip', () => {
       }),
       { params: Promise.resolve({ id: rigA.id }) },
     )
-    expect(tRes.status).toBe(200)
+    expect(tRes.status).toBe(201)
     const transfer = await prisma.transferRequest.findFirstOrThrow({ where: { toOperatorId: op2.id } })
 
     mockSession = operatorSession(op2.id)
