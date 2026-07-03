@@ -92,13 +92,52 @@ export default function AdminHubsPage() {
     setHubsLoading(false)
   }, [])
 
+  const loadInbound = React.useCallback(async () => {
+    try {
+      const r = await fetch('/api/hubs/inbound')
+      if (!r.ok) return
+      const d = await r.json()
+      setInboundData(d.data ?? [])
+      setCounts(d.counts ?? { totalPending: 0, discrepancies: 0 })
+    } catch {
+      setInboundData([])
+    }
+  }, [])
+
   React.useEffect(() => {
     loadHubs()
-    fetch('/api/hubs/inbound')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (d) { setInboundData(d.data ?? []); setCounts(d.counts ?? { totalPending: 0, discrepancies: 0 }) } })
-      .catch(() => setInboundData([]))
-  }, [loadHubs])
+    loadInbound()
+  }, [loadHubs, loadInbound])
+
+  // W0-9: admin actions for the hub-return loop — usable even for email-less hubs
+  // (both staging hubs), where the auto-delivery links can't reach anyone.
+  const markReceived = async (statusLinkId: string) => {
+    const res = await fetch(`/api/status-links/${statusLinkId}/receive`, { method: 'POST' })
+    const d = await res.json().catch(() => ({}))
+    showToast(res.ok ? 'Marked received.' : typeof d.error === 'string' ? d.error : 'Could not mark received.')
+    await loadInbound()
+  }
+  const dismissLink = async (statusLinkId: string) => {
+    const res = await fetch(`/api/status-links/${statusLinkId}/revoke`, { method: 'POST' })
+    const d = await res.json().catch(() => ({}))
+    showToast(res.ok ? 'Dismissed.' : typeof d.error === 'string' ? d.error : 'Could not dismiss.')
+    await loadInbound()
+  }
+  const reissueLink = async (statusLinkId: string) => {
+    const res = await fetch(`/api/status-links/${statusLinkId}/reissue`, { method: 'POST' })
+    const d = await res.json().catch(() => ({}))
+    if (res.ok && d.url) {
+      try {
+        await navigator.clipboard.writeText(d.url)
+        showToast('New link copied to clipboard.')
+      } catch {
+        showToast(`New link: ${d.url}`)
+      }
+    } else {
+      showToast(typeof d.error === 'string' ? d.error : 'Could not reissue link.')
+    }
+    await loadInbound()
+  }
 
   const openAddHub = () => { setHubForm({ name: '', city: '', state: '', email: '', street1: '', street2: '', zip: '', country: 'US' }); setAddHubOpen(true) }
   const openEditHub = (hub: Hub) => {
@@ -262,6 +301,7 @@ export default function AdminHubsPage() {
                             <TableCell>STATUS</TableCell>
                             <TableCell align="right">SENT</TableCell>
                             <TableCell align="right">EXPIRES</TableCell>
+                            <TableCell align="right">ACTIONS</TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
@@ -298,6 +338,13 @@ export default function AdminHubsPage() {
                                 >
                                   {fmtDate(u.expiresAt)}
                                 </Typography>
+                              </TableCell>
+                              <TableCell align="right">
+                                <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                                  <MutationButton size="small" onClick={() => markReceived(u.statusLinkId)}>Received</MutationButton>
+                                  <MutationButton size="small" variant="outlined" onClick={() => reissueLink(u.statusLinkId)}>Copy link</MutationButton>
+                                  <MutationButton size="small" color="error" onClick={() => dismissLink(u.statusLinkId)}>Dismiss</MutationButton>
+                                </Stack>
                               </TableCell>
                             </TableRow>
                           ))}

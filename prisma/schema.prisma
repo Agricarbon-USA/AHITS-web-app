@@ -1178,3 +1178,32 @@ model Shipment {
   @@index([hubId])
   @@map("shipments")
 }
+
+enum EmailStatus {
+  SENT
+  FAILED
+  SKIPPED
+}
+
+/// FND-8: a delivery record for every outbound email attempt, so a failed
+/// shop/hub/invite/alert/invoice send is never silently swallowed and the
+/// invoice→processor email has an auditable trail. Written by sendEmail; read by
+/// the admin email-log surface. `kind` categorises the send; `status` is the
+/// outcome (SKIPPED = suppressed by the non-prod EMAIL_SANDBOX guard).
+model EmailLog {
+  id         String      @id @default(cuid())
+  to         String
+  subject    String
+  kind       String      @default("OTHER")
+  status     EmailStatus
+  attempts   Int         @default(0)
+  lastError  String?
+  providerId String?
+  sentAt     DateTime?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  @@index([status, createdAt])
+  @@index([kind, createdAt])
+  @@map("email_logs")
+}

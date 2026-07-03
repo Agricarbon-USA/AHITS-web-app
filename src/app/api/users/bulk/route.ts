@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
       })
       const setupUrl = `${appUrl}/setup-account?token=${encodeURIComponent(rawToken)}`
       try {
-        await sendEmail({
+        await sendEmail({ kind: 'INVITE',
           to: row.email,
           subject: `You've been invited to AHITS — Agricarbon`,
           html: inviteEmail(row.name, row.role, setupUrl),

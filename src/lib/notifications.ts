@@ -102,7 +102,7 @@ export async function dispatchPendingAlerts(): Promise<{ alerts: number; notific
 
     try {
       const linkUrl = p.link ? `${APP_URL}${p.link}` : undefined
-      await sendEmail({
+      await sendEmail({ kind: 'ALERT',
         to: admins.map((a) => a.email),
         subject: `AHITS: ${p.title}`,
         html: genericAlertEmail(p.title, p.message, linkUrl),
