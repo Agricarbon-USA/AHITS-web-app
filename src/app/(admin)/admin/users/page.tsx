@@ -299,14 +299,21 @@ export default function AdminUsersPage() {
     fetch('/api/projects').then((r) => r.json()).then((d) => setProjects(d.data ?? d ?? [])).catch(() => {})
   }, [load])
 
-  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 4000) }
+  const [toastSev, setToastSev] = React.useState<'success' | 'error'>('success')
+  const showToast = (msg: string, sev: 'success' | 'error' = 'success') => { setToast(msg); setToastSev(sev); setTimeout(() => setToast(''), 4000) }
 
-  const patchUser = async (id: string, body: object) => {
+  const patchUser = async (id: string, body: object): Promise<boolean> => {
     const res = await fetch(`/api/users/${id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     })
-    if (!res.ok) { const d = await res.json().catch(() => ({})); showToast(typeof d.error === 'string' ? d.error : 'Action failed') }
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}))
+      showToast(typeof d.error === 'string' ? d.error : 'Action failed', 'error')
+      await load()
+      return false
+    }
     await load()
+    return true
   }
 
   const roleChip = (role: string) => (
@@ -337,7 +344,7 @@ export default function AdminUsersPage() {
         </Stack>
       </Stack>
 
-      {toast && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setToast('')}>{toast}</Alert>}
+      {toast && <Alert severity={toastSev} sx={{ mb: 2 }} onClose={() => setToast('')}>{toast}</Alert>}
 
       {projects.length > 0 && (
         <Stack direction="row" spacing={1.5} mb={2} alignItems="center">
@@ -416,7 +423,7 @@ export default function AdminUsersPage() {
                                 title: 'Unlock PIN',
                                 message: `Unlock ${user.name}'s PIN so they can log in again?`,
                                 label: 'Unlock', color: 'warning',
-                                action: async () => { await patchUser(user.id, { unlockPin: true }); showToast(`${user.name}'s PIN unlocked`) },
+                                action: async () => { if (await patchUser(user.id, { unlockPin: true })) showToast(`${user.name}'s PIN unlocked`) },
                               })}>
                               <LockOpenIcon fontSize="small" />
                             </IconButton>
@@ -430,7 +437,7 @@ export default function AdminUsersPage() {
                                 title: 'Deactivate Account',
                                 message: `${user.name} will be logged out immediately and unable to log in. Their history is preserved; you can reactivate them any time.`,
                                 label: 'Deactivate', color: 'error',
-                                action: async () => { await patchUser(user.id, { isActive: false }); showToast(`${user.name} deactivated`) },
+                                action: async () => { if (await patchUser(user.id, { isActive: false })) showToast(`${user.name} deactivated`) },
                               })}>
                               <BlockIcon fontSize="small" />
                             </IconButton>
@@ -442,7 +449,7 @@ export default function AdminUsersPage() {
                                 title: 'Reactivate Account',
                                 message: `Reactivate ${user.name}'s account so they can log in again?`,
                                 label: 'Reactivate', color: 'primary',
-                                action: async () => { await patchUser(user.id, { isActive: true }); showToast(`${user.name} reactivated`) },
+                                action: async () => { if (await patchUser(user.id, { isActive: true })) showToast(`${user.name} reactivated`) },
                               })}>
                               <CheckCircleIcon fontSize="small" />
                             </IconButton>

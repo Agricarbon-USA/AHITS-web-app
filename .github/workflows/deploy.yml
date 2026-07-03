@@ -50,7 +50,17 @@ jobs:
           credentials_json: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
 
       - name: Apply pending migrations to the target database
-        run: make cloud-run-migrate GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }}
+        # FND-15: migrate the DB that matches the branch. cloud-run-migrate reads
+        # $(SECRET_NS)_MIGRATE_URL; without SECRET_NS a prod deploy would migrate
+        # STAGING and then serve prod against an unmigrated schema.
+        # Prereq: AHITS_PROD_MIGRATE_URL must exist in Secret Manager (prod session
+        # pooler, port 5432, IPv4) before the first production deploy.
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/production" ]; then
+            make cloud-run-migrate SECRET_NS=AHITS_PROD GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }}
+          else
+            make cloud-run-migrate GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }}
+          fi
 
   deploy:
     name: Build & Deploy

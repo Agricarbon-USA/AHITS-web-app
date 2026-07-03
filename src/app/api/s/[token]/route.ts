@@ -6,6 +6,11 @@ import { getRequest, getLineChecklist } from '@/lib/deployment-requests'
 // Public, login-less context for a tokenized status link. Token-gated and
 // rate-limited (the token IS the credential). Returns only the scoped fields
 // the external party needs — never operator emails, costs, or unrelated data.
+const S_VEHICLE_TYPE_LABELS: Record<string, string> = {
+  TRUCK: 'Truck', TRAILER: 'Trailer', POLARIS_UTV: 'Polaris UTV',
+  CAN_AM_UTV: 'Can-Am UTV', CHRISTIE_DRILL: 'Christie Drill', ATV: 'ATV', OTHER: 'Other',
+}
+
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params
 
@@ -62,7 +67,14 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
         progress,
         lines: lines.map((l) => ({
           id: l.id,
-          name: l.specificItemName ?? l.categoryName ?? l.itemType ?? l.vehicleType ?? l.description ?? 'Item',
+          name:
+            l.specificItemName ??
+            l.specificVehicleName ??
+            l.categoryName ??
+            (l.vehicleType ? (S_VEHICLE_TYPE_LABELS[l.vehicleType] ?? l.vehicleType) : null) ??
+            l.itemType ??
+            l.description ??
+            'Item',
           requestedQty: l.requestedQty,
           kind: l.lineType,
           itemType: l.itemType,
