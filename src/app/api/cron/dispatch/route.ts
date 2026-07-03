@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { createAlert, resolveActiveAlert } from '@/lib/alerts'
 import { dispatchPendingAlerts } from '@/lib/notifications'
 import { allHubStockForScan } from '@/lib/inventory-stock'
+import { businessDateTime } from '@/lib/business-date'
 import { getNotificationConfig } from '@/lib/notification-config'
 
 // Notification dispatcher, hit on a schedule by an external scheduler (e.g.
@@ -117,19 +118,9 @@ async function run() {
   const { dailyCheckCutoff } = await getNotificationConfig()
   const [cutoffHour, cutoffMinute] = dailyCheckCutoff.split(':').map(Number)
 
-  // Derive tz-local date and wall-clock time using Intl so we don't need a
-  // date-fns/luxon dependency. 'en-CA' gives zero-padded ISO-style parts.
-  const p = Object.fromEntries(
-    new Intl.DateTimeFormat('en-CA', {
-      timeZone: process.env.APP_TIMEZONE ?? 'America/Chicago',
-      hour12: false,
-      year: 'numeric', month: '2-digit', day: '2-digit',
-      hour: '2-digit', minute: '2-digit',
-    }).formatToParts(now).map((x) => [x.type, x.value]),
-  )
-  const today = `${p.year}-${p.month}-${p.day}` // tz-local date, e.g. "2026-06-30"
-  const localHour = Number(p.hour)
-  const localMinute = Number(p.minute)
+  // Shared business-date/-time helper (FND-7) so the cutoff scan and the client's
+  // check date can never drift out of the APP_TIMEZONE business day.
+  const { date: today, hour: localHour, minute: localMinute } = businessDateTime(now)
 
   const pastCutoff =
     localHour > cutoffHour ||

@@ -8,6 +8,7 @@ import {
 } from '@mui/material'
 import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
+import { businessDate } from '@/lib/business-date'
 import { DEFAULT_DAILY_CHECKLIST } from '@/types'
 
 // The full ~16-item inspection (PRD §11.4) is the single source of truth, shared
@@ -42,7 +43,7 @@ export default function OperatorDailyCheckPage() {
   // (UR-033 allows daily-checking any vehicle). Hold its details so it shows in
   // the picker + name + checklist-type resolution instead of rendering as "—".
   const [scannedVehicle, setScannedVehicle] = React.useState<{ id: string; name: string; type: string } | null>(null)
-  const [date, setDate] = React.useState(() => new Date().toISOString().slice(0, 10))
+  const [date, setDate] = React.useState(() => businessDate())
   const [odometer, setOdometer] = React.useState('')
   const [site, setSite] = React.useState('')
   const [checklist, setChecklist] = React.useState<ChecklistRow[]>(
@@ -163,7 +164,7 @@ export default function OperatorDailyCheckPage() {
     setIssues('')
     setOdometer('')
     setSite('')
-    setDate(new Date().toISOString().slice(0, 10))
+    setDate(businessDate())
     setSubmitted(false)
     setError('')
     setStep(0)
