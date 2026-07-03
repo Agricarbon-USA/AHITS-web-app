@@ -96,6 +96,7 @@ export interface LineChecklistRow {
   fulfilledQty: number | null
   specificInventoryItemId: string | null
   specificItemName: string | null
+  specificVehicleName: string | null
   substitutedItemId: string | null
   substitutedName: string | null
   resolvedUnitId: string | null
@@ -409,6 +410,7 @@ export async function getLineChecklist(
            l."itemType", l."vehicleType"::text AS "vehicleType", l."requestedQty",
            l."fulfillmentStatus", l."fulfilledQty", l."denyReason",
            l."specificInventoryItemId", ii."name" AS "specificItemName",
+           v."name" AS "specificVehicleName",
            l."substitutedItemId", si."name" AS "substitutedName",
            l."resolvedUnitId", l."resolvedVehicleId",
            l."description",
@@ -416,6 +418,7 @@ export async function getLineChecklist(
     FROM "deployment_request_lines" l
     LEFT JOIN "categories" c ON c."id" = l."categoryId"
     LEFT JOIN "inventory_items" ii ON ii."id" = l."specificInventoryItemId"
+    LEFT JOIN "vehicles" v ON v."id" = l."specificVehicleId"
     LEFT JOIN "inventory_items" si ON si."id" = l."substitutedItemId"
     LEFT JOIN "inventory_units" ru ON ru."id" = l."resolvedUnitId"
     WHERE l."requestId" = ${requestId}
