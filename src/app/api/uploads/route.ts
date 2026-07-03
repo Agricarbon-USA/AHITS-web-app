@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAuth } from '@/lib/auth/session'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { sniffImageMime, extForImageMime, isPdf } from '@/lib/photo-security'
+import { rateLimit } from '@/lib/rate-limit'
 
 const BUCKET = 'photos'
 const MAX_SIZE_BYTES = 10 * 1024 * 1024 // 10 MB
@@ -9,6 +10,9 @@ const MAX_SIZE_BYTES = 10 * 1024 * 1024 // 10 MB
 export async function POST(req: NextRequest) {
   const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const rl = await rateLimit(`uploads:${session.userId}`, 30, 60_000)
+  if (!rl.allowed) return NextResponse.json({ error: 'Too many uploads — slow down.' }, { status: 429 })
 
   let formData: FormData
   try {
