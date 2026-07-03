@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { randomBytes } from 'crypto'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
 import { sendEmail } from '@/lib/email/resend'
 import { inviteEmail } from '@/lib/email/templates'
 import { writeAudit } from '@/lib/audit'
+import { generateInviteToken, hashInviteToken } from '@/lib/invite-token'
 
 // Bulk-onboard operators by emailing invites (Wave 2A.5 §B.3). Each row creates
 // a CSPRNG invite token; a fresh user sets their own PIN via the invite flow.
@@ -34,22 +34,33 @@ export async function POST(req: NextRequest) {
         continue
       }
       await prisma.inviteToken.deleteMany({ where: { email: row.email, usedAt: null } })
+      // Invite tokens mint accounts, so persist only the sha256 hash (H2 / FND-3);
+      // the raw token lives only in the emailed setup URL — same posture as the
+      // single-invite route. (The bulk path previously stored the RAW token, which
+      // both 404'd every link and left live secrets at rest.)
+      const rawToken = generateInviteToken()
       const invite = await prisma.inviteToken.create({
         data: {
           email: row.email,
           name: row.name,
           role: row.role,
-          token: randomBytes(32).toString('base64url'),
+          token: hashInviteToken(rawToken),
           createdBy: session.userId,
           expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
         },
       })
-      const setupUrl = `${appUrl}/setup-account?token=${encodeURIComponent(invite.token)}`
-      await sendEmail({
-        to: row.email,
-        subject: `You've been invited to AHITS — Agricarbon`,
-        html: inviteEmail(row.name, row.role, setupUrl),
-      })
+      const setupUrl = `${appUrl}/setup-account?token=${encodeURIComponent(rawToken)}`
+      try {
+        await sendEmail({
+          to: row.email,
+          subject: `You've been invited to AHITS — Agricarbon`,
+          html: inviteEmail(row.name, row.role, setupUrl),
+        })
+      } catch (err) {
+        // Don't leave a dangling invite the admin thinks went out.
+        await prisma.inviteToken.delete({ where: { id: invite.id } }).catch(() => {})
+        throw err
+      }
       results.push({ email: row.email, ok: true })
     } catch (err) {
       console.error('bulk invite row failed', row.email, err)
