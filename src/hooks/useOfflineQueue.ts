@@ -4,6 +4,7 @@ import * as React from 'react'
 import type { OfflineQueueItem, MutateResult } from '@/types'
 import { resolvePhotoRefs } from '@/lib/photoStore'
 import { extractCreatedId, itemReferencesPlaceholder, remapPlaceholderId } from '@/lib/offline-remap'
+import { ensurePersistentStorage, getStorageEstimate, probeIdbWritable } from '@/lib/storage-health'
 
 const DB_NAME = 'ahits_offline'
 const STORE = 'queue'
@@ -80,25 +81,38 @@ export function useOfflineQueue() {
   const [isOffline, setIsOffline] = React.useState(
     typeof navigator !== 'undefined' && !navigator.onLine
   )
+  const [persistenceGranted, setPersistenceGranted] = React.useState<boolean | null>(null)
+  const [idbWritable, setIdbWritable] = React.useState(true)
+  const [nearQuota, setNearQuota] = React.useState(false)
+  const [possibleDataLoss, setPossibleDataLoss] = React.useState(false)
+  const [staleQueue, setStaleQueue] = React.useState(false)
   const syncingRef = React.useRef(false)
+  // Set to true when flush() actually deletes at least one item this session —
+  // suppresses false-positive possibleDataLoss if the queue legitimately drained.
+  const flushedThisSessionRef = React.useRef(false)
 
   // Recompute honest counts straight from IndexedDB.
   const refresh = React.useCallback(async () => {
     try {
       const db = await openDB()
       const items = await getAllItems(db)
-      setPending(items.filter((i) => i.status !== 'failed').length)
-      setFailed(items.filter((i) => i.status === 'failed').length)
+      const nonFailed = items.filter((i) => i.status !== 'failed')
+      const failedItems = items.filter((i) => i.status === 'failed')
+      setPending(nonFailed.length)
+      setFailed(failedItems.length)
       setPendingDeployCreate(
-        items.some((i) => i.status !== 'failed' && i.endpoint === '/api/deployments' && i.method === 'POST')
+        nonFailed.some((i) => i.endpoint === '/api/deployments' && i.method === 'POST')
       )
+      try { localStorage.setItem('ahits_pending_hint', String(nonFailed.length)) } catch {}
+      const SIX_DAYS = 6 * 24 * 60 * 60 * 1000
+      setStaleQueue(nonFailed.some((i) => Date.now() - i.createdAt > SIX_DAYS))
     } catch {
       /* IDB unavailable (private mode / SSR) — leave counts as-is */
     }
   }, [])
 
   const enqueue = React.useCallback(
-    async (item: Omit<OfflineQueueItem, 'id' | 'retries' | 'createdAt'>) => {
+    async (item: Omit<OfflineQueueItem, 'id' | 'retries' | 'createdAt'>): Promise<boolean> => {
       try {
         const db = await openDB()
         await putItem(db, {
@@ -109,8 +123,9 @@ export function useOfflineQueue() {
           createdAt: Date.now(),
         } as OfflineQueueItem)
         await refresh()
+        return true
       } catch {
-        /* IDB unavailable (Safari private mode) — write silently dropped */
+        return false
       }
     },
     [refresh]
@@ -170,6 +185,7 @@ export function useOfflineQueue() {
             }
           }
           await deleteItem(db, item.id)
+          flushedThisSessionRef.current = true
         } else if (TERMINAL_STATUSES.has(res.status)) {
           const errBody = await res.json().catch(() => ({}))
           await putItem(db, { ...work, status: 'failed', lastError: extractError(errBody) })
@@ -253,7 +269,16 @@ export function useOfflineQueue() {
         const errBody = await res.json().catch(() => ({}))
         return { ok: false, queued: false, error: extractError(errBody), status: res.status }
       } catch {
-        await enqueue({ endpoint: args.endpoint, method, body, idempotencyKey, label: args.label, placeholderId: args.placeholderId })
+        const stored = await enqueue({ endpoint: args.endpoint, method, body, idempotencyKey, label: args.label, placeholderId: args.placeholderId })
+        if (!stored) {
+          return {
+            ok: false,
+            queued: false,
+            error: "Couldn’t save this action on your device — your change was NOT recorded. Reconnect and try again.",
+            status: 0,
+            reason: 'storage' as const,
+          }
+        }
         return { ok: true, queued: true, data: null }
       }
     },
@@ -262,10 +287,35 @@ export function useOfflineQueue() {
 
   // Seed counts + flush on mount, and react to connectivity/visibility changes.
   React.useEffect(() => {
-    // Ask the browser to keep our IndexedDB queue from being evicted under
-    // storage pressure (matters most on iOS). Best-effort.
-    navigator.storage?.persist?.().catch(() => {})
-    refresh()
+    // Capture last session's pending hint BEFORE refresh() overwrites it.
+    // If oldHint > 0 but IDB is now empty (and nothing flushed this session),
+    // storage eviction may have silently dropped queued writes.
+    const oldHint = Number(localStorage.getItem('ahits_pending_hint') ?? '0')
+
+    async function init() {
+      const [persisted, estimate, writable] = await Promise.all([
+        ensurePersistentStorage(),
+        getStorageEstimate(),
+        probeIdbWritable(),
+      ])
+      setPersistenceGranted(persisted)
+      setIdbWritable(writable)
+      if (estimate) setNearQuota(estimate.ratio > 0.8)
+
+      await refresh()
+
+      if (oldHint > 0 && !flushedThisSessionRef.current) {
+        try {
+          const db = await openDB()
+          const items = await getAllItems(db)
+          if (items.filter((i) => i.status !== 'failed').length === 0) {
+            setPossibleDataLoss(true)
+          }
+        } catch {}
+      }
+    }
+
+    init()
     flush()
     const onOnline = () => { setIsOffline(false); flush() }
     const onOffline = () => setIsOffline(true)
@@ -295,5 +345,12 @@ export function useOfflineQueue() {
     pendingDeployCreate,
     syncing,
     isOffline,
+    // Storage health:
+    persistenceGranted,
+    idbWritable,
+    nearQuota,
+    possibleDataLoss,
+    staleQueue,
+    storageAtRisk: !idbWritable || nearQuota || possibleDataLoss,
   }
 }
