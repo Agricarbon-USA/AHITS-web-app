@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
-import { getDeploymentRoster, addProjectLink, removeAllProjectLinks } from '@/lib/deployment-assignments'
+import { getDeploymentRosterForDisplay, addProjectLink, removeAllProjectLinks } from '@/lib/deployment-assignments'
 
 const RIG_INCLUDE = {
   operator: { select: { id: true, name: true } },
@@ -85,12 +85,12 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     if (!isSecondary) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  const ro = await getDeploymentRoster(id)
-  // The roster only returns OPEN assignments, so ENDED deployments have operator:null.
-  // Hydrate from the retained legacy Rig.operatorId (schema NOT NULL; users are
-  // soft-deleted, never removed) so historical attribution still displays and the admin
-  // drawer/list can't crash on a null operator after a deployment is ended. Mirrors the
-  // list route's fallback (completes B1 for the single-rig GET; pairs with UR-032).
+  // UR-032: the display roster returns the FINAL roster for an ended deployment
+  // (primary + secondaries), so historical attribution shows the real operator
+  // instead of null — from the authoritative assignment table, not the legacy
+  // Rig.operatorId column. The legacy column remains only a last-resort safety net
+  // for pre-assignment-table rigs (Rig.operatorId is NOT NULL).
+  const ro = await getDeploymentRosterForDisplay(id)
   let operator = ro.operator ? { id: ro.operator.id, name: ro.operator.name } : null
   if (!operator) {
     const fallback = await prisma.user.findUnique({

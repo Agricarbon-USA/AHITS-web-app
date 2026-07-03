@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
-import { getDeploymentRosters, ensureOpenAssignment, addProjectLink } from '@/lib/deployment-assignments'
+import { getDeploymentRostersForDisplay, ensureOpenAssignment, addProjectLink } from '@/lib/deployment-assignments'
 import { drawFromHub, getStockAtHub, totalStock, setStockAtHub, resyncItemTotal } from '@/lib/inventory-stock'
 import { claimHeldStock } from '@/lib/deployment-requests'
 import { withIdempotency } from '@/lib/idempotency'
@@ -124,7 +124,10 @@ export async function GET(req: NextRequest) {
     orderBy: { startedAt: 'desc' },
   })
 
-  const rosters = await getDeploymentRosters(rigs.map((r) => r.id))
+  // UR-032: display roster so ENDED deployments (active=false / history) keep
+  // their operator attribution instead of serializing operator: null. Identical
+  // to the open roster for active deployments.
+  const rosters = await getDeploymentRostersForDisplay(rigs.map((r) => r.id))
 
   // The roster only returns OPEN (un-ended) assignments, so ENDED deployments have
   // operator:null. Hydrate those from the retained legacy Rig.operatorId (schema
