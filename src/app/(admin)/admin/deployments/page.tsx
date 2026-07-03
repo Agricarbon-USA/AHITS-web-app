@@ -529,7 +529,7 @@ function DeploymentDrawer({
     setActionLoading(false)
     if (!res.ok) {
       const d = await res.json().catch(() => ({}))
-      showToast(typeof d.error === 'string' ? d.error : 'Failed to add vehicles')
+      showToast(typeof d.error === 'string' ? d.error : 'Failed to add vehicles', 'error')
       return
     }
     setNoteDialog(null)
@@ -591,7 +591,7 @@ function DeploymentDrawer({
     setActionLoading(false)
     if (!res.ok) {
       const d = await res.json().catch(() => ({}))
-      showToast(typeof d.error === 'string' ? d.error : 'Failed to remove vehicles')
+      showToast(typeof d.error === 'string' ? d.error : 'Failed to remove vehicles', 'error')
       return
     }
     setNoteDialog(null)
@@ -626,7 +626,7 @@ function DeploymentDrawer({
       setNoteDialog(null)
       setAddItemOpen(true)
       await refresh()
-      showToast(err.error ?? 'A unit was just taken. Please reselect.')
+      showToast(err.error ?? 'A unit was just taken. Please reselect.', 'error')
       return
     }
     setNoteDialog(null)
