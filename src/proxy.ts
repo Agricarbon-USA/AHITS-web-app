@@ -40,15 +40,49 @@ function getSecret() {
   return new TextEncoder().encode(s)
 }
 
+function buildCsp(nonce: string): string {
+  return [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    "img-src 'self' data: blob: https://*.supabase.co",
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
+    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self' data:",
+    "connect-src 'self' https://*.supabase.co",
+    "worker-src 'self' blob:",
+    "manifest-src 'self'",
+  ].join('; ')
+}
+
+// Sets the CSP on both the forwarded request (so Next.js renderer reads the
+// nonce for its bootstrap <script> tags) and the response (so the browser
+// enforces it). Both sides must carry the same nonce string.
+// x-nonce carries the bare nonce value for the root layout to read — that
+// `headers()` call opts the entire app into per-request dynamic rendering,
+// which is required for Next.js to stamp the nonce on generated <script> tags.
+function nextWithCsp(request: NextRequest, csp: string, nonce: string): NextResponse {
+  const requestHeaders = new Headers(request.headers)
+  requestHeaders.set('content-security-policy', csp)
+  requestHeaders.set('x-nonce', nonce)
+  const response = NextResponse.next({ request: { headers: requestHeaders } })
+  response.headers.set('Content-Security-Policy', csp)
+  return response
+}
+
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
+  const nonce = btoa(crypto.randomUUID())
+  const csp = buildCsp(nonce)
 
-  // Allow public paths
+  // Public paths render HTML (login, invite, /s/* token pages) — need the nonce.
   if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
-    return NextResponse.next()
+    return nextWithCsp(request, csp, nonce)
   }
 
-  // Allow static/api-without-auth paths
+  // Static assets that bypass auth — no HTML body, nonce not needed.
   if (
     pathname.startsWith('/_next') ||
     pathname.startsWith('/icons') ||
@@ -119,7 +153,7 @@ export async function proxy(request: NextRequest) {
       )
     }
 
-    return NextResponse.next()
+    return nextWithCsp(request, csp, nonce)
   } catch {
     return NextResponse.redirect(new URL('/login', request.url))
   }
