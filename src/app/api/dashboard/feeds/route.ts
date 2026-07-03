@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { businessDate } from '@/lib/business-date'
 import { requireAuth } from '@/lib/auth/session'
 
 // Operational feeds for the dashboard (alert-response KPI): the things to act on
@@ -24,8 +25,9 @@ export async function GET() {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const now = new Date()
-  const startOfToday = new Date(now)
-  startOfToday.setHours(0, 0, 0, 0)
+  // FND-7: "today" is the APP_TIMEZONE business date (matches the cron + client),
+  // not the server's UTC midnight.
+  const businessToday = new Date(businessDate(now))
   const dueSoonCutoff = new Date(now.getTime() + DUE_SOON_DAYS * MS_PER_DAY)
   const longRunningCutoff = new Date(now.getTime() - LONG_RUNNING_DAYS * MS_PER_DAY)
   const spendWindowStart = new Date(now.getTime() - SPEND_WINDOW_DAYS * MS_PER_DAY)
@@ -35,7 +37,7 @@ export async function GET() {
       where: { endedAt: null },
       select: { id: true, label: true, startedAt: true, operatorId: true, operator: { select: { name: true } } },
     }),
-    prisma.dailyCheck.findMany({ where: { submittedAt: { gte: startOfToday } }, select: { operatorId: true } }),
+    prisma.dailyCheck.findMany({ where: { date: businessToday }, select: { operatorId: true } }),
     prisma.maintenanceTask.findMany({
       where: { status: { not: 'COMPLETED' }, nextDue: { not: null, lte: dueSoonCutoff } },
       orderBy: { nextDue: 'asc' },
