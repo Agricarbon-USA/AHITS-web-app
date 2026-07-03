@@ -14,7 +14,9 @@ const MAX_RETRIES = 8
 // HTTP statuses that mean "the server received and rejected this for good" —
 // retrying will never succeed, so the item becomes "needs attention" instead of
 // looping forever and wedging the queue.
-const TERMINAL_STATUSES = new Set([400, 401, 403, 404, 409, 410, 422])
+// 401 is deliberately NOT terminal: an expired session must not discard a
+// queued write (FND-14b). It is parked and retried after re-auth.
+const TERMINAL_STATUSES = new Set([400, 403, 404, 409, 410, 422])
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -186,6 +188,13 @@ export function useOfflineQueue() {
           }
           await deleteItem(db, item.id)
           flushedThisSessionRef.current = true
+        } else if (res.status === 401) {
+          // FND-14b: an expired/absent session (e.g. the 24h JWT lapsed while the
+          // operator was offline) is NOT a terminal failure — the queued write is
+          // still valid. Leave it pending (don't burn a retry, don't mark failed)
+          // so it replays after re-authentication, and stop this pass rather than
+          // 401-failing every remaining item. Prevents silent field-data loss.
+          break
         } else if (TERMINAL_STATUSES.has(res.status)) {
           const errBody = await res.json().catch(() => ({}))
           await putItem(db, { ...work, status: 'failed', lastError: extractError(errBody) })

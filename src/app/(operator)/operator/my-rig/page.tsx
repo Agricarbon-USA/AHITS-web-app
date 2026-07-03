@@ -666,6 +666,18 @@ export default function MyRigPage() {
     await loadTransfers()
   }, [loadTransfers])
 
+  // FND-14a: when a queued offline deployment-create drains on reconnect,
+  // pendingDeployCreate flips true→false. Without a re-load the page keeps showing
+  // the "Start Deployment" empty state against a rig that now exists, so tapping
+  // Start 409s. Re-load on that transition so the real active rig appears.
+  const prevPendingDeployRef = React.useRef(pendingDeployCreate)
+  React.useEffect(() => {
+    if (prevPendingDeployRef.current && !pendingDeployCreate) {
+      void load()
+    }
+    prevPendingDeployRef.current = pendingDeployCreate
+  }, [pendingDeployCreate, load])
+
   React.useEffect(() => {
     load()
     fetch('/api/vehicles').then((r) => r.json()).then((d) => setVehicles(d.data ?? d ?? [])).catch(() => {})
