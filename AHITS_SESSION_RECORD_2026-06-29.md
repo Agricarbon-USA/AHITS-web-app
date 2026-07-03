@@ -37,19 +37,41 @@ The session began as an ultra-review heading into Phase 3 and turned into a full
 2. **`AHITS_PHASE3_READINESS_2026-06-26.md` is a pre-merge snapshot** — its "four fixes not merged / UR-004 & UR-008 OPEN" core is now false. Superseded by this record.
 3. **Repo hygiene** — ~30 untracked `AHITS_*.md` planning docs and a stray `.~lock`/`.git/index.lock` in the root. Add the planning docs to `.gitignore` (or a `/docs` folder) and clear the locks. Close the issue-register `.xlsx` in your spreadsheet app so its `.~lock` releases (and so it reloads with the latest edits).
 
-## 5. Recommended next steps (in order)
+## 5. A6 pass status — IN PROGRESS (the active pilot gate)
 
-1. **Confirm CI green on `development`** (the one check the sandbox couldn't run) — quick and worth doing before the device pass.
-2. **Run the A6 device pass** using `AHITS_A6_DEVICE_CHECKLIST.md` on real iOS + Android (web and installed PWA) + a desktop control. File a UR-# for any failure; re-run that row after the fix. A clean pass = **pilot line reached.**
-3. **Merge the cron `.trim()` hardening** (small PR) and do the §4 hygiene cleanup.
-4. **Begin Phase 3 with the smallest capstone — Deployment Map** (adds 3 GPS fields to `DailyCheck`, captured opt-in on submit; a Mapbox admin map). It's the lowest-risk entry and de-risks the GPS plumbing before the heavier items.
-5. **Then the heavier Phase-3 capstones** in roadmap order: Time Tracking / Invoicing / Availability (7 new models — the big one), then the no-app QR web form, then advanced analytics / admin-mobile / contractor onboarding.
-6. **Before real go-live (not before pilot):** execute the prod-DB standup (`AHITS_PROD_STANDUP_CHECKLIST.md`, Option A) with the data-isolation check; address UR-009 indexes and UR-032 ended-deployment attribution.
-7. **Parked by decision (revisit when ready):** Web Push, the RN wrapper, per-project checklists, external non-admin alert recipients.
+The A6 device pass is underway (`AHITS_A6_DEVICE_CHECKLIST.md`). Steps 1–2 OK; **step 3 (stay logged in while navigating offline) surfaced a real blocker on all five platforms** — Android reverted to `/login`; iOS flashed the offline page then froze (taps dead).
 
-## 6. Key artifacts from this session
-- `AHITS_ULTRA_REVIEW_ISSUE_REGISTER.xlsx` — issue register (reconciled to merged state; UR-037 cron row + infra-done summary added).
+**Root cause (code-certain, UR-038):** App-Router tab taps are **RSC fetches** the service worker wasn't caching (its matcher only caught `mode==='navigate'`), so offline soft-nav stalled; and the SW **precached the dynamic, authed operator pages with `revision:null`**, which captured a `/login` redirect at install time and served it offline (the Android symptom).
+
+**Fix built + handed off — branch `feature/20260629/max-slater-offline-rsc-nav` — PENDING DEVICE RE-TEST:** the SW now caches RSC navigations (`ahits-app-rsc`), no longer precaches authed pages (only `/~offline`), and a new `RoutePrefetcher` warms all operator-reachable routes while online so they're cached before signal drops. tsc/lint green; **cannot be device-verified from the build environment** — offline App-Router PWA nav is the trickiest piece and may need an iteration.
+
+**Re-test procedure (must follow exactly):** after deploy, fully drop the old SW on each device (uninstall + reinstall the PWA, or DevTools → Unregister + Clear storage); open the app **online and wait ~10 s** so the prefetch warms the cache; **then** go offline and run step 3. If it still fails, capture: which screen it lands on, which platforms, and whether the online-warm step was done.
+
+## 6. Recommended next steps
+
+**Track 1 — finish the pilot gate (A6):**
+1. Deploy the offline-RSC-nav fix; re-run A6 **step 3** per the procedure above; iterate if needed.
+2. Complete the remaining A6 rows on all five platforms; record sign-off. Clean pass = **pilot line reached.**
+
+**Track 2 — parallel build queue (safe to progress while A6 is being verified):**
+3. **Phase 3 — Deployment Map** (smallest capstone): add `gpsLat/gpsLng/gpsAccuracy` to `DailyCheck`, capture opt-in on daily-check submit, Mapbox admin map. Lowest-risk Phase-3 entry; de-risks the GPS plumbing.
+4. **UR-032** — ended-deployment operator attribution (data correctness; server-side, not platform-dependent).
+5. **UR-009** — add the missing FK/status indexes (pre-prod scale).
+6. **#29 slice 3c→4** — legacy-column retirement (gated by UR-002; the snapshot-gated irreversible drop — sequence carefully).
+7. Low/cleanup tail: UR-010, UR-011, UR-012, UR-013, UR-014, UR-031 + the deferred CR-* tickets.
+
+**Track 3 — pre-go-live (after pilot, not blocking the start of Phase 3):**
+8. Prod-DB standup (`AHITS_PROD_STANDUP_CHECKLIST.md`, Option A) + the data-isolation check.
+
+**Parked by decision:** Web Push, RN wrapper, per-project checklists, external non-admin alert recipients.
+
+**Small loose ends:** the cron `.trim()` hardening PR (pushed this session — confirm merged); the repo doc-hygiene PR (commit the `AHITS_*.md` records + the `.gitignore` that ignores the binary `.xlsx` register and office `.~lock` sidecars).
+
+## 7. Key artifacts (next-session pickup)
+- `AHITS_SESSION_RECORD_2026-06-29.md` — **this doc; the current-state handoff. Start here.**
+- `AHITS_ULTRA_REVIEW_ISSUE_REGISTER.xlsx` — issue register (reconciled to merged state; UR-037 cron + UR-038 offline-nav rows; infra-done summary). Living local file (gitignored).
+- `AHITS_A6_DEVICE_CHECKLIST.md` — the device-pass sign-off sheet (step 3 has a known fix in flight — see §5).
 - `AHITS_FIELD_BUGS_DIAGNOSIS_2026-06-26.md` — the A6 field-bug root-cause report.
-- `AHITS_A6_DEVICE_CHECKLIST.md` — the device-pass sign-off sheet (new).
+- `src/app/sw.ts` + `src/components/operator/RoutePrefetcher.tsx` — the offline-RSC-nav fix (pending device verify).
 - `scripts/g1-backfill-hub-stock.ts` — one-off to resurface any pre-fix lost stock (dry-run default).
 - `AHITS_PROD_STANDUP_CHECKLIST.md` — the deferred go-live runbook (Option A).
