@@ -660,6 +660,7 @@ model MaintenanceTask {
   @@index([status, nextDue])
   @@index([inventoryUnitId])
   @@index([deletedAt])
+  @@index([repairHubId]) // UR-009: FK filtered by hub inbound / repair views
   @@map("maintenance_tasks")
 }
 
@@ -723,6 +724,7 @@ model Alert {
 
   @@index([resolved, triggeredAt])
   @@index([sourceTable, sourceId])
+  @@index([resolved, notifiedAt]) // UR-009: the dispatch cron scans (resolved=false, notifiedAt=null) every run
   @@map("alerts")
 }
 
