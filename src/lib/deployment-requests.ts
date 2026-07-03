@@ -771,3 +771,66 @@ export async function applyRequestTransition(
       return { ok: false, code: 'STATE_MISMATCH' }
   }
 }
+
+type RawClient = Pick<typeof prisma, '$executeRaw' | '$queryRaw'>
+
+/**
+ * UR-010 (R4 hold-through-claim): claim up to `qty` units of held (reserved) stock
+ * for `operatorId` on `inventoryItemId` at `hubId`. Converts the reservation into a
+ * physical draw: decrements `inventory_stock.quantity` AND `reservedQty` atomically,
+ * and marks `claimedQty` on each matching request line (oldest first).
+ *
+ * Returns the number of units claimed (0 when no held stock exists — the caller falls
+ * through to the free-stock `drawFromHub` path, preserving pre-UR-010 behavior).
+ */
+export async function claimHeldStock(
+  operatorId: string,
+  inventoryItemId: string,
+  hubId: string,
+  qty: number,
+  db: RawClient = prisma,
+): Promise<number> {
+  if (qty <= 0) return 0
+
+  type LineRow = { id: string; unclaimed: number }
+  const lines = await db.$queryRaw<LineRow[]>`
+    SELECT l."id", (l."heldQty" - l."claimedQty") AS "unclaimed"
+    FROM "deployment_request_lines" l
+    JOIN "deployment_requests" r ON r."id" = l."requestId"
+    WHERE l."heldItemId" = ${inventoryItemId}
+      AND l."heldHubId"  = ${hubId}
+      AND l."heldQty"    > l."claimedQty"
+      AND l."releasedAt" IS NULL
+      AND (r."requestedById" = ${operatorId} OR r."forOperatorId" = ${operatorId})
+    ORDER BY r."createdAt" ASC
+  `
+
+  let remaining = qty
+  let totalClaimed = 0
+
+  for (const line of lines) {
+    if (remaining <= 0) break
+    const unclaimed = Number(line.unclaimed)
+    const claim = Math.min(remaining, unclaimed)
+    if (claim <= 0) continue
+
+    await db.$executeRaw`
+      UPDATE "deployment_request_lines"
+      SET "claimedQty" = "claimedQty" + ${claim}
+      WHERE "id" = ${line.id}
+    `
+    // Convert reserve→draw on the hub stock row (quantity down, reservedQty released).
+    await db.$executeRaw`
+      UPDATE "inventory_stock"
+      SET "quantity"    = "quantity" - ${claim},
+          "reservedQty" = GREATEST("reservedQty" - ${claim}, 0),
+          "updatedAt"   = now()
+      WHERE "itemId" = ${inventoryItemId} AND "hubId" = ${hubId}
+    `
+
+    totalClaimed += claim
+    remaining -= claim
+  }
+
+  return totalClaimed
+}
