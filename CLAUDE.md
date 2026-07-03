@@ -29,19 +29,24 @@ git commit -m "<short description of change>"
 git push -u origin "$BRANCH"
 ```
 
-## 3. Run Prisma locally before opening the PR
+## 3. Regenerate the Prisma client and commit any new migration
 
-Always run these on the local machine before creating the PR. The Docker build does not run migrations, and a missing Prisma client or unapplied migration will fail the build.
+If you changed the schema, regenerate the client and create the migration on a
+**disposable local/dev DB** (never a shared one — see the non-negotiable rules below):
 
 ```bash
-# Regenerate the Prisma client if schema changed
-make db-generate
-
-# Apply any pending migrations against the real database
-make db-migrate
+make db-generate       # regenerate the Prisma client if schema changed
+make db-migrate-dev    # create the migration against a LOCAL/dev DB only
 ```
 
-If you created a new migration during this change, also commit the generated files in `prisma/migrations/` as part of the same branch.
+Commit the generated `prisma/migrations/*` files as part of this branch.
+
+> **Migrations against staging/prod are applied by the CI `migrate` job in
+> `deploy.yml` (`make cloud-run-migrate`), not by hand.** You do **not** run
+> `make db-migrate` against the shared staging/prod database from a laptop — the
+> direct URL is IPv6-only from most networks and it duplicates the CI step. Just
+> make sure the committed migration is backward-compatible (see rules below), since
+> the migrate job runs **before** the new revision serves traffic.
 
 ## 4. Open a pull request
 
@@ -81,8 +86,9 @@ gh pr view --comments
 
 - The staging service is `ahits-web-app-staging` on Cloud Run in `us-central1`.
 - You can also trigger an on-demand staging preview by adding the `deploy-staging` label to any open PR: `gh pr edit $PR_NUMBER --add-label deploy-staging` (runs `pr-staging-deploy.yml`).
-- **Auto-deploys (`deploy.yml`):** landing changes on `development` deploys to **staging**; landing changes on `production` deploys to **prod**. Both first run the shared `verify` workflow (lint, type-check, build, tests) and will not deploy if it fails. Promote staging → prod by merging `development` into `production` (e.g. a PR with `--base production`).
-- Migrations are **not** applied by `deploy.yml` or the Docker image. Apply them with `make db-migrate` against the target database **before** the code that needs them lands (see step 3). Automating this in the release path is a tracked Wave A item.
+- **Auto-deploys (`deploy.yml`):** landing changes on `development` deploys to **staging**; landing changes on `production` deploys to **prod**. Each run is `verify` (lint, type-check, build, tests) → **`migrate`** (`make cloud-run-migrate`) → `deploy`, and will not deploy if an earlier job fails. Promote staging → prod by merging `development` into `production` (e.g. a PR with `--base production`).
+- Migrate-on-deploy **is live** (the `migrate` job in `deploy.yml`), superseding the old manual step. The Docker image itself still does not run migrations.
+- ⚠️ **KNOWN BUG (fix before the first prod promote):** `make cloud-run-migrate` hardcodes the **staging** migration secret (`AHITS_MIGRATE_URL`), so a merge to `production` currently migrates **staging** and then serves prod against an unmigrated schema. Before promoting to prod: parameterize the secret to `$(SECRET_NS)_MIGRATE_URL`, create `AHITS_PROD_MIGRATE_URL` (prod session pooler, port 5432, IPv4), and have `deploy.yml` pass `SECRET_NS=AHITS_PROD` on the `production` branch. Tracked as a Wave 0 release-safety item.
 - Do **not** deploy directly from a local machine to production; always go through the PR + GitHub Actions flow.
 
 ## Database & migration rules (non-negotiable)
@@ -94,9 +100,11 @@ outage, and manual-migration/secret ordering has repeatedly stalled deploys.
   (staging or prod). Those are for a disposable local/dev DB only. Schema changes
   ship as a **committed migration** in `prisma/migrations/` and are applied with
   `prisma migrate deploy` (`make db-migrate` / `make cloud-run-migrate`).
-- **Apply the migration before the code that needs it lands.** `deploy.yml` and the
-  Docker image do **not** run migrations. A revision that references a table/column
-  that isn't in the DB yet will error at runtime.
+- **Ship migrations backward-compatible.** The `deploy.yml` `migrate` job runs
+  **before** the new revision serves traffic, but the two are not atomic: a revision
+  that references a table/column the migration hasn't added yet errors at runtime.
+  Additive (nullable columns, new tables) is safe; destructive drops must lag the
+  code that stopped using them.
 - **A new secret must exist in Secret Manager _before_ the deploy that mounts it.**
   Cloud Run validates `--set-secrets` references at deploy time; deploying first
   fails the release. Create the `AHITS_*` secret, confirm an ENABLED version, then
@@ -104,5 +112,6 @@ outage, and manual-migration/secret ordering has repeatedly stalled deploys.
 - Adding a new env secret also means adding its `NAME=AHITS_NAME:latest` mapping to
   the `--set-secrets` line in the `Makefile` (`cloud-run-deploy`) — otherwise the
   next deploy silently drops it.
-- Migrate-on-deploy automation (an authenticated migrate step in the release path)
-  is the tracked Wave A item that would retire most of this manual ceremony.
+- Migrate-on-deploy automation (the authenticated `migrate` job in `deploy.yml`) has
+  **shipped** and retires most of the old manual ceremony — but see the prod-secret
+  bug noted in the Deployment Workflow above; that must be fixed before prod relies on it.

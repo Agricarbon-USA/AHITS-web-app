@@ -86,10 +86,23 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   const ro = await getDeploymentRoster(id)
+  // The roster only returns OPEN assignments, so ENDED deployments have operator:null.
+  // Hydrate from the retained legacy Rig.operatorId (schema NOT NULL; users are
+  // soft-deleted, never removed) so historical attribution still displays and the admin
+  // drawer/list can't crash on a null operator after a deployment is ended. Mirrors the
+  // list route's fallback (completes B1 for the single-rig GET; pairs with UR-032).
+  let operator = ro.operator ? { id: ro.operator.id, name: ro.operator.name } : null
+  if (!operator) {
+    const fallback = await prisma.user.findUnique({
+      where: { id: rig.operatorId },
+      select: { id: true, name: true },
+    })
+    operator = fallback ?? { id: rig.operatorId, name: 'Unknown operator' }
+  }
   return NextResponse.json({
     ...rig,
     operatorId: ro.operatorId ?? rig.operatorId,
-    operator: ro.operator ? { id: ro.operator.id, name: ro.operator.name } : null,
+    operator,
     project: ro.projects[0] ?? null,
     secondaryOperators: ro.secondaryOperators,
   })

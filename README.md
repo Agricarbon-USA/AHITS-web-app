@@ -38,9 +38,11 @@ Copy `.env.example` to `.env` and fill in:
 | `SUPABASE_SERVICE_ROLE_KEY`     | Supabase service role key                              |
 | `PIN_SESSION_SECRET`            | 32-byte hex secret (`openssl rand -hex 32`)            |
 | `RESEND_API_KEY`                | Resend API key for email alerts                        |
-| `ADMIN_EMAIL`                   | Email to receive system alerts                         |
+| `EMAIL_FROM`                    | Email that Resend will send FROM                       |
+| `CRON_SECRET`                   | Bearer secret for the `/api/cron/dispatch` endpoint    |
+| `APP_TIMEZONE`                  | IANA tz for daily-check cutoff (default `America/Chicago`) |
+| `NEXT_PUBLIC_APP_URL`           | Public base URL (used in tokenized links/emails)       |
 | `GCP_PROJECT_ID`                | GCP project ID for deployment                          |
-| `EMAIL_FROM`                | Email that resend will send FROM                          |
 
 ---
 
@@ -53,7 +55,7 @@ make db-migrate-dev  # Create & apply DB migration
 make db-seed         # Seed sample data
 make db-studio       # Open Prisma Studio
 make docker-build    # Build Docker image
-make deploy          # Deploy to Cloud Run (staging)
+make deploy-staging  # Deploy to Cloud Run (staging)
 make deploy-prod     # Deploy to Cloud Run (production)
 make logs            # Tail Cloud Run logs
 ```
@@ -102,8 +104,11 @@ error instead of touching production.
 
 ### CI/CD
 
-- **`develop` branch** → deploys to `ahits-web-app-staging`
-- **`main` branch** → deploys to `ahits-web-app` (production, min 1 instance)
+There is **no `main` branch.** The integration branch is `development` and the release branch is `production`.
+
+- **`development` branch** → runs `verify` (lint, type-check, build, tests) → migrate → deploys to `ahits-web-app-staging`
+- **`production` branch** → same pipeline → deploys to `ahits-web-app` (production, min 1 instance)
+- Open PRs may also get an on-demand staging preview via the `deploy-staging` label (`pr-staging-deploy.yml`).
 
 ---
 
@@ -128,8 +133,10 @@ error instead of touching production.
 │   ├── lib/                 # prisma, supabase, auth, email
 │   └── types/               # TypeScript types
 ├── .github/workflows/
-│   ├── ci.yml               # PR lint + type check
-│   └── deploy.yml           # GCP Cloud Run deploy
+│   ├── ci.yml               # PR entry — calls verify (lint, type-check, build, tests)
+│   ├── verify.yml           # Reusable: lint, type-check, build, DB tests (postgres service)
+│   ├── pr-staging-deploy.yml # On-demand PR staging preview (label or dispatch)
+│   └── deploy.yml           # verify → migrate → GCP Cloud Run deploy
 ├── Dockerfile
 └── .env.example
 ```
