@@ -120,7 +120,7 @@ async function issueReservationLink(requestId: string, hubId: string, createdByI
   })
   if (!hub.email) return
   const url = statusLinkUrl(rawToken)
-  await sendEmail({
+  await sendEmail({ kind: 'RESERVATION',
     to: hub.email,
     subject: `Reservation request — ${label ?? 'Rig reservation'}`,
     html: genericAlertEmail(

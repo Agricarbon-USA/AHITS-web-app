@@ -138,7 +138,7 @@ async function issueForwardHubLink(requestId: string, hubId: string, createdById
   })
   if (!hub.email) return
   const url = statusLinkUrl(rawToken)
-  await sendEmail({
+  await sendEmail({ kind: 'RESERVATION',
     to: hub.email,
     subject: `Material request forwarded — ${label ?? 'Material request'}`,
     html: genericAlertEmail(

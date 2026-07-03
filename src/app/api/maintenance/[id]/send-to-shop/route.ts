@@ -54,7 +54,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   let emailed = false
   try {
-    await sendEmail({
+    await sendEmail({ kind: 'WORK_ORDER',
       to: recipientEmail,
       subject: `Work Order: ${assetName} — ${task.taskName}`,
       html: workOrderEmail({
