@@ -218,7 +218,7 @@ export default function AdminMaintenancePage() {
     load()
     loadLinks()
     loadInoperable()
-    fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(d ?? [])).catch(() => {})
+    fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(Array.isArray(d) ? d : (d?.data ?? []))).catch(() => {})
   }, [load, loadLinks, loadInoperable])
 
   // Deep link from a dashboard alert (?task=<id>) auto-opens that task once.

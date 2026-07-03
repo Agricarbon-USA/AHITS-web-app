@@ -772,6 +772,12 @@ model Photo {
   inventoryItem   InventoryItem?   @relation(fields: [inventoryItemId], references: [id])
   vehicle         Vehicle?         @relation(fields: [vehicleId], references: [id])
 
+  @@index([dailyCheckId])
+  @@index([checkLogId])
+  @@index([maintenanceId])
+  @@index([inventoryItemId])
+  @@index([vehicleId])
+  @@index([uploadedById])
   @@map("photos")
 }
 

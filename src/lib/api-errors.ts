@@ -6,6 +6,11 @@ export function isRecordNotFound(err: unknown): boolean {
   return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025'
 }
 
+/** Prisma unique-constraint violation (e.g. duplicate email). */
+export function isUniqueViolation(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002'
+}
+
 /**
  * Run a Prisma write whose target row may not exist — a soft-delete `update` or a
  * `delete` keyed on a client-supplied id. On P2025 ("record not found") it returns
