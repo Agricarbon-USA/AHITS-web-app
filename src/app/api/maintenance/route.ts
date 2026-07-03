@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
-import { createAlert } from '@/lib/alerts'
-import { money } from '@/lib/validation'
+import { money, parsePagination } from '@/lib/validation'
 
 export async function GET(req: NextRequest) {
   const session = await requireAuth()
@@ -12,6 +11,7 @@ export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const status = searchParams.get('status')
   const vehicleId = searchParams.get('vehicleId')
+  const { pageSize, skip } = parsePagination(searchParams)
 
   const tasks = await prisma.maintenanceTask.findMany({
     where: {
@@ -20,6 +20,8 @@ export async function GET(req: NextRequest) {
       ...(vehicleId && { vehicleId }),
     },
     orderBy: [{ status: 'asc' }, { nextDue: 'asc' }],
+    take: pageSize,
+    skip,
     include: {
       vehicle: { select: { id: true, name: true } },
       item: { select: { id: true, name: true } },
@@ -30,17 +32,7 @@ export async function GET(req: NextRequest) {
     },
   })
 
-  // Fire-and-forget: create alerts for overdue tasks
-  const now = new Date()
-  for (const task of tasks) {
-    if (task.status === 'OVERDUE' && task.nextDue && task.nextDue < now) {
-      createAlert('MAINTENANCE_OVERDUE', 'maintenance_tasks', task.id, {
-        taskName: task.taskName,
-        itemId: task.itemId ?? null,
-        daysPastDue: Math.floor((now.getTime() - task.nextDue.getTime()) / 86400000),
-      }).catch(() => {})
-    }
-  }
+  // NOTE: overdue-alert creation lives in the cron dispatcher (a GET must not write).
 
   // Cost/spend data is admin-only (§10.2). Strip cost fields for operators.
   const data = session.role === 'ADMIN'

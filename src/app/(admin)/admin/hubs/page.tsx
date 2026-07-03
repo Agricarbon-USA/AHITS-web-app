@@ -86,10 +86,17 @@ export default function AdminHubsPage() {
 
   const loadHubs = React.useCallback(async () => {
     setHubsLoading(true)
-    const res = await fetch('/api/hubs')
-    const data = await res.json()
-    setHubs(data)
-    setHubsLoading(false)
+    try {
+      const res = await fetch('/api/hubs')
+      const data = res.ok ? await res.json() : null
+      // W0-8/FND-33: /api/hubs returns an array on success but an {error} object on
+      // 401/500 — guard so a bad response can't crash the .map render.
+      setHubs(Array.isArray(data) ? data : (data?.data ?? []))
+    } catch {
+      setHubs([])
+    } finally {
+      setHubsLoading(false)
+    }
   }, [])
 
   React.useEffect(() => {

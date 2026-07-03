@@ -1263,7 +1263,7 @@ export default function AdminDeploymentsPage() {
       }))
       setInventoryItems(items)
     }).catch(() => {})
-    fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(d ?? [])).catch(() => {})
+    fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(Array.isArray(d) ? d : (d?.data ?? []))).catch(() => {})
   }, [])
 
   // UR-017: route through the shared bottom-center Snackbar; keep the

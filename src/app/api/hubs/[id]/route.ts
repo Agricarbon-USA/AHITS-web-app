@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
-import { writeOr404 } from '@/lib/api-errors'
+import { writeOr404, isRecordNotFound } from '@/lib/api-errors'
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAdmin()
@@ -25,10 +25,16 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (trimmedCountry && trimmedCountry.length !== 2) return NextResponse.json({ error: 'Country must be a 2-letter code (e.g. US).' }, { status: 400 })
   }
 
-  const hub = await prisma.hub.update({
-    where: { id },
-    data: { name: name.trim(), city: city.trim(), state: state.trim().toUpperCase() },
-  })
+  let hub
+  try {
+    hub = await prisma.hub.update({
+      where: { id },
+      data: { name: name.trim(), city: city.trim(), state: state.trim().toUpperCase() },
+    })
+  } catch (err) {
+    if (isRecordNotFound(err)) return NextResponse.json({ error: 'Hub not found' }, { status: 404 })
+    throw err
+  }
   await prisma.$executeRaw`
     UPDATE "hubs"
     SET "email" = ${trimmedEmail || null},

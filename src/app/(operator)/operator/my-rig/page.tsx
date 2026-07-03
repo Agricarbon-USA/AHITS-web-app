@@ -687,7 +687,7 @@ export default function MyRigPage() {
     fetch('/api/operators').then((r) => r.json()).then((d) => {
       setOperators(d.data ?? [])
     }).catch(() => {})
-    fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(d ?? [])).catch(() => {})
+    fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(Array.isArray(d) ? d : (d?.data ?? []))).catch(() => {})
   }, [load])
 
   const handleRespond = async () => {

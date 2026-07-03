@@ -295,7 +295,7 @@ export default function AdminUsersPage() {
 
   React.useEffect(() => {
     load()
-    fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(d ?? d?.data ?? [])).catch(() => {})
+    fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(Array.isArray(d) ? d : (d?.data ?? []))).catch(() => {})
     fetch('/api/projects').then((r) => r.json()).then((d) => setProjects(d.data ?? d ?? [])).catch(() => {})
   }, [load])
 
