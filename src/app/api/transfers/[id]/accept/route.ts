@@ -154,6 +154,18 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       const currentKitItem = await tx.kitItem.findUnique({ where: { id: ti.kitItemId } })
       const currentQty = currentKitItem?.quantity ?? ti.kitItem.quantity
 
+      // Carry the drawn-from-hub accounting onto the destination kit item (FND-2).
+      // drawnQuantity/drawnHubId record how much consumable stock was drawn from a
+      // hub at check-out; a later HUB return restores min(removeQty, drawnQuantity)
+      // to drawnHubId. Previously the destination item was created with
+      // drawnQuantity:0/drawnHubId:null, so every post-transfer return restored 0 —
+      // silently losing the drawn stock from inventory. Split the drawn amount so
+      // the total is conserved: the destination takes up to the transferred qty, the
+      // source keeps the remainder. (Serialized items have drawnQuantity 0 → no-op.)
+      const sourceDrawn = currentKitItem?.drawnQuantity ?? 0
+      const destDrawnQuantity = Math.min(transferQty, sourceDrawn)
+      const destDrawnHubId = destDrawnQuantity > 0 ? (currentKitItem?.drawnHubId ?? null) : null
+
       // Mark source kit item removed (even if already removedAt is set on ended-rig transfers)
       if (transferQty >= currentQty) {
         await tx.kitItem.update({
@@ -163,7 +175,9 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       } else {
         await tx.kitItem.update({
           where: { id: ti.kitItemId },
-          data: { quantity: currentQty - transferQty },
+          // Source keeps the un-transferred share of the drawn stock so it can't
+          // over-restore stock it no longer holds.
+          data: { quantity: currentQty - transferQty, drawnQuantity: sourceDrawn - destDrawnQuantity },
         })
       }
       await tx.kitItem.create({
@@ -172,6 +186,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           inventoryItemId: ti.kitItem.inventoryItemId,
           quantity: transferQty,
           inventoryUnitId: ti.inventoryUnitId ?? ti.kitItem.inventoryUnitId ?? null,
+          drawnQuantity: destDrawnQuantity,
+          drawnHubId: destDrawnHubId,
         },
       })
       await tx.checkLog.create({
