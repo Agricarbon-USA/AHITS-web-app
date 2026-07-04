@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { withIdempotency } from '@/lib/idempotency'
-import { restoreToHub } from '@/lib/inventory-stock'
+import { restoreToHub, resyncItemTotal } from '@/lib/inventory-stock'
 
 const bodySchema = z.object({
   quantity: z.number().int().min(1).optional(),
@@ -131,10 +131,16 @@ async function _DELETE(
         // the item's home hub so it stays visible in hub-filtered views.
         const hubForRestore = (resolvedHub as string)
         await restoreToHub(kitItem.inventoryItemId, hubForRestore, restoreQty, tx)
-        await tx.inventoryItem.update({
-          where: { id: kitItem.inventoryItemId },
-          data: { quantity: { increment: restoreQty }, ...(body.data.hubId ? { hubId: body.data.hubId } : {}) },
-        })
+        // #106: recompute the cross-hub total from stock rows (one discipline for every
+        // return path) rather than a blind increment — self-heals drift. The hub re-anchor
+        // is a separate field, kept as its own update.
+        await resyncItemTotal(kitItem.inventoryItemId, tx)
+        if (body.data.hubId) {
+          await tx.inventoryItem.update({
+            where: { id: kitItem.inventoryItemId },
+            data: { hubId: body.data.hubId },
+          })
+        }
       }
       const excludeUnitIds = await getUnitsInOtherRigs(tx, kitItem.inventoryItemId, rigId)
       const units = await tx.inventoryUnit.findMany({

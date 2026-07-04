@@ -14,3 +14,17 @@ concurrency:
 jobs:
   verify:
     uses: ./.github/workflows/verify.yml
+
+  # #107: enforce the "backward-compatible migrations only" rule (CLAUDE.md → Database
+  # & migration rules) instead of relying on convention. Fails a PR whose newly-added
+  # migrations contain destructive / NOT-NULL-without-default SQL, unless the migration
+  # opts out with a `-- migration-safety: acknowledged <reason>` line.
+  migration-safety:
+    name: Backward-compatible migrations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check added migrations
+        run: bash scripts/check-migration-safety.sh "origin/${{ github.base_ref }}"

@@ -197,9 +197,38 @@ async function run() {
     /* held columns missing / transient — non-fatal */
   }
 
-  // 8) Dispatch: email admins + create in-app notifications for un-notified alerts.
+  // 8) #106: inventory drift assertion. For every consumable that participates in the
+  // multi-hub model (has ≥1 inventory_stock row), the cross-hub total
+  // inventory_items.quantity MUST equal Σ inventory_stock.quantity. A mismatch means a
+  // write path mis-maintained the dual write — log it (with the delta) so it's caught in
+  // monitoring instead of surfacing later as "disappearing inventory". Detection-only
+  // (no auto-heal) so a real bug isn't silently masked. Legacy items with no stock rows
+  // are excluded (their quantity legitimately predates per-hub tracking).
+  let inventoryDriftFlagged = 0
+  try {
+    const drift = await prisma.$queryRaw<{ id: string; name: string | null; total: number; sumStock: bigint | number }[]>`
+      SELECT ii."id", ii."name", ii."quantity" AS "total",
+             COALESCE((SELECT SUM(s."quantity") FROM "inventory_stock" s WHERE s."itemId" = ii."id"), 0) AS "sumStock"
+      FROM "inventory_items" ii
+      WHERE ii."itemType" = 'CONSUMABLE'
+        AND ii."deletedAt" IS NULL
+        AND EXISTS (SELECT 1 FROM "inventory_stock" s WHERE s."itemId" = ii."id")
+        AND ii."quantity" <> COALESCE((SELECT SUM(s."quantity") FROM "inventory_stock" s WHERE s."itemId" = ii."id"), 0)
+    `
+    inventoryDriftFlagged = drift.length
+    if (drift.length > 0) {
+      console.error(
+        '[cron] inventory drift detected (quantity != Σ stock):',
+        drift.map((d) => ({ id: d.id, name: d.name, total: Number(d.total), sumStock: Number(d.sumStock) })),
+      )
+    }
+  } catch {
+    /* inventory_stock missing / transient — non-fatal */
+  }
+
+  // 9) Dispatch: email admins + create in-app notifications for un-notified alerts.
   const dispatch = await dispatchPendingAlerts()
-  return { overdueFlagged: due.length, idempotencyReaped, lowInventoryFlagged: lowFlagged, expiryFlagged, missedFlagged, holdsReleased, ...dispatch }
+  return { overdueFlagged: due.length, idempotencyReaped, lowInventoryFlagged: lowFlagged, expiryFlagged, missedFlagged, holdsReleased, inventoryDriftFlagged, ...dispatch }
 }
 
 export async function POST(req: NextRequest) {

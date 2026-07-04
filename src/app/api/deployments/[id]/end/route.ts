@@ -8,7 +8,7 @@ import { withIdempotency } from '@/lib/idempotency'
 import { issueHubReturnLinks } from '@/lib/status-links'
 import { filterAllowedPhotoUrls } from '@/lib/photo-security'
 import { endAllAssignmentsForRig, removeAllProjectLinks } from '@/lib/deployment-assignments'
-import { restoreToHub } from '@/lib/inventory-stock'
+import { restoreToHub, resyncItemTotal } from '@/lib/inventory-stock'
 
 const dispositionSchema = z.object({
   kitItemId: z.string(),
@@ -111,11 +111,11 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           const hubForRestore = disp.hubId ?? kitItem.drawnHubId ?? kitItem.item.hubId
           if (hubForRestore && kitItem.drawnQuantity > 0) {
             await restoreToHub(inventoryItemId, hubForRestore, kitItem.drawnQuantity, tx)
+            // #106: recompute the cross-hub total from the stock rows (one discipline for
+            // every return path) instead of a blind increment — self-heals any drift and
+            // can't credit the total without a backing per-hub row (A-2/A-3).
+            await resyncItemTotal(inventoryItemId, tx)
           }
-          await tx.inventoryItem.update({
-            where: { id: inventoryItemId },
-            data: { quantity: { increment: kitItem.drawnQuantity } },
-          })
         }
         const logCondition =
           disp.type === 'HUB' ? returnConditionToLogCondition(disp.returnCondition) : null
