@@ -124,7 +124,7 @@ describe('R4 hub-stock hard-reserve', () => {
     expect(stock?.reservedQty).toBe(0)
   })
 
-  it('releases stock on fulfill and marks fulfilled', async () => {
+  it('HOLDS the reserve on fulfill (UR-010) — does not release it back to free stock', async () => {
     const hub = await createHub()
     const cat = await createCategory()
     const operator = await createOperator()
@@ -149,12 +149,22 @@ describe('R4 hub-stock hard-reserve', () => {
     const fulfillResult = await applyRequestTransition(requestId, 'fulfill', 'RESERVATION')
     expect(fulfillResult).toEqual({ ok: true })
 
+    // UR-010: the reserve is HELD for the operator (converted at claim/checkout),
+    // NOT released here — releasing at fulfill was the reservation-leak bug.
     const afterFulfill = await getStockRow(item.id, hub.id)
-    expect(afterFulfill?.reservedQty).toBe(0)
+    expect(afterFulfill?.reservedQty).toBe(4)
+
+    // The hold is snapshotted onto the line (see ur010-hold-through-claim.test.ts).
+    const held = await prisma.$queryRaw<{ heldQty: number; heldItemId: string | null }[]>`
+      SELECT "heldQty", "heldItemId" FROM "deployment_request_lines" WHERE "requestId" = ${requestId}
+    `
+    expect(held[0]?.heldQty).toBe(4)
+    expect(held[0]?.heldItemId).toBe(item.id)
 
     const req = await getRequestRow(requestId)
     expect(req?.status).toBe('FULFILLED')
-    expect(req?.stockReservedAt).toBeNull()
+    // stockReservedAt stays set — the reserve is still live as the hold.
+    expect(req?.stockReservedAt).not.toBeNull()
   })
 
   it('double-confirm is idempotency-guarded (second confirm returns STATE_MISMATCH)', async () => {

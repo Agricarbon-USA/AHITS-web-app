@@ -27,6 +27,7 @@ import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 import { newPlaceholderId } from '@/lib/offline-remap'
 import { useAuth } from '@/hooks/useAuth'
 import { groupBy } from '@/lib/utils'
+import { stockAvailabilityLabel } from '@/lib/stock-format'
 
 const VEHICLE_TYPE_ORDER = ['TRUCK', 'TRAILER', 'POLARIS_UTV', 'CAN_AM_UTV', 'CHRISTIE_DRILL', 'ATV', 'OTHER']
 
@@ -405,11 +406,8 @@ function NewDeploymentDialog({
                         const entry = kitItems.get(item.id)
                         const checked = !!entry
                         // Gate consumable qty on the selected hub's available; fall back to total if no hub.
-                        const hubAvail = !isSerialized
-                          ? (sourceHubId
-                              ? (item.hubStock?.find((s) => s.hubId === sourceHubId)?.available ?? (item.availableQuantity ?? 0))
-                              : (item.availableQuantity ?? 0))
-                          : 0
+                        const hubRow = !isSerialized && sourceHubId ? item.hubStock?.find((s) => s.hubId === sourceHubId) : undefined
+                        const hubAvail = !isSerialized ? (hubRow?.available ?? (item.availableQuantity ?? 0)) : 0
                         return (
                           <Box key={item.id}>
                             <Stack direction="row" alignItems="center" spacing={1}>
@@ -438,7 +436,7 @@ function NewDeploymentDialog({
                                     setKitItems(m)
                                   }}
                                   inputProps={{ min: 1, max: hubAvail, style: { MozAppearance: 'textfield', width: 60 } }}
-                                  helperText={`${hubAvail} avail.`}
+                                  helperText={stockAvailabilityLabel(hubRow, hubAvail)}
                                   sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }}
                                 />
                               )}
@@ -1614,11 +1612,8 @@ export default function MyRigPage() {
                   }
                 }
 
-                const addHubAvail = !isSerialized
-                  ? (addItemSourceHubId
-                      ? (item.hubStock?.find((s) => s.hubId === addItemSourceHubId)?.available ?? (item.availableQuantity ?? 0))
-                      : (item.availableQuantity ?? 0))
-                  : 0
+                const addHubRow = !isSerialized && addItemSourceHubId ? item.hubStock?.find((s) => s.hubId === addItemSourceHubId) : undefined
+                const addHubAvail = !isSerialized ? (addHubRow?.available ?? (item.availableQuantity ?? 0)) : 0
                 return (
                   <Box key={item.id}>
                     <Stack direction="row" alignItems="center" spacing={1}>
@@ -1647,7 +1642,7 @@ export default function MyRigPage() {
                             setPendingItems(m)
                           }}
                           inputProps={{ min: 1, max: addHubAvail, style: { MozAppearance: 'textfield', width: 60 } }}
-                          helperText={`${addHubAvail} avail.`}
+                          helperText={stockAvailabilityLabel(addHubRow, addHubAvail)}
                           sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }}
                         />
                       )}
