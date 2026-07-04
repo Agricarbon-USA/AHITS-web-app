@@ -90,6 +90,80 @@ export async function getDeploymentRoster(
   return map.get(rigId) ?? { operator: null, operatorId: null, secondaryOperators: [], projects: [] }
 }
 
+/**
+ * UR-032: roster for DISPLAY / attribution. Identical to getDeploymentRosters for
+ * an ACTIVE deployment (has an open assignment → returns the open roster), but for
+ * an ENDED deployment (no open assignments) it returns the FINAL roster — the batch
+ * closed together by `endAllAssignmentsForRig`, which stamps every then-open
+ * assignment with the same `endedAt`. Without this, ended deployments serialize
+ * `operator: null`, losing "who ran this deployment" in history/reports.
+ */
+export async function getDeploymentRostersForDisplay(
+  rigIds: string[],
+  db: RawClient = prisma,
+): Promise<Map<string, DeploymentRoster>> {
+  const map = new Map<string, DeploymentRoster>()
+  if (rigIds.length === 0) return map
+  for (const id of rigIds) {
+    map.set(id, { operator: null, operatorId: null, secondaryOperators: [], projects: [] })
+  }
+
+  const assignments = await db.$queryRaw<
+    { rigId: string; operatorId: string; name: string | null; email: string | null; role: string }[]
+  >`
+    WITH agg AS (
+      SELECT "rigId",
+             bool_or("endedAt" IS NULL) AS has_open,
+             MAX("endedAt")            AS max_ended
+      FROM "deployment_assignments"
+      WHERE "rigId" IN (${Prisma.join(rigIds)})
+      GROUP BY "rigId"
+    )
+    SELECT a."rigId", a."operatorId", u."name", u."email", a."role"::text AS "role"
+    FROM "deployment_assignments" a
+    JOIN agg ON agg."rigId" = a."rigId"
+    LEFT JOIN "users" u ON u."id" = a."operatorId"
+    WHERE a."rigId" IN (${Prisma.join(rigIds)})
+      AND ( a."endedAt" IS NULL
+         OR (agg.has_open = false AND a."endedAt" = agg.max_ended) )
+  `
+  for (const a of assignments) {
+    const r = map.get(a.rigId)
+    if (!r) continue
+    if (a.role === 'PRIMARY') {
+      r.operator = { id: a.operatorId, name: a.name ?? '', email: a.email ?? '' }
+      r.operatorId = a.operatorId
+    } else {
+      r.secondaryOperators.push({ operator: { id: a.operatorId, name: a.name ?? '', email: a.email ?? '' } })
+    }
+  }
+
+  // Projects unchanged from the active roster (deployment_projects is gated on its
+  // own removedAt, independent of assignment end).
+  const projectRows = await db.$queryRaw<
+    { rigId: string; projectId: string; name: string | null }[]
+  >`
+    SELECT dp."rigId", dp."projectId", p."name"
+    FROM "deployment_projects" dp
+    LEFT JOIN "projects" p ON p."id" = dp."projectId"
+    WHERE dp."rigId" IN (${Prisma.join(rigIds)}) AND dp."removedAt" IS NULL
+  `
+  for (const p of projectRows) {
+    const r = map.get(p.rigId)
+    if (r) r.projects.push({ id: p.projectId, name: p.name ?? '' })
+  }
+
+  return map
+}
+
+export async function getDeploymentRosterForDisplay(
+  rigId: string,
+  db: RawClient = prisma,
+): Promise<DeploymentRoster> {
+  const map = await getDeploymentRostersForDisplay([rigId], db)
+  return map.get(rigId) ?? { operator: null, operatorId: null, secondaryOperators: [], projects: [] }
+}
+
 /** All (active + historical) project links for a deployment, newest first. */
 export async function listDeploymentProjects(rigId: string): Promise<DeploymentProjectRow[]> {
   return prisma.$queryRaw<DeploymentProjectRow[]>`
