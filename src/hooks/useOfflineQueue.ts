@@ -5,6 +5,7 @@ import type { OfflineQueueItem, MutateResult } from '@/types'
 import { resolvePhotoRefs } from '@/lib/photoStore'
 import { extractCreatedId, itemReferencesPlaceholder, remapPlaceholderId } from '@/lib/offline-remap'
 import { ensurePersistentStorage, getStorageEstimate, probeIdbWritable } from '@/lib/storage-health'
+import { requestSignature } from '@/lib/request-signature'
 
 const DB_NAME = 'ahits_offline'
 const STORE = 'queue'
@@ -53,10 +54,23 @@ function deleteItem(db: IDBDatabase, id: number): Promise<void> {
   })
 }
 
+function getItemById(db: IDBDatabase, id: number): Promise<OfflineQueueItem | undefined> {
+  return new Promise((res, rej) => {
+    const req = db.transaction(STORE, 'readonly').objectStore(STORE).get(id)
+    req.onsuccess = () => res(req.result as OfflineQueueItem | undefined)
+    req.onerror = () => rej(req.error)
+  })
+}
+
 function newKey(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
   return `k_${Date.now()}_${Math.random().toString(36).slice(2)}`
 }
+
+// Q1: an offline duplicate enqueued within this window of an identical pending item
+// is treated as an accidental double-tap and dropped. Short enough that a deliberate
+// later repeat of the same action still enqueues.
+const DEDUP_WINDOW_MS = 2000
 
 function extractError(body: unknown): string {
   if (!body || typeof body !== 'object') return 'Request failed'
@@ -92,6 +106,10 @@ export function useOfflineQueue() {
   // Set to true when flush() actually deletes at least one item this session —
   // suppresses false-positive possibleDataLoss if the queue legitimately drained.
   const flushedThisSessionRef = React.useRef(false)
+  // Q1: signature → in-flight mutate promise. A second identical submission while the
+  // first is unsettled shares the same promise (one server write / one enqueue);
+  // cleared on settle so a deliberate repeat after completion proceeds normally.
+  const inflightRef = React.useRef(new Map<string, Promise<MutateResult<unknown>>>())
 
   // Recompute honest counts straight from IndexedDB.
   const refresh = React.useCallback(async () => {
@@ -117,6 +135,21 @@ export function useOfflineQueue() {
     async (item: Omit<OfflineQueueItem, 'id' | 'retries' | 'createdAt'>): Promise<boolean> => {
       try {
         const db = await openDB()
+        // Q1 (offline): drop an accidental double-tap — an identical, non-failed write
+        // enqueued within the dedup window. The first one still replays exactly once;
+        // a deliberate repeat after the window enqueues normally.
+        try {
+          const sig = requestSignature(item.method, item.endpoint, item.body)
+          const existing = await getAllItems(db)
+          if (existing.some((q) =>
+            q.status !== 'failed' &&
+            Date.now() - q.createdAt < DEDUP_WINDOW_MS &&
+            requestSignature(q.method, q.endpoint, q.body) === sig
+          )) {
+            await refresh()
+            return true
+          }
+        } catch { /* dedup is best-effort; fall through to enqueue */ }
         await putItem(db, {
           ...item,
           idempotencyKey: item.idempotencyKey ?? newKey(),
@@ -140,8 +173,15 @@ export function useOfflineQueue() {
     try {
       const db = await openDB()
       const items = await getAllItems(db)
-      for (const item of items) {
-        if (item.status === 'failed' || item.id == null) continue
+      for (const snapshot of items) {
+        if (snapshot.id == null) continue
+        // Re-read fresh from IDB: an earlier item in THIS pass may have remapped this
+        // one's placeholder endpoint (its create succeeded) or quarantined it (its
+        // create failed terminally). The `items` snapshot is stale, so act on the
+        // current state — otherwise a remapped dependent would still be sent to its
+        // old `pending-…` endpoint (404) within the same pass.
+        const item = await getItemById(db, snapshot.id)
+        if (!item || item.id == null || item.status === 'failed') continue
         // Upload any pending local photos and swap their `localphoto:` refs for
         // real URLs before sending. No-op for writes without photos.
         let work = item
@@ -198,6 +238,26 @@ export function useOfflineQueue() {
         } else if (TERMINAL_STATUSES.has(res.status)) {
           const errBody = await res.json().catch(() => ({}))
           await putItem(db, { ...work, status: 'failed', lastError: extractError(errBody) })
+          // Q2: if a create that OTHER queued writes depend on failed for good, those
+          // dependents can never have their placeholder remapped to a real id — they'd
+          // otherwise replay against a `pending-…` endpoint and 404. Quarantine the
+          // dependent chain (mark failed) instead of marching on, so ordering and the
+          // exactly-once guarantee stay honest. (Mirror of the success-path remap loop
+          // above; the app's only placeholder-bearing create is deploy-create, whose
+          // dependents don't themselves create — so a single depth-1 pass is complete.)
+          if (work.placeholderId) {
+            const all = await getAllItems(db)
+            for (const other of all) {
+              if (other.id == null || other.id === item.id || other.status === 'failed') continue
+              if (itemReferencesPlaceholder(other, work.placeholderId)) {
+                await putItem(db, {
+                  ...other,
+                  status: 'failed',
+                  lastError: 'A required earlier action failed, so this action could not be applied.',
+                })
+              }
+            }
+          }
         } else {
           // 5xx / 408 / 429 — transient; retry up to the cap.
           const retries = (work.retries ?? 0) + 1
@@ -254,41 +314,55 @@ export function useOfflineQueue() {
       placeholderId?: string
     }): Promise<MutateResult<T>> => {
       const method = args.method ?? 'POST'
-      const idempotencyKey = newKey()
-      // Upload any locally-stored photos now (online) and swap their
-      // `localphoto:` refs for real URLs. If this throws (offline / upload
-      // failed) we keep the original body — its local refs and stored blobs are
-      // preserved, and flush() resolves them on reconnect.
-      let body = args.body
-      try {
-        body = await resolvePhotoRefs(args.body)
-      } catch {
-        body = args.body
-      }
-      try {
-        const res = await fetch(args.endpoint, {
-          method,
-          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
-          body: body === undefined ? undefined : JSON.stringify(body),
-        })
-        if (res.ok) {
-          const data = (await res.json().catch(() => null)) as T
-          return { ok: true, queued: false, data }
+      // Q1: coalesce an accidental concurrent double-tap onto the first call's promise
+      // (same request signature still in-flight) so the write reaches the server /
+      // queue exactly once. Cleared on settle → a deliberate repeat afterwards runs.
+      const sig = requestSignature(method, args.endpoint, args.body)
+      const existing = inflightRef.current.get(sig)
+      if (existing) return existing as Promise<MutateResult<T>>
+      const run = (async (): Promise<MutateResult<T>> => {
+        const idempotencyKey = newKey()
+        // Upload any locally-stored photos now (online) and swap their
+        // `localphoto:` refs for real URLs. If this throws (offline / upload
+        // failed) we keep the original body — its local refs and stored blobs are
+        // preserved, and flush() resolves them on reconnect.
+        let body = args.body
+        try {
+          body = await resolvePhotoRefs(args.body)
+        } catch {
+          body = args.body
         }
-        const errBody = await res.json().catch(() => ({}))
-        return { ok: false, queued: false, error: extractError(errBody), status: res.status }
-      } catch {
-        const stored = await enqueue({ endpoint: args.endpoint, method, body, idempotencyKey, label: args.label, placeholderId: args.placeholderId })
-        if (!stored) {
-          return {
-            ok: false,
-            queued: false,
-            error: "Couldn’t save this action on your device — your change was NOT recorded. Reconnect and try again.",
-            status: 0,
-            reason: 'storage' as const,
+        try {
+          const res = await fetch(args.endpoint, {
+            method,
+            headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+            body: body === undefined ? undefined : JSON.stringify(body),
+          })
+          if (res.ok) {
+            const data = (await res.json().catch(() => null)) as T
+            return { ok: true, queued: false, data }
           }
+          const errBody = await res.json().catch(() => ({}))
+          return { ok: false, queued: false, error: extractError(errBody), status: res.status }
+        } catch {
+          const stored = await enqueue({ endpoint: args.endpoint, method, body, idempotencyKey, label: args.label, placeholderId: args.placeholderId })
+          if (!stored) {
+            return {
+              ok: false,
+              queued: false,
+              error: "Couldn’t save this action on your device — your change was NOT recorded. Reconnect and try again.",
+              status: 0,
+              reason: 'storage' as const,
+            }
+          }
+          return { ok: true, queued: true, data: null }
         }
-        return { ok: true, queued: true, data: null }
+      })()
+      inflightRef.current.set(sig, run as Promise<MutateResult<unknown>>)
+      try {
+        return await run
+      } finally {
+        inflightRef.current.delete(sig)
       }
     },
     [enqueue]

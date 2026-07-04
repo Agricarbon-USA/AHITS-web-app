@@ -94,14 +94,23 @@ export default function OperatorDailyCheckPage() {
       .catch(() => {})
   }, [])
 
+  // Q3: the selected vehicle's TYPE as a stable string. The checklist effect below
+  // keys off THIS, not the `vehicles` array ref — so it re-fetches the template only
+  // when the vehicle/type actually changes, not every time /api/deployments resolves
+  // and setRig produces a new `vehicles` reference. Depending on the array ref
+  // previously re-ran the effect and silently wiped the operator's entered picks/notes.
+  const selectedVehicleType = vehicles.find((rv) => rv.vehicle.id === vehicleId)?.vehicle.type ?? ''
+
   // M5-25: resolve the admin-configured checklist for the selected vehicle's
   // type, falling back to the built-in ~16-item default. Re-runs when the
   // operator switches vehicles. Offline / no template → keep the default list.
   React.useEffect(() => {
-    if (!vehicleId) return
-    const vt = vehicles.find((rv) => rv.vehicle.id === vehicleId)?.vehicle.type ?? ''
+    // Wait until the vehicle's type is actually known before fetching, so we don't
+    // fire once with a blank type and then re-fetch (and reset the checklist) when it
+    // resolves — closes the narrow preselect/scan-path wipe. Unknown type keeps the default.
+    if (!vehicleId || !selectedVehicleType) return
     let active = true
-    fetch(`/api/checklist-templates?vehicleType=${encodeURIComponent(vt)}`)
+    fetch(`/api/checklist-templates?vehicleType=${encodeURIComponent(selectedVehicleType)}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (!active) return
@@ -111,7 +120,7 @@ export default function OperatorDailyCheckPage() {
       })
       .catch(() => { /* offline — keep the current (default) list */ })
     return () => { active = false }
-  }, [vehicleId, vehicles])
+  }, [vehicleId, selectedVehicleType])
 
   const passFail = checklist.every((item) => item.value !== 'no')
   const failingItems = checklist.filter((item) => item.value === 'no')

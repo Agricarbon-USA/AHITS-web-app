@@ -630,6 +630,7 @@ export default function MyRigPage() {
   const [isRentalToggle, setIsRentalToggle] = React.useState(false)
   const [rentalFields, setRentalFields] = React.useState<Partial<RentalVehicleFields>>({})
   const [rentalSubmitLoading, setRentalSubmitLoading] = React.useState(false)
+  const rentalSubmitRef = React.useRef(false) // Q1: synchronous re-entry guard (the loading state disables the button a tick late)
   const [rentalError, setRentalError] = React.useState('')
   const [addItemOpen, setAddItemOpen] = React.useState(false)
   const [pendingItems, setPendingItems] = React.useState<Map<string, PendingItemEntry>>(new Map())
@@ -1490,6 +1491,8 @@ export default function MyRigPage() {
                   setRentalError('Adding a rental needs an internet connection. Try again when you’re back online.')
                   return
                 }
+                if (rentalSubmitRef.current) return // Q1: block a same-tick double-tap
+                rentalSubmitRef.current = true
                 setRentalSubmitLoading(true)
                 try {
                   const payload = rentalFieldsToVehiclePayload(rentalFields)
@@ -1527,6 +1530,7 @@ export default function MyRigPage() {
                   setRentalError(e instanceof Error ? e.message : 'Failed to add rental vehicle')
                 } finally {
                   setRentalSubmitLoading(false)
+                  rentalSubmitRef.current = false
                 }
               }}>
               {rentalSubmitLoading ? 'Adding…' : 'Add Rental Vehicle'}
