@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { createAlert, resolveActiveAlert } from '@/lib/alerts'
 import { dispatchPendingAlerts } from '@/lib/notifications'
 import { allHubStockForScan } from '@/lib/inventory-stock'
+import { releaseAllHeldForRequest } from '@/lib/deployment-requests'
 import { businessDateTime } from '@/lib/business-date'
 import { getNotificationConfig } from '@/lib/notification-config'
 
@@ -150,9 +151,55 @@ async function run() {
     }
   }
 
-  // 6) Dispatch: email admins + create in-app notifications for un-notified alerts.
+  // 7) UR-010 (M5): release STALE holds. A fulfilled reservation whose operator never
+  // claimed the held stock (or checked out at a different hub, H6) would otherwise
+  // freeze that hub's reserve forever. After HOLD_TTL_HOURS past fulfilledAt, release
+  // the unclaimed remainder back to free availability — guarded per-line by releasedAt
+  // (releaseAllHeldForRequest) so a repeat run / admin release / cancel can't
+  // double-release. Only reservedQty is freed (quantity totals untouched → no resync).
+  // Math.floor + finite/≥1 guard: make_interval(hours => …) takes an integer, so a
+  // mis-set non-integer/NaN env value must not throw or disable the sweep.
+  const ttlParsed = Math.floor(Number(process.env.HOLD_TTL_HOURS ?? 72))
+  const holdTtlHours = Number.isFinite(ttlParsed) && ttlParsed >= 1 ? ttlParsed : 72
+  let holdsReleased = 0
+  try {
+    const staleReqs = await prisma.$queryRaw<{ requestId: string; operatorId: string | null; label: string | null }[]>`
+      SELECT DISTINCT l."requestId" AS "requestId",
+             COALESCE(r."forOperatorId", r."requestedById") AS "operatorId",
+             r."label" AS "label"
+      FROM "deployment_request_lines" l
+      JOIN "deployment_requests" r ON r."id" = l."requestId"
+      WHERE l."releasedAt" IS NULL
+        AND l."heldQty" > l."claimedQty"
+        AND r."status" = 'FULFILLED'
+        AND r."fulfilledAt" < NOW() - make_interval(hours => ${holdTtlHours})
+    `
+    for (const row of staleReqs) {
+      const released = await prisma.$transaction((tx) => releaseAllHeldForRequest(row.requestId, tx))
+      if (released > 0) {
+        holdsReleased++
+        if (row.operatorId) {
+          await prisma.notification.create({
+            data: {
+              userId: row.operatorId,
+              type: 'RESERVATION_UPDATE',
+              title: 'Held items returned to stock',
+              body: row.label
+                ? `Unclaimed held items for "${row.label}" were returned to hub stock after ${holdTtlHours}h.`
+                : `Unclaimed held items were returned to hub stock after ${holdTtlHours}h.`,
+              link: '/operator/requests',
+            },
+          }).catch(() => {})
+        }
+      }
+    }
+  } catch {
+    /* held columns missing / transient — non-fatal */
+  }
+
+  // 8) Dispatch: email admins + create in-app notifications for un-notified alerts.
   const dispatch = await dispatchPendingAlerts()
-  return { overdueFlagged: due.length, idempotencyReaped, lowInventoryFlagged: lowFlagged, expiryFlagged, missedFlagged, ...dispatch }
+  return { overdueFlagged: due.length, idempotencyReaped, lowInventoryFlagged: lowFlagged, expiryFlagged, missedFlagged, holdsReleased, ...dispatch }
 }
 
 export async function POST(req: NextRequest) {

@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { reserveAtHub, releaseAtHub } from '@/lib/inventory-stock'
+import { reserveAtHub, releaseAtHub, drawReservedFromHub } from '@/lib/inventory-stock'
 
 // M6 / Addendum §F — Deployment Requests data layer. Raw SQL (no generated-client
 // coupling, same approach as lib/checklist-templates). R1 extends the original
@@ -731,16 +731,24 @@ export async function applyRequestTransition(
         `
         return Number(n) > 0 ? { ok: true } : { ok: false, code: 'STATE_MISMATCH' }
       }
-      // RESERVATION: release reserves then mark fulfilled
+      // UR-010: RESERVATION fulfill HOLDS the reserve for the operator. Do NOT
+      // release here (that was the leak — it returned held goods to free stock).
+      // Snapshot the reserve onto the lines; the operator converts it reserve→draw
+      // when they claim it at checkout. The reserve and stockReservedAt stay set
+      // until claim / cancel / admin-release / TTL.
       return prisma.$transaction(async (tx) => {
-        await releaseReservedStock(id, tx)
+        const reqRows = await tx.$queryRaw<{ fulfillerHubId: string | null }[]>`
+          SELECT "fulfillerHubId" FROM "deployment_requests" WHERE "id" = ${id}
+        `
         const n = await tx.$executeRaw`
           UPDATE "deployment_requests"
-          SET "status" = 'FULFILLED', "updatedAt" = now(), "fulfilledAt" = now(),
-              "stockReservedAt" = NULL
+          SET "status" = 'FULFILLED', "updatedAt" = now(), "fulfilledAt" = now()
           WHERE "id" = ${id} AND "status" = 'STAGED'
         `
-        return Number(n) > 0 ? ({ ok: true } as TransitionResult) : ({ ok: false, code: 'STATE_MISMATCH' } as TransitionResult)
+        if (Number(n) === 0) return { ok: false, code: 'STATE_MISMATCH' } as TransitionResult
+        const hub = reqRows[0]?.fulfillerHubId
+        if (hub) await snapshotHeldLines(id, hub, tx)
+        return { ok: true } as TransitionResult
       })
     }
 
@@ -775,13 +783,21 @@ export async function applyRequestTransition(
 type RawClient = Pick<typeof prisma, '$executeRaw' | '$queryRaw'>
 
 /**
- * UR-010 (R4 hold-through-claim): claim up to `qty` units of held (reserved) stock
- * for `operatorId` on `inventoryItemId` at `hubId`. Converts the reservation into a
- * physical draw: decrements `inventory_stock.quantity` AND `reservedQty` atomically,
- * and marks `claimedQty` on each matching request line (oldest first).
+ * UR-010 (R4 hold-through-claim): claim up to `qty` units of HELD (reserved) stock
+ * for `operatorId` on `inventoryItemId` at `hubId`, converting reserve→draw. Marks
+ * `claimedQty` on each matching FULFILLED, unreleased line (oldest fulfilled first)
+ * and decrements the hub stock row by the same amount via the guarded
+ * `drawReservedFromHub`. Returns the number claimed (0 when the operator holds none
+ * here — the caller then free-draws the remainder via `drawFromHub`).
  *
- * Returns the number of units claimed (0 when no held stock exists — the caller falls
- * through to the free-stock `drawFromHub` path, preserving pre-UR-010 behavior).
+ * MUST run inside the checkout `$transaction` (both callers pass `tx`):
+ *  - C2: each candidate line is re-read under `SELECT ... FOR UPDATE`, so two
+ *    concurrent claims — two devices, or an offline replay racing the live request —
+ *    serialize instead of both acting on the same stale `unclaimed` value (which
+ *    would drive `claimedQty > heldQty` and double-draw).
+ *  - H2: the reserve→draw is guarded inside `drawReservedFromHub` (succeeds only if
+ *    quantity>=claim AND reservedQty>=claim); a shortfall is an invariant breach →
+ *    throw, rolling back the whole checkout rather than committing negative stock.
  */
 export async function claimHeldStock(
   operatorId: string,
@@ -792,17 +808,17 @@ export async function claimHeldStock(
 ): Promise<number> {
   if (qty <= 0) return 0
 
-  type LineRow = { id: string; unclaimed: number }
-  const lines = await db.$queryRaw<LineRow[]>`
-    SELECT l."id", (l."heldQty" - l."claimedQty") AS "unclaimed"
+  const lines = await db.$queryRaw<{ id: string }[]>`
+    SELECT l."id"
     FROM "deployment_request_lines" l
     JOIN "deployment_requests" r ON r."id" = l."requestId"
     WHERE l."heldItemId" = ${inventoryItemId}
       AND l."heldHubId"  = ${hubId}
       AND l."heldQty"    > l."claimedQty"
       AND l."releasedAt" IS NULL
+      AND r."status" = 'FULFILLED'
       AND (r."requestedById" = ${operatorId} OR r."forOperatorId" = ${operatorId})
-    ORDER BY r."createdAt" ASC
+    ORDER BY r."fulfilledAt" ASC NULLS LAST, r."createdAt" ASC
   `
 
   let remaining = qty
@@ -810,7 +826,13 @@ export async function claimHeldStock(
 
   for (const line of lines) {
     if (remaining <= 0) break
-    const unclaimed = Number(line.unclaimed)
+    // C2: lock this line and read the authoritative held/claimed UNDER the lock, so a
+    // concurrent claim can't compute its take from a value we're about to change.
+    const locked = await db.$queryRaw<{ held: number; used: number }[]>`
+      SELECT "heldQty" AS held, "claimedQty" AS used
+      FROM "deployment_request_lines" WHERE "id" = ${line.id} FOR UPDATE
+    `
+    const unclaimed = Number(locked[0]?.held ?? 0) - Number(locked[0]?.used ?? 0)
     const claim = Math.min(remaining, unclaimed)
     if (claim <= 0) continue
 
@@ -819,18 +841,80 @@ export async function claimHeldStock(
       SET "claimedQty" = "claimedQty" + ${claim}
       WHERE "id" = ${line.id}
     `
-    // Convert reserve→draw on the hub stock row (quantity down, reservedQty released).
-    await db.$executeRaw`
-      UPDATE "inventory_stock"
-      SET "quantity"    = "quantity" - ${claim},
-          "reservedQty" = GREATEST("reservedQty" - ${claim}, 0),
-          "updatedAt"   = now()
-      WHERE "itemId" = ${inventoryItemId} AND "hubId" = ${hubId}
-    `
+    // H2: guarded reserve→draw. A shortfall means the aggregate reserve can't cover
+    // what this line claims to hold — the invariant is broken; abort the checkout.
+    const drawn = await drawReservedFromHub(inventoryItemId, hubId, claim, db)
+    if (drawn < claim) throw new Error('HOLD_INVARIANT_BREACH')
 
     totalClaimed += claim
     remaining -= claim
   }
 
   return totalClaimed
+}
+
+/**
+ * UR-010 (M1): at FULFILL, snapshot the confirm-time reserve onto each reserved line
+ * as an immutable hold (heldQty/heldItemId/heldHubId), and LEAVE the reserve in place
+ * (releasing it here was the leak). The selected set + effective item/qty mirror
+ * `effectiveReserveLines` EXACTLY — same specific/substituted joins, same filters,
+ * same effective-type post-check — so immediately after fulfill
+ * reservedQty(item,hub) == Σ heldQty(item,hub) with claimedQty 0. Per-line so
+ * `claimedQty` and release can operate line-by-line.
+ */
+async function snapshotHeldLines(requestId: string, fulfillerHubId: string, tx: RawTx): Promise<void> {
+  const held = await tx.$queryRaw<{ id: string; effItem: string; effQty: bigint | number }[]>`
+    SELECT l."id" AS id,
+           COALESCE(l."substitutedItemId", l."specificInventoryItemId") AS "effItem",
+           COALESCE(l."fulfilledQty", l."requestedQty") AS "effQty"
+    FROM "deployment_request_lines" l
+    JOIN "inventory_items" ii ON ii."id" = l."specificInventoryItemId"
+    LEFT JOIN "inventory_items" si ON si."id" = l."substitutedItemId"
+    WHERE l."requestId" = ${requestId}
+      AND l."lineType" = 'KIT_ITEM'
+      AND l."specificInventoryItemId" IS NOT NULL
+      AND ii."itemType" = 'CONSUMABLE'
+      AND l."fulfillmentStatus" IN ('CONFIRMED', 'EDITED')
+      AND COALESCE(si."itemType", ii."itemType") = 'CONSUMABLE'
+  `
+  for (const h of held) {
+    await tx.$executeRaw`
+      UPDATE "deployment_request_lines"
+      SET "heldQty" = ${Number(h.effQty)}, "heldItemId" = ${h.effItem},
+          "heldHubId" = ${fulfillerHubId}, "claimedQty" = 0, "releasedAt" = NULL
+      WHERE "id" = ${h.id}
+    `
+  }
+}
+
+/**
+ * UR-010 (H5): release ONE held line's UNCLAIMED remainder back to free stock, at
+ * most once. The `releasedAt IS NULL` guard makes cancel + TTL-cron + admin-release
+ * converge — whichever runs second matches 0 rows and releases nothing. Releases
+ * only `heldQty - claimedQty` (H3: never the full original qty). Returns the amount released.
+ */
+export async function releaseHeldLine(lineId: string, tx: RawTx): Promise<number> {
+  const rows = await tx.$queryRaw<{ heldItemId: string | null; heldHubId: string | null; rel: number }[]>`
+    UPDATE "deployment_request_lines"
+    SET "releasedAt" = now()
+    WHERE "id" = ${lineId} AND "releasedAt" IS NULL AND "heldQty" > "claimedQty"
+    RETURNING "heldItemId", "heldHubId", ("heldQty" - "claimedQty") AS rel
+  `
+  const r = rows[0]
+  if (r?.heldItemId && r?.heldHubId && Number(r.rel) > 0) {
+    await releaseAtHub(r.heldItemId, r.heldHubId, Number(r.rel), tx)
+    return Number(r.rel)
+  }
+  return 0
+}
+
+/** UR-010: release all of a request's still-held (unclaimed, unreleased) lines. */
+export async function releaseAllHeldForRequest(requestId: string, tx: RawTx): Promise<number> {
+  const lines = await tx.$queryRaw<{ id: string }[]>`
+    SELECT "id" FROM "deployment_request_lines"
+    WHERE "requestId" = ${requestId} AND "releasedAt" IS NULL AND "heldQty" > "claimedQty"
+  `
+  let total = 0
+  for (const { id } of lines) total += await releaseHeldLine(id, tx)
+  return total
 }

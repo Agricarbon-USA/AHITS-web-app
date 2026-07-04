@@ -85,12 +85,20 @@ export async function totalStock(itemId: string, db: RawClient = prisma): Promis
   return Number(rows[0]?.total ?? 0)
 }
 
-/** Set (create or overwrite) an item's stock at a hub. Admin edit primitive. */
+/**
+ * Set (create or overwrite) an item's stock at a hub. Admin edit primitive.
+ * UR-010 H4: an overwrite can never drop `quantity` below the hub's committed
+ * `reservedQty` — doing so would break the invariant `quantity >= reservedQty` and
+ * let a subsequent claim/draw underflow. The DO UPDATE floors the new value at the
+ * existing reservedQty (you cannot have less physical stock than you've promised);
+ * on a fresh row reservedQty defaults to 0 so the floor is a no-op.
+ */
 export async function setStockAtHub(itemId: string, hubId: string, quantity: number, db: RawClient = prisma): Promise<void> {
   await db.$executeRaw`
     INSERT INTO "inventory_stock" ("id", "itemId", "hubId", "quantity", "updatedAt")
     VALUES (${randomUUID()}, ${itemId}, ${hubId}, ${Math.max(0, quantity)}, now())
-    ON CONFLICT ("itemId", "hubId") DO UPDATE SET "quantity" = ${Math.max(0, quantity)}, "updatedAt" = now()`
+    ON CONFLICT ("itemId", "hubId") DO UPDATE
+      SET "quantity" = GREATEST(${Math.max(0, quantity)}, "inventory_stock"."reservedQty"), "updatedAt" = now()`
 }
 
 /** Available quantity of an item at one hub, accounting for reserves (quantity - reservedQty). */
@@ -114,6 +122,25 @@ export async function drawFromHub(itemId: string, hubId: string, qty: number, db
     UPDATE "inventory_stock" SET "quantity" = "quantity" - ${qty}, "updatedAt" = now()
     WHERE "itemId" = ${itemId} AND "hubId" = ${hubId}
       AND "quantity" - "reservedQty" >= ${qty}`
+  return Number(n) > 0 ? qty : 0
+}
+
+/**
+ * UR-010: draw `qty` that is ALREADY reserved for this operator — decrement
+ * quantity AND reservedQty together in one guarded UPDATE (the reserve→draw
+ * conversion at claim/checkout). Guarded on BOTH `quantity >= qty` and
+ * `reservedQty >= qty` so it can never drive either negative; a shortfall returns 0,
+ * which the caller MUST treat as an invariant breach and roll back (never free-draw).
+ * Unlike drawFromHub this does NOT respect the `quantity - reservedQty` available
+ * floor, because the qty being drawn is itself part of the reservedQty being released.
+ */
+export async function drawReservedFromHub(itemId: string, hubId: string, qty: number, db: RawClient = prisma): Promise<number> {
+  if (qty <= 0) return 0
+  const n = await db.$executeRaw`
+    UPDATE "inventory_stock"
+    SET "quantity" = "quantity" - ${qty}, "reservedQty" = "reservedQty" - ${qty}, "updatedAt" = now()
+    WHERE "itemId" = ${itemId} AND "hubId" = ${hubId}
+      AND "quantity" >= ${qty} AND "reservedQty" >= ${qty}`
   return Number(n) > 0 ? qty : 0
 }
 
