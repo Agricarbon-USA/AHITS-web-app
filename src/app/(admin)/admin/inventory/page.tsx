@@ -501,6 +501,7 @@ function DetailDrawer({
   onUpdated: () => void
 }) {
   const canEdit = useCanEdit()
+  const showToast = useToast()
   const [detail, setDetail] = React.useState<ItemDetail | null>(null)
   const [loading, setLoading] = React.useState(false)
   const [activeTab, setActiveTab] = React.useState(0)
@@ -529,22 +530,31 @@ function DetailDrawer({
   }, [row, loadDetail])
 
   const handleUnitStatusChange = async (unitId: string, status: string) => {
-    await fetch(`/api/inventory/units/${unitId}`, {
+    const res = await fetch(`/api/inventory/units/${unitId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status }),
     })
+    if (!res.ok) {
+      // Q4: surface the failure — the reload below otherwise silently reverted the change.
+      const d = await res.json().catch(() => ({}))
+      showToast({ message: typeof d.error === 'string' ? d.error : 'Could not update unit status.', severity: 'error' })
+    }
     if (row) loadDetail(row.id)
   }
 
   const handleSerialBlur = async (unitId: string) => {
     const sn = serialEdits[unitId]
     if (sn === undefined) return
-    await fetch(`/api/inventory/units/${unitId}`, {
+    const res = await fetch(`/api/inventory/units/${unitId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ serialNumber: sn || null }),
     })
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}))
+      showToast({ message: typeof d.error === 'string' ? d.error : 'Could not save the serial number.', severity: 'error' })
+    }
     setSerialEdits((prev) => { const n = { ...prev }; delete n[unitId]; return n })
     if (row) loadDetail(row.id)
   }
@@ -578,11 +588,18 @@ function DetailDrawer({
 
   const handleApproveRetirement = async () => {
     if (!detail || !retireUnitId) return
-    await fetch(`/api/inventory/${detail.id}/review-inoperable`, {
+    const res = await fetch(`/api/inventory/${detail.id}/review-inoperable`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ unitId: retireUnitId, decision: 'RETIRE', note: 'Approved for retirement by admin' }),
     })
+    if (res.ok) {
+      showToast({ message: 'Unit retired.', severity: 'success' })
+    } else {
+      // Q4: surface the failure instead of silently closing + reverting on reload.
+      const d = await res.json().catch(() => ({}))
+      showToast({ message: typeof d.error === 'string' ? d.error : 'Could not retire the unit.', severity: 'error' })
+    }
     setRetireUnitId(null)
     loadDetail(detail.id)
     onUpdated()

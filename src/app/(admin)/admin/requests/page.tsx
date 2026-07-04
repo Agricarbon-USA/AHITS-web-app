@@ -324,6 +324,10 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
     if (r.ok) {
       showToast({ message: 'Reservation staged.', severity: 'success' })
       onRefresh()
+    } else {
+      // Q4: surface the failure instead of silently returning — a rejected stage
+      // (e.g. insufficient stock / state mismatch) previously looked like nothing happened.
+      showToast({ message: r.error ?? 'Could not stage the reservation.', severity: 'error' })
     }
     return r
   }

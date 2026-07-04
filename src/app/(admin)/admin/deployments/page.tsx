@@ -644,7 +644,12 @@ function DeploymentDrawer({
     })
     if (res.ok) {
       setRemoveDialog({ open: false, kitItem: null })
+      showToast('Item returned.')
       await refresh()
+    } else {
+      // Q4: surface the failure — a swallowed error here looked like a successful return.
+      const d = await res.json().catch(() => ({}))
+      showToast(typeof d.error === 'string' ? d.error : 'Could not return the item.', 'error')
     }
   }
 
