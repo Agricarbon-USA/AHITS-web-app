@@ -339,18 +339,31 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
       const removeQty = isSerialized ? 1 : Math.min(disp.quantity ?? kitItem.quantity, kitItem.quantity)
       const fullRemoval = isSerialized || removeQty >= kitItem.quantity
 
+      // A-1 / CR-17: claim the removal conditionally so two concurrent bulk returns
+      // of the SAME kit item can't both restore stock. The loser matches 0 rows and
+      // skips this disposition (the winner already did the return + logs). The partial
+      // branch also decrements drawnQuantity so a later partial return can't over-restore.
       // TRANSFER removal is finalized only when the recipient ACCEPTS (the
-      // transfer/accept route decrements the source kit item then). Removing it
-      // here too would double-decrement the source quantity — so, exactly like
-      // end/route.ts, skip the kit-item mutation for TRANSFER dispositions.
+      // transfer/accept route decrements the source kit item then). Mutating it here
+      // too would double-decrement — so, exactly like end/route.ts, skip the kit-item
+      // mutation (and the claim) for TRANSFER dispositions.
+      const drawn = kitItem.drawnQuantity ?? 0
+      let restoreQty = 0
       if (disp.type !== 'TRANSFER') {
         if (fullRemoval) {
-          await tx.kitItem.update({ where: { id: disp.kitItemId }, data: { removedAt: now } })
-        } else {
-          await tx.kitItem.update({
-            where: { id: disp.kitItemId },
-            data: { quantity: kitItem.quantity - removeQty },
+          const claimed = await tx.kitItem.updateMany({
+            where: { id: disp.kitItemId, removedAt: null },
+            data: { removedAt: now },
           })
+          if (claimed.count === 0) continue
+          restoreQty = drawn
+        } else {
+          restoreQty = Math.min(removeQty, drawn)
+          const claimed = await tx.kitItem.updateMany({
+            where: { id: disp.kitItemId, removedAt: null, quantity: { gte: removeQty } },
+            data: { quantity: { decrement: removeQty }, drawnQuantity: { decrement: restoreQty } },
+          })
+          if (claimed.count === 0) continue
         }
       }
 
@@ -367,16 +380,17 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
           // every bulk return. Legacy null drawnHubId falls back to item.hubId;
           // if still null, skip the hub row but always restore the total so no
           // stock is lost.
-          const restoreQty = Math.min(removeQty, kitItem.drawnQuantity)
           // G1: chosen destination hub wins, then drawn hub, then home hub.
           const hubForRestore = disp.hubId ?? kitItem.drawnHubId ?? kitItem.item.hubId
           if (hubForRestore && restoreQty > 0) {
             await restoreToHub(inventoryItemId, hubForRestore, restoreQty, tx)
           }
-          await tx.inventoryItem.update({
-            where: { id: inventoryItemId },
-            data: { quantity: { increment: restoreQty } },
-          })
+          if (restoreQty > 0) {
+            await tx.inventoryItem.update({
+              where: { id: inventoryItemId },
+              data: { quantity: { increment: restoreQty } },
+            })
+          }
         }
         await tx.checkLog.create({
           data: {
