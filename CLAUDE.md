@@ -88,7 +88,7 @@ gh pr view --comments
 - You can also trigger an on-demand staging preview by adding the `deploy-staging` label to any open PR: `gh pr edit $PR_NUMBER --add-label deploy-staging` (runs `pr-staging-deploy.yml`).
 - **Auto-deploys (`deploy.yml`):** landing changes on `development` deploys to **staging**; landing changes on `production` deploys to **prod**. Each run is `verify` (lint, type-check, build, tests) → **`migrate`** (`make cloud-run-migrate`) → `deploy`, and will not deploy if an earlier job fails. Promote staging → prod by merging `development` into `production` (e.g. a PR with `--base production`).
 - Migrate-on-deploy **is live** (the `migrate` job in `deploy.yml`), superseding the old manual step. The Docker image itself still does not run migrations.
-- ⚠️ **KNOWN BUG (fix before the first prod promote):** `make cloud-run-migrate` hardcodes the **staging** migration secret (`AHITS_MIGRATE_URL`), so a merge to `production` currently migrates **staging** and then serves prod against an unmigrated schema. Before promoting to prod: parameterize the secret to `$(SECRET_NS)_MIGRATE_URL`, create `AHITS_PROD_MIGRATE_URL` (prod session pooler, port 5432, IPv4), and have `deploy.yml` pass `SECRET_NS=AHITS_PROD` on the `production` branch. Tracked as a Wave 0 release-safety item.
+- ✅ **Prod migrate-secret namespacing — FIXED (was a known bug).** `make cloud-run-migrate` reads `$(SECRET_NS)_MIGRATE_URL` (not the hardcoded staging secret), and `deploy.yml` passes `SECRET_NS=AHITS_PROD` on the `production` branch (staging uses the default `AHITS`). **Remaining pre-prod operational step:** create `AHITS_PROD_MIGRATE_URL` in Secret Manager (prod session pooler, port 5432, IPv4) with an ENABLED version **before** the first production promote — `cloud-run-migrate` reads it at migrate time and fails hard if it's absent.
 - Do **not** deploy directly from a local machine to production; always go through the PR + GitHub Actions flow.
 
 ## Database & migration rules (non-negotiable)
@@ -104,7 +104,12 @@ outage, and manual-migration/secret ordering has repeatedly stalled deploys.
   **before** the new revision serves traffic, but the two are not atomic: a revision
   that references a table/column the migration hasn't added yet errors at runtime.
   Additive (nullable columns, new tables) is safe; destructive drops must lag the
-  code that stopped using them.
+  code that stopped using them. **This is enforced in CI** — the `migration-safety`
+  job (`.github/workflows/ci.yml` → `scripts/check-migration-safety.sh`) fails a PR
+  whose newly-added migrations contain `DROP TABLE`/`DROP COLUMN`/`TRUNCATE`/`RENAME`/
+  `SET NOT NULL`/`ADD COLUMN … NOT NULL` without a `DEFAULT`. A drop that legitimately
+  lags the code that stopped using it can opt out with a
+  `-- migration-safety: acknowledged <reason>` line in the migration.
 - **A new secret must exist in Secret Manager _before_ the deploy that mounts it.**
   Cloud Run validates `--set-secrets` references at deploy time; deploying first
   fails the release. Create the `AHITS_*` secret, confirm an ENABLED version, then
@@ -113,5 +118,6 @@ outage, and manual-migration/secret ordering has repeatedly stalled deploys.
   the `--set-secrets` line in the `Makefile` (`cloud-run-deploy`) — otherwise the
   next deploy silently drops it.
 - Migrate-on-deploy automation (the authenticated `migrate` job in `deploy.yml`) has
-  **shipped** and retires most of the old manual ceremony — but see the prod-secret
-  bug noted in the Deployment Workflow above; that must be fixed before prod relies on it.
+  **shipped** and retires most of the old manual ceremony. The prod migrate-secret
+  namespacing is fixed (`$(SECRET_NS)_MIGRATE_URL`); the only remaining pre-prod step is
+  creating the `AHITS_PROD_MIGRATE_URL` secret (ENABLED) before the first promote.

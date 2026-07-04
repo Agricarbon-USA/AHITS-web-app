@@ -142,12 +142,12 @@ cloud-run-url: ## Print URL of a Cloud Run service. Set SERVICE.
 	  --format="value(status.url)"
 
 # Apply pending Prisma migrations to the deployed database BEFORE the new
-# revision serves traffic. Reads AHITS_MIGRATE_URL — the Supabase SESSION pooler
+# revision serves traffic. Reads $(SECRET_NS)_MIGRATE_URL — the Supabase SESSION pooler
 # (IPv4, port 5432, session mode), which is reachable from GitHub Actions runners
 # and supports the session semantics `prisma migrate deploy` needs. Do NOT point
-# this at AHITS_DATABASE_URL (the 6543 transaction pooler) — pgBouncer transaction
+# this at $(SECRET_NS)_DATABASE_URL (the 6543 transaction pooler) — pgBouncer transaction
 # mode breaks migration advisory locks. Requires the deployer service account to
-# have roles/secretmanager.secretAccessor on AHITS_MIGRATE_URL.
+# have roles/secretmanager.secretAccessor on $(SECRET_NS)_MIGRATE_URL.
 # `@` suppresses command echo so the connection string is never printed.
 cloud-run-migrate: ## Apply pending migrations to the deployed DB. Set GCP_PROJECT.
 	@DB_URL="$$(gcloud secrets versions access latest --secret=$(SECRET_NS)_MIGRATE_URL --project=$(GCP_PROJECT))"; \
