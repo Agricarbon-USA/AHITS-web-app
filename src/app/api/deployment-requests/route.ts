@@ -7,6 +7,7 @@ import { issueStatusLink, statusLinkUrl } from '@/lib/status-links'
 import { sendEmail } from '@/lib/email/resend'
 import { genericAlertEmail } from '@/lib/email/templates'
 import { prisma } from '@/lib/prisma'
+import { withIdempotency } from '@/lib/idempotency'
 
 const lineSchema = z
   .object({
@@ -54,6 +55,12 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  // FND-21: dedupe the create so an offline-queue replay or a double-tap can't
+  // open two requests. No-ops when the client sends no Idempotency-Key.
+  return withIdempotency(req, 'deployment-requests.POST', () => _POST(req))
+}
+
+async function _POST(req: NextRequest) {
   const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
