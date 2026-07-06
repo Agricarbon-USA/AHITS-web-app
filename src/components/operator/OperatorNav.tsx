@@ -20,7 +20,7 @@ import { useAuth } from '@/hooks/useAuth'
 const NAV_ITEMS = [
   { label: 'My Dashboard', href: '/operator/dashboard', icon: DashboardIcon },
   { label: 'Daily Check', href: '/operator/daily-check', icon: ChecklistIcon },
-  { label: 'My Deployment', href: '/operator/my-rig', icon: LocalShippingIcon },
+  { label: 'My Deployment', href: '/operator/my-deployment', icon: LocalShippingIcon },
   { label: 'Scan QR', href: '/operator/scan', icon: QrCodeScannerIcon },
   { label: 'Requests', href: '/operator/requests', icon: PlaylistAddCheckIcon },
 ]
@@ -79,7 +79,7 @@ export function OperatorNav() {
             sx={{ borderRadius: 2, mx: 1, mb: 0.5 }}
           >
             <ListItemIcon sx={{ minWidth: 36 }}>
-              {href === '/operator/my-rig' ? (
+              {href === '/operator/my-deployment' ? (
                 <Badge badgeContent={pendingCount || undefined} color="error">
                   <Icon fontSize="small" />
                 </Badge>

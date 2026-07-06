@@ -13,7 +13,7 @@ import { usePathname, useRouter } from 'next/navigation'
 const ITEMS = [
   { label: 'Home', href: '/operator/dashboard', icon: <DashboardIcon /> },
   { label: 'Check', href: '/operator/daily-check', icon: <ChecklistIcon /> },
-  { label: 'Deploy', href: '/operator/my-rig', icon: <LocalShippingIcon /> },
+  { label: 'My Deployment', href: '/operator/my-deployment', icon: <LocalShippingIcon /> },
   { label: 'Scan', href: '/operator/scan', icon: <QrCodeScannerIcon /> },
 ]
 

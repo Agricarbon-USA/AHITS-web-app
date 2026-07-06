@@ -21,7 +21,7 @@ const VEHICLE_ICON: Record<string, React.ElementType> = {
   OTHER: LocalShippingIcon,
 }
 
-// Structural prop types — both the operator (my-rig) and admin (deployments)
+// Structural prop types — both the operator (my-deployment) and admin (deployments)
 // Rig shapes are assignable to these, so the dialog can be shared without
 // coupling to either page's local interfaces.
 export interface TransferKitItem {
@@ -48,7 +48,7 @@ export type TransferToast = (t: {
 }) => void
 
 /**
- * One shared transfer dialog used by both the operator (my-rig) and admin
+ * One shared transfer dialog used by both the operator (my-deployment) and admin
  * (deployments) screens — collapses two ~140-line near-duplicate copies (UX-5).
  *
  * Behaviour differences are explicit props:

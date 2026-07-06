@@ -13,7 +13,7 @@ const PREFETCH_ROUTES = [
   // Operator primary tabs
   '/operator/dashboard',
   '/operator/daily-check',
-  '/operator/my-rig',
+  '/operator/my-deployment',
   '/operator/scan',
   '/operator/requests',
   // Read-only admin browse surfaces operators can open

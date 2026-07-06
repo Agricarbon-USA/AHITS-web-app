@@ -80,7 +80,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
         type: 'HANDOFF_REQUESTED',
         title: 'Deployment handoff requested',
         body: `${session.name} wants to hand off a deployment to you.`,
-        link: '/operator/my-rig',
+        link: '/operator/my-deployment',
       },
     }).catch(() => {})
   }
