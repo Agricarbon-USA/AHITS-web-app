@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { rateLimit, clientIp } from '@/lib/rate-limit'
 import { withIdempotency } from '@/lib/idempotency'
-import { resolveStatusLink, applyTransition, hashToken } from '@/lib/status-links'
+import { resolveStatusLink, applyTransition, hashToken, isLinkActionable } from '@/lib/status-links'
 import { setLineFulfillment } from '@/lib/deployment-requests'
 import { prisma } from '@/lib/prisma'
 
@@ -48,13 +48,26 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ token: st
 
     const { lineId, action, actorLabel, ...lineFields } = parsed.data
 
-    // Token-scoped ownership check: lineId must belong to the request this token controls.
+    // FND-6: gate the per-line action on link actionability — the same check the
+    // whole-request branch applies via applyTransition. Without it, a superseded,
+    // revoked, or expired link could still confirm/edit/deny a line for as long as
+    // the request stayed REQUESTED, defeating the resend-revokes-old-link guarantee.
+    const link = await resolveStatusLink(token)
+    if (!link) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    if (!isLinkActionable(link)) {
+      return NextResponse.json({ error: 'This link is no longer active.' }, { status: 409 })
+    }
+
+    // Token-scoped ownership check: lineId must belong to the request this token
+    // controls. The state/expiry predicate is repeated in SQL as defense in depth.
     const tokenHash = hashToken(token)
     const ownership = await prisma.$queryRaw<{ cnt: bigint }[]>`
       SELECT COUNT(*)::bigint AS cnt
       FROM "deployment_request_lines" drl
       JOIN "status_links" sl ON sl."deploymentRequestId" = drl."requestId"
       WHERE drl."id" = ${lineId} AND sl."tokenHash" = ${tokenHash}
+        AND sl."state" NOT IN ('REVOKED', 'COMPLETED', 'EXPIRED')
+        AND sl."expiresAt" > now()
     `
     if (Number(ownership[0]?.cnt ?? 0) === 0) {
       return NextResponse.json({ error: 'Line not found.' }, { status: 404 })

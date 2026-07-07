@@ -97,7 +97,7 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
     try {
       const res = await fetch(`/api/s/${token}/transition`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `${token}:${action}:${Date.now()}` },
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `${token}:${action}` },
         body: JSON.stringify({ action, actorLabel, note: note || undefined }),
       })
       const data = await res.json().catch(() => ({}))
@@ -171,7 +171,7 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
       try {
         const res = await fetch(`/api/s/${token}/transition`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `${token}:PREPARED:${Date.now()}` },
+          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `${token}:PREPARED` },
           body: JSON.stringify({ action: 'PREPARED', actorLabel }),
         })
         const json = await res.json().catch(() => ({}))
