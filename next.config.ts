@@ -40,6 +40,11 @@ const nextConfig: NextConfig = {
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }]
   },
+  // W0-11: /operator/my-rig was renamed to /operator/my-deployment. Permanent
+  // redirect keeps old bookmarks and already-persisted notification links working.
+  async redirects() {
+    return [{ source: '/operator/my-rig', destination: '/operator/my-deployment', permanent: true }]
+  },
 }
 
 export default withSerwist(nextConfig)

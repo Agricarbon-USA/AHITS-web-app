@@ -116,7 +116,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
         type: 'TRANSFER_DECLINED',
         title: 'Transfer declined',
         body: `${session.name} declined the equipment transfer${responseNote ? `: ${responseNote}` : ''}.`,
-        link: '/operator/my-rig',
+        link: '/operator/my-deployment',
       },
     }).catch(() => {})
   }

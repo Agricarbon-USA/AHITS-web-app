@@ -243,7 +243,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
         type: 'TRANSFER_ACCEPTED',
         title: 'Transfer accepted',
         body: `${session.name} accepted the equipment transfer.`,
-        link: '/operator/my-rig',
+        link: '/operator/my-deployment',
       },
     }).catch(() => {})
   }

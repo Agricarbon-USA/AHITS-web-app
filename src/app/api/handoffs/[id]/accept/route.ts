@@ -72,7 +72,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
         type: 'HANDOFF_ACCEPTED',
         title: 'Deployment handoff accepted',
         body: `${session.name} accepted the deployment handoff.`,
-        link: '/operator/my-rig',
+        link: '/operator/my-deployment',
       },
     }).catch(() => {})
   }

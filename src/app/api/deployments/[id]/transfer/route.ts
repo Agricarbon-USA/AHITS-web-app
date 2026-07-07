@@ -137,7 +137,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
         type: 'TRANSFER_REQUESTED',
         title: 'Incoming equipment transfer',
         body: `${session.name} wants to transfer ${counts.join(' and ')} to you. Tap to review.`,
-        link: '/operator/my-rig',
+        link: '/operator/my-deployment',
       },
     })
 
