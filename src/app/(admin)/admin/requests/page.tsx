@@ -541,7 +541,7 @@ export default function AdminRequestsPage() {
     void load()
     const loadMeta = async () => {
       const [hubsRes, opsRes] = await Promise.all([fetch('/api/hubs'), fetch('/api/operators')])
-      if (hubsRes.ok) setHubs((await hubsRes.json()) as HubOption[])
+      if (hubsRes.ok) { const hd = await hubsRes.json(); setHubs((Array.isArray(hd) ? hd : (hd?.data ?? [])) as HubOption[]) }
       if (opsRes.ok) {
         const d = await opsRes.json()
         setOperators((d.data as OperatorOption[]) ?? [])
