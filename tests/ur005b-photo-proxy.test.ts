@@ -1,5 +1,12 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { extractStoragePath, toPhotoSrc, isAllowedPhotoUrl } from '../src/lib/photo-security'
+
+// isAllowedPhotoUrl checks the photo host against NEXT_PUBLIC_SUPABASE_URL. Pin it to
+// the fixtures' host so the allowlist assertions are deterministic regardless of the
+// ambient env (a real Supabase URL in .env would otherwise reject the abc.supabase.co
+// fixtures). Read at call time in the source, so a plain stubEnv is sufficient.
+beforeEach(() => { vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://abc.supabase.co') })
+afterEach(() => { vi.unstubAllEnvs() })
 
 // UR-005b: photos live in a PRIVATE bucket and render only through the auth-gated
 // proxy `/api/photos/<path>`. These helpers must (a) resolve any reference form to

@@ -7,8 +7,6 @@
 // content-injection / phishing vector. We persist only URLs that point at our
 // own Supabase storage object endpoint.
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
-
 // UR-005b: photos live in a PRIVATE bucket. They are never rendered from a public
 // Supabase URL; instead every reference is rewritten to the auth-gated proxy
 // `/api/photos/<object-path>` (see src/app/api/photos/[...path]/route.ts), which
@@ -71,14 +69,21 @@ export function isAllowedPhotoUrl(url: unknown): url is string {
   if (u.protocol !== 'https:') return false
   // Must hit a Supabase storage object path (…/storage/v1/object/{public|sign}/…).
   if (!u.pathname.includes('/storage/v1/object/')) return false
-  if (SUPABASE_URL) {
+  // Read at call time (not module load) so the check is deterministic under test.
+  // In production Next.js inlines NEXT_PUBLIC_* at build time, so this is a constant
+  // either way — no runtime behavior change; it only makes the host allowlist stubbable.
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
+  if (supabaseUrl) {
     try {
-      return u.host === new URL(SUPABASE_URL).host
+      return u.host === new URL(supabaseUrl).host
     } catch {
       /* fall through to the generic host check */
     }
   }
-  // No configured origin (tests/local) — require a Supabase-hosted bucket.
+  // No configured origin (tests/local) — require a Supabase-hosted bucket. NOTE: this
+  // generic fallback is deliberately looser and must NEVER be the production path:
+  // NEXT_PUBLIC_SUPABASE_URL is a required Cloud Run runtime secret (Makefile env-check
+  // hard-fails without it), so prod always takes the strict host-equality branch above.
   return u.hostname.endsWith('.supabase.co')
 }
 
