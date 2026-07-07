@@ -205,7 +205,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           await createAlert('DAMAGE_REPORTED', 'maintenance_tasks', task.id, {
             itemName: kitItem.item.name,
             operatorId: session.userId,
-          })
+          }, tx)
           if (disp.photoUrls.length > 0) {
             await tx.photo.createMany({
               data: filterAllowedPhotoUrls(disp.photoUrls).map((url) => ({
