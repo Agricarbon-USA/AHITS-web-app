@@ -343,6 +343,71 @@ function MoveStockDialog({
   )
 }
 
+// ── Add Stock Dialog (seed first stock at a hub) ──────────────────
+function AddStockDialog({
+  itemId, hubs, stock, onClose, onSuccess,
+}: {
+  itemId: string
+  hubs: HubOption[]
+  stock: HubStockRow[]
+  onClose: () => void
+  onSuccess: () => void
+}) {
+  // Offer only hubs without a stock row yet — an existing hub is edited in-place in
+  // the table. This is the first-stock path (FND-13): a brand-new item has no rows,
+  // so Move Stock is disabled and the per-row editors don't exist; this seeds the
+  // first row via the same { hubId, quantity } set-API the row editor uses.
+  const stockedHubIds = new Set(stock.map((s) => s.hubId))
+  const availableHubs = hubs.filter((h) => !stockedHubIds.has(h.id))
+  const [hubId, setHubId] = React.useState('')
+  const [qty, setQty] = React.useState(1)
+  const [loading, setLoading] = React.useState(false)
+  const [error, setError] = React.useState('')
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    if (!hubId) { setError('Select a hub'); return }
+    if (qty < 1) { setError('Quantity must be at least 1'); return }
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/inventory/${itemId}/stock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // Additive receive (race-safe) — see the stock route's receiveSchema.
+        body: JSON.stringify({ hubId, addQty: qty }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) { setError(typeof data.error === 'string' ? data.error : 'Could not add stock'); return }
+      onSuccess()
+    } catch { setError('Network error') }
+    finally { setLoading(false) }
+  }
+
+  return (
+    <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
+      <DialogTitle>Add Stock at a Hub</DialogTitle>
+      <Box component="form" onSubmit={handleSubmit}>
+        <DialogContent>
+          <Stack spacing={2.5} pt={0.5}>
+            {error && <Alert severity="error">{error}</Alert>}
+            <TextField select label="Hub" value={hubId} onChange={(e) => setHubId(e.target.value)} fullWidth required>
+              {availableHubs.length === 0
+                ? <MenuItem value="" disabled>Every hub already has a stock row — edit it in the table instead</MenuItem>
+                : availableHubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.name ?? h.id}</MenuItem>)}
+            </TextField>
+            <TextField label="Quantity" type="number" value={qty} onChange={(e) => setQty(parseInt(e.target.value) || 0)} inputProps={{ min: 1 }} fullWidth required />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={onClose} disabled={loading}>Cancel</Button>
+          <Button type="submit" variant="contained" disabled={loading || !hubId}>{loading ? <CircularProgress size={16} /> : 'Add Stock'}</Button>
+        </DialogActions>
+      </Box>
+    </Dialog>
+  )
+}
+
 // ── Stock by Hub Section ──────────────────────────────────────────
 
 function StockByHubSection({
@@ -359,6 +424,7 @@ function StockByHubSection({
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState('')
   const [moveOpen, setMoveOpen] = React.useState(false)
+  const [addOpen, setAddOpen] = React.useState(false)
 
   const loadStock = React.useCallback(async () => {
     setLoading(true)
@@ -396,13 +462,19 @@ function StockByHubSection({
     <Box mb={3}>
       <Stack direction="row" justifyContent="space-between" alignItems="center" mb={1}>
         <Typography variant="subtitle2" fontWeight={600}>Stock by Hub</Typography>
-        <MutationButton size="small" startIcon={<SwapHorizIcon />} onClick={() => setMoveOpen(true)} disabled={stock.length === 0}>
-          Move Stock
-        </MutationButton>
+        <Stack direction="row" spacing={1}>
+          <MutationButton size="small" startIcon={<AddIcon />} onClick={() => setAddOpen(true)}
+            disabled={hubs.every((h) => stock.some((s) => s.hubId === h.id))}>
+            Add Stock
+          </MutationButton>
+          <MutationButton size="small" startIcon={<SwapHorizIcon />} onClick={() => setMoveOpen(true)} disabled={stock.length === 0}>
+            Move Stock
+          </MutationButton>
+        </Stack>
       </Stack>
       {error && <Alert severity="error" onClose={() => setError('')} sx={{ mb: 1 }}>{error}</Alert>}
       {stock.length === 0 ? (
-        <Typography variant="body2" color="text.secondary">No stock rows yet. Use the edit controls to set stock at a hub.</Typography>
+        <Typography variant="body2" color="text.secondary">No stock rows yet. Use the &ldquo;Add Stock&rdquo; button above to set stock at a hub.</Typography>
       ) : (
         <TableContainer component={Paper} variant="outlined">
           <Table size="small">
@@ -473,6 +545,15 @@ function StockByHubSection({
           stock={stock}
           onClose={() => setMoveOpen(false)}
           onSuccess={() => { setMoveOpen(false); loadStock(); onUpdated() }}
+        />
+      )}
+      {addOpen && (
+        <AddStockDialog
+          itemId={itemId}
+          hubs={hubs}
+          stock={stock}
+          onClose={() => setAddOpen(false)}
+          onSuccess={() => { setAddOpen(false); loadStock(); onUpdated() }}
         />
       )}
     </Box>
