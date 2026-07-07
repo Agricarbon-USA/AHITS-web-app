@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { useUrlFilters } from '@/hooks/useUrlFilters'
 import {
   Box, Typography, Button, Dialog, DialogTitle, DialogContent,
   DialogActions, TextField, MenuItem, Stack, Alert,
@@ -28,6 +29,10 @@ import { RepairReviewDialog } from '@/components/shared/RepairReviewDialog'
 import { EQUIPMENT_STATUS } from '@/lib/status'
 import { useCanEdit, EditGuard, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 import { groupBy } from '@/lib/utils'
+
+// FND-48: URL-persisted filter keys for the inventory list (stable object so the
+// useUrlFilters setter callback stays referentially stable).
+const INVENTORY_FILTER_DEFAULTS = { categoryId: '', itemType: '', hubId: '', operatorId: '', projectId: '' }
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -1040,7 +1045,17 @@ function DetailDrawer({
 
 // ── Main Page ─────────────────────────────────────────────────────
 
+// FND-48: useUrlFilters -> useSearchParams requires a Suspense boundary at the
+// route (matches src/app/setup-account/page.tsx); without it `next build` fails.
 export default function AdminInventoryPage() {
+  return (
+    <React.Suspense>
+      <AdminInventoryContent />
+    </React.Suspense>
+  )
+}
+
+function AdminInventoryContent() {
   const canEdit = useCanEdit()
   const showToast = useToast()
   const [items, setItems] = React.useState<InventoryItemRow[]>([])
@@ -1048,11 +1063,13 @@ export default function AdminInventoryPage() {
   const [page, setPage] = React.useState(0)
   const [pageSize] = React.useState(25)
   const [search, setSearch] = React.useState('')
-  const [categoryFilter, setCategoryFilter] = React.useState('')
-  const [itemTypeFilter, setItemTypeFilter] = React.useState('')
-  const [hubFilter, setHubFilter] = React.useState('')
-  const [operatorFilter, setOperatorFilter] = React.useState('')
-  const [projectFilter, setProjectFilter] = React.useState('')
+  // FND-48: these five filters live in the URL (deep-linkable, reload-safe).
+  const { filters, setFilters } = useUrlFilters(INVENTORY_FILTER_DEFAULTS)
+  const categoryFilter = filters.categoryId
+  const itemTypeFilter = filters.itemType
+  const hubFilter = filters.hubId
+  const operatorFilter = filters.operatorId
+  const projectFilter = filters.projectId
   const [loading, setLoading] = React.useState(true)
   const [categories, setCategories] = React.useState<CategoryOption[]>([])
   const [hubs, setHubs] = React.useState<HubOption[]>([])
@@ -1129,7 +1146,7 @@ export default function AdminInventoryPage() {
             <Chip
               key={type || 'all'}
               label={type === '' ? 'All' : type === 'CONSUMABLE' ? 'Consumables' : 'Serialized'}
-              onClick={() => { setItemTypeFilter(type); setPage(0) }}
+              onClick={() => { setFilters({ itemType: type }); setPage(0) }}
               color={itemTypeFilter === type ? 'primary' : 'default'}
               variant={itemTypeFilter === type ? 'filled' : 'outlined'}
               size="small"
@@ -1143,7 +1160,7 @@ export default function AdminInventoryPage() {
             size="small"
             label="Category"
             value={categoryFilter}
-            onChange={(e) => { setCategoryFilter(e.target.value); setPage(0) }}
+            onChange={(e) => { setFilters({ categoryId: e.target.value }); setPage(0) }}
             sx={{ width: 200 }}
           >
             <MenuItem value="">All categories</MenuItem>
@@ -1156,7 +1173,7 @@ export default function AdminInventoryPage() {
             size="small"
             label="Hub"
             value={hubFilter}
-            onChange={(e) => { setHubFilter(e.target.value); setPage(0) }}
+            onChange={(e) => { setFilters({ hubId: e.target.value }); setPage(0) }}
             sx={{ width: 180 }}
           >
             <MenuItem value="">All hubs</MenuItem>
@@ -1169,7 +1186,7 @@ export default function AdminInventoryPage() {
             size="small"
             label="Operator"
             value={operatorFilter}
-            onChange={(e) => { setOperatorFilter(e.target.value); setPage(0) }}
+            onChange={(e) => { setFilters({ operatorId: e.target.value }); setPage(0) }}
             sx={{ width: 180 }}
           >
             <MenuItem value="">All operators</MenuItem>
@@ -1182,7 +1199,7 @@ export default function AdminInventoryPage() {
             size="small"
             label="Project"
             value={projectFilter}
-            onChange={(e) => { setProjectFilter(e.target.value); setPage(0) }}
+            onChange={(e) => { setFilters({ projectId: e.target.value }); setPage(0) }}
             sx={{ width: 180 }}
           >
             <MenuItem value="">All projects</MenuItem>
@@ -1191,8 +1208,9 @@ export default function AdminInventoryPage() {
         )}
         {(categoryFilter || itemTypeFilter || hubFilter || operatorFilter || projectFilter || search) && (
           <Button size="small" variant="text" onClick={() => {
-            setSearch(''); setCategoryFilter(''); setItemTypeFilter('');
-            setHubFilter(''); setOperatorFilter(''); setProjectFilter(''); setPage(0)
+            setSearch('')
+            setFilters({ categoryId: '', itemType: '', hubId: '', operatorId: '', projectId: '' })
+            setPage(0)
           }}>Clear filters</Button>
         )}
       </Stack>
