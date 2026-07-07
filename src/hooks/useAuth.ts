@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import useSWR, { useSWRConfig } from 'swr'
 import { useRouter } from 'next/navigation'
 import type { SessionUser } from '@/types'
@@ -56,6 +56,18 @@ export function useAuth() {
     shouldRetryOnError: false,
   })
 
+  // Hydration safety (React #418): `fallbackData` is read from localStorage, so it
+  // is `undefined` during SSR but the cached user on the client's FIRST render.
+  // Any consumer that renders identity text/structure (e.g. the nav's operator
+  // name + role-gated items, which host the Sign Out button) would therefore
+  // mismatch server vs. client and abort hydration — leaving onClick handlers
+  // unattached (dead Sign Out / Start Deployment). Gate the EXPOSED identity
+  // behind `mounted` so the first client render matches the server shell; the
+  // cached identity resolves one tick later (still instant/offline — no network),
+  // fixing the whole class of bug centrally rather than per consumer.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
+
   const logout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {})
     writeCachedIdentity(null)
@@ -73,6 +85,7 @@ export function useAuth() {
   // returned null, not a network throw) means the session is dead, so actively
   // bounce to /login. This restores the revocation UX the DB layout-check used to
   // provide, without logging the operator out merely for being offline.
+  // Keyed on `data` (not the mounted-gated identity) so revocation still fires.
   useEffect(() => {
     if (data === null && typeof navigator !== 'undefined' && navigator.onLine) {
       writeCachedIdentity(null)
@@ -81,13 +94,15 @@ export function useAuth() {
   }, [data, router])
 
   return {
-    user: data ?? undefined,
+    // Mounted-gated for hydration safety (see note above). Server and first client
+    // render both yield `undefined`; the resolved identity appears post-mount.
+    user: mounted ? (data ?? undefined) : undefined,
     isLoading,
     // Only a real, online failure is an error; an offline blip is not (we keep
     // showing the cached identity, so the operator stays "logged in").
     isError: !!error && !isOffline,
     isOffline,
-    isAdmin: data?.role === 'ADMIN',
+    isAdmin: mounted ? data?.role === 'ADMIN' : false,
     logout,
   }
 }
