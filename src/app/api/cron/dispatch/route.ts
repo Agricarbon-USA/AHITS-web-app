@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { prisma } from '@/lib/prisma'
+import { getDeploymentRostersForDisplay } from '@/lib/deployment-assignments'
 import { createAlert, resolveActiveAlert } from '@/lib/alerts'
 import { dispatchPendingAlerts } from '@/lib/notifications'
 import { allHubStockForScan } from '@/lib/inventory-stock'
@@ -128,22 +129,30 @@ async function run() {
     (localHour === cutoffHour && localMinute >= cutoffMinute)
   let missedFlagged = 0
 
+  // W0-10 PR-1: enumerate every active rig (tsc-typed so the PR-4 column drop is a
+  // compile error here, not a silent miss) and resolve its PRIMARY from the assignment
+  // roster, falling back to the legacy Rig.operatorId. The fallback keeps the missed-
+  // daily-check scan from silently dropping a rig if an active rig ever lacks an open
+  // PRIMARY assignment (the alert path must not fail closed).
   const activeRigs = await prisma.rig.findMany({
     where: { endedAt: null },
-    select: { operatorId: true, operator: { select: { name: true } } },
-    distinct: ['operatorId'],
+    select: { id: true, operatorId: true, operator: { select: { name: true } } },
   })
+  const cronRosters = await getDeploymentRostersForDisplay(activeRigs.map((r) => r.id))
 
   for (const rig of activeRigs) {
+    const roster = cronRosters.get(rig.id)
+    const operatorId = roster?.operatorId ?? rig.operatorId
+    const operatorName = roster?.operator?.name ?? rig.operator?.name ?? 'Operator'
     const checkedToday = await prisma.dailyCheck.findFirst({
-      where: { operatorId: rig.operatorId, date: new Date(today) },
+      where: { operatorId, date: new Date(today) },
       select: { id: true },
     })
     if (checkedToday) {
-      await resolveActiveAlert('DAILY_CHECK_MISSED', 'operators', rig.operatorId)
+      await resolveActiveAlert('DAILY_CHECK_MISSED', 'operators', operatorId)
     } else if (pastCutoff) {
-      await createAlert('DAILY_CHECK_MISSED', 'operators', rig.operatorId, {
-        operatorName: rig.operator.name,
+      await createAlert('DAILY_CHECK_MISSED', 'operators', operatorId, {
+        operatorName,
         date: today,
         cutoff: dailyCheckCutoff,
       })

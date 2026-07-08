@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
+import { getAuthorizedActiveRig } from '@/lib/deployment-auth'
 import { requireAuth } from '@/lib/auth/session'
 import { withIdempotency } from '@/lib/idempotency'
 
@@ -50,17 +51,6 @@ const removeSchema = z.object({
   note: z.string().min(1, 'Note is required'),
 })
 
-async function getAuthorizedActiveRig(id: string, session: { userId: string; role: string }) {
-  const rig = await prisma.rig.findUnique({ where: { id } })
-  if (!rig || rig.endedAt) return null
-  if (session.role === 'ADMIN') return rig
-  if (rig.operatorId === session.userId) return rig
-  const secondary = await prisma.rigOperator.findUnique({
-    where: { rigId_operatorId: { rigId: id, operatorId: session.userId } },
-  })
-  if (secondary) return rig
-  return null
-}
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAuth()

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { EquipmentCategory, EquipmentStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { getDeploymentRoster } from '@/lib/deployment-assignments'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import { writeOr404 } from '@/lib/api-errors'
 import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions } from '@/lib/inventory'
@@ -52,8 +53,9 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
             select: {
               rig: {
                 select: {
+                  id: true,
                   endedAt: true,
-                  operator: { select: { id: true, name: true } },
+                  operatorId: true,
                   project: { select: { id: true, name: true, location: true } },
                 },
               },
@@ -78,6 +80,13 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
 
   const activeKit = item.kitItems.find((ki) => ki.kit.rig !== null && ki.kit.rig.endedAt === null)
   const activeRig = activeKit?.kit.rig ?? null
+  // W0-10 PR-1: operator from the assignment roster; fall back to the legacy
+  // Rig.operatorId (one-off user lookup) so a roster miss never blanks the name.
+  const activeRoster = activeRig ? await getDeploymentRoster(activeRig.id) : null
+  let currentOperator = activeRoster?.operator ?? null
+  if (!currentOperator && activeRig?.operatorId) {
+    currentOperator = await prisma.user.findUnique({ where: { id: activeRig.operatorId }, select: { id: true, name: true, email: true } })
+  }
 
   const { kitItems, categoryRef, ...rest } = item
   void kitItems
@@ -91,7 +100,7 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
     // Derived single-source-of-truth quantities (units for serialized, stored count for consumables)
     derivedQuantity: derived.effectiveQuantity,
     availableQuantity: derived.availableQuantity,
-    currentOperator: activeRig?.operator ?? null,
+    currentOperator,
     currentProject: activeRig?.project ?? null,
   }
   // Cost/spend data is admin-only (§10.2). Strip it for operators.

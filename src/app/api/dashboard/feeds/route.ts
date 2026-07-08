@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { businessDate } from '@/lib/business-date'
 import { requireAuth } from '@/lib/auth/session'
+import { getDeploymentRostersForDisplay } from '@/lib/deployment-assignments'
 
 // Operational feeds for the dashboard (alert-response KPI): the things to act on
 // today, not just the headline counts. Read-only. Readable by any authenticated
@@ -52,7 +53,7 @@ export async function GET() {
       where: { endedAt: null, startedAt: { lt: longRunningCutoff } },
       orderBy: { startedAt: 'asc' },
       take: 15,
-      select: { id: true, label: true, startedAt: true, operator: { select: { name: true } } },
+      select: { id: true, label: true, startedAt: true },
     }),
     prisma.checkLog.findMany({
       orderBy: { submittedAt: 'desc' },
@@ -83,9 +84,18 @@ export async function GET() {
   ])
 
   const checkedToday = new Set(checksToday.map((c) => c.operatorId))
+  // W0-10 PR-1: rig operator (id + name) from the assignment roster, not Rig.operatorId.
+  const rigRosters = await getDeploymentRostersForDisplay(activeRigs.map((r) => r.id))
   const missedChecks = activeRigs
-    .filter((r) => !checkedToday.has(r.operatorId))
-    .map((r) => ({ rigId: r.id, operator: r.operator?.name ?? 'Unassigned', label: r.label, startedAt: r.startedAt }))
+    // W0-10 PR-1: prefer the assignment roster's PRIMARY, fall back to the legacy
+    // Rig.operatorId so an active rig without an open PRIMARY is never silently
+    // dropped from the admin missed-check list.
+    .map((r) => {
+      const roster = rigRosters.get(r.id)
+      return { r, operatorId: roster?.operatorId ?? r.operatorId, operatorName: roster?.operator?.name ?? r.operator?.name ?? 'Unassigned' }
+    })
+    .filter(({ operatorId }) => operatorId && !checkedToday.has(operatorId))
+    .map(({ r, operatorName }) => ({ rigId: r.id, operator: operatorName, label: r.label, startedAt: r.startedAt }))
 
   const maintenanceDueSoon = dueTasks.map((t) => ({
     id: t.id,
@@ -98,7 +108,7 @@ export async function GET() {
 
   const longRunning = longRigs.map((r) => ({
     rigId: r.id,
-    operator: r.operator?.name ?? 'Unassigned',
+    operator: rigRosters.get(r.id)?.operator?.name ?? 'Unassigned',
     label: r.label,
     startedAt: r.startedAt,
     daysOut: Math.floor((now.getTime() - r.startedAt.getTime()) / MS_PER_DAY),

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
+import { isAuthorizedForRig } from '@/lib/deployment-auth'
 import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { createAlert } from '@/lib/alerts'
@@ -71,11 +72,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     },
   })
   if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (session.role !== 'ADMIN' && rig.operatorId !== session.userId) {
-    const isSecondary = await prisma.rigOperator.findUnique({
-      where: { rigId_operatorId: { rigId: id, operatorId: session.userId } },
-    })
-    if (!isSecondary) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  if (!(await isAuthorizedForRig(rig, session))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
   if (rig.endedAt) return NextResponse.json({ error: 'Deployment already ended' }, { status: 409 })
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { getVehicleOperators } from '@/lib/deployment-assignments'
 import { requireAuth } from '@/lib/auth/session'
 import { parseScannedCode } from '@/lib/qr'
 
@@ -25,11 +26,12 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ qrC
       qrCodeId: true,
       location: true,
       odometer: true,
-      assignedOperatorId: true,
     },
   })
 
   if (!vehicle) return NextResponse.json({ error: 'Vehicle not found' }, { status: 404 })
 
-  return NextResponse.json({ vehicle })
+  // W0-10 PR-1: assigned operator from the assignment table, not Vehicle.assignedOperatorId.
+  const assignedOperatorId = (await getVehicleOperators([vehicle.id])).get(vehicle.id)?.operatorId ?? null
+  return NextResponse.json({ vehicle: { ...vehicle, assignedOperatorId } })
 }
