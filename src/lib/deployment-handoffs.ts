@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { prisma } from '@/lib/prisma'
-import { endAssignmentByRole, ensureOpenAssignment } from '@/lib/deployment-assignments'
+import { endAssignmentByRole, ensureOpenAssignment , getActivePrimaryForRig } from '@/lib/deployment-assignments'
 import type { PrismaClient } from '@prisma/client'
 
 type Tx = Parameters<Parameters<PrismaClient['$transaction']>[0]>[0]
@@ -32,7 +32,9 @@ export async function reassignPrimary(
   actorId: string,
   note: string,
 ): Promise<void> {
-  await endAssignmentByRole(rig.id, rig.operatorId, 'PRIMARY', tx)
+  // W0-10 PR-1: end the CURRENT open PRIMARY (roster) with legacy fallback.
+  const currentPrimary = (await getActivePrimaryForRig(rig.id, tx)) ?? rig.operatorId
+  await endAssignmentByRole(rig.id, currentPrimary, 'PRIMARY', tx)
   await ensureOpenAssignment({ rigId: rig.id, operatorId: toOperatorId, role: 'PRIMARY', addedById: actorId, note }, tx)
   await tx.rig.update({ where: { id: rig.id }, data: { operatorId: toOperatorId } })
   const rvs = await tx.rigVehicle.findMany({ where: { rigId: rig.id, removedAt: null }, select: { vehicleId: true } })

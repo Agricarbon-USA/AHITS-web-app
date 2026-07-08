@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { VehicleType, VehicleStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { getVehicleOperators } from '@/lib/deployment-assignments'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import { writeOr404 } from '@/lib/api-errors'
 
@@ -58,19 +59,21 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
   // Merge hub + assigned-operator names via raw SQL (hubId newer than client).
   let hubId: string | null = null
   let hubName: string | null = null
-  let assignedOperatorName: string | null = null
+  // W0-10 PR-1: derive the assigned operator once (id + name) from the assignment table.
+  const vehicleOp = (await getVehicleOperators([id])).get(id) ?? null
+  const assignedOperatorId = vehicleOp?.operatorId ?? null
+  const assignedOperatorName = vehicleOp?.operatorName ?? null
   try {
-    const rows = await prisma.$queryRaw<{ hubId: string | null; hubName: string | null; assignedOperatorName: string | null }[]>`
-      SELECT v."hubId", h."name" AS "hubName", u."name" AS "assignedOperatorName"
+    const rows = await prisma.$queryRaw<{ hubId: string | null; hubName: string | null }[]>`
+      SELECT v."hubId", h."name" AS "hubName"
       FROM "vehicles" v
       LEFT JOIN "hubs" h ON h."id" = v."hubId"
-      LEFT JOIN "users" u ON u."id" = v."assignedOperatorId"
       WHERE v."id" = ${id}
     `
-    if (rows[0]) { hubId = rows[0].hubId; hubName = rows[0].hubName; assignedOperatorName = rows[0].assignedOperatorName }
+    if (rows[0]) { hubId = rows[0].hubId; hubName = rows[0].hubName }
   } catch { /* hubId column missing pre-migration */ }
 
-  return NextResponse.json({ data: { ...vehicle, hubId, hubName, assignedOperatorName } })
+  return NextResponse.json({ data: { ...vehicle, assignedOperatorId, hubId, hubName, assignedOperatorName } })
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

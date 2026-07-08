@@ -111,13 +111,24 @@ export async function GET(req: NextRequest) {
     projectRigIds = rows.map((r) => r.rigId)
   }
 
+  // W0-10 PR-1: rigs where this operator has an OPEN assignment (any role). Added to
+  // the visibility OR below alongside the legacy primary/secondary clauses — non-revoking
+  // (the two legacy clauses are removed at PR-4).
+  let assignedRigIds: string[] = []
+  if (session.role === 'OPERATOR') {
+    const arows = await prisma.$queryRaw<{ rigId: string }[]>`
+      SELECT DISTINCT "rigId" FROM "deployment_assignments"
+      WHERE "operatorId" = ${session.userId} AND "endedAt" IS NULL`
+    assignedRigIds = arows.map((r) => r.rigId)
+  }
+
   const rigs = await prisma.rig.findMany({
     where: {
       ...(active ? { endedAt: null } : { endedAt: { not: null } }),
       ...(projectRigIds !== undefined && { id: { in: projectRigIds } }),
       // Operators see deployments where they are primary OR secondary
       ...(session.role === 'OPERATOR'
-        ? { OR: [{ operatorId: session.userId }, { secondaryOperators: { some: { operatorId: session.userId } } }] }
+        ? { OR: [{ id: { in: assignedRigIds } }, { operatorId: session.userId }, { secondaryOperators: { some: { operatorId: session.userId } } }] }
         : operatorId ? { operatorId } : {}),
     },
     include: RIG_LIST_INCLUDE,

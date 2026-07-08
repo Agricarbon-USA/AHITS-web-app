@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
+import { isAuthorizedForRig } from '@/lib/deployment-auth'
+import { getActivePrimaryForRig } from '@/lib/deployment-assignments'
 import { requireAuth } from '@/lib/auth/session'
 import { withIdempotency } from '@/lib/idempotency'
 
@@ -47,11 +49,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     },
   })
   if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (session.role !== 'ADMIN' && rig.operatorId !== session.userId) {
-    const isSecondary = await prisma.rigOperator.findUnique({
-      where: { rigId_operatorId: { rigId: id, operatorId: session.userId } },
-    })
-    if (!isSecondary) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  if (!(await isAuthorizedForRig(rig, session))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
   if (rig.endedAt) return NextResponse.json({ error: 'Deployment has ended' }, { status: 409 })
 
@@ -65,7 +64,9 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     return NextResponse.json({ error: 'Select at least one vehicle or item to transfer' }, { status: 400 })
   }
 
-  if (toOperatorId === rig.operatorId) {
+  // W0-10 PR-1: self-transfer guard vs the deployment's PRIMARY (roster + legacy fallback).
+  const primaryId = (await getActivePrimaryForRig(id)) ?? rig.operatorId
+  if (toOperatorId === primaryId) {
     return NextResponse.json({ error: 'Cannot transfer to the same operator' }, { status: 400 })
   }
 

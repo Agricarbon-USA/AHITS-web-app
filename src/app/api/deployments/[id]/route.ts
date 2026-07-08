@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
+import { isAuthorizedForRig } from '@/lib/deployment-auth'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
-import { getDeploymentRosterForDisplay, addProjectLink, removeAllProjectLinks } from '@/lib/deployment-assignments'
+import { getDeploymentRosterForDisplay, getActivePrimaryForRig, addProjectLink, removeAllProjectLinks } from '@/lib/deployment-assignments'
 
 const RIG_INCLUDE = {
   operator: { select: { id: true, name: true } },
@@ -78,11 +79,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const rig = await prisma.rig.findUnique({ where: { id }, include: RIG_GET_INCLUDE })
   if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  if (session.role !== 'ADMIN' && rig.operatorId !== session.userId) {
-    const isSecondary = await prisma.rigOperator.findUnique({
-      where: { rigId_operatorId: { rigId: id, operatorId: session.userId } },
-    })
-    if (!isSecondary) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  if (!(await isAuthorizedForRig(rig, session))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
   // UR-032: the display roster returns the FINAL roster for an ended deployment
@@ -115,7 +113,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const rig = await prisma.rig.findUnique({ where: { id } })
   if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (session.role !== 'ADMIN' && rig.operatorId !== session.userId) {
+  // W0-10 PR-1: PATCH is PRIMARY-only (no secondary) — preserve that with roster-PRIMARY
+  // + legacy fallback (do NOT use the any-role isAuthorizedForRig here).
+  const primaryId = (await getActivePrimaryForRig(id)) ?? rig.operatorId
+  if (session.role !== 'ADMIN' && primaryId !== session.userId) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 

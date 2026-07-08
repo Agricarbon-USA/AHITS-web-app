@@ -237,6 +237,47 @@ export async function getActivePrimary(operatorId: string): Promise<DeploymentAs
   return rows[0] ?? null
 }
 
+/** W0-10 PR-1: true if the operator has an OPEN assignment (any role) on this rig.
+ *  The role-agnostic authorization primitive that replaces the legacy
+ *  (Rig.operatorId primary + rig_operators secondary) ownership check. */
+export async function hasOpenAssignment(rigId: string, operatorId: string, db: RawClient = prisma): Promise<boolean> {
+  const rows = await db.$queryRaw<{ ok: number }[]>`
+    SELECT 1 AS ok FROM "deployment_assignments"
+    WHERE "rigId" = ${rigId} AND "operatorId" = ${operatorId} AND "endedAt" IS NULL
+    LIMIT 1`
+  return rows.length > 0
+}
+
+/** W0-10 PR-1: the open PRIMARY operatorId for a rig (null if none), from the
+ *  assignment table — the successor to reading Rig.operatorId as "who runs this rig". */
+export async function getActivePrimaryForRig(rigId: string, db: RawClient = prisma): Promise<string | null> {
+  const rows = await db.$queryRaw<{ operatorId: string }[]>`
+    SELECT "operatorId" FROM "deployment_assignments"
+    WHERE "rigId" = ${rigId} AND "role" = 'PRIMARY' AND "endedAt" IS NULL
+    ORDER BY "startedAt" DESC LIMIT 1`
+  return rows[0]?.operatorId ?? null
+}
+
+/** W0-10 PR-1: derive each vehicle's currently-assigned operator — the open PRIMARY of
+ *  the active rig the vehicle is in — the successor to Vehicle.assignedOperatorId. The
+ *  one-open-RigVehicle-per-vehicle invariant means at most one active rig per vehicle. */
+export async function getVehicleOperators(
+  vehicleIds: string[], db: RawClient = prisma,
+): Promise<Map<string, { operatorId: string; operatorName: string | null }>> {
+  const m = new Map<string, { operatorId: string; operatorName: string | null }>()
+  if (vehicleIds.length === 0) return m
+  const rows = await db.$queryRaw<{ vehicleId: string; operatorId: string; operatorName: string | null }[]>`
+    SELECT rv."vehicleId", a."operatorId", u."name" AS "operatorName"
+    FROM "rig_vehicles" rv
+    JOIN "rigs" r ON r."id" = rv."rigId" AND r."endedAt" IS NULL
+    JOIN "deployment_assignments" a ON a."rigId" = r."id" AND a."role" = 'PRIMARY' AND a."endedAt" IS NULL
+    LEFT JOIN "users" u ON u."id" = a."operatorId"
+    WHERE rv."vehicleId" IN (${Prisma.join(vehicleIds)}) AND rv."removedAt" IS NULL
+    ORDER BY a."startedAt" DESC`
+  for (const r of rows) if (!m.has(r.vehicleId)) m.set(r.vehicleId, { operatorId: r.operatorId, operatorName: r.operatorName })
+  return m
+}
+
 /** Open a new operator assignment on a deployment. */
 export async function addAssignment(
   input: { rigId: string; operatorId: string; role: AssignmentRole; addedById?: string | null; note?: string | null },

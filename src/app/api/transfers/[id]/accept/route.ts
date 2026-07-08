@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
 import { withIdempotency } from '@/lib/idempotency'
-import { ensureOpenAssignment, endAllAssignmentsForRig, removeAllProjectLinks } from '@/lib/deployment-assignments'
+import { ensureOpenAssignment, endAllAssignmentsForRig, removeAllProjectLinks , getActivePrimaryForRig } from '@/lib/deployment-assignments'
 
 const schema = z.object({
   responseNote: z.string().optional(),
@@ -54,6 +54,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   const now = new Date()
   const toOperatorId = transfer.toOperatorId
   const sourceName = transfer.fromRig.operator.name
+  // W0-10 PR-1: source-rig PRIMARY (roster) + legacy fallback for the CHECK_IN log.
+  const fromRigPrimary = (await getActivePrimaryForRig(transfer.fromRig.id)) ?? transfer.fromRig.operatorId
 
   let updatedTransfer
   try {
@@ -195,7 +197,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           action: 'CHECK_IN',
           itemId: ti.kitItem.inventoryItemId,
           inventoryUnitId: ti.inventoryUnitId ?? ti.kitItem.inventoryUnitId ?? undefined,
-          operatorId: transfer.fromRig.operatorId,
+          operatorId: fromRigPrimary,
           rigId: transfer.fromRig.id,
           notes: transfer.note,
         },

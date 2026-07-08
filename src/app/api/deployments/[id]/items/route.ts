@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
+import { getAuthorizedActiveRig } from '@/lib/deployment-auth'
+import { getActivePrimaryForRig } from '@/lib/deployment-assignments'
 import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { createAlert } from '@/lib/alerts'
@@ -94,29 +96,6 @@ const removeSchema = z.object({
   itemDispositions: z.array(dispositionSchema).min(1),
 })
 
-async function getAuthorizedActiveRig(id: string, session: { userId: string; role: string }) {
-  const rig = await prisma.rig.findUnique({ where: { id } })
-  if (!rig || rig.endedAt) return null
-  if (session.role === 'ADMIN') return rig
-  if (rig.operatorId === session.userId) return rig
-  const secondary = await prisma.rigOperator.findUnique({
-    where: { rigId_operatorId: { rigId: id, operatorId: session.userId } },
-  })
-  if (secondary) return rig
-  return null
-}
-
-async function getAuthorizedRig(id: string, session: { userId: string; role: string }) {
-  const rig = await prisma.rig.findUnique({ where: { id } })
-  if (!rig) return null
-  if (session.role === 'ADMIN') return rig
-  if (rig.operatorId === session.userId) return rig
-  const secondary = await prisma.rigOperator.findUnique({
-    where: { rigId_operatorId: { rigId: id, operatorId: session.userId } },
-  })
-  if (secondary) return rig
-  return null
-}
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   return withIdempotency(req, 'deployments.items.POST', () => _POST(req, ctx))
@@ -128,6 +107,10 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   const { id } = await params
   const rig = await getAuthorizedActiveRig(id, session)
   if (!rig) return NextResponse.json({ error: 'Not found or forbidden' }, { status: 404 })
+  // W0-10 PR-1: attribution operator = the deployment's PRIMARY (roster) with legacy
+  // fallback — behavior-preserving (legacy used rig.operatorId = the primary). Whether
+  // CheckLog should instead record the ACTING user is a separate product question.
+  const primaryId = (await getActivePrimaryForRig(id)) ?? rig.operatorId
 
   const body = await req.json()
   const parsed = addSchema.safeParse(body)
@@ -209,7 +192,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
             // first — converts reserve→draw — then draw any remainder from free stock.
             // Normal reservation checkout: claimed === quantity, no free draw. Direct
             // (no-reservation) add: claimed === 0, it all comes from free stock.
-            const claimed = await claimHeldStock(rig.operatorId, entry.inventoryItemId, sourceHubId, entry.quantity, tx)
+            const claimed = await claimHeldStock(primaryId, entry.inventoryItemId, sourceHubId, entry.quantity, tx)
             const remainder = entry.quantity - claimed
             if (remainder > 0) {
               const drawn = await drawFromHub(entry.inventoryItemId, sourceHubId, remainder, tx)
@@ -310,6 +293,10 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
   const { id } = await params
   const rig = await getAuthorizedActiveRig(id, session)
   if (!rig) return NextResponse.json({ error: 'Not found or forbidden' }, { status: 404 })
+  // W0-10 PR-1: attribution operator = the deployment's PRIMARY (roster) with legacy
+  // fallback — behavior-preserving (legacy used rig.operatorId = the primary). Whether
+  // CheckLog should instead record the ACTING user is a separate product question.
+  const primaryId = (await getActivePrimaryForRig(id)) ?? rig.operatorId
 
   const body = await req.json()
   const parsed = removeSchema.safeParse(body)
@@ -397,7 +384,7 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
             action: 'CHECK_IN',
             itemId: inventoryItemId,
             inventoryUnitId: kitItem.inventoryUnitId ?? undefined,
-            operatorId: rig.operatorId,
+            operatorId: primaryId,
             rigId: id,
             notes: note,
             condition: returnConditionToLogCondition(disp.returnCondition),
@@ -438,7 +425,7 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
             action: 'CHECK_IN',
             itemId: inventoryItemId,
             inventoryUnitId: kitItem.inventoryUnitId ?? undefined,
-            operatorId: rig.operatorId,
+            operatorId: primaryId,
             rigId: id,
             notes: note,
             condition: logCondition,

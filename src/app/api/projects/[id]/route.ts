@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { ProjectType, ProjectStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { getDeploymentRostersForDisplay } from '@/lib/deployment-assignments'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 
 export async function GET(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -15,12 +16,14 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
       lead: { select: { id: true, name: true } },
       rigs: {
         orderBy: { startedAt: 'desc' },
-        include: { operator: { select: { id: true, name: true } } },
       },
     },
   })
   if (!project) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  return NextResponse.json({ data: project })
+  // W0-10 PR-1: attach each rig's operator from the assignment roster, not Rig.operatorId.
+  const projectRosters = await getDeploymentRostersForDisplay(project.rigs.map((r) => r.id))
+  const projectOut = { ...project, rigs: project.rigs.map((r) => ({ ...r, operator: projectRosters.get(r.id)?.operator ?? null })) }
+  return NextResponse.json({ data: projectOut })
 }
 
 // Whitelisted, mass-assignment-safe update. `.strict()` rejects unknown keys.

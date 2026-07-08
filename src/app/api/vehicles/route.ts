@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
+import { getVehicleOperators } from '@/lib/deployment-assignments'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import { getActiveProjectsForVehicles } from '@/lib/project-associations'
 
@@ -25,24 +26,22 @@ export async function GET(req: NextRequest) {
   // Merge hub + assigned-operator names via raw SQL — `hubId` is newer than the
   // generated client, so we read it the same best-effort way as Hub.email.
   // Tolerates a pre-migration DB (returns vehicles without hub fields).
-  const meta = new Map<string, { hubId: string | null; hubName: string | null; assignedOperatorName: string | null }>()
+  const meta = new Map<string, { hubId: string | null; hubName: string | null }>()
   try {
     const rows = await prisma.$queryRaw<
-      { id: string; hubId: string | null; hubName: string | null; assignedOperatorName: string | null }[]
+      { id: string; hubId: string | null; hubName: string | null }[]
     >`
-      SELECT v."id",
-             v."hubId",
-             h."name" AS "hubName",
-             u."name" AS "assignedOperatorName"
+      SELECT v."id", v."hubId", h."name" AS "hubName"
       FROM "vehicles" v
       LEFT JOIN "hubs" h ON h."id" = v."hubId"
-      LEFT JOIN "users" u ON u."id" = v."assignedOperatorId"
       WHERE v."deletedAt" IS NULL
     `
-    for (const r of rows) meta.set(r.id, { hubId: r.hubId, hubName: r.hubName, assignedOperatorName: r.assignedOperatorName })
+    for (const r of rows) meta.set(r.id, { hubId: r.hubId, hubName: r.hubName })
   } catch { /* hubId column missing pre-migration */ }
 
   const vehicleIds = vehicles.map((v) => v.id)
+  // W0-10 PR-1: assigned operator (id + name) derived from the assignment table.
+  const vehicleOps = await getVehicleOperators(vehicleIds)
   const projectsMap = vehicleIds.length > 0
     ? await getActiveProjectsForVehicles(vehicleIds)
     : new Map<string, { id: string; name: string }[]>()
@@ -52,7 +51,8 @@ export async function GET(req: NextRequest) {
       ...v,
       hubId: meta.get(v.id)?.hubId ?? null,
       hubName: meta.get(v.id)?.hubName ?? null,
-      assignedOperatorName: meta.get(v.id)?.assignedOperatorName ?? null,
+      assignedOperatorId: vehicleOps.get(v.id)?.operatorId ?? null,
+      assignedOperatorName: vehicleOps.get(v.id)?.operatorName ?? null,
       activeProjects: projectsMap.get(v.id) ?? [],
     })),
   })

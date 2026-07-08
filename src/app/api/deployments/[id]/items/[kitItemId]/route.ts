@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
+import { isAuthorizedForRig } from '@/lib/deployment-auth'
 import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { withIdempotency } from '@/lib/idempotency'
@@ -39,11 +40,8 @@ async function _DELETE(
   const rig = await prisma.rig.findUnique({ where: { id: rigId } })
   if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (rig.endedAt) return NextResponse.json({ error: 'Deployment has ended' }, { status: 409 })
-  if (session.role !== 'ADMIN' && rig.operatorId !== session.userId) {
-    const secondary = await prisma.rigOperator.findUnique({
-      where: { rigId_operatorId: { rigId, operatorId: session.userId } },
-    })
-    if (!secondary) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  if (!(await isAuthorizedForRig(rig, session))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
   const kitItem = await prisma.kitItem.findUnique({
