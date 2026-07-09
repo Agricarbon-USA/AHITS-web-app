@@ -359,6 +359,19 @@ export default function AdminUsersPage() {
         </Stack>
       )}
 
+      {projects.length > 0 && (
+        <Stack direction="row" spacing={1.5} mb={2} alignItems="center">
+          <TextField select size="small" label="All Projects" value={filterProject}
+            onChange={(e) => setFilterProject(e.target.value)} sx={{ minWidth: 180 }}>
+            <MenuItem value="">All Projects</MenuItem>
+            {projects.map((p) => <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>)}
+          </TextField>
+          {filterProject && (
+            <Button size="small" onClick={() => setFilterProject('')}>Clear</Button>
+          )}
+        </Stack>
+      )}
+
       {/* Users table */}
       <TableContainer component={Paper} sx={{ borderRadius: 2 }}>
         <Table>
