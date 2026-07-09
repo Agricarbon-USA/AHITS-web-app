@@ -108,6 +108,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       })
     })
   } catch (err: unknown) {
+    // W0-10 PR-2b: a partial-unique violation (index C, one open RigVehicle per vehicle,
+    // or the concurrent-add race the pre-check can slip) surfaces as Prisma P2002 / PG
+    // 23505 — translate to a friendly 409 instead of a raw 500.
+    const code = (err as { code?: string }).code
+    if (code === 'P2002' || code === '23505') {
+      return NextResponse.json(
+        { error: 'One or more of those vehicles is already on an active deployment. Remove it there first.' },
+        { status: 409 }
+      )
+    }
     const msg = err instanceof Error ? err.message : 'Failed to add vehicles'
     console.error('[POST /api/deployments/[id]/vehicles]', err)
     return NextResponse.json({ error: msg }, { status: 500 })

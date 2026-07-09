@@ -385,6 +385,16 @@ async function _POST(req: NextRequest) {
         { status: 409 }
       )
     }
+    // W0-10 PR-2b: a partial-unique violation (index A one-open-PRIMARY-per-operator, or
+    // index C once live) that slipped the app guards under a concurrent race surfaces as
+    // Prisma P2002 / PG 23505 — translate to a friendly 409 rather than a raw 500.
+    const code = (err as { code?: string }).code
+    if (code === 'P2002' || code === '23505') {
+      return NextResponse.json(
+        { error: "Can't start this deployment — the operator or one of the vehicles is already on another active deployment. End or free it there first, then try again." },
+        { status: 409 }
+      )
+    }
     // Return the actual error as JSON instead of re-throwing (which produces non-JSON 500)
     const msg = err instanceof Error ? err.message : 'Failed to create deployment'
     console.error('[POST /api/deployments]', err)

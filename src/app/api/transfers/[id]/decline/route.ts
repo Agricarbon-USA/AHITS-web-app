@@ -29,6 +29,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           },
         },
       },
+      vehicles: { select: { vehicleId: true } },
     },
   })
   if (!transfer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -99,6 +100,20 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
             rigId: transfer.fromRigId,
             notes: `Transfer declined: ${responseNote ?? 'no reason given'}. Units returned to inventory.`,
           },
+        })
+      }
+      // W0-10 PR-2b: the source deployment already ended, so close the vehicle rows this
+      // declined transfer was holding open (end-of-deployment keeps a pending transfer's
+      // vehicles open) — otherwise the vehicle strands as "on an active deployment".
+      const declinedVehicleIds = transfer.vehicles.map((v) => v.vehicleId)
+      if (declinedVehicleIds.length > 0) {
+        await tx.rigVehicle.updateMany({
+          where: { rigId: transfer.fromRigId, vehicleId: { in: declinedVehicleIds }, removedAt: null },
+          data: { removedAt: now },
+        })
+        await tx.vehicle.updateMany({
+          where: { id: { in: declinedVehicleIds } },
+          data: { assignedOperatorId: null },
         })
       }
     }
