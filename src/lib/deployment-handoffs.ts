@@ -32,7 +32,10 @@ export async function reassignPrimary(
   actorId: string,
   note: string,
 ): Promise<void> {
-  // W0-10 PR-1: end the CURRENT open PRIMARY (roster) with legacy fallback.
+  // ORDER IS LOAD-BEARING: end the current open PRIMARY BEFORE opening the new one.
+  // The W0-10 PR-2 partial unique index `one_open_primary_per_rig` permits at most one
+  // open PRIMARY per rig; reversing these two lines would momentarily create a second
+  // open PRIMARY and violate the index. Keep end-before-add.
   const currentPrimary = (await getActivePrimaryForRig(rig.id, tx)) ?? rig.operatorId
   await endAssignmentByRole(rig.id, currentPrimary, 'PRIMARY', tx)
   await ensureOpenAssignment({ rigId: rig.id, operatorId: toOperatorId, role: 'PRIMARY', addedById: actorId, note }, tx)
