@@ -33,17 +33,28 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: 'Operator is already the primary operator' }, { status: 409 })
   }
 
-  const assignment = await prisma.$transaction(async (tx) => {
-    const result = await tx.rigOperator.upsert({
-      where: { rigId_operatorId: { rigId: id, operatorId } },
-      create: { rigId: id, operatorId },
-      update: {},
-      include: { operator: { select: { id: true, name: true, email: true } } },
+  try {
+    const assignment = await prisma.$transaction(async (tx) => {
+      const result = await tx.rigOperator.upsert({
+        where: { rigId_operatorId: { rigId: id, operatorId } },
+        create: { rigId: id, operatorId },
+        update: {},
+        include: { operator: { select: { id: true, name: true, email: true } } },
+      })
+      await ensureOpenAssignment({ rigId: id, operatorId, role: 'SECONDARY', addedById: session.userId }, tx)
+      return result
     })
-    await ensureOpenAssignment({ rigId: id, operatorId, role: 'SECONDARY', addedById: session.userId }, tx)
-    return result
-  })
-  return NextResponse.json(assignment, { status: 201 })
+    return NextResponse.json(assignment, { status: 201 })
+  } catch (err: unknown) {
+    // W0-10 PR-2b: index D (one open SECONDARY per rig+operator) violation under a
+    // concurrent double-add surfaces as P2002 / 23505 — friendly 409, not a raw 500.
+    const code = (err as { code?: string }).code
+    if (code === 'P2002' || code === '23505') {
+      return NextResponse.json({ error: 'That operator is already assigned to this deployment.' }, { status: 409 })
+    }
+    console.error('[POST /api/deployments/[id]/operators]', err)
+    return NextResponse.json({ error: 'Failed to add operator' }, { status: 500 })
+  }
 }
 
 const removeSchema = z.object({ operatorId: z.string() })

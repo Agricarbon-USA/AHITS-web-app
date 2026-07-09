@@ -271,6 +271,24 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
         data: { assignedOperatorId: null },
       })
     }
+    // W0-10 PR-2b: close the rig's open RigVehicle rows so each vehicle is freed for its
+    // next deployment. Previously these were left open on an ended rig and no path could
+    // ever close them (the vehicles DELETE route rejects ended rigs), stranding the row
+    // forever — which breaks the one-open-RigVehicle-per-vehicle invariant index C (PR-2c)
+    // enforces and blocks the routine "reuse this vehicle next time".
+    // EXCEPTION: a vehicle with a still-PENDING outbound transfer must keep its source row
+    // OPEN — the accept path's stillPresent guard requires removedAt IS NULL to move it to
+    // the recipient (mirrors how end skips removedAt for TRANSFER kit items). Closing it
+    // would brick the transfer and orphan the vehicle.
+    const pendingXfer = await tx.transferRequest.findMany({
+      where: { fromRigId: id, status: 'PENDING' },
+      select: { vehicles: { select: { vehicleId: true } } },
+    })
+    const keepOpenVehicleIds = pendingXfer.flatMap((t) => t.vehicles.map((v) => v.vehicleId))
+    await tx.rigVehicle.updateMany({
+      where: { rigId: id, removedAt: null, vehicleId: { notIn: keepOpenVehicleIds } },
+      data: { removedAt: now },
+    })
   })
 
   // Wave F-R (soft-gate, best-effort): issue HUB_RETURN confirmation links for
