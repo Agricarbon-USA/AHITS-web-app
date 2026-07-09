@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { hydrateTransfersFromRig } from '@/lib/deployment-assignments'
 import { requireAuth } from '@/lib/auth/session'
 
 const TRANSFER_INCLUDE = {
-  fromRig: { include: { operator: { select: { id: true, name: true } } } },
+  fromRig: true,
   toOperator: { select: { id: true, name: true } },
   vehicles: { include: { vehicle: { select: { id: true, name: true, type: true } } } },
   items: {
@@ -45,16 +46,12 @@ export async function GET(req: NextRequest) {
   if (direction === 'incoming') {
     where.toOperatorId = session.userId
   } else if (direction === 'outgoing') {
-    where.OR = [
-      { fromRigId: { in: myPrimaryRigs } },
-      { fromRig: { operatorId: session.userId } },
-    ]
+    where.fromRigId = { in: myPrimaryRigs }
   } else if (session.role !== 'ADMIN') {
     // No direction given: non-admins still only see transfers involving them.
     where.OR = [
       { toOperatorId: session.userId },
       { fromRigId: { in: myPrimaryRigs } },
-      { fromRig: { operatorId: session.userId } },
     ]
   }
 
@@ -64,5 +61,5 @@ export async function GET(req: NextRequest) {
     orderBy: { createdAt: 'desc' },
   })
 
-  return NextResponse.json(transfers)
+  return NextResponse.json(await hydrateTransfersFromRig(transfers))
 }

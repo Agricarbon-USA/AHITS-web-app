@@ -36,7 +36,7 @@ export async function GET() {
   const [activeRigs, checksToday, dueTasks, longRigs, recentLogs, recentSpend] = await Promise.all([
     prisma.rig.findMany({
       where: { endedAt: null },
-      select: { id: true, label: true, startedAt: true, operatorId: true, operator: { select: { name: true } } },
+      select: { id: true, label: true, startedAt: true },
     }),
     prisma.dailyCheck.findMany({ where: { date: businessToday }, select: { operatorId: true } }),
     prisma.maintenanceTask.findMany({
@@ -92,7 +92,7 @@ export async function GET() {
     // dropped from the admin missed-check list.
     .map((r) => {
       const roster = rigRosters.get(r.id)
-      return { r, operatorId: roster?.operatorId ?? r.operatorId, operatorName: roster?.operator?.name ?? r.operator?.name ?? 'Unassigned' }
+      return { r, operatorId: roster?.operatorId ?? null, operatorName: roster?.operator?.name ?? 'Unassigned' }
     })
     .filter(({ operatorId }) => operatorId && !checkedToday.has(operatorId))
     .map(({ r, operatorName }) => ({ rigId: r.id, operator: operatorName, label: r.label, startedAt: r.startedAt }))

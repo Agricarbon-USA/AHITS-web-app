@@ -1,27 +1,17 @@
-import { prisma } from '@/lib/prisma'
 import { hasOpenAssignment } from '@/lib/deployment-assignments'
+import { prisma } from '@/lib/prisma'
 
 type Session = { userId: string; role: string }
 
 /**
- * W0-10 PR-1: may this session act on this rig?
- *   admin  OR  an OPEN deployment_assignment (any role)  OR  — the legacy OR-fallback,
- *   deleted at PR-4 once the assignment table is the sole source of truth — the rig's
- *   legacy Rig.operatorId (primary) / rig_operators (secondary).
- * NON-REVOKING by construction: PR-1 only ADDS the assignment path; it can never remove
- * access that the legacy check granted. At PR-4 the two legacy clauses are removed and
- * `tsc` will flag `rig.operatorId` once the column is dropped — the compile-time backstop.
+ * W0-10: may this session act on this rig?
+ *   admin  OR  an OPEN deployment_assignment (any role).
+ * The assignment table is the sole source of truth (legacy Rig.operatorId /
+ * rig_operators were dropped in PR-4).
  */
-export async function isAuthorizedForRig(rig: { id: string; operatorId: string }, session: Session): Promise<boolean> {
+export async function isAuthorizedForRig(rig: { id: string }, session: Session): Promise<boolean> {
   if (session.role === 'ADMIN') return true
-  if (await hasOpenAssignment(rig.id, session.userId)) return true
-  // ── legacy OR-fallback (remove at W0-10 PR-4) ──────────────────────────────
-  if (rig.operatorId === session.userId) return true
-  const secondary = await prisma.rigOperator.findUnique({
-    where: { rigId_operatorId: { rigId: rig.id, operatorId: session.userId } },
-  })
-  return !!secondary
-  // ───────────────────────────────────────────────────────────────────────────
+  return hasOpenAssignment(rig.id, session.userId)
 }
 
 /** Fetch + authorize an ACTIVE rig (not ended); null if missing/ended/forbidden. */

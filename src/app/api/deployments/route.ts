@@ -2,13 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
-import { getDeploymentRostersForDisplay, ensureOpenAssignment, addProjectLink } from '@/lib/deployment-assignments'
+import { getDeploymentRostersForDisplay, ensureOpenAssignment, addProjectLink, getActiveRigForOperator, hydrateRigOperator } from '@/lib/deployment-assignments'
 import { drawFromHub, getStockAtHub, totalStock, setStockAtHub, resyncItemTotal } from '@/lib/inventory-stock'
 import { claimHeldStock } from '@/lib/deployment-requests'
 import { withIdempotency } from '@/lib/idempotency'
 
 const RIG_INCLUDE = {
-  operator: { select: { id: true, name: true } },
   project: { select: { id: true, name: true } },
   vehicles: {
     where: { removedAt: null },
@@ -33,9 +32,6 @@ const RIG_INCLUDE = {
         },
       },
     },
-  },
-  secondaryOperators: {
-    include: { operator: { select: { id: true, name: true, email: true } } },
   },
 } as const
 
@@ -128,7 +124,7 @@ export async function GET(req: NextRequest) {
       ...(projectRigIds !== undefined && { id: { in: projectRigIds } }),
       // Operators see deployments where they are primary OR secondary
       ...(session.role === 'OPERATOR'
-        ? { OR: [{ id: { in: assignedRigIds } }, { operatorId: session.userId }, { secondaryOperators: { some: { operatorId: session.userId } } }] }
+        ? { id: { in: assignedRigIds } }
         : operatorId ? { operatorId } : {}),
     },
     include: RIG_LIST_INCLUDE,
@@ -140,31 +136,16 @@ export async function GET(req: NextRequest) {
   // to the open roster for active deployments.
   const rosters = await getDeploymentRostersForDisplay(rigs.map((r) => r.id))
 
-  // The roster only returns OPEN (un-ended) assignments, so ENDED deployments have
-  // operator:null. Hydrate those from the retained legacy Rig.operatorId (schema
-  // NOT NULL; users are soft-deleted, never removed) so (a) historical attribution
-  // still displays and (b) the admin "Show ended" list can't crash on a null
-  // operator. Batched single lookup, only for rigs whose roster operator is absent.
-  // (Fixes B1; pairs with the UR-032 ended-deployment attribution work.)
-  const fallbackOperatorIds = Array.from(
-    new Set(rigs.filter((r) => !rosters.get(r.id)?.operator).map((r) => r.operatorId)),
-  )
-  const fallbackOperators = fallbackOperatorIds.length
-    ? await prisma.user.findMany({
-        where: { id: { in: fallbackOperatorIds } },
-        select: { id: true, name: true },
-      })
-    : []
-  const fallbackOperatorMap = new Map(fallbackOperators.map((u) => [u.id, u]))
-
+  // W0-10 PR-4: the display roster is the sole source of operator attribution. It returns
+  // the FINAL roster for ended deployments too (max_ended CTE), so historical attribution
+  // still shows. A rig with no PRIMARY assignment (should be impossible under PR-2 index B +
+  // the §6 Q1/Q2 drop gate) serializes operator:null rather than crashing.
   const out = rigs.map((r) => {
     const ro = rosters.get(r.id) ?? { operator: null, operatorId: null, secondaryOperators: [], projects: [] }
-    const operator = ro.operator
-      ? { id: ro.operator.id, name: ro.operator.name }
-      : fallbackOperatorMap.get(r.operatorId) ?? { id: r.operatorId, name: 'Unknown operator' }
+    const operator = ro.operator ? { id: ro.operator.id, name: ro.operator.name } : { id: 'unknown', name: 'Unknown operator' }
     return {
       ...r,
-      operatorId: ro.operatorId ?? r.operatorId,
+      operatorId: ro.operatorId ?? null,
       operator,
       project: ro.projects[0] ?? null,
       secondaryOperators: ro.secondaryOperators,
@@ -198,10 +179,7 @@ async function _POST(req: NextRequest) {
     // CR-14: an operator may hold at most one active (un-ended) deployment.
     // Two active rigs make "my active rig" lookups ambiguous (findFirst silently
     // picks one) and strand items in the other. Reject up front.
-    const existingActive = await tx.rig.findFirst({
-      where: { operatorId, endedAt: null },
-      select: { id: true },
-    })
+    const existingActive = await getActiveRigForOperator(operatorId, tx)
     if (existingActive) {
       throw new Error('OPERATOR_HAS_ACTIVE_RIG')
     }
@@ -401,5 +379,5 @@ async function _POST(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 
-  return NextResponse.json(rig, { status: 201 })
+  return NextResponse.json(await hydrateRigOperator(rig), { status: 201 })
 }

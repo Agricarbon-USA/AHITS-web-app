@@ -261,6 +261,54 @@ export async function getActivePrimaryForRig(rigId: string, db: RawClient = pris
 /** W0-10 PR-1: derive each vehicle's currently-assigned operator — the open PRIMARY of
  *  the active rig the vehicle is in — the successor to Vehicle.assignedOperatorId. The
  *  one-open-RigVehicle-per-vehicle invariant means at most one active rig per vehicle. */
+/** W0-10 PR-4: the open PRIMARY operator for a rig, REQUIRED. Throws if none — after the
+ *  legacy Rig.operatorId fallback is gone, the one-open-PRIMARY-per-rig invariant (PR-2
+ *  index B) guarantees an active rig has exactly one; a missing row is data corruption and
+ *  must fail loudly rather than silently mis-attribute. */
+/** W0-10 PR-4: the active rig an operator holds as open PRIMARY (successor to
+ *  `rig.findFirst({ operatorId, endedAt: null })`), or null. */
+/** W0-10 PR-4: attach roster-sourced operator/secondaryOperators/operatorId to a rig
+ *  response object (successor to the dropped `operator`/`secondaryOperators` includes). */
+export async function hydrateRigOperator<T extends { id: string }>(rig: T) {
+  const ro = await getDeploymentRosterForDisplay(rig.id)
+  return {
+    ...rig,
+    operatorId: ro.operatorId ?? null,
+    operator: ro.operator ? { id: ro.operator.id, name: ro.operator.name } : { id: 'unknown', name: 'Unknown operator' },
+    secondaryOperators: ro.secondaryOperators,
+  }
+}
+
+/** W0-10 PR-4: attach each transfer's source-rig PRIMARY operator (successor to the dropped
+ *  fromRig.operator include) for list/detail display. Batched. */
+export async function hydrateTransfersFromRig<T extends { fromRigId: string; fromRig: { id: string } }>(
+  transfers: T[],
+) {
+  const rosters = await getDeploymentRostersForDisplay(transfers.map((t) => t.fromRig.id))
+  return transfers.map((t) => ({
+    ...t,
+    fromRig: {
+      ...t.fromRig,
+      operator: rosters.get(t.fromRig.id)?.operator ?? null,
+    },
+  }))
+}
+
+export async function getActiveRigForOperator(operatorId: string, db: RawClient = prisma): Promise<string | null> {
+  const rows = await db.$queryRaw<{ rigId: string }[]>`
+    SELECT a."rigId" FROM "deployment_assignments" a
+    JOIN "rigs" r ON r."id" = a."rigId" AND r."endedAt" IS NULL
+    WHERE a."operatorId" = ${operatorId} AND a."role" = 'PRIMARY' AND a."endedAt" IS NULL
+    LIMIT 1`
+  return rows[0]?.rigId ?? null
+}
+
+export async function getRequiredPrimaryForRig(rigId: string, db: RawClient = prisma): Promise<string> {
+  const primary = await getActivePrimaryForRig(rigId, db)
+  if (!primary) throw new Error(`No open PRIMARY assignment for rig ${rigId}`)
+  return primary
+}
+
 export async function getVehicleOperators(
   vehicleIds: string[], db: RawClient = prisma,
 ): Promise<Map<string, { operatorId: string; operatorName: string | null }>> {

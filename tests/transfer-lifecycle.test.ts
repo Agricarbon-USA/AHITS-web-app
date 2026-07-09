@@ -73,7 +73,8 @@ describe('End-of-deployment TRANSFER lifecycle', () => {
     expect(kiAfterAccept?.removedAt).not.toBeNull()
 
     // New kit item should exist for op2
-    const destRig = await prisma.rig.findFirst({ where: { operatorId: op2.id, endedAt: null } })
+    const _da = await prisma.deploymentAssignment.findFirst({ where: { operatorId: op2.id, role: 'PRIMARY', endedAt: null } })
+    const destRig = _da ? await prisma.rig.findUnique({ where: { id: _da.rigId } }) : null
     expect(destRig).not.toBeNull()
     const newKitItem = await prisma.kitItem.findFirst({
       where: { kit: { rigId: destRig!.id }, inventoryItemId: item.id, removedAt: null },

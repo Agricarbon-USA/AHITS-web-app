@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
+import { hydrateRigOperator } from '@/lib/deployment-assignments'
 import { getAuthorizedActiveRig } from '@/lib/deployment-auth'
 import { requireAuth } from '@/lib/auth/session'
 import { withIdempotency } from '@/lib/idempotency'
 
 const RIG_INCLUDE = {
-  operator: { select: { id: true, name: true } },
   project: { select: { id: true, name: true } },
   vehicles: {
     where: { removedAt: null },
@@ -124,7 +124,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   const updated = await prisma.rig.findUniqueOrThrow({ where: { id }, include: RIG_INCLUDE })
-  return NextResponse.json(updated)
+  return NextResponse.json(await hydrateRigOperator(updated))
 }
 
 export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
@@ -208,5 +208,5 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
   }
 
   const updated = await prisma.rig.findUniqueOrThrow({ where: { id }, include: RIG_INCLUDE })
-  return NextResponse.json(updated)
+  return NextResponse.json(await hydrateRigOperator(updated))
 }

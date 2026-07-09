@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
 import { withIdempotency } from '@/lib/idempotency'
-import { ensureOpenAssignment, endAllAssignmentsForRig, removeAllProjectLinks , getActivePrimaryForRig } from '@/lib/deployment-assignments'
+import { ensureOpenAssignment, endAllAssignmentsForRig, removeAllProjectLinks , getActivePrimaryForRig, getRequiredPrimaryForRig, getActiveRigForOperator, getDeploymentRosterForDisplay } from '@/lib/deployment-assignments'
 
 const schema = z.object({
   responseNote: z.string().optional(),
@@ -26,9 +26,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       fromRig: {
         select: {
           id: true,
-          operatorId: true,
           endedAt: true,
-          operator: { select: { id: true, name: true } },
         },
       },
       vehicles: true,
@@ -53,9 +51,12 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
   const now = new Date()
   const toOperatorId = transfer.toOperatorId
-  const sourceName = transfer.fromRig.operator.name
-  // W0-10 PR-1: source-rig PRIMARY (roster) + legacy fallback for the CHECK_IN log.
-  const fromRigPrimary = (await getActivePrimaryForRig(transfer.fromRig.id)) ?? transfer.fromRig.operatorId
+  // W0-10 PR-4: source-rig PRIMARY from the DISPLAY roster — its final-roster (max_ended)
+  // CTE returns the operator even for an ENDED source rig (end-of-deployment transfer flow),
+  // where getRequiredPrimaryForRig would throw. Nullable operatorId is fine for the CHECK_IN log.
+  const fromRoster = await getDeploymentRosterForDisplay(transfer.fromRig.id)
+  const fromRigPrimary = fromRoster.operatorId
+  const sourceName = fromRoster.operator?.name ?? 'Operator'
 
   let updatedTransfer
   try {
@@ -114,9 +115,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     }
 
     // Find or create destination rig (source rig stays active regardless)
-    let destRig = await tx.rig.findFirst({
-      where: { operatorId: toOperatorId, endedAt: null },
-    })
+    const destRigId = await getActiveRigForOperator(toOperatorId, tx)
+    let destRig = destRigId ? await tx.rig.findUnique({ where: { id: destRigId } }) : null
     if (!destRig) {
       destRig = await tx.rig.create({
         data: { operatorId: toOperatorId, startedAt: now },

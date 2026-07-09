@@ -3,10 +3,9 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { isAuthorizedForRig } from '@/lib/deployment-auth'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
-import { getDeploymentRosterForDisplay, getActivePrimaryForRig, addProjectLink, removeAllProjectLinks } from '@/lib/deployment-assignments'
+import { getDeploymentRosterForDisplay, getActivePrimaryForRig, addProjectLink, removeAllProjectLinks, getRequiredPrimaryForRig, hydrateRigOperator } from '@/lib/deployment-assignments'
 
 const RIG_INCLUDE = {
-  operator: { select: { id: true, name: true } },
   project: { select: { id: true, name: true } },
   vehicles: {
     where: { removedAt: null },
@@ -31,9 +30,6 @@ const RIG_INCLUDE = {
         },
       },
     },
-  },
-  secondaryOperators: {
-    include: { operator: { select: { id: true, name: true, email: true } } },
   },
 } as const
 
@@ -88,18 +84,13 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   // instead of null — from the authoritative assignment table, not the legacy
   // Rig.operatorId column. The legacy column remains only a last-resort safety net
   // for pre-assignment-table rigs (Rig.operatorId is NOT NULL).
+  // W0-10 PR-4: the display roster (final roster for ended rigs via max_ended) is the sole
+  // source of operator attribution; the legacy Rig.operatorId fallback was dropped.
   const ro = await getDeploymentRosterForDisplay(id)
-  let operator = ro.operator ? { id: ro.operator.id, name: ro.operator.name } : null
-  if (!operator) {
-    const fallback = await prisma.user.findUnique({
-      where: { id: rig.operatorId },
-      select: { id: true, name: true },
-    })
-    operator = fallback ?? { id: rig.operatorId, name: 'Unknown operator' }
-  }
+  const operator = ro.operator ? { id: ro.operator.id, name: ro.operator.name } : { id: 'unknown', name: 'Unknown operator' }
   return NextResponse.json({
     ...rig,
-    operatorId: ro.operatorId ?? rig.operatorId,
+    operatorId: ro.operatorId ?? null,
     operator,
     project: ro.projects[0] ?? null,
     secondaryOperators: ro.secondaryOperators,
@@ -115,7 +106,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   // W0-10 PR-1: PATCH is PRIMARY-only (no secondary) — preserve that with roster-PRIMARY
   // + legacy fallback (do NOT use the any-role isAuthorizedForRig here).
-  const primaryId = (await getActivePrimaryForRig(id)) ?? rig.operatorId
+  const primaryId = await getActivePrimaryForRig(id)
   if (session.role !== 'ADMIN' && primaryId !== session.userId) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
@@ -132,5 +123,5 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
     return result
   })
-  return NextResponse.json(updated)
+  return NextResponse.json(await hydrateRigOperator(updated))
 }

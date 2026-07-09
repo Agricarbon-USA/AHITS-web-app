@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+import { ensureOpenAssignment } from '../../src/lib/deployment-assignments'
 import { prisma } from '../../src/lib/prisma'
 
 let counter = 0
@@ -68,14 +69,12 @@ export async function createInventoryUnit(
 export async function createVehicle(overrides?: {
   name?: string
   type?: string
-  assignedOperatorId?: string | null
   status?: string
 }) {
   return prisma.vehicle.create({
     data: {
       name: overrides?.name ?? `Vehicle-${uid()}`,
       type: (overrides?.type ?? 'TRUCK') as never,
-      assignedOperatorId: overrides?.assignedOperatorId ?? null,
       status: (overrides?.status ?? 'ACTIVE') as never,
     },
   })
@@ -89,9 +88,9 @@ export async function addVehicleToRig(rigId: string, vehicleId: string) {
 }
 
 export async function createRig(operatorId: string) {
-  const rig = await prisma.rig.create({
-    data: { operatorId },
-  })
+  const rig = await prisma.rig.create({ data: { operatorId } })
+  // W0-10 PR-4a: readers now use the open PRIMARY assignment; operatorId column drops in PR-4b.
+  await ensureOpenAssignment({ rigId: rig.id, operatorId, role: 'PRIMARY', addedById: operatorId, note: 'fixture' })
   const kit = await prisma.kit.create({
     data: { rigId: rig.id },
   })
