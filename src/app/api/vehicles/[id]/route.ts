@@ -21,7 +21,6 @@ const vehicleUpdateSchema = z
     status: z.nativeEnum(VehicleStatus),
     location: z.string().nullable(),
     hubId: z.string().nullable(),
-    assignedOperatorId: z.string().nullable(),
     insuranceExpires: z.coerce.date().nullable(),
     registrationExpires: z.coerce.date().nullable(),
     notes: z.string().nullable(),

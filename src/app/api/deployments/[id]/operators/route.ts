@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
-import { getDeploymentRoster, getActivePrimaryForRig, ensureOpenAssignment, endAssignmentByRole } from '@/lib/deployment-assignments'
+import { getDeploymentRoster, getActivePrimaryForRig, ensureOpenAssignment, endAssignmentByRole, getRequiredPrimaryForRig } from '@/lib/deployment-assignments'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAdmin()
@@ -26,9 +26,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
   const { operatorId } = parsed.data
 
-  const rig = await prisma.rig.findUnique({ where: { id }, select: { operatorId: true } })
+  const rig = await prisma.rig.findUnique({ where: { id }, select: { id: true } })
   if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  const primaryId = (await getActivePrimaryForRig(id)) ?? rig.operatorId
+  const primaryId = await getActivePrimaryForRig(id)
   if (primaryId === operatorId) {
     return NextResponse.json({ error: 'Operator is already the primary operator' }, { status: 409 })
   }

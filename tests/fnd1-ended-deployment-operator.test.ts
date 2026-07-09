@@ -46,7 +46,7 @@ describe('FND-1 — ended deployment serializes with a non-null operator', () =>
     expect(body.operator.id).toBe(op.id)
   })
 
-  it('ended deployment (roster empty) still returns operator hydrated from Rig.operatorId', async () => {
+  it('ended deployment still returns operator hydrated from the final assignment roster', async () => {
     const { rig } = await createRig(op.id)
     await ensureOpenAssignment({ rigId: rig.id, operatorId: op.id, role: 'PRIMARY', addedById: op.id, note: 'test' })
 
@@ -57,7 +57,7 @@ describe('FND-1 — ended deployment serializes with a non-null operator', () =>
     mockSession = adminSession(op.id)
     const { status, body } = await getRig(rig.id)
     expect(status).toBe(200)
-    // The fix: operator is hydrated from the retained legacy Rig.operatorId, not null.
+    // W0-10 PR-4: operator hydrates from the final (closed) assignment roster (max_ended CTE), not null.
     expect(body.operator).not.toBeNull()
     expect(body.operator.id).toBe(op.id)
     expect(body.operator.name).toBe('Ended Op')

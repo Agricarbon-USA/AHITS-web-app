@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
+import { getActiveRigForOperator } from '@/lib/deployment-assignments'
 import { requireAuth } from '@/lib/auth/session'
 import { withIdempotency } from '@/lib/idempotency'
 import { writeAudit } from '@/lib/audit'
@@ -44,14 +45,12 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
       const rig = await tx.rig.findUnique({
         where: { id: handoff.rigId },
-        select: { id: true, operatorId: true, endedAt: true },
+        select: { id: true, endedAt: true },
       })
       if (!rig || rig.endedAt) throw new Error('Deployment has ended')
 
-      const targetConflict = await tx.rig.findFirst({
-        where: { operatorId: handoff.toOperatorId, endedAt: null, id: { not: handoff.rigId } },
-      })
-      if (targetConflict) throw new Error('TARGET_HAS_ACTIVE_RIG')
+      const targetConflict = await getActiveRigForOperator(handoff.toOperatorId, tx)
+      if (targetConflict && targetConflict !== handoff.rigId) throw new Error('TARGET_HAS_ACTIVE_RIG')
 
       await reassignPrimary(tx, rig, handoff.toOperatorId, session.userId, handoff.note)
     })

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { getAuthorizedActiveRig } from '@/lib/deployment-auth'
-import { getActivePrimaryForRig } from '@/lib/deployment-assignments'
+import { getActivePrimaryForRig, getRequiredPrimaryForRig, hydrateRigOperator } from '@/lib/deployment-assignments'
 import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { createAlert } from '@/lib/alerts'
@@ -13,7 +13,6 @@ import { drawFromHub, getStockAtHub, restoreToHub, resyncItemTotal } from '@/lib
 import { claimHeldStock } from '@/lib/deployment-requests'
 
 const RIG_INCLUDE = {
-  operator: { select: { id: true, name: true } },
   project: { select: { id: true, name: true } },
   vehicles: {
     where: { removedAt: null },
@@ -110,7 +109,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   // W0-10 PR-1: attribution operator = the deployment's PRIMARY (roster) with legacy
   // fallback — behavior-preserving (legacy used rig.operatorId = the primary). Whether
   // CheckLog should instead record the ACTING user is a separate product question.
-  const primaryId = (await getActivePrimaryForRig(id)) ?? rig.operatorId
+  const primaryId = await getRequiredPrimaryForRig(id)
 
   const body = await req.json()
   const parsed = addSchema.safeParse(body)
@@ -280,7 +279,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   }
 
   const updated = await prisma.rig.findUniqueOrThrow({ where: { id }, include: RIG_INCLUDE })
-  return NextResponse.json(updated)
+  return NextResponse.json(await hydrateRigOperator(updated))
 }
 
 export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
@@ -296,7 +295,7 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
   // W0-10 PR-1: attribution operator = the deployment's PRIMARY (roster) with legacy
   // fallback — behavior-preserving (legacy used rig.operatorId = the primary). Whether
   // CheckLog should instead record the ACTING user is a separate product question.
-  const primaryId = (await getActivePrimaryForRig(id)) ?? rig.operatorId
+  const primaryId = await getRequiredPrimaryForRig(id)
 
   const body = await req.json()
   const parsed = removeSchema.safeParse(body)
@@ -550,5 +549,5 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
   }
 
   const updated = await prisma.rig.findUniqueOrThrow({ where: { id }, include: RIG_INCLUDE })
-  return NextResponse.json(updated)
+  return NextResponse.json(await hydrateRigOperator(updated))
 }

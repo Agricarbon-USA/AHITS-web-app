@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { isAuthorizedForRig } from '@/lib/deployment-auth'
-import { getActivePrimaryForRig } from '@/lib/deployment-assignments'
+import { getActivePrimaryForRig, getRequiredPrimaryForRig, hydrateTransfersFromRig } from '@/lib/deployment-assignments'
 import { requireAuth } from '@/lib/auth/session'
 import { withIdempotency } from '@/lib/idempotency'
 
@@ -19,7 +19,7 @@ const schema = z.object({
 })
 
 const TRANSFER_INCLUDE = {
-  fromRig: { include: { operator: { select: { id: true, name: true } } } },
+  fromRig: true,
   toOperator: { select: { id: true, name: true } },
   initiatedBy: { select: { id: true, name: true } },
   vehicles: { include: { vehicle: { select: { id: true, name: true, type: true } } } },
@@ -65,7 +65,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   }
 
   // W0-10 PR-1: self-transfer guard vs the deployment's PRIMARY (roster + legacy fallback).
-  const primaryId = (await getActivePrimaryForRig(id)) ?? rig.operatorId
+  const primaryId = await getRequiredPrimaryForRig(id)
   if (toOperatorId === primaryId) {
     return NextResponse.json({ error: 'Cannot transfer to the same operator' }, { status: 400 })
   }
@@ -145,5 +145,6 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     return created
   })
 
-  return NextResponse.json(transferRequest, { status: 201 })
+  // W0-10 PR-4: hydrate the source-rig operator (successor to the dropped fromRig.operator include).
+  return NextResponse.json((await hydrateTransfersFromRig([transferRequest]))[0], { status: 201 })
 }

@@ -136,14 +136,15 @@ async function run() {
   // PRIMARY assignment (the alert path must not fail closed).
   const activeRigs = await prisma.rig.findMany({
     where: { endedAt: null },
-    select: { id: true, operatorId: true, operator: { select: { name: true } } },
+    select: { id: true },
   })
   const cronRosters = await getDeploymentRostersForDisplay(activeRigs.map((r) => r.id))
 
   for (const rig of activeRigs) {
     const roster = cronRosters.get(rig.id)
-    const operatorId = roster?.operatorId ?? rig.operatorId
-    const operatorName = roster?.operator?.name ?? rig.operator?.name ?? 'Operator'
+    const operatorId = roster?.operatorId ?? null
+    if (!operatorId) continue
+    const operatorName = roster?.operator?.name ?? 'Operator'
     const checkedToday = await prisma.dailyCheck.findFirst({
       where: { operatorId, date: new Date(today) },
       select: { id: true },

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
+import { getActiveRigForOperator } from '@/lib/deployment-assignments'
 import { requireAuth } from '@/lib/auth/session'
 import { createAlert, resolveActiveAlert } from '@/lib/alerts'
 import { applyOdometerReading } from '@/lib/maintenance'
@@ -127,12 +128,16 @@ export async function POST(req: NextRequest) {
   // (type, sourceTable, sourceId, unresolved), so this does not spam on every check.
   if (session.userId) {
     try {
-      const rig = await prisma.rig.findFirst({
-        where: { operatorId: session.userId, endedAt: null },
-        include: {
-          kits: { include: { items: { where: { removedAt: null }, include: { item: { select: { name: true } } } } } },
-        },
-      })
+      // W0-10 PR-4: find the operator's active rig via the assignment table (Rig.operatorId dropped).
+      const activeRigId = await getActiveRigForOperator(session.userId)
+      const rig = activeRigId
+        ? await prisma.rig.findUnique({
+            where: { id: activeRigId },
+            include: {
+              kits: { include: { items: { where: { removedAt: null }, include: { item: { select: { name: true } } } } } },
+            },
+          })
+        : null
       const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
       if (rig && rig.startedAt < cutoff) {
         const kitItems = rig.kits.flatMap((k) => k.items)

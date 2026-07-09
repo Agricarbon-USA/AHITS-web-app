@@ -55,7 +55,6 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
                 select: {
                   id: true,
                   endedAt: true,
-                  operatorId: true,
                   project: { select: { id: true, name: true, location: true } },
                 },
               },
@@ -80,13 +79,9 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
 
   const activeKit = item.kitItems.find((ki) => ki.kit.rig !== null && ki.kit.rig.endedAt === null)
   const activeRig = activeKit?.kit.rig ?? null
-  // W0-10 PR-1: operator from the assignment roster; fall back to the legacy
-  // Rig.operatorId (one-off user lookup) so a roster miss never blanks the name.
+  // W0-10 PR-4: operator from the assignment roster (sole source; Rig.operatorId dropped).
   const activeRoster = activeRig ? await getDeploymentRoster(activeRig.id) : null
-  let currentOperator = activeRoster?.operator ?? null
-  if (!currentOperator && activeRig?.operatorId) {
-    currentOperator = await prisma.user.findUnique({ where: { id: activeRig.operatorId }, select: { id: true, name: true, email: true } })
-  }
+  const currentOperator = activeRoster?.operator ?? null
 
   const { kitItems, categoryRef, ...rest } = item
   void kitItems
