@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
 import { nextDueFromInterval } from '@/lib/maintenance'
 import { money } from '@/lib/validation'
+import { withIdempotency } from '@/lib/idempotency'
 
 const schema = z.object({
   actualOdometer: z.number().int().optional(),
@@ -25,7 +26,11 @@ const schema = z.object({
  *     `nextDue` / `nextOdometer` forward by the interval, staying active for the
  *     next cycle. Any overdue alert is resolved.
  */
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  return withIdempotency(req, 'maintenance.complete.POST', () => _POST(req, ctx))
+}
+
+async function _POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAdmin()
   if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const { id } = await params

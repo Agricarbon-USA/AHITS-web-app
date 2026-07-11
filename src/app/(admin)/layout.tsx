@@ -3,6 +3,7 @@ import { AdminNav } from '@/components/admin/AdminNav'
 import { NotificationBell } from '@/components/shared/NotificationBell'
 import { ToastProvider } from '@/components/shared/useToast'
 import { ReadOnlyProvider } from '@/components/shared/ReadOnly'
+import { OfflineBanner } from '@/components/operator/OfflineBanner'
 import { getSessionClaims } from '@/lib/auth/session'
 import { redirect } from 'next/navigation'
 
@@ -20,6 +21,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   return (
     <AppShell nav={<AdminNav />} title={canEdit ? 'AHITS Admin' : 'AHITS'} headerActions={<NotificationBell />}>
       <ToastProvider>
+        <OfflineBanner />
         <ReadOnlyProvider canEdit={canEdit}>{children}</ReadOnlyProvider>
       </ToastProvider>
     </AppShell>

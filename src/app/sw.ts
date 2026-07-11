@@ -44,7 +44,12 @@ const serwist = new Serwist({
           pathname.startsWith('/api/inventory') ||
           pathname.startsWith('/api/vehicles') ||
           pathname.startsWith('/api/maintenance') ||
-          pathname.startsWith('/api/daily-check')),
+          pathname.startsWith('/api/daily-check') ||
+          pathname.startsWith('/api/transfers') ||
+          pathname.startsWith('/api/handoffs') ||
+          pathname.startsWith('/api/deployment-requests') ||
+          pathname.startsWith('/api/hubs') ||
+          pathname.startsWith('/api/notifications')),
       method: 'GET',
       handler: new NetworkFirst({
         cacheName: 'ahits-field-reads',
