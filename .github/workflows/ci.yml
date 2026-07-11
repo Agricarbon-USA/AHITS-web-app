@@ -19,6 +19,13 @@ jobs:
   # & migration rules) instead of relying on convention. Fails a PR whose newly-added
   # migrations contain destructive / NOT-NULL-without-default SQL, unless the migration
   # opts out with a `-- migration-safety: acknowledged <reason>` line.
+  # When targeting `production`, an acknowledged destructive statement is a HARD FAIL
+  # unless the PR carries the `destructive-migration-approved` label (see note below).
+  #
+  # NOTE: CI triggers on push/open/synchronize — NOT on label-add. If the
+  # `destructive-migration-approved` label is added after the last push, re-trigger
+  # CI with an empty commit (`git commit --allow-empty`) or "Re-run all jobs" in the
+  # Actions UI before merging.
   migration-safety:
     name: Backward-compatible migrations
     runs-on: ubuntu-latest
@@ -28,3 +35,72 @@ jobs:
           fetch-depth: 0
       - name: Check added migrations
         run: bash scripts/check-migration-safety.sh "origin/${{ github.base_ref }}"
+        env:
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+
+  # Hard-fail any PR targeting `production` whose added migrations DROP the legacy
+  # operator columns/table (operatorId, assignedOperatorId, rig_operators) that the
+  # W0-10 completion patches (held/batch5-pr4c-drop.patch) are waiting to land.
+  # Requires the `destructive-migration-approved` label to proceed — that label must
+  # be added by a project lead AFTER all §11 gate conditions are satisfied.
+  #
+  # NOTE: same label-add caveat as migration-safety above — push or manually re-run
+  # after adding the label.
+  production-drop-guard:
+    name: Production DROP guard (W0-10 operator columns)
+    runs-on: ubuntu-latest
+    if: github.base_ref == 'production'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect DROP of legacy operator objects in added migrations
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          BASE="origin/production"
+          git fetch --quiet origin production 2>/dev/null || true
+
+          mapfile -t FILES < <(
+            git diff --diff-filter=AM --name-only "${BASE}...HEAD" \
+              -- 'prisma/migrations/**/*.sql' 2>/dev/null || true
+          )
+
+          if [ "${#FILES[@]}" -eq 0 ]; then
+            echo "✅ production-drop-guard: no added migrations to check."
+            exit 0
+          fi
+
+          # Patterns that indicate the W0-10 irreversible drop is landing.
+          # Match against comment-stripped, whitespace-normalized SQL so multi-line
+          # statements are caught.
+          GUARD_RE='DROP[[:space:]]+(TABLE[[:space:]]+("?rig_operators"?)|COLUMN[[:space:]]+("?operatorId"?|"?assignedOperatorId"?))'
+
+          found=0
+          for f in "${FILES[@]}"; do
+            [ -f "$f" ] || continue
+            # Strip -- comments, collapse newlines → single-line per statement
+            normalized=$(sed 's/--[^'"'"']*$//' "$f" | tr '\n' ' ' | tr -s '[:space:]' ' ')
+            if echo "$normalized" | grep -iqE "$GUARD_RE"; then
+              echo "::error file=$f::This migration DROPs a legacy operator column/table (operatorId, assignedOperatorId, or rig_operators). These are the W0-10 irreversible drops — they may only land on production once ALL gate conditions in held/README.md §11 are satisfied AND the PR carries the 'destructive-migration-approved' label."
+              found=1
+            fi
+          done
+
+          if [ "$found" -eq 0 ]; then
+            echo "✅ production-drop-guard: no legacy operator DROP detected."
+            exit 0
+          fi
+
+          # Drops found — check for the approval label.
+          if echo ",$PR_LABELS," | grep -q ",destructive-migration-approved,"; then
+            echo "::warning::production-drop-guard: legacy operator DROP approved via 'destructive-migration-approved' label — ensure §11 gate conditions are satisfied."
+            exit 0
+          fi
+
+          echo ""
+          echo "❌ production-drop-guard: PR targets production and drops legacy operator objects."
+          echo "   Add the 'destructive-migration-approved' label (project lead only) after confirming ALL §11 gate conditions in held/README.md, then re-run CI."
+          exit 1

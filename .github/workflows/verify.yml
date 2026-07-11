@@ -90,6 +90,27 @@ jobs:
           DATABASE_URL: ${{ env.TEST_DB_URL }}
           DIRECT_URL: ${{ env.TEST_DB_URL }}
 
+      # prisma db push derives the schema from schema.prisma and cannot create
+      # partial (WHERE-clause) indexes — Prisma has no syntax for them. Apply the
+      # FND-23 partial-unique indexes from the committed migrations so the invariant
+      # constraints exist in the test DB and tests that violate them catch real bugs.
+      - name: Apply FND-23 partial-unique indexes to test database
+        run: |
+          psql "${{ env.TEST_DB_URL }}" <<'SQL'
+          CREATE UNIQUE INDEX IF NOT EXISTS "deployment_assignments_one_open_primary_per_operator"
+            ON "deployment_assignments" ("operatorId")
+            WHERE "role" = 'PRIMARY' AND "endedAt" IS NULL;
+          CREATE UNIQUE INDEX IF NOT EXISTS "deployment_assignments_one_open_primary_per_rig"
+            ON "deployment_assignments" ("rigId")
+            WHERE "role" = 'PRIMARY' AND "endedAt" IS NULL;
+          CREATE UNIQUE INDEX IF NOT EXISTS "deployment_assignments_one_open_secondary_per_rig_op"
+            ON "deployment_assignments" ("rigId", "operatorId")
+            WHERE "role" = 'SECONDARY' AND "endedAt" IS NULL;
+          CREATE UNIQUE INDEX IF NOT EXISTS "rig_vehicles_one_open_per_vehicle"
+            ON "rig_vehicles" ("vehicleId")
+            WHERE "removedAt" IS NULL;
+          SQL
+
       - name: Run tests
         run: npm test
         env:
