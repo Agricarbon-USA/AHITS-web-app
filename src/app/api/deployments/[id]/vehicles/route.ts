@@ -158,21 +158,9 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
   try {
     await prisma.$transaction(async (tx) => {
       for (const disp of vehicles) {
-        // Mark the RigVehicle as removed
-        await tx.rigVehicle.updateMany({
-          where: {
-            rigId: id,
-            vehicleId: disp.vehicleId,
-            removedAt: null,
-          },
-          data: {
-            removedAt: now,
-            removeNote: disp.note ?? note,
-          },
-        })
-
         if (disp.dispositionType === 'TRANSFER' && disp.toOperatorId) {
-          // Create a transfer request for the vehicle
+          // Keep the RigVehicle row open (removedAt: null) so the accept path's
+          // "still present" guard can find it. The row is closed when accepted.
           await tx.transferRequest.create({
             data: {
               fromRigId: id,
@@ -185,6 +173,18 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
           })
           // Don't clear assignedOperatorId yet — happens on acceptance
         } else {
+          // Mark the RigVehicle as removed for all non-TRANSFER dispositions
+          await tx.rigVehicle.updateMany({
+            where: {
+              rigId: id,
+              vehicleId: disp.vehicleId,
+              removedAt: null,
+            },
+            data: {
+              removedAt: now,
+              removeNote: disp.note ?? note,
+            },
+          })
           // Update vehicle status and clear assignment
           const statusMap: Record<string, 'ACTIVE' | 'IN_MAINTENANCE' | 'RETIRED'> = {
             AVAILABLE: 'ACTIVE',

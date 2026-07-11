@@ -95,16 +95,13 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     }
 
     // Guard: verify each kit item is still in the source rig (not double-transferred).
-    // Allow items from ended rigs — those were intentionally kept pending via the TRANSFER path.
+    // A TRANSFER disposition keeps the kit item's removedAt null until accept/decline;
+    // removedAt set means it was already transferred elsewhere — reject regardless of
+    // whether the source rig ended (the previous OR-ended-rig exception was too broad
+    // and allowed double-transfer of items already moved to a different recipient).
     for (const ti of transfer.items) {
       const stillPresent = await tx.kitItem.findFirst({
-        where: {
-          id: ti.kitItemId,
-          OR: [
-            { removedAt: null },
-            { kit: { rig: { id: transfer.fromRig.id, endedAt: { not: null } } } },
-          ],
-        },
+        where: { id: ti.kitItemId, removedAt: null },
       })
       if (!stillPresent) {
         throw new Error(`Kit item is no longer in the source deployment`)
@@ -168,19 +165,23 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       const destDrawnQuantity = Math.min(transferQty, sourceDrawn)
       const destDrawnHubId = destDrawnQuantity > 0 ? (currentKitItem?.drawnHubId ?? null) : null
 
-      // Mark source kit item removed (even if already removedAt is set on ended-rig transfers)
+      // Mark source kit item removed. Use conditional updateMany (WHERE quantity >= transferQty
+      // AND removedAt IS NULL) so two concurrent accepts on the same transfer item can't both
+      // commit: the loser matches 0 rows and throws, rolling back the whole transaction.
       if (transferQty >= currentQty) {
-        await tx.kitItem.update({
-          where: { id: ti.kitItemId },
+        const kitClaim = await tx.kitItem.updateMany({
+          where: { id: ti.kitItemId, removedAt: null },
           data: { removedAt: now },
         })
+        if (kitClaim.count === 0) throw new Error('Kit item was already transferred')
       } else {
-        await tx.kitItem.update({
-          where: { id: ti.kitItemId },
+        const kitClaim = await tx.kitItem.updateMany({
+          where: { id: ti.kitItemId, quantity: { gte: transferQty }, removedAt: null },
           // Source keeps the un-transferred share of the drawn stock so it can't
           // over-restore stock it no longer holds.
-          data: { quantity: currentQty - transferQty, drawnQuantity: sourceDrawn - destDrawnQuantity },
+          data: { quantity: { decrement: transferQty }, drawnQuantity: { decrement: destDrawnQuantity } },
         })
+        if (kitClaim.count === 0) throw new Error('Insufficient quantity remaining for kit item transfer')
       }
       await tx.kitItem.create({
         data: {
