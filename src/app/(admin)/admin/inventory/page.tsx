@@ -694,7 +694,7 @@ function DetailDrawer({
   const damagePhotos = detail?.photos.filter((p) => p.context === 'DAMAGE') ?? []
 
   return (
-    <Drawer anchor="right" open={!!row} onClose={onClose} PaperProps={{ sx: { width: 540 } }}>
+    <Drawer anchor="right" open={!!row} onClose={onClose} PaperProps={{ sx: { width: { xs: '100%', sm: 540 } } }}>
       {loading && (
         <Box p={3}><Stack spacing={1.5}>{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} height={32} />)}</Stack></Box>
       )}
@@ -1063,6 +1063,11 @@ function AdminInventoryContent() {
   const [page, setPage] = React.useState(0)
   const [pageSize] = React.useState(25)
   const [search, setSearch] = React.useState('')
+  const [debouncedSearch, setDebouncedSearch] = React.useState('')
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 350)
+    return () => clearTimeout(t)
+  }, [search])
   // FND-48: these five filters live in the URL (deep-linkable, reload-safe).
   const { filters, setFilters } = useUrlFilters(INVENTORY_FILTER_DEFAULTS)
   const categoryFilter = filters.categoryId
@@ -1083,7 +1088,7 @@ function AdminInventoryContent() {
   const load = React.useCallback(async () => {
     setLoading(true)
     const params = new URLSearchParams({ page: String(page + 1), pageSize: String(pageSize) })
-    if (search) params.set('q', search)
+    if (debouncedSearch) params.set('q', debouncedSearch)
     if (categoryFilter) params.set('categoryId', categoryFilter)
     if (itemTypeFilter) params.set('itemType', itemTypeFilter)
     if (hubFilter) params.set('hubId', hubFilter)
@@ -1093,7 +1098,7 @@ function AdminInventoryContent() {
     setItems(res.data ?? [])
     setTotal(res.total ?? 0)
     setLoading(false)
-  }, [page, pageSize, search, categoryFilter, itemTypeFilter, hubFilter, operatorFilter, projectFilter])
+  }, [page, pageSize, debouncedSearch, categoryFilter, itemTypeFilter, hubFilter, operatorFilter, projectFilter])
 
   React.useEffect(() => { load() }, [load])
 

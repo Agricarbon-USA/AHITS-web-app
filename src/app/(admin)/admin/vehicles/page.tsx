@@ -284,20 +284,20 @@ export default function AdminVehiclesPage() {
                   <TableCell sortDirection={sortKey === 'status' ? sortDir : false}>
                     <TableSortLabel active={sortKey === 'status'} direction={sortKey === 'status' ? sortDir : 'asc'} onClick={() => toggleSort('status')}>Status</TableSortLabel>
                   </TableCell>
-                  <TableCell sortDirection={sortKey === 'hub' ? sortDir : false}>
+                  <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }} sortDirection={sortKey === 'hub' ? sortDir : false}>
                     <TableSortLabel active={sortKey === 'hub'} direction={sortKey === 'hub' ? sortDir : 'asc'} onClick={() => toggleSort('hub')}>Hub</TableSortLabel>
                   </TableCell>
-                  <TableCell sortDirection={sortKey === 'operator' ? sortDir : false}>
+                  <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }} sortDirection={sortKey === 'operator' ? sortDir : false}>
                     <TableSortLabel active={sortKey === 'operator'} direction={sortKey === 'operator' ? sortDir : 'asc'} onClick={() => toggleSort('operator')}>Operator</TableSortLabel>
                   </TableCell>
-                  <TableCell>Project</TableCell>
-                  <TableCell align="right" sortDirection={sortKey === 'odometer' ? sortDir : false}>
+                  <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>Project</TableCell>
+                  <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right" sortDirection={sortKey === 'odometer' ? sortDir : false}>
                     <TableSortLabel active={sortKey === 'odometer'} direction={sortKey === 'odometer' ? sortDir : 'asc'} onClick={() => toggleSort('odometer')}>Odometer</TableSortLabel>
                   </TableCell>
-                  <TableCell>Insurance</TableCell>
-                  <TableCell>Registration</TableCell>
-                  <TableCell align="right">Checks</TableCell>
-                  <TableCell align="right">Maint.</TableCell>
+                  <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Insurance</TableCell>
+                  <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Registration</TableCell>
+                  <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">Checks</TableCell>
+                  <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">Maint.</TableCell>
                   <TableCell />
                 </TableRow>
               </TableHead>
@@ -326,20 +326,20 @@ export default function AdminVehiclesPage() {
                             </TableCell>
                             <TableCell>{vehicleTypeLabel(v.type)}</TableCell>
                             <TableCell><StatusChip status={v.status} kind="vehicle" /></TableCell>
-                            <TableCell>{v.hubName ?? <Typography variant="caption" color="text.secondary">{v.location || '—'}</Typography>}</TableCell>
-                            <TableCell>{v.assignedOperatorName ?? '—'}</TableCell>
-                            <TableCell>
+                            <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>{v.hubName ?? <Typography variant="caption" color="text.secondary">{v.location || '—'}</Typography>}</TableCell>
+                            <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>{v.assignedOperatorName ?? '—'}</TableCell>
+                            <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>
                               <Stack direction="row" spacing={0.5} flexWrap="wrap">
                                 {(v.activeProjects ?? []).length === 0
                                   ? <Typography variant="caption" color="text.secondary">—</Typography>
                                   : (v.activeProjects ?? []).map((p) => <Chip key={p.id} size="small" label={p.name} variant="outlined" />)}
                               </Stack>
                             </TableCell>
-                            <TableCell align="right">{v.odometer != null ? v.odometer.toLocaleString() : '—'}</TableCell>
-                            <TableCell><Chip size="small" label={ins.label} color={ins.color} variant={ins.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
-                            <TableCell><Chip size="small" label={reg.label} color={reg.color} variant={reg.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
-                            <TableCell align="right">{v._count?.dailyChecks ?? 0}</TableCell>
-                            <TableCell align="right">{v._count?.maintenanceTasks ?? 0}</TableCell>
+                            <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{v.odometer != null ? v.odometer.toLocaleString() : '—'}</TableCell>
+                            <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}><Chip size="small" label={ins.label} color={ins.color} variant={ins.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
+                            <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}><Chip size="small" label={reg.label} color={reg.color} variant={reg.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
+                            <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{v._count?.dailyChecks ?? 0}</TableCell>
+                            <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{v._count?.maintenanceTasks ?? 0}</TableCell>
                             <TableCell align="right" onClick={(e) => e.stopPropagation()}>
                               <MutationIconButton tooltip="Edit" size="small" onClick={() => { setEditing(v); setFormOpen(true) }}><EditIcon fontSize="small" /></MutationIconButton>
                               <MutationIconButton tooltip="Delete" size="small" onClick={() => setConfirmDelete(v)}><DeleteIcon fontSize="small" /></MutationIconButton>
@@ -359,20 +359,20 @@ export default function AdminVehiclesPage() {
                           </TableCell>
                           <TableCell>{vehicleTypeLabel(v.type)}</TableCell>
                           <TableCell><StatusChip status={v.status} kind="vehicle" /></TableCell>
-                          <TableCell>{v.hubName ?? <Typography variant="caption" color="text.secondary">{v.location || '—'}</Typography>}</TableCell>
-                          <TableCell>{v.assignedOperatorName ?? '—'}</TableCell>
-                          <TableCell>
+                          <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>{v.hubName ?? <Typography variant="caption" color="text.secondary">{v.location || '—'}</Typography>}</TableCell>
+                          <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>{v.assignedOperatorName ?? '—'}</TableCell>
+                          <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>
                             <Stack direction="row" spacing={0.5} flexWrap="wrap">
                               {(v.activeProjects ?? []).length === 0
                                 ? <Typography variant="caption" color="text.secondary">—</Typography>
                                 : (v.activeProjects ?? []).map((p) => <Chip key={p.id} size="small" label={p.name} variant="outlined" />)}
                             </Stack>
                           </TableCell>
-                          <TableCell align="right">{v.odometer != null ? v.odometer.toLocaleString() : '—'}</TableCell>
-                          <TableCell><Chip size="small" label={ins.label} color={ins.color} variant={ins.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
-                          <TableCell><Chip size="small" label={reg.label} color={reg.color} variant={reg.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
-                          <TableCell align="right">{v._count?.dailyChecks ?? 0}</TableCell>
-                          <TableCell align="right">{v._count?.maintenanceTasks ?? 0}</TableCell>
+                          <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{v.odometer != null ? v.odometer.toLocaleString() : '—'}</TableCell>
+                          <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}><Chip size="small" label={ins.label} color={ins.color} variant={ins.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
+                          <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}><Chip size="small" label={reg.label} color={reg.color} variant={reg.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
+                          <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{v._count?.dailyChecks ?? 0}</TableCell>
+                          <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{v._count?.maintenanceTasks ?? 0}</TableCell>
                           <TableCell align="right" onClick={(e) => e.stopPropagation()}>
                             <MutationIconButton tooltip="Edit" size="small" onClick={() => { setEditing(v); setFormOpen(true) }}><EditIcon fontSize="small" /></MutationIconButton>
                             <MutationIconButton tooltip="Delete" size="small" onClick={() => setConfirmDelete(v)}><DeleteIcon fontSize="small" /></MutationIconButton>
