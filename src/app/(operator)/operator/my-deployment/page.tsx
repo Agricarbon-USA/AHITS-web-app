@@ -28,8 +28,7 @@ import { newPlaceholderId } from '@/lib/offline-remap'
 import { useAuth } from '@/hooks/useAuth'
 import { groupBy } from '@/lib/utils'
 import { stockAvailabilityLabel } from '@/lib/stock-format'
-
-const VEHICLE_TYPE_ORDER = ['TRUCK', 'TRAILER', 'POLARIS_UTV', 'CAN_AM_UTV', 'CHRISTIE_DRILL', 'ATV', 'OTHER']
+import { VEHICLE_TYPE_ORDER, vehicleTypeLabel } from '@/lib/vehicle-types'
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -354,11 +353,11 @@ function NewDeploymentDialog({
                 {groupBy(
                   [...unassignedVehicles].sort((a, b) => a.name.localeCompare(b.name)),
                   (v) => v.type,
-                  VEHICLE_TYPE_ORDER,
+                  [...VEHICLE_TYPE_ORDER],
                 ).map(({ group, items: gv }) => (
                   <React.Fragment key={group}>
                     <ListSubheader sx={{ lineHeight: '32px', bgcolor: 'background.default' }}>
-                      {group.replace(/_/g, ' ')}
+                      {vehicleTypeLabel(group)}
                     </ListSubheader>
                     {gv.map((v) => {
                       const Icon = VEHICLE_ICON[v.type] ?? LocalShippingIcon
@@ -1442,11 +1441,11 @@ export default function MyRigPage() {
                   {groupBy(
                     [...unassignedVehicles].sort((a, b) => a.name.localeCompare(b.name)),
                     (v) => v.type,
-                    VEHICLE_TYPE_ORDER,
+                    [...VEHICLE_TYPE_ORDER],
                   ).map(({ group, items: gv }) => (
                     <React.Fragment key={group}>
                       <ListSubheader sx={{ lineHeight: '32px', bgcolor: 'background.default' }}>
-                        {group.replace(/_/g, ' ')}
+                        {vehicleTypeLabel(group)}
                       </ListSubheader>
                       {gv.map((v) => {
                         const Icon = VEHICLE_ICON[v.type] ?? LocalShippingIcon

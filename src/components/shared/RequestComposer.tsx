@@ -21,6 +21,7 @@ import {
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
+import { VEHICLE_TYPE_LABELS } from '@/lib/vehicle-types'
 
 // Shared deployment-request composer. Used by BOTH the operator requests page
 // (offline-first: onSubmit routes through the offline queue) and the admin
@@ -87,18 +88,6 @@ export interface RequestComposerBody {
 export interface RequestSubmitResult {
   ok: boolean
   error?: string
-}
-
-// ── Constants ─────────────────────────────────────────────────────────────────
-
-const VEHICLE_TYPE_LABELS: Record<string, string> = {
-  TRUCK: 'Truck',
-  TRAILER: 'Trailer',
-  POLARIS_UTV: 'Polaris UTV',
-  CAN_AM_UTV: 'Can-Am UTV',
-  CHRISTIE_DRILL: 'Christie Drill',
-  ATV: 'ATV',
-  OTHER: 'Other',
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

@@ -9,6 +9,7 @@ import UploadFileIcon from '@mui/icons-material/UploadFile'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import CloseIcon from '@mui/icons-material/Close'
 import { uploadDocument } from '@/lib/photoStore'
+import { VEHICLE_TYPES, vehicleTypeLabel } from '@/lib/vehicle-types'
 
 // NEW-5 Rental Vehicles.
 //
@@ -36,10 +37,6 @@ export interface RentalVehicleFields {
   rentalCostAmount?: string
   rentalCostPeriod?: 'DAY' | 'WEEK' | 'MONTH' | 'FLAT'
 }
-
-const VEHICLE_TYPES = [
-  'TRUCK', 'TRAILER', 'POLARIS_UTV', 'CAN_AM_UTV', 'CHRISTIE_DRILL', 'ATV', 'OTHER',
-]
 
 const RENTAL_COMPANIES = ['Enterprise', 'United Rentals', 'Other']
 
@@ -141,7 +138,7 @@ export function RentalVehicleForm({ value, onChange, disabled = false }: RentalV
         fullWidth
       >
         {VEHICLE_TYPES.map((t) => (
-          <MenuItem key={t} value={t}>{t.replace(/_/g, ' ')}</MenuItem>
+          <MenuItem key={t} value={t}>{vehicleTypeLabel(t)}</MenuItem>
         ))}
       </TextField>
 

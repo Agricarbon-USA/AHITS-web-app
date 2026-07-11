@@ -14,7 +14,7 @@ import { reserveAtHub, releaseAtHub, drawReservedFromHub } from '@/lib/inventory
 
 export const LINE_TYPES = ['KIT_ITEM', 'VEHICLE', 'NEW_PURCHASE', 'SHIPPING_LABEL'] as const
 export type LineType = (typeof LINE_TYPES)[number]
-export const VEHICLE_TYPES = ['TRUCK', 'TRAILER', 'POLARIS_UTV', 'CAN_AM_UTV', 'CHRISTIE_DRILL', 'ATV', 'OTHER'] as const
+export { VEHICLE_TYPES } from '@/lib/vehicle-types'
 
 export const REQUEST_TYPES = ['RESERVATION', 'MATERIAL'] as const
 export type RequestType = (typeof REQUEST_TYPES)[number]

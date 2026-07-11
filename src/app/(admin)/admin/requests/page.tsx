@@ -21,6 +21,7 @@ import {
   type VehicleOption,
   type CategoryOption,
 } from '@/components/shared/RequestComposer'
+import { VEHICLE_TYPE_LABELS, type VehicleTypeValue } from '@/lib/vehicle-types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -73,10 +74,6 @@ interface OperatorOption { id: string; name: string }
 
 const TERMINAL = new Set(['FULFILLED', 'CANCELLED', 'DENIED'])
 
-const VEHICLE_TYPE_LABELS: Record<string, string> = {
-  TRUCK: 'Truck', TRAILER: 'Trailer', POLARIS_UTV: 'Polaris UTV',
-  CAN_AM_UTV: 'Can-Am UTV', CHRISTIE_DRILL: 'Christie Drill', ATV: 'ATV', OTHER: 'Other',
-}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -84,7 +81,7 @@ function lineDisplayName(l: LineRow): string {
   if (l.specificItemName) return `${l.specificItemName}${l.specificUnitSerial ? ` · #${l.specificUnitSerial}` : ''}`
   if (l.specificVehicleName) return l.specificVehicleName
   if (l.categoryName) return l.categoryName
-  if (l.vehicleType) return VEHICLE_TYPE_LABELS[l.vehicleType] ?? l.vehicleType
+  if (l.vehicleType) return VEHICLE_TYPE_LABELS[l.vehicleType as VehicleTypeValue] ?? l.vehicleType
   if (l.itemType) return l.itemType
   return l.description ?? 'Item'
 }

@@ -17,13 +17,12 @@ import { useToast } from '@/components/shared/useToast'
 import { useCanEdit, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 import { groupBy } from '@/lib/utils'
 import { uploadDocument } from '@/lib/photoStore'
+import { VEHICLE_TYPES, vehicleTypeLabel } from '@/lib/vehicle-types'
 
 const RENTAL_PERIODS: { value: 'DAY' | 'WEEK' | 'MONTH' | 'FLAT'; label: string }[] = [
   { value: 'DAY', label: '/ day' }, { value: 'WEEK', label: '/ week' },
   { value: 'MONTH', label: '/ month' }, { value: 'FLAT', label: 'flat' },
 ]
-
-const VEHICLE_TYPES = ['TRUCK', 'TRAILER', 'POLARIS_UTV', 'CAN_AM_UTV', 'CHRISTIE_DRILL', 'ATV', 'OTHER']
 const VEHICLE_STATUSES = ['ACTIVE', 'IN_MAINTENANCE', 'OUT_OF_SERVICE', 'RETIRED']
 
 interface VehicleRow {
@@ -231,7 +230,7 @@ export default function AdminVehiclesPage() {
           />
           <TextField select size="small" label="Type" value={filterType} onChange={(e) => setFilterType(e.target.value)} sx={{ minWidth: 150 }}>
             <MenuItem value="">All types</MenuItem>
-            {VEHICLE_TYPES.map((t) => <MenuItem key={t} value={t}>{t.replace(/_/g, ' ')}</MenuItem>)}
+            {VEHICLE_TYPES.map((t) => <MenuItem key={t} value={t}>{vehicleTypeLabel(t)}</MenuItem>)}
           </TextField>
           <TextField select size="small" label="Status" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} sx={{ minWidth: 150 }}>
             <MenuItem value="">All statuses</MenuItem>
@@ -304,11 +303,11 @@ export default function AdminVehiclesPage() {
               </TableHead>
               <TableBody>
                 {groupByType
-                  ? groupBy(visibleVehicles, (v) => v.type, VEHICLE_TYPES).flatMap(({ group, items: gv }) => [
+                  ? groupBy(visibleVehicles, (v) => v.type, [...VEHICLE_TYPES]).flatMap(({ group, items: gv }) => [
                       <TableRow key={`__hdr__${group}`}>
                         <TableCell colSpan={12} sx={{ bgcolor: 'grey.50', py: 0.5, borderBottom: '1px solid', borderColor: 'divider' }}>
                           <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1.6 }}>
-                            {group.replace(/_/g, ' ')} ({gv.length})
+                            {vehicleTypeLabel(group)} ({gv.length})
                           </Typography>
                         </TableCell>
                       </TableRow>,
@@ -325,7 +324,7 @@ export default function AdminVehiclesPage() {
                               </Stack>
                               {v.makeModel && <Typography variant="caption" color="text.secondary">{v.makeModel}{v.year ? ` · ${v.year}` : ''}</Typography>}
                             </TableCell>
-                            <TableCell>{v.type.replace(/_/g, ' ')}</TableCell>
+                            <TableCell>{vehicleTypeLabel(v.type)}</TableCell>
                             <TableCell><StatusChip status={v.status} kind="vehicle" /></TableCell>
                             <TableCell>{v.hubName ?? <Typography variant="caption" color="text.secondary">{v.location || '—'}</Typography>}</TableCell>
                             <TableCell>{v.assignedOperatorName ?? '—'}</TableCell>
@@ -358,7 +357,7 @@ export default function AdminVehiclesPage() {
                             <Typography variant="body2" fontWeight={500}>{v.name}</Typography>
                             {v.makeModel && <Typography variant="caption" color="text.secondary">{v.makeModel}{v.year ? ` · ${v.year}` : ''}</Typography>}
                           </TableCell>
-                          <TableCell>{v.type.replace(/_/g, ' ')}</TableCell>
+                          <TableCell>{vehicleTypeLabel(v.type)}</TableCell>
                           <TableCell><StatusChip status={v.status} kind="vehicle" /></TableCell>
                           <TableCell>{v.hubName ?? <Typography variant="caption" color="text.secondary">{v.location || '—'}</Typography>}</TableCell>
                           <TableCell>{v.assignedOperatorName ?? '—'}</TableCell>
@@ -400,7 +399,7 @@ export default function AdminVehiclesPage() {
             </Stack>
             <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
               <StatusChip status={detail.status} kind="vehicle" />
-              <Chip size="small" label={detail.type.replace(/_/g, ' ')} variant="outlined" />
+              <Chip size="small" label={vehicleTypeLabel(detail.type)} variant="outlined" />
               {detail.hubName && <Chip size="small" label={detail.hubName} variant="outlined" />}
             </Stack>
 
@@ -689,7 +688,7 @@ function VehicleFormDialog({ vehicle, hubs, onClose, onSaved, showToast }: {
           <TextField label="Name" value={name} onChange={(e) => setName(e.target.value)} fullWidth required />
           <Stack direction="row" spacing={2}>
             <TextField select label="Type" value={type} onChange={(e) => setType(e.target.value)} fullWidth>
-              {VEHICLE_TYPES.map((t) => <MenuItem key={t} value={t}>{t.replace(/_/g, ' ')}</MenuItem>)}
+              {VEHICLE_TYPES.map((t) => <MenuItem key={t} value={t}>{vehicleTypeLabel(t)}</MenuItem>)}
             </TextField>
             {isEdit && (
               <TextField select label="Status" value={status} onChange={(e) => setStatus(e.target.value)} fullWidth>

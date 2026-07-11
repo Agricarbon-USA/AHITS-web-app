@@ -2,14 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { rateLimit, clientIp } from '@/lib/rate-limit'
 import { resolveStatusLink, markViewed, isLinkActionable, ALLOWED_ACTIONS } from '@/lib/status-links'
 import { getRequest, getLineChecklist } from '@/lib/deployment-requests'
-
-// Public, login-less context for a tokenized status link. Token-gated and
-// rate-limited (the token IS the credential). Returns only the scoped fields
-// the external party needs — never operator emails, costs, or unrelated data.
-const S_VEHICLE_TYPE_LABELS: Record<string, string> = {
-  TRUCK: 'Truck', TRAILER: 'Trailer', POLARIS_UTV: 'Polaris UTV',
-  CAN_AM_UTV: 'Can-Am UTV', CHRISTIE_DRILL: 'Christie Drill', ATV: 'ATV', OTHER: 'Other',
-}
+import { VEHICLE_TYPE_LABELS, type VehicleTypeValue } from '@/lib/vehicle-types'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params
@@ -71,7 +64,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
             l.specificItemName ??
             l.specificVehicleName ??
             l.categoryName ??
-            (l.vehicleType ? (S_VEHICLE_TYPE_LABELS[l.vehicleType] ?? l.vehicleType) : null) ??
+            (l.vehicleType ? (VEHICLE_TYPE_LABELS[l.vehicleType as VehicleTypeValue] ?? l.vehicleType) : null) ??
             l.itemType ??
             l.description ??
             'Item',

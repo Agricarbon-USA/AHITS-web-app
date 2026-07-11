@@ -13,19 +13,12 @@ import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward'
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { DEFAULT_DAILY_CHECKLIST } from '@/types'
+import { VEHICLE_TYPES, VEHICLE_TYPE_LABELS } from '@/lib/vehicle-types'
 
-// Vehicle types must match the Prisma VehicleType enum. Kept local so this
-// client component doesn't import the server-only checklist lib (which pulls in
-// Prisma). "" = applies to all vehicle types (a general override).
+// "" = general override (applies to all vehicle types)
 const VEHICLE_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: '', label: 'All vehicle types (general)' },
-  { value: 'TRUCK', label: 'Truck' },
-  { value: 'TRAILER', label: 'Trailer' },
-  { value: 'POLARIS_UTV', label: 'Polaris UTV' },
-  { value: 'CAN_AM_UTV', label: 'Can-Am UTV' },
-  { value: 'CHRISTIE_DRILL', label: 'Christie Drill' },
-  { value: 'ATV', label: 'ATV' },
-  { value: 'OTHER', label: 'Other' },
+  ...VEHICLE_TYPES.map((v) => ({ value: v, label: VEHICLE_TYPE_LABELS[v] })),
 ]
 const typeLabel = (v: string | null) =>
   VEHICLE_TYPE_OPTIONS.find((o) => o.value === (v ?? ''))?.label ?? v ?? 'General'
