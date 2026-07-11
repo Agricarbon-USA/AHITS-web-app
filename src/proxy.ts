@@ -127,6 +127,9 @@ async function handleRequest(request: NextRequest, requestId: string) {
   const token = request.cookies.get('ahits_session')?.value
 
   if (!token) {
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
@@ -186,6 +189,9 @@ async function handleRequest(request: NextRequest, requestId: string) {
 
     return nextWithCsp(request, csp, nonce, requestId)
   } catch {
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
     return NextResponse.redirect(new URL('/login', request.url))
   }
 }

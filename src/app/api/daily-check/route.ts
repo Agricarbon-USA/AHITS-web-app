@@ -6,6 +6,7 @@ import { requireAuth } from '@/lib/auth/session'
 import { createAlert, resolveActiveAlert } from '@/lib/alerts'
 import { applyOdometerReading } from '@/lib/maintenance'
 import { parsePagination } from '@/lib/validation'
+import { businessDate } from '@/lib/business-date'
 
 const schema = z.object({
   vehicleId: z.string(),
@@ -70,7 +71,11 @@ export async function POST(req: NextRequest) {
   const parsed = schema.safeParse(await req.json())
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const { vehicleId, date, checklistJson, passFail, issues, odometer, site } = parsed.data
+  const { vehicleId, checklistJson, passFail, issues, odometer, site } = parsed.data
+  // Clamp to server-side business date so a check can't be pre-dated or
+  // future-dated to dodge the missed-check alert (note: a check synced a day
+  // late is recorded as today, not the day it was performed).
+  const date = businessDate()
 
   // Daily checks may be performed on ANY active vehicle/equipment — not just
   // items in the operator's deployment. Operators routinely inspect a vehicle
