@@ -51,3 +51,7 @@ google-creds.json
 # in git — its history lives in the session records). Markdown analysis/session
 # docs ARE tracked (see the AHITS_*.md records already in the repo).
 *.xlsx
+# --- AHITS working cruft (not for version control) ---
+_to_delete/
+.ahits_write_test_*
+.ahits-codebase-snapshot.tar.gz
