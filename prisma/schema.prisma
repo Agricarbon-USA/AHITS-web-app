@@ -151,6 +151,7 @@ enum AlertType {
   MATERIAL_REQUEST
   DAILY_CHECK_FAILED
   DAILY_CHECK_MISSED
+  INVENTORY_DRIFT
 }
 
 enum PhotoContext {

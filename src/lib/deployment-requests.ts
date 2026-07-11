@@ -610,15 +610,34 @@ export async function applyRequestTransition(
         `
         return Number(n) > 0 ? { ok: true } : { ok: false, code: 'STATE_MISMATCH' }
       }
-      return prisma.$transaction(async (tx) => {
-        await releaseReservedStock(id, tx)
-        const n = await tx.$executeRaw`
-          UPDATE "deployment_requests"
-          SET "status" = 'CANCELLED', "updatedAt" = now(), "stockReservedAt" = NULL
-          WHERE "id" = ${id} AND "status" IN ('DRAFT', 'REQUESTED', 'STAGED')
-        `
-        return Number(n) > 0 ? ({ ok: true } as TransitionResult) : ({ ok: false, code: 'STATE_MISMATCH' } as TransitionResult)
-      })
+      // Flip status FIRST so a state-mismatch rolls the whole transaction back (including
+      // the release). The previous order (release→flip) committed the release even when the
+      // status guard failed, leaking reserved stock back to free availability on every
+      // STATE_MISMATCH. Mirror the confirm path: flip→throw sentinel→release→return ok.
+      //
+      // stockReservedAt is intentionally NOT nulled in the status flip — releaseReservedStock
+      // reads it to find the hub to release from. It is nulled in a follow-up UPDATE after
+      // the release so the guard in releaseReservedStock (stockReservedAt IS NULL → skip)
+      // doesn't short-circuit before we've done the actual release.
+      try {
+        return await prisma.$transaction(async (tx) => {
+          const n = await tx.$executeRaw`
+            UPDATE "deployment_requests"
+            SET "status" = 'CANCELLED', "updatedAt" = now()
+            WHERE "id" = ${id} AND "status" IN ('DRAFT', 'REQUESTED', 'STAGED')
+          `
+          if (Number(n) === 0) throw Object.assign(new Error('STATE_MISMATCH'), { _code: 'STATE_MISMATCH' })
+          await releaseReservedStock(id, tx)
+          await tx.$executeRaw`
+            UPDATE "deployment_requests" SET "stockReservedAt" = NULL WHERE "id" = ${id}
+          `
+          return { ok: true } as TransitionResult
+        })
+      } catch (err: unknown) {
+        const e = err as { _code?: string }
+        if (e._code === 'STATE_MISMATCH') return { ok: false, code: 'STATE_MISMATCH' }
+        throw err
+      }
     }
 
     case 'confirm':
@@ -828,19 +847,29 @@ export async function claimHeldStock(
     if (remaining <= 0) break
     // C2: lock this line and read the authoritative held/claimed UNDER the lock, so a
     // concurrent claim can't compute its take from a value we're about to change.
+    // The releasedAt IS NULL guard prevents claiming a line that was released between
+    // the initial candidate query above and this per-row lock acquisition.
     const locked = await db.$queryRaw<{ held: number; used: number }[]>`
       SELECT "heldQty" AS held, "claimedQty" AS used
-      FROM "deployment_request_lines" WHERE "id" = ${line.id} FOR UPDATE
+      FROM "deployment_request_lines"
+      WHERE "id" = ${line.id} AND "releasedAt" IS NULL
+      FOR UPDATE
     `
     const unclaimed = Number(locked[0]?.held ?? 0) - Number(locked[0]?.used ?? 0)
     const claim = Math.min(remaining, unclaimed)
     if (claim <= 0) continue
 
-    await db.$executeRaw`
+    // Conditional UPDATE: only advances claimedQty when the line is still unreleased
+    // and there is enough unclaimed headroom. A 0-row result means the line was released
+    // or claimed down to 0 concurrently — skip it (the free-draw path handles the gap).
+    const updated = await db.$executeRaw`
       UPDATE "deployment_request_lines"
       SET "claimedQty" = "claimedQty" + ${claim}
       WHERE "id" = ${line.id}
+        AND "releasedAt" IS NULL
+        AND "heldQty" - "claimedQty" >= ${claim}
     `
+    if (Number(updated) === 0) continue
     // H2: guarded reserve→draw. A shortfall means the aggregate reserve can't cover
     // what this line claims to hold — the invariant is broken; abort the checkout.
     const drawn = await drawReservedFromHub(inventoryItemId, hubId, claim, db)

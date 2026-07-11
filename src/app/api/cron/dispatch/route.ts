@@ -269,14 +269,122 @@ async function run() {
         '[cron] inventory drift detected (quantity != Σ stock):',
         drift.map((d) => ({ id: d.id, name: d.name, total: Number(d.total), sumStock: Number(d.sumStock) })),
       )
+      for (const d of drift) {
+        await createAlert('INVENTORY_DRIFT', 'inventory_items', d.id, {
+          itemName: d.name,
+          total: Number(d.total),
+          sumStock: Number(d.sumStock),
+        })
+      }
     }
   } catch {
     /* inventory_stock missing / transient — non-fatal */
   }
 
+  // 8b) Inventory invariant checks. Violations indicate a write-path bug — raise an
+  // alert per violation category so they surface in monitoring immediately.
+  let invariantViolations = 0
+  try {
+    // INV-1: stock non-negativity
+    const inv1 = await prisma.$queryRaw<{ itemId: string; hubId: string; quantity: number; reservedQty: number }[]>`
+      SELECT s."itemId", s."hubId", s."quantity", s."reservedQty"
+      FROM "inventory_stock" s
+      WHERE s."quantity" < 0 OR s."reservedQty" < 0
+    `
+    if (inv1.length > 0) {
+      invariantViolations += inv1.length
+      await createAlert('INVENTORY_DRIFT', 'inventory_stock', 'inv1-negative-stock', {
+        itemName: 'INV-1 negative stock/reservedQty',
+        count: inv1.length,
+        sample: JSON.stringify(inv1.slice(0, 3)),
+      })
+    }
+
+    // INV-2: reservedQty must never exceed quantity
+    const inv2 = await prisma.$queryRaw<{ itemId: string; hubId: string; quantity: number; reservedQty: number }[]>`
+      SELECT s."itemId", s."hubId", s."quantity", s."reservedQty"
+      FROM "inventory_stock" s
+      WHERE s."reservedQty" > s."quantity"
+    `
+    if (inv2.length > 0) {
+      invariantViolations += inv2.length
+      await createAlert('INVENTORY_DRIFT', 'inventory_stock', 'inv2-reserved-exceeds-stock', {
+        itemName: 'INV-2 reservedQty > quantity',
+        count: inv2.length,
+        sample: JSON.stringify(inv2.slice(0, 3)),
+      })
+    }
+
+    // INV-3: held↔reserved mirror
+    const inv3 = await prisma.$queryRaw<{ itemId: string; hubId: string; heldOutstanding: bigint | number; reservedQty: bigint | number }[]>`
+      SELECT h."itemId", h."hubId", h."heldOutstanding", COALESCE(s."reservedQty",0) AS "reservedQty"
+      FROM (
+        SELECT l."heldItemId" AS "itemId", l."heldHubId" AS "hubId",
+               SUM(l."heldQty" - l."claimedQty") AS "heldOutstanding"
+        FROM "deployment_request_lines" l
+        JOIN "deployment_requests" r ON r."id" = l."requestId"
+        WHERE l."releasedAt" IS NULL AND l."heldQty" > l."claimedQty"
+          AND r."status" = 'FULFILLED' AND l."heldItemId" IS NOT NULL
+        GROUP BY l."heldItemId", l."heldHubId"
+      ) h
+      LEFT JOIN "inventory_stock" s ON s."itemId" = h."itemId" AND s."hubId" = h."hubId"
+      WHERE h."heldOutstanding" <> COALESCE(s."reservedQty",0)
+    `
+    if (inv3.length > 0) {
+      invariantViolations += inv3.length
+      await createAlert('INVENTORY_DRIFT', 'inventory_stock', 'inv3-held-reserved-mismatch', {
+        itemName: 'INV-3 held↔reserved mismatch',
+        count: inv3.length,
+        sample: JSON.stringify(inv3.slice(0, 3).map((r) => ({ ...r, heldOutstanding: Number(r.heldOutstanding), reservedQty: Number(r.reservedQty) }))),
+      })
+    }
+
+    // INV-4: orphan holds (unreleased holds on non-FULFILLED requests)
+    const inv4 = await prisma.$queryRaw<{ id: string; requestId: string; status: string; heldQty: number; claimedQty: number }[]>`
+      SELECT l."id", l."requestId", r."status"::text AS "status", l."heldQty", l."claimedQty"
+      FROM "deployment_request_lines" l
+      JOIN "deployment_requests" r ON r."id" = l."requestId"
+      WHERE l."releasedAt" IS NULL AND l."heldQty" > l."claimedQty"
+        AND r."status" <> 'FULFILLED'
+    `
+    if (inv4.length > 0) {
+      invariantViolations += inv4.length
+      await createAlert('INVENTORY_DRIFT', 'deployment_request_lines', 'inv4-orphan-holds', {
+        itemName: 'INV-4 orphan holds on non-FULFILLED requests',
+        count: inv4.length,
+        sample: JSON.stringify(inv4.slice(0, 3)),
+      })
+    }
+
+    // INV-5: custody strands (IN_TRANSIT >14d or CHECKED_OUT/IN_TRANSIT with no open kit item)
+    const inv5 = await prisma.$queryRaw<{ id: string; inventoryItemId: string; serialNumber: string | null; status: string; updatedAt: Date }[]>`
+      SELECT u."id", u."inventoryItemId", u."serialNumber", u."status", u."updatedAt"
+      FROM "inventory_units" u
+      WHERE u."deletedAt" IS NULL
+        AND (
+          (u."status" = 'IN_TRANSIT' AND u."updatedAt" < NOW() - INTERVAL '14 days')
+          OR (u."status" IN ('CHECKED_OUT','IN_TRANSIT') AND NOT EXISTS (
+                SELECT 1 FROM "kit_items" ki
+                JOIN "kits" k ON k."id" = ki."kitId"
+                JOIN "rigs" rg ON rg."id" = k."rigId" AND rg."endedAt" IS NULL
+                WHERE ki."inventoryUnitId" = u."id" AND ki."removedAt" IS NULL))
+        )
+    `
+    if (inv5.length > 0) {
+      invariantViolations += inv5.length
+      await createAlert('INVENTORY_DRIFT', 'inventory_units', 'inv5-custody-strands', {
+        itemName: 'INV-5 stranded units (no active kit item)',
+        count: inv5.length,
+        sample: JSON.stringify(inv5.slice(0, 3)),
+      })
+    }
+  } catch {
+    /* schema missing / transient — non-fatal */
+  }
+
   // 9) Dispatch: email admins + create in-app notifications for un-notified alerts.
   const dispatch = await dispatchPendingAlerts()
-  return { overdueFlagged: due.length, idempotencyReaped, lowInventoryFlagged: lowFlagged, expiryFlagged, missedFlagged, holdsReleased, inventoryDriftFlagged, ...dispatch }
+  return { overdueFlagged: due.length, idempotencyReaped, lowInventoryFlagged: lowFlagged, expiryFlagged, missedFlagged, holdsReleased, inventoryDriftFlagged, invariantViolations, ...dispatch }
 }
 
 async function handleCron(req: NextRequest) {

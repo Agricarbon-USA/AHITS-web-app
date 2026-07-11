@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
 import { withIdempotency } from '@/lib/idempotency'
+import { restoreToHub, resyncItemTotal } from '@/lib/inventory-stock'
 
 const schema = z.object({
   responseNote: z.string().optional(),
@@ -25,7 +26,16 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       items: {
         include: {
           kitItem: {
-            select: { id: true, inventoryItemId: true, inventoryUnitId: true, quantity: true, removedAt: true },
+            select: {
+              id: true,
+              inventoryItemId: true,
+              inventoryUnitId: true,
+              quantity: true,
+              drawnQuantity: true,
+              drawnHubId: true,
+              removedAt: true,
+              item: { select: { itemType: true, hubId: true } },
+            },
           },
         },
       },
@@ -73,6 +83,14 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
         if (kitItem.removedAt) continue
 
         await tx.kitItem.update({ where: { id: kitItem.id }, data: { removedAt: now } })
+
+        if (kitItem.item.itemType === 'CONSUMABLE' && (kitItem.drawnQuantity ?? 0) > 0) {
+          const hubForRestore = kitItem.drawnHubId ?? kitItem.item.hubId
+          if (hubForRestore) {
+            await restoreToHub(kitItem.inventoryItemId, hubForRestore, kitItem.drawnQuantity!, tx)
+            await resyncItemTotal(kitItem.inventoryItemId, tx)
+          }
+        }
 
         if (kitItem.inventoryUnitId) {
           await tx.inventoryUnit.update({

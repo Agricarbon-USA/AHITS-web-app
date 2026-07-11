@@ -372,10 +372,7 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
             await restoreToHub(inventoryItemId, hubForRestore, restoreQty, tx)
           }
           if (restoreQty > 0) {
-            await tx.inventoryItem.update({
-              where: { id: inventoryItemId },
-              data: { quantity: { increment: restoreQty } },
-            })
+            await resyncItemTotal(inventoryItemId, tx)
           }
         }
         await tx.checkLog.create({
