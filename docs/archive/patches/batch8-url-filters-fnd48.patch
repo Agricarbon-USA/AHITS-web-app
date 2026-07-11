@@ -1,0 +1,222 @@
+From 461b6608b87b95ff9f5eee0f8155c5fed8d21f27 Mon Sep 17 00:00:00 2001
+From: maxwellslater <maxtslater@gmail.com>
+Date: Tue, 7 Jul 2026 16:08:48 -0600
+Subject: [PATCH] =?UTF-8?q?feat(admin):=20URL-persisted=20filters=20?=
+ =?UTF-8?q?=E2=80=94=20useUrlFilters=20hook=20+=20inventory=20exemplar=20(?=
+ =?UTF-8?q?FND-48)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Adds src/hooks/useUrlFilters: a small hook that persists a set of string filters in
+the URL query string so admin list views are deep-linkable and reload-safe, the
+foundation the week board (N-5) and notification deep-links build on. setFilters
+patches one-or-more keys in a SINGLE history-replace so clearing several filters can't
+race a stale snapshot; empty/default values are omitted; scroll position preserved.
+
+Wires it into the inventory list (the richest filter set — 5 dropdowns — so it stresses
+the abstraction) with the values aliased to the old names so reads/load() are untouched;
+only the setters changed. search + pagination stay local for now. The page body is
+wrapped in <Suspense> (required by Next 16 for useSearchParams — mirrors
+src/app/setup-account/page.tsx; without it next build fails).
+
+4-agent review:
+- antagonist (BLOCKER, fixed): useSearchParams needs a Suspense boundary or the build
+  fails — added, matching the app's existing pattern. Also memoized the returned filters
+  object (footgun for future callers). Confirmed: no refetch loop, clear-all race genuinely
+  fixed, no key collisions, no hydration mismatch, operator read-only parity preserved.
+- product/operator-lens (KEY, sequencing): this slice is plumbing without a consumer —
+  ~0 manager-hours until something emits a filtered URL. NEXT (do before more inventory
+  polish): (1) wire LOW_INVENTORY notification (alert-display.ts dead-ends on the
+  unfiltered list) to a pre-filtered URL; (2) persist search in the URL (debounced) so
+  reload doesn't silently drop it; (3) roll the hook to /admin/deployments + /admin/requests
+  (the week board + bell's real click-through targets); (4) a filtered-state banner so a
+  short deep-linked list doesn't read as missing data.
+
+VERIFY IN CC (not provable in-sandbox — no next build): npm run build succeeds (the
+Suspense requirement), and a deep-link like /admin/inventory?hubId=<id> lands pre-filtered.
+---
+ src/app/(admin)/admin/inventory/page.tsx | 42 +++++++++++++------
+ src/hooks/useUrlFilters.ts               | 53 ++++++++++++++++++++++++
+ 2 files changed, 83 insertions(+), 12 deletions(-)
+ create mode 100644 src/hooks/useUrlFilters.ts
+
+diff --git a/src/app/(admin)/admin/inventory/page.tsx b/src/app/(admin)/admin/inventory/page.tsx
+index eedf62f..9c04f46 100644
+--- a/src/app/(admin)/admin/inventory/page.tsx
++++ b/src/app/(admin)/admin/inventory/page.tsx
+@@ -1,6 +1,7 @@
+ 'use client'
+ 
+ import * as React from 'react'
++import { useUrlFilters } from '@/hooks/useUrlFilters'
+ import {
+   Box, Typography, Button, Dialog, DialogTitle, DialogContent,
+   DialogActions, TextField, MenuItem, Stack, Alert,
+@@ -29,6 +30,10 @@ import { EQUIPMENT_STATUS } from '@/lib/status'
+ import { useCanEdit, EditGuard, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
+ import { groupBy } from '@/lib/utils'
+ 
++// FND-48: URL-persisted filter keys for the inventory list (stable object so the
++// useUrlFilters setter callback stays referentially stable).
++const INVENTORY_FILTER_DEFAULTS = { categoryId: '', itemType: '', hubId: '', operatorId: '', projectId: '' }
++
+ // ── Types ─────────────────────────────────────────────────────────
+ 
+ interface CategoryOption { id: string; name: string }
+@@ -1040,7 +1045,17 @@ function DetailDrawer({
+ 
+ // ── Main Page ─────────────────────────────────────────────────────
+ 
++// FND-48: useUrlFilters -> useSearchParams requires a Suspense boundary at the
++// route (matches src/app/setup-account/page.tsx); without it `next build` fails.
+ export default function AdminInventoryPage() {
++  return (
++    <React.Suspense>
++      <AdminInventoryContent />
++    </React.Suspense>
++  )
++}
++
++function AdminInventoryContent() {
+   const canEdit = useCanEdit()
+   const showToast = useToast()
+   const [items, setItems] = React.useState<InventoryItemRow[]>([])
+@@ -1048,11 +1063,13 @@ export default function AdminInventoryPage() {
+   const [page, setPage] = React.useState(0)
+   const [pageSize] = React.useState(25)
+   const [search, setSearch] = React.useState('')
+-  const [categoryFilter, setCategoryFilter] = React.useState('')
+-  const [itemTypeFilter, setItemTypeFilter] = React.useState('')
+-  const [hubFilter, setHubFilter] = React.useState('')
+-  const [operatorFilter, setOperatorFilter] = React.useState('')
+-  const [projectFilter, setProjectFilter] = React.useState('')
++  // FND-48: these five filters live in the URL (deep-linkable, reload-safe).
++  const { filters, setFilters } = useUrlFilters(INVENTORY_FILTER_DEFAULTS)
++  const categoryFilter = filters.categoryId
++  const itemTypeFilter = filters.itemType
++  const hubFilter = filters.hubId
++  const operatorFilter = filters.operatorId
++  const projectFilter = filters.projectId
+   const [loading, setLoading] = React.useState(true)
+   const [categories, setCategories] = React.useState<CategoryOption[]>([])
+   const [hubs, setHubs] = React.useState<HubOption[]>([])
+@@ -1129,7 +1146,7 @@ export default function AdminInventoryPage() {
+             <Chip
+               key={type || 'all'}
+               label={type === '' ? 'All' : type === 'CONSUMABLE' ? 'Consumables' : 'Serialized'}
+-              onClick={() => { setItemTypeFilter(type); setPage(0) }}
++              onClick={() => { setFilters({ itemType: type }); setPage(0) }}
+               color={itemTypeFilter === type ? 'primary' : 'default'}
+               variant={itemTypeFilter === type ? 'filled' : 'outlined'}
+               size="small"
+@@ -1143,7 +1160,7 @@ export default function AdminInventoryPage() {
+             size="small"
+             label="Category"
+             value={categoryFilter}
+-            onChange={(e) => { setCategoryFilter(e.target.value); setPage(0) }}
++            onChange={(e) => { setFilters({ categoryId: e.target.value }); setPage(0) }}
+             sx={{ width: 200 }}
+           >
+             <MenuItem value="">All categories</MenuItem>
+@@ -1156,7 +1173,7 @@ export default function AdminInventoryPage() {
+             size="small"
+             label="Hub"
+             value={hubFilter}
+-            onChange={(e) => { setHubFilter(e.target.value); setPage(0) }}
++            onChange={(e) => { setFilters({ hubId: e.target.value }); setPage(0) }}
+             sx={{ width: 180 }}
+           >
+             <MenuItem value="">All hubs</MenuItem>
+@@ -1169,7 +1186,7 @@ export default function AdminInventoryPage() {
+             size="small"
+             label="Operator"
+             value={operatorFilter}
+-            onChange={(e) => { setOperatorFilter(e.target.value); setPage(0) }}
++            onChange={(e) => { setFilters({ operatorId: e.target.value }); setPage(0) }}
+             sx={{ width: 180 }}
+           >
+             <MenuItem value="">All operators</MenuItem>
+@@ -1182,7 +1199,7 @@ export default function AdminInventoryPage() {
+             size="small"
+             label="Project"
+             value={projectFilter}
+-            onChange={(e) => { setProjectFilter(e.target.value); setPage(0) }}
++            onChange={(e) => { setFilters({ projectId: e.target.value }); setPage(0) }}
+             sx={{ width: 180 }}
+           >
+             <MenuItem value="">All projects</MenuItem>
+@@ -1191,8 +1208,9 @@ export default function AdminInventoryPage() {
+         )}
+         {(categoryFilter || itemTypeFilter || hubFilter || operatorFilter || projectFilter || search) && (
+           <Button size="small" variant="text" onClick={() => {
+-            setSearch(''); setCategoryFilter(''); setItemTypeFilter('');
+-            setHubFilter(''); setOperatorFilter(''); setProjectFilter(''); setPage(0)
++            setSearch('')
++            setFilters({ categoryId: '', itemType: '', hubId: '', operatorId: '', projectId: '' })
++            setPage(0)
+           }}>Clear filters</Button>
+         )}
+       </Stack>
+diff --git a/src/hooks/useUrlFilters.ts b/src/hooks/useUrlFilters.ts
+new file mode 100644
+index 0000000..0f2e9ce
+--- /dev/null
++++ b/src/hooks/useUrlFilters.ts
+@@ -0,0 +1,53 @@
++'use client'
++
++import * as React from 'react'
++import { usePathname, useRouter, useSearchParams } from 'next/navigation'
++
++/**
++ * FND-48: persist a set of string filters in the URL query string so admin list
++ * views are deep-linkable (e.g. a notification or the week board can open a page
++ * pre-filtered) and survive a reload. The URL is the source of truth.
++ *
++ * `setFilters` patches one OR MORE keys in a SINGLE history-replace, so clearing
++ * several filters at once can't race (a per-key setter would read a stale snapshot
++ * and drop all but the last change). Empty values (and values equal to the default)
++ * are omitted so the URL stays clean. `scroll: false` keeps the list position.
++ *
++ * Pass a STABLE `defaults` object (declare it at module scope) so the setter
++ * callback is stable across renders.
++ */
++export function useUrlFilters<T extends Record<string, string>>(
++  defaults: T,
++): { filters: T; setFilters: (patch: Partial<T>) => void } {
++  const router = useRouter()
++  const pathname = usePathname()
++  const searchParams = useSearchParams()
++
++  // Read straight from the URL — the URL is the source of truth. Memoized on the
++  // search string so the returned object is referentially stable across renders that
++  // don't change the query (safe to use in a caller's effect/memo dep array).
++  const filters = React.useMemo(() => {
++    const out = {} as T
++    for (const key of Object.keys(defaults) as (keyof T & string)[]) {
++      const v = searchParams.get(key)
++      out[key] = (v ?? defaults[key]) as T[typeof key]
++    }
++    return out
++  }, [searchParams, defaults])
++
++  const setFilters = React.useCallback(
++    (patch: Partial<T>) => {
++      const params = new URLSearchParams(searchParams.toString())
++      for (const [key, value] of Object.entries(patch)) {
++        if (value === undefined) continue
++        if (value === '' || value === defaults[key]) params.delete(key)
++        else params.set(key, value)
++      }
++      const qs = params.toString()
++      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
++    },
++    [searchParams, pathname, router, defaults],
++  )
++
++  return { filters, setFilters }
++}
+-- 
+2.34.1
+

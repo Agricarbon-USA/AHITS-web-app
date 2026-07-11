@@ -1,3 +1,8 @@
+> STATUS: canonical (ID register — FND-#, W0-#, P3-*, CARRY-#)   ·   UPDATED: 2026-07-03
+> SUPERSEDES: docs/archive/AHITS_PHASE3_DETAILED_WORKPLAN.md   ·   SUPERSEDED-BY: —
+> READ-WITH: AHITS_PHASE3PLUS_NORTH_STAR_v3.md, AHITS_MASTER_ROADMAP.md
+> NOTE: Re-baselined in *ordering* by AHITS_PHASE3_WORKPLAN_2026-07-10.md; strategy = AHITS_PHASE3PLUS_NORTH_STAR_v3.md.
+
 # AHITS — Phase 3 Workplan v2 · State-of-the-App Review & Build Plan
 
 _Prepared 2026-07-02 (finalized 2026-07-03). **This document supersedes `AHITS_PHASE3_DETAILED_WORKPLAN.md` (2026-06-30).** The prior plan remains valid history and is quoted where still accurate; every place this review disagrees with it is flagged with **[Δ v1]**. This is the canonical Phase-3 entry document._

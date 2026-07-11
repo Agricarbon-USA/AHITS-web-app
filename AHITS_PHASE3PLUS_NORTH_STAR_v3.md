@@ -1,3 +1,7 @@
+> STATUS: canonical   ·   UPDATED: 2026-07-03
+> SUPERSEDES: AHITS_PHASE3PLUS_NORTH_STAR_v2.md → docs/archive/   ·   SUPERSEDED-BY: —
+> READ-WITH: AHITS_PHASE3_WORKPLAN_v2.md, AHITS_MASTER_ROADMAP.md
+
 # AHITS — Phase 3+ North Star v3 · Two Loops and a Friction Budget
 
 _Prepared 2026-07-03. **Supersedes `AHITS_PHASE3PLUS_NORTH_STAR_v2.md` (same date).** v2 corrected v1's thesis — AHITS owns the field **operation** (instruments, people, operational evidence), never the sample — and that correction stands untouched here. What v2 got wrong is subtler and the product owner named it: v2 is a **catalogue of buildable bets**, and a catalogue answers "what could we build on these primitives?" when the question that decides whether any of it matters is "**why would an operator open this app at 6:40 a.m. instead of sending a text?**" v2 is ledger-heavy and UX-light: it designs three ledgers in loving detail and designs the human loop that feeds them not at all. v3 interrogates the scoping itself. It is shorter than v2 in active surface — **four things matter; everything else is parked by name** — and that is the point._
@@ -99,6 +103,7 @@ After a season of P3-TIME actuals, AHITS holds what nothing else in the company 
 Photos are already captured everywhere (`Photo`: five contexts, GPS, thumbnails — verified) and viewable only record-by-record. A filterable timeline per vehicle/unit/deployment (condition-over-time, dispute evidence, "what does a correctly-loaded trailer look like" for onboarding) is 3–5 days of read-side UI. Worth doing; never worth a quarter.
 
 **Named and judged less important — found, weighed, declined.** (a) *Structured operator↔office status comms:* the Today view plus task-typed clock entries plus the bell **is** the structured status channel; building messaging invites the comparison to texting on texting's home turf — skip. (b) *Onboarding/offboarding:* onboarding is `P3-ONB-1` (planned) and NS-14 helps train; offboarding is a checklist view over existing primitives (suspend + force-logout exist on `User`, gear custody via `CheckLog`, HUB_RETURN links) — a few days *when churn actually bites*, not before. (c) *A morning route/navigation feature:* the maps app on the operator's phone is better at it; carry the address, link out, stop. (d) *Crew-to-crew visibility ("where's everyone else").* Cute, surveillance-adjacent, serves neither loop. No.
+> ⚠️ SUPERSEDED BY DECISIONS.md D2 — last-known crew visibility (attestation GPS only, no live tracking) is now IN scope for the Map capstone.
 
 ---
 

@@ -1,0 +1,957 @@
+From 38fcecee428857a2a30937594b845c74a83cdfea Mon Sep 17 00:00:00 2001
+From: Fable <fable@local>
+Date: Wed, 8 Jul 2026 11:13:24 -0700
+Subject: [PATCH] W0-10 PR-1: migrate all operator readers onto
+ deployment_assignments
+
+Retire-in-place prep: every READER of the legacy operator columns
+(Rig.operatorId, rig_operators/secondaryOperators, Vehicle.assignedOperatorId)
+now resolves through the deployment_assignments table, while the columns and
+their writers stay in place (dropped in PR-4). Non-revoking by construction:
+auth grants on (open assignment) OR (legacy primary) OR (legacy secondary);
+display/scan paths keep a legacy fallback so nothing blanks or fails closed.
+
+New helpers in lib/deployment-assignments.ts: hasOpenAssignment,
+getActivePrimaryForRig, getVehicleOperators (deterministic ORDER BY), plus
+lib/deployment-auth.ts (isAuthorizedForRig / getAuthorizedActiveRig / getAuthorizedRig).
+
+Four-agent review fixes: transfers list visibility unioned onto assignments;
+cron + dashboard missed-check scan re-typed through Prisma with a legacy
+fallback so a rig without an open PRIMARY is never silently dropped from
+alerting; inventory detail operator fallback; vehicle-operator lookup deduped.
+
+Deferred to later PRs (tracked in the migration plan): writer-adjacent
+inverse-lookups (transfers/handoffs accept, handoff guard) + the DROP -> PR-4;
+one-open-PRIMARY-per-rig partial unique index -> PR-2.
+---
+ src/app/api/cron/dispatch/route.ts            | 21 +++++++---
+ src/app/api/dashboard/feeds/route.ts          | 18 ++++++--
+ src/app/api/deployments/[id]/end/route.ts     |  8 ++--
+ src/app/api/deployments/[id]/handoff/route.ts |  9 ++--
+ .../[id]/items/[kitItemId]/route.ts           |  8 ++--
+ src/app/api/deployments/[id]/items/route.ts   | 39 ++++++------------
+ .../api/deployments/[id]/operators/route.ts   |  5 ++-
+ src/app/api/deployments/[id]/route.ts         | 15 +++----
+ .../api/deployments/[id]/transfer/route.ts    | 13 +++---
+ .../api/deployments/[id]/vehicles/route.ts    | 12 +-----
+ src/app/api/deployments/route.ts              | 13 +++++-
+ src/app/api/inventory/[id]/route.ts           | 13 +++++-
+ src/app/api/inventory/route.ts                | 24 +++++++++--
+ src/app/api/projects/[id]/route.ts            |  7 +++-
+ src/app/api/transfers/[id]/accept/route.ts    |  6 ++-
+ src/app/api/transfers/route.ts                | 18 +++++++-
+ src/app/api/vehicles/[id]/route.ts            | 15 ++++---
+ .../api/vehicles/by-qr/[qrCodeId]/route.ts    |  6 ++-
+ src/app/api/vehicles/route.ts                 | 18 ++++----
+ src/lib/deployment-assignments.ts             | 41 +++++++++++++++++++
+ src/lib/deployment-auth.ts                    | 39 ++++++++++++++++++
+ src/lib/deployment-handoffs.ts                |  6 ++-
+ 22 files changed, 249 insertions(+), 105 deletions(-)
+ create mode 100644 src/lib/deployment-auth.ts
+
+diff --git a/src/app/api/cron/dispatch/route.ts b/src/app/api/cron/dispatch/route.ts
+index f6dbd38..baa9962 100644
+--- a/src/app/api/cron/dispatch/route.ts
++++ b/src/app/api/cron/dispatch/route.ts
+@@ -1,6 +1,7 @@
+ import { NextRequest, NextResponse } from 'next/server'
+ import { timingSafeEqual } from 'crypto'
+ import { prisma } from '@/lib/prisma'
++import { getDeploymentRostersForDisplay } from '@/lib/deployment-assignments'
+ import { createAlert, resolveActiveAlert } from '@/lib/alerts'
+ import { dispatchPendingAlerts } from '@/lib/notifications'
+ import { allHubStockForScan } from '@/lib/inventory-stock'
+@@ -128,22 +129,30 @@ async function run() {
+     (localHour === cutoffHour && localMinute >= cutoffMinute)
+   let missedFlagged = 0
+ 
++  // W0-10 PR-1: enumerate every active rig (tsc-typed so the PR-4 column drop is a
++  // compile error here, not a silent miss) and resolve its PRIMARY from the assignment
++  // roster, falling back to the legacy Rig.operatorId. The fallback keeps the missed-
++  // daily-check scan from silently dropping a rig if an active rig ever lacks an open
++  // PRIMARY assignment (the alert path must not fail closed).
+   const activeRigs = await prisma.rig.findMany({
+     where: { endedAt: null },
+-    select: { operatorId: true, operator: { select: { name: true } } },
+-    distinct: ['operatorId'],
++    select: { id: true, operatorId: true, operator: { select: { name: true } } },
+   })
++  const cronRosters = await getDeploymentRostersForDisplay(activeRigs.map((r) => r.id))
+ 
+   for (const rig of activeRigs) {
++    const roster = cronRosters.get(rig.id)
++    const operatorId = roster?.operatorId ?? rig.operatorId
++    const operatorName = roster?.operator?.name ?? rig.operator?.name ?? 'Operator'
+     const checkedToday = await prisma.dailyCheck.findFirst({
+-      where: { operatorId: rig.operatorId, date: new Date(today) },
++      where: { operatorId, date: new Date(today) },
+       select: { id: true },
+     })
+     if (checkedToday) {
+-      await resolveActiveAlert('DAILY_CHECK_MISSED', 'operators', rig.operatorId)
++      await resolveActiveAlert('DAILY_CHECK_MISSED', 'operators', operatorId)
+     } else if (pastCutoff) {
+-      await createAlert('DAILY_CHECK_MISSED', 'operators', rig.operatorId, {
+-        operatorName: rig.operator.name,
++      await createAlert('DAILY_CHECK_MISSED', 'operators', operatorId, {
++        operatorName,
+         date: today,
+         cutoff: dailyCheckCutoff,
+       })
+diff --git a/src/app/api/dashboard/feeds/route.ts b/src/app/api/dashboard/feeds/route.ts
+index c5a2548..fc11926 100644
+--- a/src/app/api/dashboard/feeds/route.ts
++++ b/src/app/api/dashboard/feeds/route.ts
+@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
+ import { prisma } from '@/lib/prisma'
+ import { businessDate } from '@/lib/business-date'
+ import { requireAuth } from '@/lib/auth/session'
++import { getDeploymentRostersForDisplay } from '@/lib/deployment-assignments'
+ 
+ // Operational feeds for the dashboard (alert-response KPI): the things to act on
+ // today, not just the headline counts. Read-only. Readable by any authenticated
+@@ -52,7 +53,7 @@ export async function GET() {
+       where: { endedAt: null, startedAt: { lt: longRunningCutoff } },
+       orderBy: { startedAt: 'asc' },
+       take: 15,
+-      select: { id: true, label: true, startedAt: true, operator: { select: { name: true } } },
++      select: { id: true, label: true, startedAt: true },
+     }),
+     prisma.checkLog.findMany({
+       orderBy: { submittedAt: 'desc' },
+@@ -83,9 +84,18 @@ export async function GET() {
+   ])
+ 
+   const checkedToday = new Set(checksToday.map((c) => c.operatorId))
++  // W0-10 PR-1: rig operator (id + name) from the assignment roster, not Rig.operatorId.
++  const rigRosters = await getDeploymentRostersForDisplay(activeRigs.map((r) => r.id))
+   const missedChecks = activeRigs
+-    .filter((r) => !checkedToday.has(r.operatorId))
+-    .map((r) => ({ rigId: r.id, operator: r.operator?.name ?? 'Unassigned', label: r.label, startedAt: r.startedAt }))
++    // W0-10 PR-1: prefer the assignment roster's PRIMARY, fall back to the legacy
++    // Rig.operatorId so an active rig without an open PRIMARY is never silently
++    // dropped from the admin missed-check list.
++    .map((r) => {
++      const roster = rigRosters.get(r.id)
++      return { r, operatorId: roster?.operatorId ?? r.operatorId, operatorName: roster?.operator?.name ?? r.operator?.name ?? 'Unassigned' }
++    })
++    .filter(({ operatorId }) => operatorId && !checkedToday.has(operatorId))
++    .map(({ r, operatorName }) => ({ rigId: r.id, operator: operatorName, label: r.label, startedAt: r.startedAt }))
+ 
+   const maintenanceDueSoon = dueTasks.map((t) => ({
+     id: t.id,
+@@ -98,7 +108,7 @@ export async function GET() {
+ 
+   const longRunning = longRigs.map((r) => ({
+     rigId: r.id,
+-    operator: r.operator?.name ?? 'Unassigned',
++    operator: rigRosters.get(r.id)?.operator?.name ?? 'Unassigned',
+     label: r.label,
+     startedAt: r.startedAt,
+     daysOut: Math.floor((now.getTime() - r.startedAt.getTime()) / MS_PER_DAY),
+diff --git a/src/app/api/deployments/[id]/end/route.ts b/src/app/api/deployments/[id]/end/route.ts
+index 067d8b5..8267758 100644
+--- a/src/app/api/deployments/[id]/end/route.ts
++++ b/src/app/api/deployments/[id]/end/route.ts
+@@ -1,6 +1,7 @@
+ import { NextRequest, NextResponse } from 'next/server'
+ import { z } from 'zod'
+ import { prisma } from '@/lib/prisma'
++import { isAuthorizedForRig } from '@/lib/deployment-auth'
+ import { requireAuth } from '@/lib/auth/session'
+ import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
+ import { createAlert } from '@/lib/alerts'
+@@ -71,11 +72,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
+     },
+   })
+   if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+-  if (session.role !== 'ADMIN' && rig.operatorId !== session.userId) {
+-    const isSecondary = await prisma.rigOperator.findUnique({
+-      where: { rigId_operatorId: { rigId: id, operatorId: session.userId } },
+-    })
+-    if (!isSecondary) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
++  if (!(await isAuthorizedForRig(rig, session))) {
++    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+   }
+   if (rig.endedAt) return NextResponse.json({ error: 'Deployment already ended' }, { status: 409 })
+ 
+diff --git a/src/app/api/deployments/[id]/handoff/route.ts b/src/app/api/deployments/[id]/handoff/route.ts
+index 34b84be..9e9eccf 100644
+--- a/src/app/api/deployments/[id]/handoff/route.ts
++++ b/src/app/api/deployments/[id]/handoff/route.ts
+@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
+ import { requireAuth } from '@/lib/auth/session'
+ import { withIdempotency } from '@/lib/idempotency'
+ import { writeAudit } from '@/lib/audit'
++import { getActivePrimaryForRig } from '@/lib/deployment-assignments'
+ import { reassignPrimary, createHandoff } from '@/lib/deployment-handoffs'
+ 
+ const schema = z.object({
+@@ -26,7 +27,9 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
+   if (rig.endedAt) return NextResponse.json({ error: 'Deployment has ended' }, { status: 409 })
+ 
+   const isAdmin = session.role === 'ADMIN'
+-  const isPrimary = rig.operatorId === session.userId
++  // W0-10 PR-1: PRIMARY-only — roster-PRIMARY (+ legacy fallback); primaryId reused below.
++  const primaryId = (await getActivePrimaryForRig(id)) ?? rig.operatorId
++  const isPrimary = primaryId === session.userId
+   if (!isAdmin && !isPrimary) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+ 
+   const body = await req.json()
+@@ -34,7 +37,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
+   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
+   const { toOperatorId, note, force: forceRaw } = parsed.data
+ 
+-  if (toOperatorId === rig.operatorId) {
++  if (toOperatorId === primaryId) {
+     return NextResponse.json({ error: 'That operator is already the primary operator' }, { status: 409 })
+   }
+ 
+@@ -44,7 +47,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
+   }
+ 
+   const force = isAdmin && forceRaw === true
+-  const fromOperatorId = rig.operatorId
++  const fromOperatorId = primaryId
+ 
+   let handoffId: string
+   try {
+diff --git a/src/app/api/deployments/[id]/items/[kitItemId]/route.ts b/src/app/api/deployments/[id]/items/[kitItemId]/route.ts
+index 0c8407a..418fb02 100644
+--- a/src/app/api/deployments/[id]/items/[kitItemId]/route.ts
++++ b/src/app/api/deployments/[id]/items/[kitItemId]/route.ts
+@@ -1,6 +1,7 @@
+ import { NextRequest, NextResponse } from 'next/server'
+ import { z } from 'zod'
+ import { prisma } from '@/lib/prisma'
++import { isAuthorizedForRig } from '@/lib/deployment-auth'
+ import { requireAuth } from '@/lib/auth/session'
+ import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
+ import { withIdempotency } from '@/lib/idempotency'
+@@ -39,11 +40,8 @@ async function _DELETE(
+   const rig = await prisma.rig.findUnique({ where: { id: rigId } })
+   if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+   if (rig.endedAt) return NextResponse.json({ error: 'Deployment has ended' }, { status: 409 })
+-  if (session.role !== 'ADMIN' && rig.operatorId !== session.userId) {
+-    const secondary = await prisma.rigOperator.findUnique({
+-      where: { rigId_operatorId: { rigId, operatorId: session.userId } },
+-    })
+-    if (!secondary) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
++  if (!(await isAuthorizedForRig(rig, session))) {
++    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+   }
+ 
+   const kitItem = await prisma.kitItem.findUnique({
+diff --git a/src/app/api/deployments/[id]/items/route.ts b/src/app/api/deployments/[id]/items/route.ts
+index 7f4a55e..737d6f2 100644
+--- a/src/app/api/deployments/[id]/items/route.ts
++++ b/src/app/api/deployments/[id]/items/route.ts
+@@ -1,6 +1,8 @@
+ import { NextRequest, NextResponse } from 'next/server'
+ import { z } from 'zod'
+ import { prisma } from '@/lib/prisma'
++import { getAuthorizedActiveRig } from '@/lib/deployment-auth'
++import { getActivePrimaryForRig } from '@/lib/deployment-assignments'
+ import { requireAuth } from '@/lib/auth/session'
+ import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
+ import { createAlert } from '@/lib/alerts'
+@@ -94,29 +96,6 @@ const removeSchema = z.object({
+   itemDispositions: z.array(dispositionSchema).min(1),
+ })
+ 
+-async function getAuthorizedActiveRig(id: string, session: { userId: string; role: string }) {
+-  const rig = await prisma.rig.findUnique({ where: { id } })
+-  if (!rig || rig.endedAt) return null
+-  if (session.role === 'ADMIN') return rig
+-  if (rig.operatorId === session.userId) return rig
+-  const secondary = await prisma.rigOperator.findUnique({
+-    where: { rigId_operatorId: { rigId: id, operatorId: session.userId } },
+-  })
+-  if (secondary) return rig
+-  return null
+-}
+-
+-async function getAuthorizedRig(id: string, session: { userId: string; role: string }) {
+-  const rig = await prisma.rig.findUnique({ where: { id } })
+-  if (!rig) return null
+-  if (session.role === 'ADMIN') return rig
+-  if (rig.operatorId === session.userId) return rig
+-  const secondary = await prisma.rigOperator.findUnique({
+-    where: { rigId_operatorId: { rigId: id, operatorId: session.userId } },
+-  })
+-  if (secondary) return rig
+-  return null
+-}
+ 
+ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+   return withIdempotency(req, 'deployments.items.POST', () => _POST(req, ctx))
+@@ -128,6 +107,10 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
+   const { id } = await params
+   const rig = await getAuthorizedActiveRig(id, session)
+   if (!rig) return NextResponse.json({ error: 'Not found or forbidden' }, { status: 404 })
++  // W0-10 PR-1: attribution operator = the deployment's PRIMARY (roster) with legacy
++  // fallback — behavior-preserving (legacy used rig.operatorId = the primary). Whether
++  // CheckLog should instead record the ACTING user is a separate product question.
++  const primaryId = (await getActivePrimaryForRig(id)) ?? rig.operatorId
+ 
+   const body = await req.json()
+   const parsed = addSchema.safeParse(body)
+@@ -209,7 +192,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
+             // first — converts reserve→draw — then draw any remainder from free stock.
+             // Normal reservation checkout: claimed === quantity, no free draw. Direct
+             // (no-reservation) add: claimed === 0, it all comes from free stock.
+-            const claimed = await claimHeldStock(rig.operatorId, entry.inventoryItemId, sourceHubId, entry.quantity, tx)
++            const claimed = await claimHeldStock(primaryId, entry.inventoryItemId, sourceHubId, entry.quantity, tx)
+             const remainder = entry.quantity - claimed
+             if (remainder > 0) {
+               const drawn = await drawFromHub(entry.inventoryItemId, sourceHubId, remainder, tx)
+@@ -310,6 +293,10 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
+   const { id } = await params
+   const rig = await getAuthorizedActiveRig(id, session)
+   if (!rig) return NextResponse.json({ error: 'Not found or forbidden' }, { status: 404 })
++  // W0-10 PR-1: attribution operator = the deployment's PRIMARY (roster) with legacy
++  // fallback — behavior-preserving (legacy used rig.operatorId = the primary). Whether
++  // CheckLog should instead record the ACTING user is a separate product question.
++  const primaryId = (await getActivePrimaryForRig(id)) ?? rig.operatorId
+ 
+   const body = await req.json()
+   const parsed = removeSchema.safeParse(body)
+@@ -397,7 +384,7 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
+             action: 'CHECK_IN',
+             itemId: inventoryItemId,
+             inventoryUnitId: kitItem.inventoryUnitId ?? undefined,
+-            operatorId: rig.operatorId,
++            operatorId: primaryId,
+             rigId: id,
+             notes: note,
+             condition: returnConditionToLogCondition(disp.returnCondition),
+@@ -438,7 +425,7 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
+             action: 'CHECK_IN',
+             itemId: inventoryItemId,
+             inventoryUnitId: kitItem.inventoryUnitId ?? undefined,
+-            operatorId: rig.operatorId,
++            operatorId: primaryId,
+             rigId: id,
+             notes: note,
+             condition: logCondition,
+diff --git a/src/app/api/deployments/[id]/operators/route.ts b/src/app/api/deployments/[id]/operators/route.ts
+index 5b98f11..63537d8 100644
+--- a/src/app/api/deployments/[id]/operators/route.ts
++++ b/src/app/api/deployments/[id]/operators/route.ts
+@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
+ import { z } from 'zod'
+ import { prisma } from '@/lib/prisma'
+ import { requireAdmin } from '@/lib/auth/session'
+-import { getDeploymentRoster, ensureOpenAssignment, endAssignmentByRole } from '@/lib/deployment-assignments'
++import { getDeploymentRoster, getActivePrimaryForRig, ensureOpenAssignment, endAssignmentByRole } from '@/lib/deployment-assignments'
+ 
+ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+   const session = await requireAdmin()
+@@ -28,7 +28,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
+ 
+   const rig = await prisma.rig.findUnique({ where: { id }, select: { operatorId: true } })
+   if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+-  if (rig.operatorId === operatorId) {
++  const primaryId = (await getActivePrimaryForRig(id)) ?? rig.operatorId
++  if (primaryId === operatorId) {
+     return NextResponse.json({ error: 'Operator is already the primary operator' }, { status: 409 })
+   }
+ 
+diff --git a/src/app/api/deployments/[id]/route.ts b/src/app/api/deployments/[id]/route.ts
+index 44bd1db..04b1ee9 100644
+--- a/src/app/api/deployments/[id]/route.ts
++++ b/src/app/api/deployments/[id]/route.ts
+@@ -1,8 +1,9 @@
+ import { NextRequest, NextResponse } from 'next/server'
+ import { z } from 'zod'
+ import { prisma } from '@/lib/prisma'
++import { isAuthorizedForRig } from '@/lib/deployment-auth'
+ import { requireAuth, requireAdmin } from '@/lib/auth/session'
+-import { getDeploymentRosterForDisplay, addProjectLink, removeAllProjectLinks } from '@/lib/deployment-assignments'
++import { getDeploymentRosterForDisplay, getActivePrimaryForRig, addProjectLink, removeAllProjectLinks } from '@/lib/deployment-assignments'
+ 
+ const RIG_INCLUDE = {
+   operator: { select: { id: true, name: true } },
+@@ -78,11 +79,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
+   const rig = await prisma.rig.findUnique({ where: { id }, include: RIG_GET_INCLUDE })
+   if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+ 
+-  if (session.role !== 'ADMIN' && rig.operatorId !== session.userId) {
+-    const isSecondary = await prisma.rigOperator.findUnique({
+-      where: { rigId_operatorId: { rigId: id, operatorId: session.userId } },
+-    })
+-    if (!isSecondary) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
++  if (!(await isAuthorizedForRig(rig, session))) {
++    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+   }
+ 
+   // UR-032: the display roster returns the FINAL roster for an ended deployment
+@@ -115,7 +113,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
+ 
+   const rig = await prisma.rig.findUnique({ where: { id } })
+   if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+-  if (session.role !== 'ADMIN' && rig.operatorId !== session.userId) {
++  // W0-10 PR-1: PATCH is PRIMARY-only (no secondary) — preserve that with roster-PRIMARY
++  // + legacy fallback (do NOT use the any-role isAuthorizedForRig here).
++  const primaryId = (await getActivePrimaryForRig(id)) ?? rig.operatorId
++  if (session.role !== 'ADMIN' && primaryId !== session.userId) {
+     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+   }
+ 
+diff --git a/src/app/api/deployments/[id]/transfer/route.ts b/src/app/api/deployments/[id]/transfer/route.ts
+index eb092b9..a2c9206 100644
+--- a/src/app/api/deployments/[id]/transfer/route.ts
++++ b/src/app/api/deployments/[id]/transfer/route.ts
+@@ -1,6 +1,8 @@
+ import { NextRequest, NextResponse } from 'next/server'
+ import { z } from 'zod'
+ import { prisma } from '@/lib/prisma'
++import { isAuthorizedForRig } from '@/lib/deployment-auth'
++import { getActivePrimaryForRig } from '@/lib/deployment-assignments'
+ import { requireAuth } from '@/lib/auth/session'
+ import { withIdempotency } from '@/lib/idempotency'
+ 
+@@ -47,11 +49,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
+     },
+   })
+   if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+-  if (session.role !== 'ADMIN' && rig.operatorId !== session.userId) {
+-    const isSecondary = await prisma.rigOperator.findUnique({
+-      where: { rigId_operatorId: { rigId: id, operatorId: session.userId } },
+-    })
+-    if (!isSecondary) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
++  if (!(await isAuthorizedForRig(rig, session))) {
++    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+   }
+   if (rig.endedAt) return NextResponse.json({ error: 'Deployment has ended' }, { status: 409 })
+ 
+@@ -65,7 +64,9 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
+     return NextResponse.json({ error: 'Select at least one vehicle or item to transfer' }, { status: 400 })
+   }
+ 
+-  if (toOperatorId === rig.operatorId) {
++  // W0-10 PR-1: self-transfer guard vs the deployment's PRIMARY (roster + legacy fallback).
++  const primaryId = (await getActivePrimaryForRig(id)) ?? rig.operatorId
++  if (toOperatorId === primaryId) {
+     return NextResponse.json({ error: 'Cannot transfer to the same operator' }, { status: 400 })
+   }
+ 
+diff --git a/src/app/api/deployments/[id]/vehicles/route.ts b/src/app/api/deployments/[id]/vehicles/route.ts
+index fa51fce..c56e0e7 100644
+--- a/src/app/api/deployments/[id]/vehicles/route.ts
++++ b/src/app/api/deployments/[id]/vehicles/route.ts
+@@ -1,6 +1,7 @@
+ import { NextRequest, NextResponse } from 'next/server'
+ import { z } from 'zod'
+ import { prisma } from '@/lib/prisma'
++import { getAuthorizedActiveRig } from '@/lib/deployment-auth'
+ import { requireAuth } from '@/lib/auth/session'
+ import { withIdempotency } from '@/lib/idempotency'
+ 
+@@ -50,17 +51,6 @@ const removeSchema = z.object({
+   note: z.string().min(1, 'Note is required'),
+ })
+ 
+-async function getAuthorizedActiveRig(id: string, session: { userId: string; role: string }) {
+-  const rig = await prisma.rig.findUnique({ where: { id } })
+-  if (!rig || rig.endedAt) return null
+-  if (session.role === 'ADMIN') return rig
+-  if (rig.operatorId === session.userId) return rig
+-  const secondary = await prisma.rigOperator.findUnique({
+-    where: { rigId_operatorId: { rigId: id, operatorId: session.userId } },
+-  })
+-  if (secondary) return rig
+-  return null
+-}
+ 
+ export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+   const session = await requireAuth()
+diff --git a/src/app/api/deployments/route.ts b/src/app/api/deployments/route.ts
+index 0b4ca12..06a5419 100644
+--- a/src/app/api/deployments/route.ts
++++ b/src/app/api/deployments/route.ts
+@@ -111,13 +111,24 @@ export async function GET(req: NextRequest) {
+     projectRigIds = rows.map((r) => r.rigId)
+   }
+ 
++  // W0-10 PR-1: rigs where this operator has an OPEN assignment (any role). Added to
++  // the visibility OR below alongside the legacy primary/secondary clauses — non-revoking
++  // (the two legacy clauses are removed at PR-4).
++  let assignedRigIds: string[] = []
++  if (session.role === 'OPERATOR') {
++    const arows = await prisma.$queryRaw<{ rigId: string }[]>`
++      SELECT DISTINCT "rigId" FROM "deployment_assignments"
++      WHERE "operatorId" = ${session.userId} AND "endedAt" IS NULL`
++    assignedRigIds = arows.map((r) => r.rigId)
++  }
++
+   const rigs = await prisma.rig.findMany({
+     where: {
+       ...(active ? { endedAt: null } : { endedAt: { not: null } }),
+       ...(projectRigIds !== undefined && { id: { in: projectRigIds } }),
+       // Operators see deployments where they are primary OR secondary
+       ...(session.role === 'OPERATOR'
+-        ? { OR: [{ operatorId: session.userId }, { secondaryOperators: { some: { operatorId: session.userId } } }] }
++        ? { OR: [{ id: { in: assignedRigIds } }, { operatorId: session.userId }, { secondaryOperators: { some: { operatorId: session.userId } } }] }
+         : operatorId ? { operatorId } : {}),
+     },
+     include: RIG_LIST_INCLUDE,
+diff --git a/src/app/api/inventory/[id]/route.ts b/src/app/api/inventory/[id]/route.ts
+index 34da7dc..0eea88a 100644
+--- a/src/app/api/inventory/[id]/route.ts
++++ b/src/app/api/inventory/[id]/route.ts
+@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
+ import { z } from 'zod'
+ import { EquipmentCategory, EquipmentStatus } from '@prisma/client'
+ import { prisma } from '@/lib/prisma'
++import { getDeploymentRoster } from '@/lib/deployment-assignments'
+ import { requireAuth, requireAdmin } from '@/lib/auth/session'
+ import { writeOr404 } from '@/lib/api-errors'
+ import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions } from '@/lib/inventory'
+@@ -52,8 +53,9 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
+             select: {
+               rig: {
+                 select: {
++                  id: true,
+                   endedAt: true,
+-                  operator: { select: { id: true, name: true } },
++                  operatorId: true,
+                   project: { select: { id: true, name: true, location: true } },
+                 },
+               },
+@@ -78,6 +80,13 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
+ 
+   const activeKit = item.kitItems.find((ki) => ki.kit.rig !== null && ki.kit.rig.endedAt === null)
+   const activeRig = activeKit?.kit.rig ?? null
++  // W0-10 PR-1: operator from the assignment roster; fall back to the legacy
++  // Rig.operatorId (one-off user lookup) so a roster miss never blanks the name.
++  const activeRoster = activeRig ? await getDeploymentRoster(activeRig.id) : null
++  let currentOperator = activeRoster?.operator ?? null
++  if (!currentOperator && activeRig?.operatorId) {
++    currentOperator = await prisma.user.findUnique({ where: { id: activeRig.operatorId }, select: { id: true, name: true, email: true } })
++  }
+ 
+   const { kitItems, categoryRef, ...rest } = item
+   void kitItems
+@@ -91,7 +100,7 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
+     // Derived single-source-of-truth quantities (units for serialized, stored count for consumables)
+     derivedQuantity: derived.effectiveQuantity,
+     availableQuantity: derived.availableQuantity,
+-    currentOperator: activeRig?.operator ?? null,
++    currentOperator,
+     currentProject: activeRig?.project ?? null,
+   }
+   // Cost/spend data is admin-only (§10.2). Strip it for operators.
+diff --git a/src/app/api/inventory/route.ts b/src/app/api/inventory/route.ts
+index 4f7f298..e52e5a6 100644
+--- a/src/app/api/inventory/route.ts
++++ b/src/app/api/inventory/route.ts
+@@ -1,6 +1,7 @@
+ import { NextRequest, NextResponse } from 'next/server'
+ import { z } from 'zod'
+ import { prisma } from '@/lib/prisma'
++import { getDeploymentRostersForDisplay } from '@/lib/deployment-assignments'
+ import { requireAuth, requireAdmin } from '@/lib/auth/session'
+ import type { EquipmentCategory, EquipmentStatus, ItemType } from '@prisma/client'
+ import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions } from '@/lib/inventory'
+@@ -40,6 +41,17 @@ export async function GET(req: NextRequest) {
+     projectItemIds = rows.map((r) => r.inventoryItemId)
+   }
+ 
++  // W0-10 PR-1: "filter by active operator" via the assignment table (rig's open PRIMARY),
++  // not Rig.operatorId.
++  let operatorRigIds: string[] = []
++  if (operatorId) {
++    const arows = await prisma.$queryRaw<{ rigId: string }[]>`
++      SELECT a."rigId" FROM "deployment_assignments" a
++      JOIN "rigs" r ON r."id" = a."rigId" AND r."endedAt" IS NULL
++      WHERE a."operatorId" = ${operatorId} AND a."role" = 'PRIMARY' AND a."endedAt" IS NULL`
++    operatorRigIds = arows.map((r) => r.rigId)
++  }
++
+   const where = {
+     deletedAt: null,
+     ...(status && { status }),
+@@ -54,7 +66,7 @@ export async function GET(req: NextRequest) {
+       kitItems: {
+         some: {
+           removedAt: null,
+-          kit: { rig: { endedAt: null, operatorId } },
++          kit: { rigId: { in: operatorRigIds } },
+         },
+       },
+     }),
+@@ -88,8 +100,8 @@ export async function GET(req: NextRequest) {
+               select: {
+                 rig: {
+                   select: {
++                    id: true,
+                     endedAt: true,
+-                    operator: { select: { id: true, name: true } },
+                     project: { select: { id: true, name: true, location: true } },
+                   },
+                 },
+@@ -114,6 +126,12 @@ export async function GET(req: NextRequest) {
+     ? await getActiveProjectsForItems(allItemIds)
+     : new Map<string, { id: string; name: string }[]>()
+ 
++  // W0-10 PR-1: each item's active-rig operator from the assignment roster.
++  const activeRigIds = items
++    .map((i) => i.kitItems.find((ki) => ki.kit.rig !== null && ki.kit.rig.endedAt === null)?.kit.rig?.id)
++    .filter((x): x is string => !!x)
++  const invRosters = await getDeploymentRostersForDisplay(activeRigIds)
++
+   const data = items.map((item) => {
+     const unitCounts = computeUnitCounts(item.units)
+     const derived = deriveQuantities(item, unitCounts)
+@@ -159,7 +177,7 @@ export async function GET(req: NextRequest) {
+       // Per-hub stock rows for consumables — used by the operator picker to gate
+       // quantity caps on the selected source hub rather than the cross-hub total.
+       ...(item.itemType === 'CONSUMABLE' && { hubStock: stockRows }),
+-      currentOperator: activeRig?.operator ?? null,
++      currentOperator: activeRig ? (invRosters.get(activeRig.id)?.operator ?? null) : null,
+       currentProject: activeRig?.project ?? null,
+       activeProjects: activeProjectsMap.get(item.id) ?? [],
+     }
+diff --git a/src/app/api/projects/[id]/route.ts b/src/app/api/projects/[id]/route.ts
+index 8c7916c..dd8ed48 100644
+--- a/src/app/api/projects/[id]/route.ts
++++ b/src/app/api/projects/[id]/route.ts
+@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
+ import { z } from 'zod'
+ import { ProjectType, ProjectStatus } from '@prisma/client'
+ import { prisma } from '@/lib/prisma'
++import { getDeploymentRostersForDisplay } from '@/lib/deployment-assignments'
+ import { requireAuth, requireAdmin } from '@/lib/auth/session'
+ 
+ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+@@ -15,12 +16,14 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
+       lead: { select: { id: true, name: true } },
+       rigs: {
+         orderBy: { startedAt: 'desc' },
+-        include: { operator: { select: { id: true, name: true } } },
+       },
+     },
+   })
+   if (!project) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+-  return NextResponse.json({ data: project })
++  // W0-10 PR-1: attach each rig's operator from the assignment roster, not Rig.operatorId.
++  const projectRosters = await getDeploymentRostersForDisplay(project.rigs.map((r) => r.id))
++  const projectOut = { ...project, rigs: project.rigs.map((r) => ({ ...r, operator: projectRosters.get(r.id)?.operator ?? null })) }
++  return NextResponse.json({ data: projectOut })
+ }
+ 
+ // Whitelisted, mass-assignment-safe update. `.strict()` rejects unknown keys.
+diff --git a/src/app/api/transfers/[id]/accept/route.ts b/src/app/api/transfers/[id]/accept/route.ts
+index aef02f6..84adbe3 100644
+--- a/src/app/api/transfers/[id]/accept/route.ts
++++ b/src/app/api/transfers/[id]/accept/route.ts
+@@ -3,7 +3,7 @@ import { z } from 'zod'
+ import { prisma } from '@/lib/prisma'
+ import { requireAuth } from '@/lib/auth/session'
+ import { withIdempotency } from '@/lib/idempotency'
+-import { ensureOpenAssignment, endAllAssignmentsForRig, removeAllProjectLinks } from '@/lib/deployment-assignments'
++import { ensureOpenAssignment, endAllAssignmentsForRig, removeAllProjectLinks , getActivePrimaryForRig } from '@/lib/deployment-assignments'
+ 
+ const schema = z.object({
+   responseNote: z.string().optional(),
+@@ -54,6 +54,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
+   const now = new Date()
+   const toOperatorId = transfer.toOperatorId
+   const sourceName = transfer.fromRig.operator.name
++  // W0-10 PR-1: source-rig PRIMARY (roster) + legacy fallback for the CHECK_IN log.
++  const fromRigPrimary = (await getActivePrimaryForRig(transfer.fromRig.id)) ?? transfer.fromRig.operatorId
+ 
+   let updatedTransfer
+   try {
+@@ -195,7 +197,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
+           action: 'CHECK_IN',
+           itemId: ti.kitItem.inventoryItemId,
+           inventoryUnitId: ti.inventoryUnitId ?? ti.kitItem.inventoryUnitId ?? undefined,
+-          operatorId: transfer.fromRig.operatorId,
++          operatorId: fromRigPrimary,
+           rigId: transfer.fromRig.id,
+           notes: transfer.note,
+         },
+diff --git a/src/app/api/transfers/route.ts b/src/app/api/transfers/route.ts
+index 10c9895..d9f61df 100644
+--- a/src/app/api/transfers/route.ts
++++ b/src/app/api/transfers/route.ts
+@@ -26,6 +26,18 @@ export async function GET(req: NextRequest) {
+   const where: Record<string, unknown> = {}
+   if (status) where.status = status
+ 
++  // W0-10 PR-1: the rigs where this operator is the open PRIMARY, from the
++  // assignment table (successor to Rig.operatorId). Unioned with the legacy
++  // relation filter below so visibility is non-revoking until the PR-4 drop.
++  const myPrimaryRigs =
++    session.role === 'ADMIN'
++      ? []
++      : (
++          await prisma.$queryRaw<{ rigId: string }[]>`
++            SELECT "rigId" FROM "deployment_assignments"
++            WHERE "operatorId" = ${session.userId} AND "role" = 'PRIMARY' AND "endedAt" IS NULL`
++        ).map((r) => r.rigId)
++
+   // Direction filters relative to the current user so the operator's
+   // "incoming" (Accept/Decline) and "outgoing" (Waiting/Cancel) banners stay
+   // distinct. Previously this param was ignored, so the sender's pending banner
+@@ -33,11 +45,15 @@ export async function GET(req: NextRequest) {
+   if (direction === 'incoming') {
+     where.toOperatorId = session.userId
+   } else if (direction === 'outgoing') {
+-    where.fromRig = { operatorId: session.userId }
++    where.OR = [
++      { fromRigId: { in: myPrimaryRigs } },
++      { fromRig: { operatorId: session.userId } },
++    ]
+   } else if (session.role !== 'ADMIN') {
+     // No direction given: non-admins still only see transfers involving them.
+     where.OR = [
+       { toOperatorId: session.userId },
++      { fromRigId: { in: myPrimaryRigs } },
+       { fromRig: { operatorId: session.userId } },
+     ]
+   }
+diff --git a/src/app/api/vehicles/[id]/route.ts b/src/app/api/vehicles/[id]/route.ts
+index f35b9a4..8d9a6fc 100644
+--- a/src/app/api/vehicles/[id]/route.ts
++++ b/src/app/api/vehicles/[id]/route.ts
+@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
+ import { z } from 'zod'
+ import { VehicleType, VehicleStatus } from '@prisma/client'
+ import { prisma } from '@/lib/prisma'
++import { getVehicleOperators } from '@/lib/deployment-assignments'
+ import { requireAuth, requireAdmin } from '@/lib/auth/session'
+ import { writeOr404 } from '@/lib/api-errors'
+ 
+@@ -58,19 +59,21 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
+   // Merge hub + assigned-operator names via raw SQL (hubId newer than client).
+   let hubId: string | null = null
+   let hubName: string | null = null
+-  let assignedOperatorName: string | null = null
++  // W0-10 PR-1: derive the assigned operator once (id + name) from the assignment table.
++  const vehicleOp = (await getVehicleOperators([id])).get(id) ?? null
++  const assignedOperatorId = vehicleOp?.operatorId ?? null
++  const assignedOperatorName = vehicleOp?.operatorName ?? null
+   try {
+-    const rows = await prisma.$queryRaw<{ hubId: string | null; hubName: string | null; assignedOperatorName: string | null }[]>`
+-      SELECT v."hubId", h."name" AS "hubName", u."name" AS "assignedOperatorName"
++    const rows = await prisma.$queryRaw<{ hubId: string | null; hubName: string | null }[]>`
++      SELECT v."hubId", h."name" AS "hubName"
+       FROM "vehicles" v
+       LEFT JOIN "hubs" h ON h."id" = v."hubId"
+-      LEFT JOIN "users" u ON u."id" = v."assignedOperatorId"
+       WHERE v."id" = ${id}
+     `
+-    if (rows[0]) { hubId = rows[0].hubId; hubName = rows[0].hubName; assignedOperatorName = rows[0].assignedOperatorName }
++    if (rows[0]) { hubId = rows[0].hubId; hubName = rows[0].hubName }
+   } catch { /* hubId column missing pre-migration */ }
+ 
+-  return NextResponse.json({ data: { ...vehicle, hubId, hubName, assignedOperatorName } })
++  return NextResponse.json({ data: { ...vehicle, assignedOperatorId, hubId, hubName, assignedOperatorName } })
+ }
+ 
+ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+diff --git a/src/app/api/vehicles/by-qr/[qrCodeId]/route.ts b/src/app/api/vehicles/by-qr/[qrCodeId]/route.ts
+index a65a2c9..863327a 100644
+--- a/src/app/api/vehicles/by-qr/[qrCodeId]/route.ts
++++ b/src/app/api/vehicles/by-qr/[qrCodeId]/route.ts
+@@ -1,5 +1,6 @@
+ import { NextRequest, NextResponse } from 'next/server'
+ import { prisma } from '@/lib/prisma'
++import { getVehicleOperators } from '@/lib/deployment-assignments'
+ import { requireAuth } from '@/lib/auth/session'
+ import { parseScannedCode } from '@/lib/qr'
+ 
+@@ -25,11 +26,12 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ qrC
+       qrCodeId: true,
+       location: true,
+       odometer: true,
+-      assignedOperatorId: true,
+     },
+   })
+ 
+   if (!vehicle) return NextResponse.json({ error: 'Vehicle not found' }, { status: 404 })
+ 
+-  return NextResponse.json({ vehicle })
++  // W0-10 PR-1: assigned operator from the assignment table, not Vehicle.assignedOperatorId.
++  const assignedOperatorId = (await getVehicleOperators([vehicle.id])).get(vehicle.id)?.operatorId ?? null
++  return NextResponse.json({ vehicle: { ...vehicle, assignedOperatorId } })
+ }
+diff --git a/src/app/api/vehicles/route.ts b/src/app/api/vehicles/route.ts
+index f653f6e..0f5366a 100644
+--- a/src/app/api/vehicles/route.ts
++++ b/src/app/api/vehicles/route.ts
+@@ -1,6 +1,7 @@
+ import { NextRequest, NextResponse } from 'next/server'
+ import { z } from 'zod'
+ import { prisma } from '@/lib/prisma'
++import { getVehicleOperators } from '@/lib/deployment-assignments'
+ import { requireAuth, requireAdmin } from '@/lib/auth/session'
+ import { getActiveProjectsForVehicles } from '@/lib/project-associations'
+ 
+@@ -25,24 +26,22 @@ export async function GET(req: NextRequest) {
+   // Merge hub + assigned-operator names via raw SQL — `hubId` is newer than the
+   // generated client, so we read it the same best-effort way as Hub.email.
+   // Tolerates a pre-migration DB (returns vehicles without hub fields).
+-  const meta = new Map<string, { hubId: string | null; hubName: string | null; assignedOperatorName: string | null }>()
++  const meta = new Map<string, { hubId: string | null; hubName: string | null }>()
+   try {
+     const rows = await prisma.$queryRaw<
+-      { id: string; hubId: string | null; hubName: string | null; assignedOperatorName: string | null }[]
++      { id: string; hubId: string | null; hubName: string | null }[]
+     >`
+-      SELECT v."id",
+-             v."hubId",
+-             h."name" AS "hubName",
+-             u."name" AS "assignedOperatorName"
++      SELECT v."id", v."hubId", h."name" AS "hubName"
+       FROM "vehicles" v
+       LEFT JOIN "hubs" h ON h."id" = v."hubId"
+-      LEFT JOIN "users" u ON u."id" = v."assignedOperatorId"
+       WHERE v."deletedAt" IS NULL
+     `
+-    for (const r of rows) meta.set(r.id, { hubId: r.hubId, hubName: r.hubName, assignedOperatorName: r.assignedOperatorName })
++    for (const r of rows) meta.set(r.id, { hubId: r.hubId, hubName: r.hubName })
+   } catch { /* hubId column missing pre-migration */ }
+ 
+   const vehicleIds = vehicles.map((v) => v.id)
++  // W0-10 PR-1: assigned operator (id + name) derived from the assignment table.
++  const vehicleOps = await getVehicleOperators(vehicleIds)
+   const projectsMap = vehicleIds.length > 0
+     ? await getActiveProjectsForVehicles(vehicleIds)
+     : new Map<string, { id: string; name: string }[]>()
+@@ -52,7 +51,8 @@ export async function GET(req: NextRequest) {
+       ...v,
+       hubId: meta.get(v.id)?.hubId ?? null,
+       hubName: meta.get(v.id)?.hubName ?? null,
+-      assignedOperatorName: meta.get(v.id)?.assignedOperatorName ?? null,
++      assignedOperatorId: vehicleOps.get(v.id)?.operatorId ?? null,
++      assignedOperatorName: vehicleOps.get(v.id)?.operatorName ?? null,
+       activeProjects: projectsMap.get(v.id) ?? [],
+     })),
+   })
+diff --git a/src/lib/deployment-assignments.ts b/src/lib/deployment-assignments.ts
+index c43be6c..c3016ca 100644
+--- a/src/lib/deployment-assignments.ts
++++ b/src/lib/deployment-assignments.ts
+@@ -237,6 +237,47 @@ export async function getActivePrimary(operatorId: string): Promise<DeploymentAs
+   return rows[0] ?? null
+ }
+ 
++/** W0-10 PR-1: true if the operator has an OPEN assignment (any role) on this rig.
++ *  The role-agnostic authorization primitive that replaces the legacy
++ *  (Rig.operatorId primary + rig_operators secondary) ownership check. */
++export async function hasOpenAssignment(rigId: string, operatorId: string, db: RawClient = prisma): Promise<boolean> {
++  const rows = await db.$queryRaw<{ ok: number }[]>`
++    SELECT 1 AS ok FROM "deployment_assignments"
++    WHERE "rigId" = ${rigId} AND "operatorId" = ${operatorId} AND "endedAt" IS NULL
++    LIMIT 1`
++  return rows.length > 0
++}
++
++/** W0-10 PR-1: the open PRIMARY operatorId for a rig (null if none), from the
++ *  assignment table — the successor to reading Rig.operatorId as "who runs this rig". */
++export async function getActivePrimaryForRig(rigId: string, db: RawClient = prisma): Promise<string | null> {
++  const rows = await db.$queryRaw<{ operatorId: string }[]>`
++    SELECT "operatorId" FROM "deployment_assignments"
++    WHERE "rigId" = ${rigId} AND "role" = 'PRIMARY' AND "endedAt" IS NULL
++    ORDER BY "startedAt" DESC LIMIT 1`
++  return rows[0]?.operatorId ?? null
++}
++
++/** W0-10 PR-1: derive each vehicle's currently-assigned operator — the open PRIMARY of
++ *  the active rig the vehicle is in — the successor to Vehicle.assignedOperatorId. The
++ *  one-open-RigVehicle-per-vehicle invariant means at most one active rig per vehicle. */
++export async function getVehicleOperators(
++  vehicleIds: string[], db: RawClient = prisma,
++): Promise<Map<string, { operatorId: string; operatorName: string | null }>> {
++  const m = new Map<string, { operatorId: string; operatorName: string | null }>()
++  if (vehicleIds.length === 0) return m
++  const rows = await db.$queryRaw<{ vehicleId: string; operatorId: string; operatorName: string | null }[]>`
++    SELECT rv."vehicleId", a."operatorId", u."name" AS "operatorName"
++    FROM "rig_vehicles" rv
++    JOIN "rigs" r ON r."id" = rv."rigId" AND r."endedAt" IS NULL
++    JOIN "deployment_assignments" a ON a."rigId" = r."id" AND a."role" = 'PRIMARY' AND a."endedAt" IS NULL
++    LEFT JOIN "users" u ON u."id" = a."operatorId"
++    WHERE rv."vehicleId" IN (${Prisma.join(vehicleIds)}) AND rv."removedAt" IS NULL
++    ORDER BY a."startedAt" DESC`
++  for (const r of rows) if (!m.has(r.vehicleId)) m.set(r.vehicleId, { operatorId: r.operatorId, operatorName: r.operatorName })
++  return m
++}
++
+ /** Open a new operator assignment on a deployment. */
+ export async function addAssignment(
+   input: { rigId: string; operatorId: string; role: AssignmentRole; addedById?: string | null; note?: string | null },
+diff --git a/src/lib/deployment-auth.ts b/src/lib/deployment-auth.ts
+new file mode 100644
+index 0000000..d48c816
+--- /dev/null
++++ b/src/lib/deployment-auth.ts
+@@ -0,0 +1,39 @@
++import { prisma } from '@/lib/prisma'
++import { hasOpenAssignment } from '@/lib/deployment-assignments'
++
++type Session = { userId: string; role: string }
++
++/**
++ * W0-10 PR-1: may this session act on this rig?
++ *   admin  OR  an OPEN deployment_assignment (any role)  OR  — the legacy OR-fallback,
++ *   deleted at PR-4 once the assignment table is the sole source of truth — the rig's
++ *   legacy Rig.operatorId (primary) / rig_operators (secondary).
++ * NON-REVOKING by construction: PR-1 only ADDS the assignment path; it can never remove
++ * access that the legacy check granted. At PR-4 the two legacy clauses are removed and
++ * `tsc` will flag `rig.operatorId` once the column is dropped — the compile-time backstop.
++ */
++export async function isAuthorizedForRig(rig: { id: string; operatorId: string }, session: Session): Promise<boolean> {
++  if (session.role === 'ADMIN') return true
++  if (await hasOpenAssignment(rig.id, session.userId)) return true
++  // ── legacy OR-fallback (remove at W0-10 PR-4) ──────────────────────────────
++  if (rig.operatorId === session.userId) return true
++  const secondary = await prisma.rigOperator.findUnique({
++    where: { rigId_operatorId: { rigId: rig.id, operatorId: session.userId } },
++  })
++  return !!secondary
++  // ───────────────────────────────────────────────────────────────────────────
++}
++
++/** Fetch + authorize an ACTIVE rig (not ended); null if missing/ended/forbidden. */
++export async function getAuthorizedActiveRig(id: string, session: Session) {
++  const rig = await prisma.rig.findUnique({ where: { id } })
++  if (!rig || rig.endedAt) return null
++  return (await isAuthorizedForRig(rig, session)) ? rig : null
++}
++
++/** Fetch + authorize a rig regardless of ended state; null if missing/forbidden. */
++export async function getAuthorizedRig(id: string, session: Session) {
++  const rig = await prisma.rig.findUnique({ where: { id } })
++  if (!rig) return null
++  return (await isAuthorizedForRig(rig, session)) ? rig : null
++}
+diff --git a/src/lib/deployment-handoffs.ts b/src/lib/deployment-handoffs.ts
+index 942088c..a20502b 100644
+--- a/src/lib/deployment-handoffs.ts
++++ b/src/lib/deployment-handoffs.ts
+@@ -1,6 +1,6 @@
+ import { randomUUID } from 'crypto'
+ import { prisma } from '@/lib/prisma'
+-import { endAssignmentByRole, ensureOpenAssignment } from '@/lib/deployment-assignments'
++import { endAssignmentByRole, ensureOpenAssignment , getActivePrimaryForRig } from '@/lib/deployment-assignments'
+ import type { PrismaClient } from '@prisma/client'
+ 
+ type Tx = Parameters<Parameters<PrismaClient['$transaction']>[0]>[0]
+@@ -32,7 +32,9 @@ export async function reassignPrimary(
+   actorId: string,
+   note: string,
+ ): Promise<void> {
+-  await endAssignmentByRole(rig.id, rig.operatorId, 'PRIMARY', tx)
++  // W0-10 PR-1: end the CURRENT open PRIMARY (roster) with legacy fallback.
++  const currentPrimary = (await getActivePrimaryForRig(rig.id, tx)) ?? rig.operatorId
++  await endAssignmentByRole(rig.id, currentPrimary, 'PRIMARY', tx)
+   await ensureOpenAssignment({ rigId: rig.id, operatorId: toOperatorId, role: 'PRIMARY', addedById: actorId, note }, tx)
+   await tx.rig.update({ where: { id: rig.id }, data: { operatorId: toOperatorId } })
+   const rvs = await tx.rigVehicle.findMany({ where: { rigId: rig.id, removedAt: null }, select: { vehicleId: true } })
+-- 
+2.34.1
+

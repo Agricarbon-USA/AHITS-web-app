@@ -44,8 +44,8 @@ All apply cleanly onto `development` with `git apply --3way` (or `git am` for th
 ## 3. Where things stand
 
 - **`development` / staging:** has everything above through **PR-4a** + the reconcile merge (`ef37a58`), deployed and **smoke-clean** (operators render from the assignment table; dashboard/deployments/vehicles good; zero console errors). The three other Wave-0 patches are **not yet landed** (your call next session).
-- **`production`:** still frozen at the **2026-06-26** promote (`origin/production` @ `039a219`) — ~3 months behind staging. The standing promote PR **#144** (`production ← development`) is now **conflict-free and mergeable** after the reconcile.
-- **Prod cutover: PAUSED (your decision).** Blocked on creating the `AHITS_PROD_MIGRATE_URL` secret (the first prod run of the branch-aware migrate path). No cost to the pause; nothing lost.
+- **`production` branch:** exists and is current (PR #144 merged 2026-07-11; `production` branch = `development` HEAD). The production **environment/DB does not** — the from-scratch standup is deferred (DECISIONS.md D1).
+- **Prod cutover: DEFERRED (your decision).** No environment to deploy to yet; the remaining pre-prod work is the from-scratch Cloud Run + DB standup, not just one secret. See `AHITS_PROD_CUTOVER_DEFERRED.md`.
 
 ---
 

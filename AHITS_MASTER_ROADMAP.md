@@ -89,7 +89,7 @@ Every workstream below is tagged against the four goals the app was founded on. 
 
 **Hard gates (workplan):**
 1. **A6 22-row × 5-target real-device pass** = the pilot line (`W0-1`). Never declared on emulators.
-2. **`W0-10` legacy-column retirement before invoicing attribution** — `TimeEntry`/`Invoice` must never read `Rig.operatorId`.
+2. **W0-10 readers (PR-4a, landed)** gate invoicing attribution; the **DROP** (4b′/4c) is elective and does NOT gate the money loop — `TimeEntry`/`Invoice` must read `deployment_assignments`, which is live on staging.
 3. **`FND-8` email reliability before the invoice email** (✅ delivery-log/retry landed; keep the gate as "verified in staging" not just "code exists").
 4. **`FND-7` + `FND-14` before any offline-first money write** (✅ both landed in code; the A6 pass is the proof).
 5. **`FND-6` (+ CSP ✅, rate-limits ✅, `FND-45` public-surface tests) before the public QR form.**
@@ -255,7 +255,7 @@ Step order:
 3. **Secrets discipline:** `AHITS_MAPBOX_TOKEN` server-side (or Docker build-arg) — a `NEXT_PUBLIC_` var would be silently undefined (`FND-49` trap); Secret Manager version ENABLED **before** the deploy that mounts it; Makefile `--set-secrets` mapping in the same change.
 4. **Admin map:** Mapbox GL JS card; one pin per active deployment at latest-check coords; recency colors (green <24h / amber 24–48h / red >48h — `businessDate`-aware, which is why `FND-7`✅ gates this); tooltip deep-links to the **renamed** `/operator/my-deployment`-backed admin drawer via `FND-48` URL params. CSP `connect-src`/`img-src` for Mapbox coordinated with the (now-landed) nonce CSP in `proxy.ts`.
 5. **Tests:** GPS round-trip, denied-permission submit, recency bucketing.
-- **Anti-goal guard:** no route history, no real-time tracking, no operator-facing map. GPS-on-attestation only.
+- **Anti-goal guard:** ~~no route history~~ → route history (last-known crew visibility) is IN scope per DECISIONS.md D2; no real-time tracking (positions from checks only, never live); operator-facing map is IN scope for the capstone per D2. GPS-on-attestation only.
 - **Rider (after MAP ships): NS-4 weather stamps** (3–5 days) — nightly server job stamps deployment-day weather from the day's GPS + `businessDate`; zero operator taps; the passive-capture model. Powers CONV-4 corroboration.
 - **Friction ledger:** operator taps added: 0.
 
