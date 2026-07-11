@@ -18,10 +18,12 @@ export async function GET() {
     const rows = await prisma.$queryRaw<ExtraRow[]>`SELECT "id", "email", "street1", "street2", "zip", "country" FROM "hubs"`
     extraById = new Map(rows.map((r) => [r.id, r]))
   } catch { /* columns missing pre-migration */ }
-  return NextResponse.json(hubs.map((h) => {
+  // FND-33: return a { data } envelope so success and error (401/500 → { error })
+  // are both objects. Every consumer is shape-tolerant (Array.isArray(d) ? d : d.data).
+  return NextResponse.json({ data: hubs.map((h) => {
     const extra = extraById.get(h.id)
     return { ...h, email: extra?.email ?? null, street1: extra?.street1 ?? null, street2: extra?.street2 ?? null, zip: extra?.zip ?? null, country: extra?.country ?? 'US' }
-  }))
+  }) })
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/

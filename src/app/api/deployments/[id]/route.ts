@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
+import { isAuthorizedForRig } from '@/lib/deployment-auth'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
-import { getDeploymentRoster, addProjectLink, removeAllProjectLinks } from '@/lib/deployment-assignments'
+import { getDeploymentRosterForDisplay, getActivePrimaryForRig, addProjectLink, removeAllProjectLinks, getRequiredPrimaryForRig, hydrateRigOperator } from '@/lib/deployment-assignments'
 
 const RIG_INCLUDE = {
-  operator: { select: { id: true, name: true } },
   project: { select: { id: true, name: true } },
   vehicles: {
     where: { removedAt: null },
-    include: { vehicle: { select: { id: true, name: true, type: true } } },
+    include: { vehicle: { select: { id: true, name: true, type: true, isRental: true, rentalAgreementUrl: true } } },
   },
   kits: {
     include: {
@@ -31,16 +31,13 @@ const RIG_INCLUDE = {
       },
     },
   },
-  secondaryOperators: {
-    include: { operator: { select: { id: true, name: true, email: true } } },
-  },
 } as const
 
 // Trimmed include for GET — operator/project/secondaryOperators sourced from roster helpers
 const RIG_GET_INCLUDE = {
   vehicles: {
     where: { removedAt: null },
-    include: { vehicle: { select: { id: true, name: true, type: true } } },
+    include: { vehicle: { select: { id: true, name: true, type: true, isRental: true, rentalAgreementUrl: true } } },
   },
   kits: {
     include: {
@@ -78,18 +75,23 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   const rig = await prisma.rig.findUnique({ where: { id }, include: RIG_GET_INCLUDE })
   if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  if (session.role !== 'ADMIN' && rig.operatorId !== session.userId) {
-    const isSecondary = await prisma.rigOperator.findUnique({
-      where: { rigId_operatorId: { rigId: id, operatorId: session.userId } },
-    })
-    if (!isSecondary) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  if (!(await isAuthorizedForRig(rig, session))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  const ro = await getDeploymentRoster(id)
+  // UR-032: the display roster returns the FINAL roster for an ended deployment
+  // (primary + secondaries), so historical attribution shows the real operator
+  // instead of null — from the authoritative assignment table, not the legacy
+  // Rig.operatorId column. The legacy column remains only a last-resort safety net
+  // for pre-assignment-table rigs (Rig.operatorId is NOT NULL).
+  // W0-10 PR-4: the display roster (final roster for ended rigs via max_ended) is the sole
+  // source of operator attribution; the legacy Rig.operatorId fallback was dropped.
+  const ro = await getDeploymentRosterForDisplay(id)
+  const operator = ro.operator ? { id: ro.operator.id, name: ro.operator.name } : { id: 'unknown', name: 'Unknown operator' }
   return NextResponse.json({
     ...rig,
-    operatorId: ro.operatorId ?? rig.operatorId,
-    operator: ro.operator ? { id: ro.operator.id, name: ro.operator.name } : null,
+    operatorId: ro.operatorId ?? null,
+    operator,
     project: ro.projects[0] ?? null,
     secondaryOperators: ro.secondaryOperators,
   })
@@ -102,7 +104,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const rig = await prisma.rig.findUnique({ where: { id } })
   if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (session.role !== 'ADMIN' && rig.operatorId !== session.userId) {
+  // W0-10 PR-1: PATCH is PRIMARY-only (no secondary) — preserve that with roster-PRIMARY
+  // + legacy fallback (do NOT use the any-role isAuthorizedForRig here).
+  const primaryId = await getActivePrimaryForRig(id)
+  if (session.role !== 'ADMIN' && primaryId !== session.userId) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
@@ -118,5 +123,5 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
     return result
   })
-  return NextResponse.json(updated)
+  return NextResponse.json(await hydrateRigOperator(updated))
 }

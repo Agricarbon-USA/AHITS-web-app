@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
 import { withIdempotency } from '@/lib/idempotency'
-import { ensureOpenAssignment, endAllAssignmentsForRig, removeAllProjectLinks } from '@/lib/deployment-assignments'
+import { ensureOpenAssignment, endAllAssignmentsForRig, removeAllProjectLinks , getActivePrimaryForRig, getRequiredPrimaryForRig, getActiveRigForOperator, getDeploymentRosterForDisplay } from '@/lib/deployment-assignments'
 
 const schema = z.object({
   responseNote: z.string().optional(),
@@ -26,9 +26,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       fromRig: {
         select: {
           id: true,
-          operatorId: true,
           endedAt: true,
-          operator: { select: { id: true, name: true } },
         },
       },
       vehicles: true,
@@ -53,7 +51,12 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
   const now = new Date()
   const toOperatorId = transfer.toOperatorId
-  const sourceName = transfer.fromRig.operator.name
+  // W0-10 PR-4: source-rig PRIMARY from the DISPLAY roster — its final-roster (max_ended)
+  // CTE returns the operator even for an ENDED source rig (end-of-deployment transfer flow),
+  // where getRequiredPrimaryForRig would throw. Nullable operatorId is fine for the CHECK_IN log.
+  const fromRoster = await getDeploymentRosterForDisplay(transfer.fromRig.id)
+  const fromRigPrimary = fromRoster.operatorId
+  const sourceName = fromRoster.operator?.name ?? 'Operator'
 
   let updatedTransfer
   try {
@@ -92,16 +95,13 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     }
 
     // Guard: verify each kit item is still in the source rig (not double-transferred).
-    // Allow items from ended rigs — those were intentionally kept pending via the TRANSFER path.
+    // A TRANSFER disposition keeps the kit item's removedAt null until accept/decline;
+    // removedAt set means it was already transferred elsewhere — reject regardless of
+    // whether the source rig ended (the previous OR-ended-rig exception was too broad
+    // and allowed double-transfer of items already moved to a different recipient).
     for (const ti of transfer.items) {
       const stillPresent = await tx.kitItem.findFirst({
-        where: {
-          id: ti.kitItemId,
-          OR: [
-            { removedAt: null },
-            { kit: { rig: { id: transfer.fromRig.id, endedAt: { not: null } } } },
-          ],
-        },
+        where: { id: ti.kitItemId, removedAt: null },
       })
       if (!stillPresent) {
         throw new Error(`Kit item is no longer in the source deployment`)
@@ -112,9 +112,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     }
 
     // Find or create destination rig (source rig stays active regardless)
-    let destRig = await tx.rig.findFirst({
-      where: { operatorId: toOperatorId, endedAt: null },
-    })
+    const destRigId = await getActiveRigForOperator(toOperatorId, tx)
+    let destRig = destRigId ? await tx.rig.findUnique({ where: { id: destRigId } }) : null
     if (!destRig) {
       destRig = await tx.rig.create({
         data: { operatorId: toOperatorId, startedAt: now },
@@ -154,17 +153,35 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       const currentKitItem = await tx.kitItem.findUnique({ where: { id: ti.kitItemId } })
       const currentQty = currentKitItem?.quantity ?? ti.kitItem.quantity
 
-      // Mark source kit item removed (even if already removedAt is set on ended-rig transfers)
+      // Carry the drawn-from-hub accounting onto the destination kit item (FND-2).
+      // drawnQuantity/drawnHubId record how much consumable stock was drawn from a
+      // hub at check-out; a later HUB return restores min(removeQty, drawnQuantity)
+      // to drawnHubId. Previously the destination item was created with
+      // drawnQuantity:0/drawnHubId:null, so every post-transfer return restored 0 —
+      // silently losing the drawn stock from inventory. Split the drawn amount so
+      // the total is conserved: the destination takes up to the transferred qty, the
+      // source keeps the remainder. (Serialized items have drawnQuantity 0 → no-op.)
+      const sourceDrawn = currentKitItem?.drawnQuantity ?? 0
+      const destDrawnQuantity = Math.min(transferQty, sourceDrawn)
+      const destDrawnHubId = destDrawnQuantity > 0 ? (currentKitItem?.drawnHubId ?? null) : null
+
+      // Mark source kit item removed. Use conditional updateMany (WHERE quantity >= transferQty
+      // AND removedAt IS NULL) so two concurrent accepts on the same transfer item can't both
+      // commit: the loser matches 0 rows and throws, rolling back the whole transaction.
       if (transferQty >= currentQty) {
-        await tx.kitItem.update({
-          where: { id: ti.kitItemId },
+        const kitClaim = await tx.kitItem.updateMany({
+          where: { id: ti.kitItemId, removedAt: null },
           data: { removedAt: now },
         })
+        if (kitClaim.count === 0) throw new Error('Kit item was already transferred')
       } else {
-        await tx.kitItem.update({
-          where: { id: ti.kitItemId },
-          data: { quantity: currentQty - transferQty },
+        const kitClaim = await tx.kitItem.updateMany({
+          where: { id: ti.kitItemId, quantity: { gte: transferQty }, removedAt: null },
+          // Source keeps the un-transferred share of the drawn stock so it can't
+          // over-restore stock it no longer holds.
+          data: { quantity: { decrement: transferQty }, drawnQuantity: { decrement: destDrawnQuantity } },
         })
+        if (kitClaim.count === 0) throw new Error('Insufficient quantity remaining for kit item transfer')
       }
       await tx.kitItem.create({
         data: {
@@ -172,6 +189,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           inventoryItemId: ti.kitItem.inventoryItemId,
           quantity: transferQty,
           inventoryUnitId: ti.inventoryUnitId ?? ti.kitItem.inventoryUnitId ?? null,
+          drawnQuantity: destDrawnQuantity,
+          drawnHubId: destDrawnHubId,
         },
       })
       await tx.checkLog.create({
@@ -179,7 +198,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           action: 'CHECK_IN',
           itemId: ti.kitItem.inventoryItemId,
           inventoryUnitId: ti.inventoryUnitId ?? ti.kitItem.inventoryUnitId ?? undefined,
-          operatorId: transfer.fromRig.operatorId,
+          operatorId: fromRigPrimary,
           rigId: transfer.fromRig.id,
           notes: transfer.note,
         },
@@ -227,7 +246,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
         type: 'TRANSFER_ACCEPTED',
         title: 'Transfer accepted',
         body: `${session.name} accepted the equipment transfer.`,
-        link: '/operator/my-rig',
+        link: '/operator/my-deployment',
       },
     }).catch(() => {})
   }

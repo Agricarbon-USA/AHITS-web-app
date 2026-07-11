@@ -71,7 +71,7 @@ export default function AdminDashboardPage() {
 
   React.useEffect(() => {
     fetch('/api/dashboard')
-      .then((r) => r.json())
+      .then((r) => { if (!r.ok) throw new Error(r.statusText); return r.json() })
       .then((d) => setStats(d.data))
       .catch(() => showToast({ message: 'Could not load dashboard stats.', severity: 'error' }))
       .finally(() => setStatsLoading(false))

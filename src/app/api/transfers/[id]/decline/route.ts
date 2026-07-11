@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
 import { withIdempotency } from '@/lib/idempotency'
+import { restoreToHub, resyncItemTotal } from '@/lib/inventory-stock'
 
 const schema = z.object({
   responseNote: z.string().optional(),
@@ -25,10 +26,20 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       items: {
         include: {
           kitItem: {
-            select: { id: true, inventoryItemId: true, inventoryUnitId: true, quantity: true, removedAt: true },
+            select: {
+              id: true,
+              inventoryItemId: true,
+              inventoryUnitId: true,
+              quantity: true,
+              drawnQuantity: true,
+              drawnHubId: true,
+              removedAt: true,
+              item: { select: { itemType: true, hubId: true } },
+            },
           },
         },
       },
+      vehicles: { select: { vehicleId: true } },
     },
   })
   if (!transfer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -73,6 +84,14 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
         await tx.kitItem.update({ where: { id: kitItem.id }, data: { removedAt: now } })
 
+        if (kitItem.item.itemType === 'CONSUMABLE' && (kitItem.drawnQuantity ?? 0) > 0) {
+          const hubForRestore = kitItem.drawnHubId ?? kitItem.item.hubId
+          if (hubForRestore) {
+            await restoreToHub(kitItem.inventoryItemId, hubForRestore, kitItem.drawnQuantity!, tx)
+            await resyncItemTotal(kitItem.inventoryItemId, tx)
+          }
+        }
+
         if (kitItem.inventoryUnitId) {
           await tx.inventoryUnit.update({
             where: { id: kitItem.inventoryUnitId },
@@ -101,6 +120,20 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           },
         })
       }
+      // W0-10 PR-2b: the source deployment already ended, so close the vehicle rows this
+      // declined transfer was holding open (end-of-deployment keeps a pending transfer's
+      // vehicles open) — otherwise the vehicle strands as "on an active deployment".
+      const declinedVehicleIds = transfer.vehicles.map((v) => v.vehicleId)
+      if (declinedVehicleIds.length > 0) {
+        await tx.rigVehicle.updateMany({
+          where: { rigId: transfer.fromRigId, vehicleId: { in: declinedVehicleIds }, removedAt: null },
+          data: { removedAt: now },
+        })
+        await tx.vehicle.updateMany({
+          where: { id: { in: declinedVehicleIds } },
+          data: { assignedOperatorId: null },
+        })
+      }
     }
     })
   } catch (err) {
@@ -116,7 +149,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
         type: 'TRANSFER_DECLINED',
         title: 'Transfer declined',
         body: `${session.name} declined the equipment transfer${responseNote ? `: ${responseNote}` : ''}.`,
-        link: '/operator/my-rig',
+        link: '/operator/my-deployment',
       },
     }).catch(() => {})
   }

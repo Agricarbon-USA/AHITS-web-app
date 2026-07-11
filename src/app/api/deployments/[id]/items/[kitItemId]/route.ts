@@ -1,14 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
+import { isAuthorizedForRig } from '@/lib/deployment-auth'
 import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { withIdempotency } from '@/lib/idempotency'
-import { restoreToHub } from '@/lib/inventory-stock'
+import { restoreToHub, resyncItemTotal } from '@/lib/inventory-stock'
 
 const bodySchema = z.object({
   quantity: z.number().int().min(1).optional(),
   returnCondition: z.enum(['GOOD', 'IN_MAINTENANCE', 'INOPERABLE']).optional(),
+  // G1: optional destination hub override. When omitted, restore falls back to
+  // the drawn hub then the item's home hub; if none resolves, the request is
+  // rejected (below) so consumable stock is never silently lost.
+  hubId: z.string().optional(),
   notes: z.string().optional(),
   // Daily-usage logging reuses this return endpoint but means "consumed in the
   // field," not "returned to the hub." When true, consumable stock is NOT
@@ -35,11 +40,8 @@ async function _DELETE(
   const rig = await prisma.rig.findUnique({ where: { id: rigId } })
   if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (rig.endedAt) return NextResponse.json({ error: 'Deployment has ended' }, { status: 409 })
-  if (session.role !== 'ADMIN' && rig.operatorId !== session.userId) {
-    const secondary = await prisma.rigOperator.findUnique({
-      where: { rigId_operatorId: { rigId, operatorId: session.userId } },
-    })
-    if (!secondary) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  if (!(await isAuthorizedForRig(rig, session))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
   const kitItem = await prisma.kitItem.findUnique({
@@ -58,6 +60,16 @@ async function _DELETE(
     returnCondition === 'IN_MAINTENANCE' ? 'IN_MAINTENANCE'
     : returnCondition === 'INOPERABLE' ? 'INOPERABLE'
     : 'AVAILABLE'
+
+  // G1: a genuine consumable return must land in a real hub. Resolve the
+  // destination (chosen → drawn → home) and reject up front if none exists, so
+  // stock is never credited to the cross-hub total with no per-hub home (the
+  // "disappeared from hub views" bug).
+  const willRestore = !isSerialized && returnCondition === 'GOOD' && !body.data.consumed && (kitItem.drawnQuantity ?? 0) > 0
+  const resolvedHub = body.data.hubId ?? kitItem.drawnHubId ?? kitItem.item.hubId
+  if (willRestore && !resolvedHub) {
+    return NextResponse.json({ error: 'A return hub is required for this item.' }, { status: 400 })
+  }
 
   await prisma.$transaction(async (tx) => {
     if (isSerialized) {
@@ -112,16 +124,21 @@ async function _DELETE(
       }
       if (returnCondition === 'GOOD' && !body.data.consumed && restoreQty > 0) {
         // Genuine return: restore hub stock (MH-1 dual-write) + cross-hub total.
-        // Legacy null drawnHubId falls back to item.hubId; if still null, skip
-        // hub restore but always increment the total so no stock is lost.
-        const hubForRestore = kitItem.drawnHubId ?? kitItem.item.hubId
-        if (hubForRestore) {
-          await restoreToHub(kitItem.inventoryItemId, hubForRestore, restoreQty, tx)
+        // G1: `resolvedHub` is guaranteed non-null here (checked above), so the
+        // per-hub credit always lands — no silent loss. Chosen hub also re-anchors
+        // the item's home hub so it stays visible in hub-filtered views.
+        const hubForRestore = (resolvedHub as string)
+        await restoreToHub(kitItem.inventoryItemId, hubForRestore, restoreQty, tx)
+        // #106: recompute the cross-hub total from stock rows (one discipline for every
+        // return path) rather than a blind increment — self-heals drift. The hub re-anchor
+        // is a separate field, kept as its own update.
+        await resyncItemTotal(kitItem.inventoryItemId, tx)
+        if (body.data.hubId) {
+          await tx.inventoryItem.update({
+            where: { id: kitItem.inventoryItemId },
+            data: { hubId: body.data.hubId },
+          })
         }
-        await tx.inventoryItem.update({
-          where: { id: kitItem.inventoryItemId },
-          data: { quantity: { increment: restoreQty } },
-        })
       }
       const excludeUnitIds = await getUnitsInOtherRigs(tx, kitItem.inventoryItemId, rigId)
       const units = await tx.inventoryUnit.findMany({

@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { prisma } from '@/lib/prisma'
-import { endAssignmentByRole, ensureOpenAssignment } from '@/lib/deployment-assignments'
+import { endAssignmentByRole, ensureOpenAssignment , getActivePrimaryForRig, getRequiredPrimaryForRig } from '@/lib/deployment-assignments'
 import type { PrismaClient } from '@prisma/client'
 
 type Tx = Parameters<Parameters<PrismaClient['$transaction']>[0]>[0]
@@ -27,12 +27,17 @@ export interface HandoffRow {
 /** Atomically reassign a deployment's PRIMARY operator (call inside a transaction). */
 export async function reassignPrimary(
   tx: Tx,
-  rig: { id: string; operatorId: string },
+  rig: { id: string },
   toOperatorId: string,
   actorId: string,
   note: string,
 ): Promise<void> {
-  await endAssignmentByRole(rig.id, rig.operatorId, 'PRIMARY', tx)
+  // ORDER IS LOAD-BEARING: end the current open PRIMARY BEFORE opening the new one.
+  // The W0-10 PR-2 partial unique index `one_open_primary_per_rig` permits at most one
+  // open PRIMARY per rig; reversing these two lines would momentarily create a second
+  // open PRIMARY and violate the index. Keep end-before-add.
+  const currentPrimary = await getRequiredPrimaryForRig(rig.id, tx)
+  await endAssignmentByRole(rig.id, currentPrimary, 'PRIMARY', tx)
   await ensureOpenAssignment({ rigId: rig.id, operatorId: toOperatorId, role: 'PRIMARY', addedById: actorId, note }, tx)
   await tx.rig.update({ where: { id: rig.id }, data: { operatorId: toOperatorId } })
   const rvs = await tx.rigVehicle.findMany({ where: { rigId: rig.id, removedAt: null }, select: { vehicleId: true } })

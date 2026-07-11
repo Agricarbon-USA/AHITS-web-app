@@ -8,6 +8,7 @@ import { compressImage } from '@/lib/imageCompress'
 import {
   storeLocalPhoto, getLocalPhoto, deleteLocalPhoto, uploadPhotoBlob, isLocalPhotoRef,
 } from '@/lib/photoStore'
+import { toPhotoSrc } from '@/lib/photo-security'
 
 interface PhotoCaptureProps {
   /** Current photo references — a mix of real URLs and `localphoto:` keys. */
@@ -31,6 +32,7 @@ export function PhotoCapture({
   const inputRef = React.useRef<HTMLInputElement>(null)
   const [previews, setPreviews] = React.useState<Record<string, string>>({})
   const [busy, setBusy] = React.useState(false)
+  const [photoError, setPhotoError] = React.useState<string | null>(null)
   // Track object URLs we create so we can revoke them on unmount.
   const objectUrls = React.useRef<string[]>([])
 
@@ -46,7 +48,8 @@ export function PhotoCapture({
           setPreviews((p) => ({ ...p, [ref]: url }))
         })
       } else {
-        setPreviews((p) => ({ ...p, [ref]: ref }))
+        // Uploaded ref → render through the auth-gated proxy (UR-005b).
+        setPreviews((p) => ({ ...p, [ref]: toPhotoSrc(ref) }))
       }
     })
     return () => { cancelled = true }
@@ -60,6 +63,7 @@ export function PhotoCapture({
   async function handleFiles(files: FileList | null) {
     if (!files || files.length === 0) return
     setBusy(true)
+    setPhotoError(null)
     try {
       const added: string[] = []
       for (const file of Array.from(files)) {
@@ -73,10 +77,20 @@ export function PhotoCapture({
           } catch {
             // Online but the upload failed — keep the photo locally so it isn't
             // lost; the queue will retry the upload on the next sync.
-            ref = await storeLocalPhoto(blob)
+            try {
+              ref = await storeLocalPhoto(blob)
+            } catch {
+              setPhotoError("Couldn't save photo — device storage may be full or unavailable.")
+              continue
+            }
           }
         } else {
-          ref = await storeLocalPhoto(blob)
+          try {
+            ref = await storeLocalPhoto(blob)
+          } catch {
+            setPhotoError("Couldn't save photo — device storage may be full or unavailable.")
+            continue
+          }
         }
         added.push(ref)
       }
@@ -154,6 +168,11 @@ export function PhotoCapture({
       {hasLocal && (
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
           Saved on device — photos upload automatically when you reconnect.
+        </Typography>
+      )}
+      {photoError && (
+        <Typography variant="caption" color="error" sx={{ display: 'block', mt: 0.5 }}>
+          {photoError}
         </Typography>
       )}
     </Box>

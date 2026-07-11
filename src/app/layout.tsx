@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next'
+import { headers } from 'next/headers'
 import { Providers } from './providers'
 import './globals.css'
 
@@ -26,11 +27,18 @@ export const viewport: Viewport = {
   viewportFit: 'cover',
 }
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
+  // Reading x-nonce opts every page into per-request dynamic rendering.
+  // This is required for Next.js to stamp the per-request nonce from
+  // Content-Security-Policy onto its generated <script> tags (app-render.js
+  // reads content-security-policy from req.headers, which is only populated
+  // correctly on a live request, not at static build time).
+  await headers()
+
   return (
     <html lang="en">
       <body>

@@ -17,27 +17,10 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? '')
   .map((s) => s.trim())
   .filter(Boolean)
 
-// Security response headers applied to every route. CSP keeps frame-ancestors
-// locked (clickjacking) and constrains base-uri/form-action/object-src while
-// remaining compatible with Next's inline bootstrap and Emotion/MUI inline
-// styles. A nonce-based strict script-src is a tracked follow-up.
-const cspDirectives = [
-  "default-src 'self'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "frame-ancestors 'none'",
-  "object-src 'none'",
-  "img-src 'self' data: blob: https://*.supabase.co",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-  "style-src 'self' 'unsafe-inline'",
-  "font-src 'self' data:",
-  "connect-src 'self' https://*.supabase.co",
-  "worker-src 'self' blob:",
-  "manifest-src 'self'",
-].join('; ')
-
+// CSP is generated per-request in src/proxy.ts with a nonce so that
+// script-src can drop 'unsafe-inline'. Only the non-CSP security headers
+// live here; they are static and apply to every route including redirects.
 const securityHeaders = [
-  { key: 'Content-Security-Policy', value: cspDirectives },
   { key: 'X-Frame-Options', value: 'DENY' },
   { key: 'X-Content-Type-Options', value: 'nosniff' },
   { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
@@ -56,6 +39,11 @@ const nextConfig: NextConfig = {
   },
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }]
+  },
+  // W0-11: /operator/my-rig was renamed to /operator/my-deployment. Permanent
+  // redirect keeps old bookmarks and already-persisted notification links working.
+  async redirects() {
+    return [{ source: '/operator/my-rig', destination: '/operator/my-deployment', permanent: true }]
   },
 }
 

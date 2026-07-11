@@ -29,7 +29,7 @@ export default function OfflinePage() {
         <div style={{ display: 'grid', gap: 12, maxWidth: 320, margin: '0 auto' }}>
           <Link href="/operator/daily-check" style={linkStyle}>Daily Check</Link>
           <Link href="/operator/scan" style={linkStyle}>Scan / Check In · Out</Link>
-          <Link href="/operator/my-rig" style={linkStyle}>My Deployment</Link>
+          <Link href="/operator/my-deployment" style={linkStyle}>My Deployment</Link>
           <Link href="/operator/dashboard" style={linkStyle}>Dashboard</Link>
         </div>
       </section>

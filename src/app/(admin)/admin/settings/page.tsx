@@ -10,6 +10,7 @@ import {
 } from '@mui/material'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { ChecklistTemplatesSection } from '@/components/admin/ChecklistTemplatesSection'
+import EmailDeliverySection from '@/components/admin/EmailDeliverySection'
 import { ALERT_LABELS } from '@/lib/alert-display'
 import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
@@ -207,6 +208,9 @@ export default function SettingsPage() {
           </Stack>
         </CardContent>
       </Card>
+
+      {/* FND-8: email delivery visibility */}
+      <EmailDeliverySection />
 
       {/* Daily-Check Checklists (M5-25) */}
       <ChecklistTemplatesSection onToast={showToast} onError={showError} />

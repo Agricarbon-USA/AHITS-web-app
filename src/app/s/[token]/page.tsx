@@ -97,7 +97,7 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
     try {
       const res = await fetch(`/api/s/${token}/transition`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `${token}:${action}:${Date.now()}` },
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `${token}:${action}` },
         body: JSON.stringify({ action, actorLabel, note: note || undefined }),
       })
       const data = await res.json().catch(() => ({}))
@@ -171,7 +171,7 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
       try {
         const res = await fetch(`/api/s/${token}/transition`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `${token}:PREPARED:${Date.now()}` },
+          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `${token}:PREPARED` },
           body: JSON.stringify({ action: 'PREPARED', actorLabel }),
         })
         const json = await res.json().catch(() => ({}))
@@ -257,14 +257,6 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
         {s.problem && <Row label="Problem" value={s.problem} />}
         {s.shipToHub && <Row label="Return to" value={s.shipToHub} />}
         {s.hub && <Row label="Hub" value={s.hub} />}
-        {!!s.photos?.length && (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
-            {s.photos.map((u, i) => (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img key={i} src={u} alt={`photo ${i + 1}`} style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 8, border: '1px solid #e0e0e0' }} />
-            ))}
-          </div>
-        )}
       </div>
 
       {!ctx.actionable ? (

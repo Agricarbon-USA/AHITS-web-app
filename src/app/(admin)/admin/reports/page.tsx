@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import {
-  Box, Typography, Paper, Stack, TextField, Button, CircularProgress,
+  Box, Typography, Paper, Stack, TextField, Button, CircularProgress, Chip,
   Table, TableHead, TableBody, TableRow, TableCell, TableSortLabel,
   ToggleButton, ToggleButtonGroup, TableContainer,
 } from '@mui/material'
@@ -23,6 +23,10 @@ interface ReportRow {
   maintenanceEvents: number
   maintenanceSpend: number
   downtimeDays: number
+  isRental: boolean
+  rentalCompany: string | null
+  rentalCostBasis: string | null
+  rentalCost: number
 }
 
 interface ReportSummary {
@@ -34,9 +38,11 @@ interface ReportSummary {
   totalMaintenanceEvents: number
   avgUtilizationPct: number
   totalDowntimeDays: number
+  rentalCount: number
+  totalRentalCost: number
 }
 
-type SortKey = keyof Pick<ReportRow, 'name' | 'deployments' | 'daysDeployed' | 'utilizationPct' | 'maintenanceEvents' | 'maintenanceSpend' | 'downtimeDays'>
+type SortKey = keyof Pick<ReportRow, 'name' | 'deployments' | 'daysDeployed' | 'utilizationPct' | 'maintenanceEvents' | 'maintenanceSpend' | 'downtimeDays' | 'rentalCost'>
 
 const fmtDate = (d: Date) => d.toISOString().slice(0, 10)
 const money = (n: number) => `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -55,7 +61,7 @@ export default function AdminReportsPage() {
   const today = React.useMemo(() => new Date(), [])
   const [from, setFrom] = React.useState(fmtDate(new Date(today.getTime() - 180 * 86_400_000)))
   const [to, setTo] = React.useState(fmtDate(today))
-  const [assetFilter, setAssetFilter] = React.useState<'ALL' | 'VEHICLE' | 'UNIT'>('ALL')
+  const [assetFilter, setAssetFilter] = React.useState<'ALL' | 'VEHICLE' | 'UNIT' | 'RENTAL'>('ALL')
   const [rows, setRows] = React.useState<ReportRow[]>([])
   const [summary, setSummary] = React.useState<ReportSummary | null>(null)
   const [loading, setLoading] = React.useState(true)
@@ -107,7 +113,11 @@ export default function AdminReportsPage() {
   }
 
   const visible = React.useMemo(() => {
-    const filtered = assetFilter === 'ALL' ? rows : rows.filter((r) => r.assetType === assetFilter)
+    const filtered = assetFilter === 'ALL'
+      ? rows
+      : assetFilter === 'RENTAL'
+        ? rows.filter((r) => r.isRental)
+        : rows.filter((r) => r.assetType === assetFilter)
     const sorted = [...filtered].sort((a, b) => {
       const av = a[sortKey]; const bv = b[sortKey]
       const cmp = typeof av === 'number' && typeof bv === 'number' ? av - bv : String(av).localeCompare(String(bv))
@@ -123,6 +133,7 @@ export default function AdminReportsPage() {
     { key: 'maintenanceEvents', label: 'Maint. Events' },
     { key: 'maintenanceSpend', label: 'Maint. Spend' },
     { key: 'downtimeDays', label: 'Downtime (d)' },
+    { key: 'rentalCost', label: 'Rental Cost' },
   ]
 
   return (
@@ -145,6 +156,7 @@ export default function AdminReportsPage() {
             <ToggleButton value="ALL">All</ToggleButton>
             <ToggleButton value="VEHICLE">Vehicles</ToggleButton>
             <ToggleButton value="UNIT">Units</ToggleButton>
+            <ToggleButton value="RENTAL">Rentals</ToggleButton>
           </ToggleButtonGroup>
         </Stack>
       </Paper>
@@ -155,6 +167,9 @@ export default function AdminReportsPage() {
           <SummaryCard label="Maint. Events" value={String(summary.totalMaintenanceEvents)} />
           <SummaryCard label="Avg Utilization" value={`${summary.avgUtilizationPct}%`} />
           <SummaryCard label="Downtime (days)" value={String(summary.totalDowntimeDays)} />
+          {summary.rentalCount > 0 && (
+            <SummaryCard label={`Rental Cost (${summary.rentalCount})`} value={money(summary.totalRentalCost)} accent />
+          )}
           <SummaryCard label="Tracked Assets" value={String(summary.assetCount)} />
         </Stack>
       )}
@@ -190,8 +205,15 @@ export default function AdminReportsPage() {
                 {visible.map((r) => (
                   <TableRow key={`${r.assetType}-${r.id}`} hover>
                     <TableCell>
-                      <Typography variant="body2" fontWeight={500}>{r.name}</Typography>
-                      <Typography variant="caption" color="text.secondary">{r.assetType === 'VEHICLE' ? 'Vehicle' : 'Unit'}</Typography>
+                      <Stack direction="row" spacing={0.5} alignItems="center">
+                        <Typography variant="body2" fontWeight={500}>{r.name}</Typography>
+                        {r.isRental && <Chip label="Rental" size="small" color="warning" variant="outlined" sx={{ height: 18, fontSize: 10 }} />}
+                      </Stack>
+                      <Typography variant="caption" color="text.secondary">
+                        {r.assetType === 'VEHICLE' ? 'Vehicle' : 'Unit'}
+                        {r.isRental && r.rentalCompany ? ` · ${r.rentalCompany}` : ''}
+                        {r.isRental && r.rentalCostBasis ? ` · ${r.rentalCostBasis}` : ''}
+                      </Typography>
                     </TableCell>
                     <TableCell>{r.identifier ?? '—'}</TableCell>
                     <TableCell>{r.kind}</TableCell>
@@ -202,6 +224,7 @@ export default function AdminReportsPage() {
                     <TableCell align="right">{r.maintenanceEvents}</TableCell>
                     <TableCell align="right">{r.maintenanceSpend > 0 ? money(r.maintenanceSpend) : '—'}</TableCell>
                     <TableCell align="right">{r.downtimeDays || '—'}</TableCell>
+                    <TableCell align="right">{r.isRental ? money(r.rentalCost) : '—'}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

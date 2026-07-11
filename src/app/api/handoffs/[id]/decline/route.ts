@@ -53,7 +53,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
         type: 'HANDOFF_DECLINED',
         title: 'Deployment handoff declined',
         body: `${session.name} declined the deployment handoff${responseNote ? `: ${responseNote}` : ''}.`,
-        link: '/operator/my-rig',
+        link: '/operator/my-deployment',
       },
     }).catch(() => {})
   }

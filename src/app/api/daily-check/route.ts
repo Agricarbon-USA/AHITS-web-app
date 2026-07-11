@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
+import { getActiveRigForOperator } from '@/lib/deployment-assignments'
 import { requireAuth } from '@/lib/auth/session'
 import { createAlert, resolveActiveAlert } from '@/lib/alerts'
 import { applyOdometerReading } from '@/lib/maintenance'
+import { parsePagination } from '@/lib/validation'
+import { businessDate } from '@/lib/business-date'
 
 const schema = z.object({
   vehicleId: z.string(),
@@ -39,8 +42,7 @@ export async function GET(req: NextRequest) {
   const vehicleId = searchParams.get('vehicleId')
   const date = searchParams.get('date')
   const operatorId = session.role === 'OPERATOR' ? session.userId : searchParams.get('operatorId')
-  const page = parseInt(searchParams.get('page') ?? '1')
-  const pageSize = parseInt(searchParams.get('pageSize') ?? '25')
+  const { page, pageSize } = parsePagination(searchParams)
 
   const where = {
     ...(vehicleId && { vehicleId }),
@@ -69,7 +71,11 @@ export async function POST(req: NextRequest) {
   const parsed = schema.safeParse(await req.json())
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const { vehicleId, date, checklistJson, passFail, issues, odometer, site } = parsed.data
+  const { vehicleId, checklistJson, passFail, issues, odometer, site } = parsed.data
+  // Clamp to server-side business date so a check can't be pre-dated or
+  // future-dated to dodge the missed-check alert (note: a check synced a day
+  // late is recorded as today, not the day it was performed).
+  const date = businessDate()
 
   // Daily checks may be performed on ANY active vehicle/equipment — not just
   // items in the operator's deployment. Operators routinely inspect a vehicle
@@ -127,12 +133,16 @@ export async function POST(req: NextRequest) {
   // (type, sourceTable, sourceId, unresolved), so this does not spam on every check.
   if (session.userId) {
     try {
-      const rig = await prisma.rig.findFirst({
-        where: { operatorId: session.userId, endedAt: null },
-        include: {
-          kits: { include: { items: { where: { removedAt: null }, include: { item: { select: { name: true } } } } } },
-        },
-      })
+      // W0-10 PR-4: find the operator's active rig via the assignment table (Rig.operatorId dropped).
+      const activeRigId = await getActiveRigForOperator(session.userId)
+      const rig = activeRigId
+        ? await prisma.rig.findUnique({
+            where: { id: activeRigId },
+            include: {
+              kits: { include: { items: { where: { removedAt: null }, include: { item: { select: { name: true } } } } } },
+            },
+          })
+        : null
       const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
       if (rig && rig.startedAt < cutoff) {
         const kitItems = rig.kits.flatMap((k) => k.items)
@@ -169,6 +179,9 @@ export async function POST(req: NextRequest) {
     } else {
       await resolveActiveAlert('DAILY_CHECK_FAILED', 'vehicles', vehicleId)
     }
+    // Any submitted check (pass or fail) clears the MISSED alert — the operator
+    // checked in for the day regardless of outcome.
+    await resolveActiveAlert('DAILY_CHECK_MISSED', 'operators', session.userId)
   } catch (err) {
     console.error('[POST /api/daily-check] daily-check-failed alert failed', err)
   }

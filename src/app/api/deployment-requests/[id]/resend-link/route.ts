@@ -54,7 +54,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   const url = statusLinkUrl(rawToken)
   let emailed = false
   if (hub.email) {
-    await sendEmail({
+    await sendEmail({ kind: 'RESERVATION',
       to: hub.email,
       subject: `Reservation request (resent) — ${request.label ?? 'Rig reservation'}`,
       html: genericAlertEmail(

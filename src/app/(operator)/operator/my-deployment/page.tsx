@@ -21,13 +21,14 @@ import GroupIcon from '@mui/icons-material/Group'
 import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
 import { TransferDialog } from '@/components/shared/TransferDialog'
 import { DispositionDialog, KitItemSummary } from '@/components/shared/DispositionDialog'
-import { RentalVehicleForm, RentalVehicleFields } from '@/components/shared/RentalVehicleForm'
+import { RentalVehicleForm, RentalVehicleFields, rentalFieldsToVehiclePayload, isRentalFormValid } from '@/components/shared/RentalVehicleForm'
 import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
+import { newPlaceholderId } from '@/lib/offline-remap'
 import { useAuth } from '@/hooks/useAuth'
 import { groupBy } from '@/lib/utils'
-
-const VEHICLE_TYPE_ORDER = ['TRUCK', 'TRAILER', 'POLARIS_UTV', 'CAN_AM_UTV', 'CHRISTIE_DRILL', 'ATV', 'OTHER']
+import { stockAvailabilityLabel } from '@/lib/stock-format'
+import { VEHICLE_TYPE_ORDER, vehicleTypeLabel } from '@/lib/vehicle-types'
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -43,7 +44,7 @@ const VEHICLE_ICON: Record<string, React.ElementType> = {
 
 interface RigVehicleRow {
   id: string
-  vehicle: { id: string; name: string; type: string; isRental: boolean }
+  vehicle: { id: string; name: string; type: string; isRental: boolean; rentalAgreementUrl?: string | null }
 }
 
 interface KitItemRow {
@@ -178,6 +179,8 @@ function NewDeploymentDialog({
   onClose: () => void
   onSuccess: () => void
 }) {
+  const { mutate } = useOfflineQueue()
+  const showToast = useToast()
   const [step, setStep] = React.useState(0)
   const [label, setLabel] = React.useState('')
   const [selVehicles, setSelVehicles] = React.useState<Set<string>>(new Set())
@@ -278,10 +281,16 @@ function NewDeploymentDialog({
     if (hasConsumableInKit && !sourceHubId) { setError('Select a source hub for consumable items.'); return }
     setLoading(true)
     setError('')
-    const res = await fetch('/api/deployments', {
+    // UR-006: route the create through the durable offline queue so an offline
+    // launch is queued (idempotency-keyed, exactly-once) and replays on
+    // reconnect instead of being silently lost. The placeholderId lets the queue
+    // remap dependent writes made against this rig before it has a real id.
+    const result = await mutate({
+      endpoint: '/api/deployments',
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      label: 'Start deployment',
+      placeholderId: newPlaceholderId(),
+      body: {
         label: label || undefined,
         note,
         vehicleIds: Array.from(selVehicles),
@@ -291,10 +300,17 @@ function NewDeploymentDialog({
             : { inventoryItemId, quantity: entry.quantity }
         ),
         ...(sourceHubId && { sourceHubId }),
-      }),
+      },
     })
-    if (res.status === 409) {
-      const d = await res.json()
+    setLoading(false)
+    if (result.ok && result.queued) {
+      showToast({ message: 'No network — deployment queued, will start when you reconnect.', severity: 'info' })
+      onClose()
+    } else if (result.ok) {
+      onSuccess(); onClose()
+    } else if (result.status === 409) {
+      // A serialized unit was just taken by someone else — drop serialized picks
+      // and send the operator back to reselect.
       const m = new Map(kitItems)
       m.forEach((entry, itemId) => {
         if (entry.itemType === 'SERIALIZED') {
@@ -303,13 +319,10 @@ function NewDeploymentDialog({
       })
       setKitItems(m)
       setStep(2)
-      setError(d.error ?? 'A unit was just taken. Please reselect.')
-      setLoading(false)
-      return
+      setError(result.error ?? 'A unit was just taken. Please reselect.')
+    } else {
+      setError(result.error ?? 'Failed')
     }
-    setLoading(false)
-    if (res.ok) { onSuccess(); onClose() }
-    else { const d = await res.json(); setError(d.error?.formErrors?.[0] ?? d.error ?? 'Failed') }
   }
 
   return (
@@ -340,11 +353,11 @@ function NewDeploymentDialog({
                 {groupBy(
                   [...unassignedVehicles].sort((a, b) => a.name.localeCompare(b.name)),
                   (v) => v.type,
-                  VEHICLE_TYPE_ORDER,
+                  [...VEHICLE_TYPE_ORDER],
                 ).map(({ group, items: gv }) => (
                   <React.Fragment key={group}>
                     <ListSubheader sx={{ lineHeight: '32px', bgcolor: 'background.default' }}>
-                      {group.replace(/_/g, ' ')}
+                      {vehicleTypeLabel(group)}
                     </ListSubheader>
                     {gv.map((v) => {
                       const Icon = VEHICLE_ICON[v.type] ?? LocalShippingIcon
@@ -392,11 +405,8 @@ function NewDeploymentDialog({
                         const entry = kitItems.get(item.id)
                         const checked = !!entry
                         // Gate consumable qty on the selected hub's available; fall back to total if no hub.
-                        const hubAvail = !isSerialized
-                          ? (sourceHubId
-                              ? (item.hubStock?.find((s) => s.hubId === sourceHubId)?.available ?? (item.availableQuantity ?? 0))
-                              : (item.availableQuantity ?? 0))
-                          : 0
+                        const hubRow = !isSerialized && sourceHubId ? item.hubStock?.find((s) => s.hubId === sourceHubId) : undefined
+                        const hubAvail = !isSerialized ? (hubRow?.available ?? (item.availableQuantity ?? 0)) : 0
                         return (
                           <Box key={item.id}>
                             <Stack direction="row" alignItems="center" spacing={1}>
@@ -425,7 +435,7 @@ function NewDeploymentDialog({
                                     setKitItems(m)
                                   }}
                                   inputProps={{ min: 1, max: hubAvail, style: { MozAppearance: 'textfield', width: 60 } }}
-                                  helperText={`${hubAvail} avail.`}
+                                  helperText={stockAvailabilityLabel(hubRow, hubAvail)}
                                   sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }}
                                 />
                               )}
@@ -510,6 +520,16 @@ function NewDeploymentDialog({
             {kitItems.size === 0 && (
               <Alert severity="warning" sx={{ mt: 1 }}>Starting with empty kit</Alert>
             )}
+            {/* UR-006: surface exactly what blocks launch HERE (on the kit step),
+                so the operator isn't left staring at a greyed-out Launch button on
+                the next step with no explanation. */}
+            {(hasUnselectedSerialized || (hasConsumableInKit && !sourceHubId)) && (
+              <Alert severity="info" sx={{ mt: 2 }}>
+                Before you can launch:
+                {hasUnselectedSerialized && <div>• Pick a unit for each selected serialized item above.</div>}
+                {hasConsumableInKit && !sourceHubId && <div>• Choose a source hub for the consumable items.</div>}
+              </Alert>
+            )}
           </Box>
         )}
 
@@ -530,11 +550,17 @@ function NewDeploymentDialog({
         <Button onClick={onClose} disabled={loading}>Cancel</Button>
         {step > 0 && <Button onClick={() => setStep((s) => s - 1)} disabled={loading}>Back</Button>}
         {step < 3 ? (
-          <Button variant="contained" onClick={() => setStep((s) => s + 1)}>Next</Button>
+          // UR-006: block leaving the kit step until serialized units are picked
+          // and a source hub is chosen — so the user can never reach the note step
+          // (and the Launch button) in a state that leaves Launch silently disabled.
+          <Button variant="contained" onClick={() => setStep((s) => s + 1)}
+            disabled={loading || (step === 2 && (hasUnselectedSerialized || (hasConsumableInKit && !sourceHubId)))}>
+            Next
+          </Button>
         ) : (
           <Button variant="contained" onClick={launch} disabled={!note.trim() || loading || hasUnselectedSerialized || (hasConsumableInKit && !sourceHubId)}
             startIcon={loading ? <CircularProgress size={16} color="inherit" /> : null}>
-            {loading ? 'Launching…' : 'Launch Deployment'}
+            {loading ? 'Launching…' : !note.trim() ? 'Enter a note to launch' : 'Launch Deployment'}
           </Button>
         )}
       </DialogActions>
@@ -552,7 +578,7 @@ export default function MyRigPage() {
   const [hubs, setHubs] = React.useState<HubOption[]>([])
 
   const showToast = useToast()
-  const { mutate } = useOfflineQueue()
+  const { mutate, pendingDeployCreate, refresh: refreshQueue } = useOfflineQueue()
   const { user } = useAuth()
   const [newOpen, setNewOpen] = React.useState(false)
   const [transferOpen, setTransferOpen] = React.useState(false)
@@ -603,6 +629,7 @@ export default function MyRigPage() {
   const [isRentalToggle, setIsRentalToggle] = React.useState(false)
   const [rentalFields, setRentalFields] = React.useState<Partial<RentalVehicleFields>>({})
   const [rentalSubmitLoading, setRentalSubmitLoading] = React.useState(false)
+  const rentalSubmitRef = React.useRef(false) // Q1: synchronous re-entry guard (the loading state disables the button a tick late)
   const [rentalError, setRentalError] = React.useState('')
   const [addItemOpen, setAddItemOpen] = React.useState(false)
   const [pendingItems, setPendingItems] = React.useState<Map<string, PendingItemEntry>>(new Map())
@@ -637,6 +664,18 @@ export default function MyRigPage() {
     await loadTransfers()
   }, [loadTransfers])
 
+  // FND-14a: when a queued offline deployment-create drains on reconnect,
+  // pendingDeployCreate flips true→false. Without a re-load the page keeps showing
+  // the "Start Deployment" empty state against a rig that now exists, so tapping
+  // Start 409s. Re-load on that transition so the real active rig appears.
+  const prevPendingDeployRef = React.useRef(pendingDeployCreate)
+  React.useEffect(() => {
+    if (prevPendingDeployRef.current && !pendingDeployCreate) {
+      void load()
+    }
+    prevPendingDeployRef.current = pendingDeployCreate
+  }, [pendingDeployCreate, load])
+
   React.useEffect(() => {
     load()
     fetch('/api/vehicles').then((r) => r.json()).then((d) => setVehicles(d.data ?? d ?? [])).catch(() => {})
@@ -646,7 +685,7 @@ export default function MyRigPage() {
     fetch('/api/operators').then((r) => r.json()).then((d) => {
       setOperators(d.data ?? [])
     }).catch(() => {})
-    fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(d ?? [])).catch(() => {})
+    fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(Array.isArray(d) ? d : (d?.data ?? []))).catch(() => {})
   }, [load])
 
   const handleRespond = async () => {
@@ -955,25 +994,71 @@ export default function MyRigPage() {
             <Typography variant="caption" color="text.secondary">&ldquo;{h.note}&rdquo;</Typography>
           </Alert>
         ))}
-        <LocalShippingIcon sx={{ fontSize: 72, color: 'text.disabled', mb: 2 }} />
-        <Typography variant="h6" color="text.secondary">No active deployment</Typography>
-        <Typography variant="body2" color="text.secondary" mb={3}>
-          Start a deployment when you pick up a rig or kit from a hub.
-        </Typography>
-        <Button variant="contained" size="large" startIcon={<AddIcon />} onClick={() => setNewOpen(true)}>
-          Start Deployment
-        </Button>
-
-        {newOpen && (
-          <NewDeploymentDialog
-            vehicles={vehicles}
-            inventoryItems={inventoryItems}
-            operators={operators}
-            hubs={hubs}
-            homeHubId={user?.homeHubId}
-            onClose={() => setNewOpen(false)}
-            onSuccess={load}
-          />
+        {/* Incoming transfer banners — also shown with no active deployment (B3): a
+            transferred-to operator must be able to review/accept a transfer even
+            before starting a rig. Accepting auto-creates a destination deployment
+            server-side (transfers/[id]/accept), so this is not a dead end. */}
+        {incomingTransfers.map((tr) => {
+          const vehicleNames = tr.vehicles.map((tv) => tv.vehicle.name).join(', ')
+          const itemNames = tr.items.map((ti) => `${ti.kitItem.item.name} ×${ti.quantity ?? ti.kitItem.quantity}`).join(', ')
+          const summary = [vehicleNames, itemNames].filter(Boolean).join(', ')
+          return (
+            <Alert
+              key={tr.id}
+              severity="info"
+              sx={{ mb: 1.5, width: '100%', alignItems: 'flex-start' }}
+              action={
+                <Stack direction="row" spacing={1} sx={{ mt: -0.5 }}>
+                  <Button size="small" color="error" variant="outlined"
+                    onClick={() => { setRespondDialog({ transfer: tr, action: 'decline' }); setResponseNote('') }}>
+                    Decline
+                  </Button>
+                  <Button size="small" color="success" variant="contained"
+                    onClick={() => { setRespondDialog({ transfer: tr, action: 'accept' }); setResponseNote('') }}>
+                    Accept
+                  </Button>
+                </Stack>
+              }
+            >
+              <Typography variant="body2" fontWeight={600}>
+                Incoming Transfer from {tr.fromRig.operator.name}
+              </Typography>
+              <Typography variant="body2">{summary}</Typography>
+              <Typography variant="caption" color="text.secondary">
+                &ldquo;{tr.note}&rdquo; · Accepting starts a new deployment for you.
+              </Typography>
+            </Alert>
+          )
+        })}
+        <LocalShippingIcon sx={{ fontSize: 72, color: pendingDeployCreate ? 'warning.main' : 'text.disabled', mb: 2 }} />
+        {pendingDeployCreate ? (
+          <>
+            <Typography variant="h6" color="text.secondary" mb={0.5}>Deployment Queued</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 340, textAlign: 'center' }}>
+              Your deployment is saved and will start automatically when you&apos;re back online — you can add vehicles and items once it syncs.
+            </Typography>
+          </>
+        ) : (
+          <>
+            <Typography variant="h6" color="text.secondary">No active deployment</Typography>
+            <Typography variant="body2" color="text.secondary" mb={3}>
+              Start a deployment when you pick up a rig or kit from a hub.
+            </Typography>
+            <Button variant="contained" size="large" startIcon={<AddIcon />} onClick={() => setNewOpen(true)}>
+              Start Deployment
+            </Button>
+            {newOpen && (
+              <NewDeploymentDialog
+                vehicles={vehicles}
+                inventoryItems={inventoryItems}
+                operators={operators}
+                hubs={hubs}
+                homeHubId={user?.homeHubId}
+                onClose={() => { setNewOpen(false); void refreshQueue() }}
+                onSuccess={load}
+              />
+            )}
+          </>
         )}
 
         {/* Handoff respond dialog (accessible when operator has no rig — they're the recipient) */}
@@ -1002,6 +1087,35 @@ export default function MyRigPage() {
               startIcon={handoffRespondLoading ? <CircularProgress size={16} color="inherit" /> : null}
             >
               {handoffRespondLoading ? 'Saving…' : handoffRespondDialog?.action === 'accept' ? 'Accept' : 'Decline'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+        {/* Transfer accept/decline dialog — needed here so a rig-less recipient can respond (B3) */}
+        <Dialog open={!!respondDialog} onClose={() => setRespondDialog(null)} maxWidth="xs" fullWidth>
+          <DialogTitle>{respondDialog?.action === 'accept' ? 'Accept Transfer' : 'Decline Transfer'}</DialogTitle>
+          <DialogContent>
+            {respondDialog?.action === 'accept' && (
+              <Typography variant="body2" color="text.secondary" mb={1.5}>
+                Accepting will start a new deployment for you and add the transferred equipment to it.
+              </Typography>
+            )}
+            <TextField
+              label="Response note (optional)"
+              value={responseNote}
+              onChange={(e) => setResponseNote(e.target.value)}
+              multiline rows={2} fullWidth sx={{ mt: 1 }}
+            />
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2 }}>
+            <Button onClick={() => setRespondDialog(null)} disabled={respondLoading}>Cancel</Button>
+            <Button
+              variant="contained"
+              color={respondDialog?.action === 'accept' ? 'success' : 'error'}
+              onClick={handleRespond}
+              disabled={respondLoading}
+              startIcon={respondLoading ? <CircularProgress size={16} color="inherit" /> : null}
+            >
+              {respondLoading ? 'Saving…' : respondDialog?.action === 'accept' ? 'Accept' : 'Decline'}
             </Button>
           </DialogActions>
         </Dialog>
@@ -1123,6 +1237,10 @@ export default function MyRigPage() {
                       <Typography variant="body2">{rv.vehicle.name}</Typography>
                       {rv.vehicle.isRental && (
                         <Chip label="Rental" size="small" color="warning" variant="outlined" sx={{ ml: 0.5, height: 18, fontSize: 10 }} />
+                      )}
+                      {rv.vehicle.isRental && !rv.vehicle.rentalAgreementUrl && (
+                        <Chip label="Agreement needed" size="small" color="error" variant="outlined"
+                          sx={{ height: 18, fontSize: 10 }} />
                       )}
                     </Stack>
                   )
@@ -1323,11 +1441,11 @@ export default function MyRigPage() {
                   {groupBy(
                     [...unassignedVehicles].sort((a, b) => a.name.localeCompare(b.name)),
                     (v) => v.type,
-                    VEHICLE_TYPE_ORDER,
+                    [...VEHICLE_TYPE_ORDER],
                   ).map(({ group, items: gv }) => (
                     <React.Fragment key={group}>
                       <ListSubheader sx={{ lineHeight: '32px', bgcolor: 'background.default' }}>
-                        {group.replace(/_/g, ' ')}
+                        {vehicleTypeLabel(group)}
                       </ListSubheader>
                       {gv.map((v) => {
                         const Icon = VEHICLE_ICON[v.type] ?? LocalShippingIcon
@@ -1360,33 +1478,39 @@ export default function MyRigPage() {
           }}>Cancel</Button>
           {isRentalToggle ? (
             <Button variant="contained"
-              disabled={rentalSubmitLoading || !rentalFields.name || !rentalFields.type}
+              disabled={rentalSubmitLoading || !isRentalFormValid(rentalFields)}
               startIcon={rentalSubmitLoading ? <CircularProgress size={16} color="inherit" /> : null}
               onClick={async () => {
                 if (!rig) return
                 setRentalError('')
+                // P2-D: adding a rental is a two-step dependent create (vehicle →
+                // attach) that isn't safely queueable, so require connectivity and
+                // tell the operator plainly — mirrors the transfer/handoff guards.
+                if (typeof navigator !== 'undefined' && !navigator.onLine) {
+                  setRentalError('Adding a rental needs an internet connection. Try again when you’re back online.')
+                  return
+                }
+                if (rentalSubmitRef.current) return // Q1: block a same-tick double-tap
+                rentalSubmitRef.current = true
                 setRentalSubmitLoading(true)
                 try {
-                  const payload = {
-                    isRental: true,
-                    name: rentalFields.name,
-                    type: rentalFields.type,
-                    rentalMake: rentalFields.rentalMake || undefined,
-                    rentalModel: rentalFields.rentalModel || undefined,
-                    rentalYear: rentalFields.rentalYear ? parseInt(rentalFields.rentalYear) : undefined,
-                    rentalLength: rentalFields.rentalLength || undefined,
-                    rentalAgreementUrl: rentalFields.rentalAgreementUrl || undefined,
-                    rentalPickupLocation: rentalFields.rentalPickupLocation || undefined,
-                    rentalDropoffLocation: rentalFields.rentalDropoffLocation || undefined,
-                  }
+                  const payload = rentalFieldsToVehiclePayload(rentalFields)
                   const vRes = await fetch('/api/vehicles', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload),
                   })
-                  const vJson = await vRes.json()
-                  if (!vRes.ok) { setRentalError(vJson.error?.formErrors?.[0] ?? vJson.error ?? 'Failed to create vehicle'); return }
-                  const vehicleId: string = vJson.data.id
+                  // Guard .json() — a non-JSON response (auth redirect, 502) must
+                  // surface an error, not throw past the catch and leave the dialog
+                  // looking like nothing happened.
+                  const vJson = await vRes.json().catch(() => ({} as { data?: { id: string }; error?: unknown }))
+                  if (!vRes.ok) {
+                    const e = (vJson as { error?: { formErrors?: string[] } | string }).error
+                    setRentalError((typeof e === 'object' && e?.formErrors?.[0]) || (typeof e === 'string' ? e : '') || 'Failed to create vehicle')
+                    return
+                  }
+                  const vehicleId: string | undefined = (vJson as { data?: { id: string } }).data?.id
+                  if (!vehicleId) { setRentalError('Failed to create vehicle'); return }
                   const addRes = await fetch(`/api/deployments/${rig.id}/vehicles`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1401,8 +1525,11 @@ export default function MyRigPage() {
                   setIsRentalToggle(false)
                   setRentalFields({})
                   await load()
+                } catch (e) {
+                  setRentalError(e instanceof Error ? e.message : 'Failed to add rental vehicle')
                 } finally {
                   setRentalSubmitLoading(false)
+                  rentalSubmitRef.current = false
                 }
               }}>
               {rentalSubmitLoading ? 'Adding…' : 'Add Rental Vehicle'}
@@ -1488,11 +1615,8 @@ export default function MyRigPage() {
                   }
                 }
 
-                const addHubAvail = !isSerialized
-                  ? (addItemSourceHubId
-                      ? (item.hubStock?.find((s) => s.hubId === addItemSourceHubId)?.available ?? (item.availableQuantity ?? 0))
-                      : (item.availableQuantity ?? 0))
-                  : 0
+                const addHubRow = !isSerialized && addItemSourceHubId ? item.hubStock?.find((s) => s.hubId === addItemSourceHubId) : undefined
+                const addHubAvail = !isSerialized ? (addHubRow?.available ?? (item.availableQuantity ?? 0)) : 0
                 return (
                   <Box key={item.id}>
                     <Stack direction="row" alignItems="center" spacing={1}>
@@ -1521,7 +1645,7 @@ export default function MyRigPage() {
                             setPendingItems(m)
                           }}
                           inputProps={{ min: 1, max: addHubAvail, style: { MozAppearance: 'textfield', width: 60 } }}
-                          helperText={`${addHubAvail} avail.`}
+                          helperText={stockAvailabilityLabel(addHubRow, addHubAvail)}
                           sx={{ width: 80, '& input::-webkit-outer-spin-button, & input::-webkit-inner-spin-button': { display: 'none' } }}
                         />
                       )}

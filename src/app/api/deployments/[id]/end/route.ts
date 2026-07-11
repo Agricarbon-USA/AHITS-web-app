@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
+import { isAuthorizedForRig } from '@/lib/deployment-auth'
 import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { createAlert } from '@/lib/alerts'
@@ -8,7 +9,7 @@ import { withIdempotency } from '@/lib/idempotency'
 import { issueHubReturnLinks } from '@/lib/status-links'
 import { filterAllowedPhotoUrls } from '@/lib/photo-security'
 import { endAllAssignmentsForRig, removeAllProjectLinks } from '@/lib/deployment-assignments'
-import { restoreToHub } from '@/lib/inventory-stock'
+import { restoreToHub, resyncItemTotal } from '@/lib/inventory-stock'
 
 const dispositionSchema = z.object({
   kitItemId: z.string(),
@@ -26,6 +27,17 @@ const dispositionSchema = z.object({
   repairHubId: z.string().optional(),
   inoperableNotes: z.string().optional(),
   photoUrls: z.array(z.string()).default([]),
+}).superRefine((v, ctx) => {
+  // G1: a "Return to Hub" disposition must name a destination hub. Without it the
+  // server skips the per-hub stock credit and the quantity vanishes from hub
+  // views ("disappeared"/"HQ"). Required at the boundary so no path can lose stock.
+  if (v.type === 'HUB' && !v.hubId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'A return hub is required', path: ['hubId'] })
+  }
+  // §11.10 / Phase-2: a damage report requires at least one photo.
+  if (v.type === 'INOPERABLE' && v.photoUrls.length === 0) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'At least one damage photo is required', path: ['photoUrls'] })
+  }
 })
 
 const schema = z.object({
@@ -60,11 +72,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     },
   })
   if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (session.role !== 'ADMIN' && rig.operatorId !== session.userId) {
-    const isSecondary = await prisma.rigOperator.findUnique({
-      where: { rigId_operatorId: { rigId: id, operatorId: session.userId } },
-    })
-    if (!isSecondary) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  if (!(await isAuthorizedForRig(rig, session))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
   if (rig.endedAt) return NextResponse.json({ error: 'Deployment already ended' }, { status: 409 })
 
@@ -72,9 +81,32 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   const parsed = schema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const { note, itemDispositions } = parsed.data
+  const { note } = parsed.data
+  let { itemDispositions } = parsed.data
   const now = new Date()
   const allKitItems = rig.kits.flatMap((k) => k.items)
+
+  // Auto-fill items with no explicit disposition: default to returning to the item's
+  // home hub in GOOD condition. If an item has no home hub, we can't safely route it —
+  // return 400 so the client can provide an explicit disposition rather than losing stock.
+  const dispMap = new Map(itemDispositions.map((d) => [d.kitItemId, d]))
+  const autoDispositions: typeof itemDispositions = []
+  for (const ki of allKitItems) {
+    if (dispMap.has(ki.id)) continue
+    const hubId = ki.item.hubId
+    if (!hubId) {
+      return NextResponse.json(
+        { error: `Item "${ki.item.name}" has no disposition and no home hub — provide an explicit disposition.` },
+        { status: 400 },
+      )
+    }
+    autoDispositions.push({ kitItemId: ki.id, type: 'HUB', hubId, returnCondition: 'GOOD', photoUrls: [] })
+  }
+  if (autoDispositions.length > 0) itemDispositions = [...itemDispositions, ...autoDispositions]
+
+  // Collect serialized unit IDs set to IN_TRANSIT inside the transaction so we can
+  // fall back to AVAILABLE if hub-return link issuance fails after the tx commits.
+  const inTransitUnitIds: string[] = []
 
   await prisma.$transaction(async (tx) => {
     await tx.rig.update({ where: { id }, data: { endedAt: now, notes: note } })
@@ -94,16 +126,17 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       if (disp.type === 'HUB') {
         if (kitItem.item.itemType === 'CONSUMABLE' && (disp.returnCondition ?? 'GOOD') === 'GOOD') {
           // Restore exactly the stock drawn at check-out (CR-1a / N-2).
-          // Dual-write: per-hub row (MH-1) + cross-hub total (always, so no
-          // stock is lost even for legacy null drawnHubId items).
-          const hubForRestore = kitItem.drawnHubId ?? kitItem.item.hubId
+          // G1: the operator-chosen destination hub wins, then the drawn hub,
+          // then the item's home hub. hubId is required for HUB (schema refine),
+          // so this is never null and the per-hub credit always lands somewhere.
+          const hubForRestore = disp.hubId ?? kitItem.drawnHubId ?? kitItem.item.hubId
           if (hubForRestore && kitItem.drawnQuantity > 0) {
             await restoreToHub(inventoryItemId, hubForRestore, kitItem.drawnQuantity, tx)
+            // #106: recompute the cross-hub total from the stock rows (one discipline for
+            // every return path) instead of a blind increment — self-heals any drift and
+            // can't credit the total without a backing per-hub row (A-2/A-3).
+            await resyncItemTotal(inventoryItemId, tx)
           }
-          await tx.inventoryItem.update({
-            where: { id: inventoryItemId },
-            data: { quantity: { increment: kitItem.drawnQuantity } },
-          })
         }
         const logCondition =
           disp.type === 'HUB' ? returnConditionToLogCondition(disp.returnCondition) : null
@@ -119,12 +152,26 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
             condition: logCondition,
           },
         })
+        // Map return condition → inventory unit status.
+        // GOOD serialized units get IN_TRANSIT so the hub's HUB_RETURN link confirmation
+        // (RECEIVED action in status-links.ts) flips them to AVAILABLE. Anonymous-unit
+        // (consumable / untracked) GOOD items stay AVAILABLE — they don't get links.
+        const condition = disp.returnCondition ?? 'GOOD'
         if (kitItem.inventoryUnit) {
+          const unitStatus =
+            condition === 'IN_MAINTENANCE' ? 'IN_MAINTENANCE' as const :
+            condition === 'INOPERABLE' ? 'INOPERABLE' as const :
+            'IN_TRANSIT' as const
           await tx.inventoryUnit.update({
             where: { id: kitItem.inventoryUnit.id },
-            data: { status: 'AVAILABLE' },
+            data: { status: unitStatus },
           })
+          if (unitStatus === 'IN_TRANSIT') inTransitUnitIds.push(kitItem.inventoryUnit.id)
         } else {
+          const targetStatus =
+            condition === 'IN_MAINTENANCE' ? 'IN_MAINTENANCE' as const :
+            condition === 'INOPERABLE' ? 'INOPERABLE' as const :
+            'AVAILABLE' as const
           const excludeUnitIds = await getUnitsInOtherRigs(tx, inventoryItemId, id)
           const units = await tx.inventoryUnit.findMany({
             where: {
@@ -137,10 +184,11 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           if (units.length > 0) {
             await tx.inventoryUnit.updateMany({
               where: { id: { in: units.map((u) => u.id) } },
-              data: { status: 'AVAILABLE' },
+              data: { status: targetStatus },
             })
           }
         }
+
         if (disp.hubId) {
           await tx.inventoryItem.update({ where: { id: inventoryItemId }, data: { hubId: disp.hubId } })
         }
@@ -193,7 +241,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           await createAlert('DAMAGE_REPORTED', 'maintenance_tasks', task.id, {
             itemName: kitItem.item.name,
             operatorId: session.userId,
-          })
+          }, tx)
           if (disp.photoUrls.length > 0) {
             await tx.photo.createMany({
               data: filterAllowedPhotoUrls(disp.photoUrls).map((url) => ({
@@ -261,11 +309,29 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
         data: { assignedOperatorId: null },
       })
     }
+    // W0-10 PR-2b: close the rig's open RigVehicle rows so each vehicle is freed for its
+    // next deployment. Previously these were left open on an ended rig and no path could
+    // ever close them (the vehicles DELETE route rejects ended rigs), stranding the row
+    // forever — which breaks the one-open-RigVehicle-per-vehicle invariant index C (PR-2c)
+    // enforces and blocks the routine "reuse this vehicle next time".
+    // EXCEPTION: a vehicle with a still-PENDING outbound transfer must keep its source row
+    // OPEN — the accept path's stillPresent guard requires removedAt IS NULL to move it to
+    // the recipient (mirrors how end skips removedAt for TRANSFER kit items). Closing it
+    // would brick the transfer and orphan the vehicle.
+    const pendingXfer = await tx.transferRequest.findMany({
+      where: { fromRigId: id, status: 'PENDING' },
+      select: { vehicles: { select: { vehicleId: true } } },
+    })
+    const keepOpenVehicleIds = pendingXfer.flatMap((t) => t.vehicles.map((v) => v.vehicleId))
+    await tx.rigVehicle.updateMany({
+      where: { rigId: id, removedAt: null, vehicleId: { notIn: keepOpenVehicleIds } },
+      data: { removedAt: now },
+    })
   })
 
   // Wave F-R (soft-gate, best-effort): issue HUB_RETURN confirmation links for
-  // serialized units sent back to a hub at end-of-deployment — the most common
-  // hub-return moment. Non-blocking; failures never affect the ended deployment.
+  // serialized GOOD units set IN_TRANSIT inside the transaction. Non-blocking; if
+  // issuance fails, fall back those units to AVAILABLE so they aren't stranded.
   try {
     const hubDisps = itemDispositions
       .filter((d) => d.type === 'HUB' && d.hubId)
@@ -273,6 +339,12 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     await issueHubReturnLinks(session.userId, hubDisps)
   } catch (e) {
     console.error('[end hub-return link issue]', e)
+    if (inTransitUnitIds.length > 0) {
+      await prisma.inventoryUnit.updateMany({
+        where: { id: { in: inTransitUnitIds }, status: 'IN_TRANSIT' },
+        data: { status: 'AVAILABLE' },
+      }).catch(() => {})
+    }
   }
 
   return NextResponse.json({ ok: true })

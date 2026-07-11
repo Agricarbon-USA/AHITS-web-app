@@ -132,17 +132,21 @@ export async function withIdempotency(
   // Try to claim the key before running the handler.
   const claimed = await claimKey(key, scope, bodyHash)
   if (!claimed) {
-    // Another request won the claim; poll briefly for its committed result.
-    for (let i = 0; i < 4; i++) {
-      await new Promise<void>((r) => setTimeout(r, 50))
+    // Another request won the claim; poll with exponential backoff for its result.
+    for (const delay of [50, 100, 200, 400, 800]) {
+      await new Promise<void>((r) => setTimeout(r, delay))
       const retry = await getCached(key, scope)
       if (retry) {
         if (retry.bodyHash && retry.bodyHash !== bodyHash) return mismatchResponse()
         return NextResponse.json(retry.body as Record<string, unknown>, { status: retry.status })
       }
     }
-    // Still in-flight after ~200 ms — fall through and run the handler anyway.
-    // This is a very narrow race; in the worst case one extra write occurs.
+    // Original still in-flight after ~1.55 s — tell the client to retry rather
+    // than double-applying a slow write.
+    return NextResponse.json(
+      { error: 'Request in flight — retry after the original completes.' },
+      { status: 409 },
+    )
   }
 
   let res: NextResponse

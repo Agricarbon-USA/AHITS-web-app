@@ -110,6 +110,14 @@ export async function issueHubReturnLinks(
   const byHub = new Map<string, { name: string; serial: string | null; url: string }[]>()
   for (const ki of serialized) {
     if (!ki.inventoryUnitId) continue
+    // W0-9: a unit can be returned, re-deployed, and returned again while an old
+    // link is still ISSUED — supersede prior active HUB_RETURN links for this unit
+    // so the Inbound list can't accrete duplicate "awaiting receipt" rows (mirrors
+    // the WORK_ORDER/RESERVATION resend-supersede pattern).
+    await prisma.statusLink.updateMany({
+      where: { type: 'HUB_RETURN', inventoryUnitId: ki.inventoryUnitId, state: { in: ['ISSUED', 'VIEWED', 'ACTED'] } },
+      data: { state: 'REVOKED', revokedAt: new Date() },
+    })
     const hubId = hubByKitItem.get(ki.id)
     const { url } = await issueStatusLink({
       type: 'HUB_RETURN',
@@ -133,7 +141,7 @@ export async function issueHubReturnLinks(
       `
       const hub = rows[0]
       if (!hub?.email) continue
-      await sendEmail({
+      await sendEmail({ kind: 'HUB_RETURN',
         to: hub.email,
         subject: `Equipment inbound to ${hub.name}`,
         html: hubReturnEmail({ hubName: hub.name, units }),
@@ -151,7 +159,7 @@ const RESOLVE_INCLUDE = {
       item: { select: { name: true } },
       unit: { select: { serialNumber: true } },
       repairHub: { select: { name: true, city: true, state: true } },
-      photos: { select: { url: true } },
+      // UR-005b: photos intentionally not resolved for the login-less status link.
     },
   },
   inventoryUnit: { include: { inventoryItem: { select: { name: true } } } },
@@ -164,6 +172,12 @@ export type ResolvedStatusLink = Prisma.StatusLinkGetPayload<{ include: typeof R
 export async function resolveStatusLink(rawToken: string): Promise<ResolvedStatusLink | null> {
   const tokenHash = hashToken(rawToken)
   return prisma.statusLink.findUnique({ where: { tokenHash }, include: RESOLVE_INCLUDE })
+}
+
+/** W0-9: resolve a status link by its DB id for admin-side actions (mark-received /
+ *  reissue from the Inbound view) — the counterpart to the public token resolve. */
+export async function resolveStatusLinkById(id: string): Promise<ResolvedStatusLink | null> {
+  return prisma.statusLink.findUnique({ where: { id }, include: RESOLVE_INCLUDE })
 }
 
 /** Terminal/blocked states a recipient can no longer act on. */
@@ -287,6 +301,12 @@ export async function applyTransition(link: ResolvedStatusLink, input: Transitio
           data: { status: 'AVAILABLE' },
         })
         await tx.statusLink.update({ where: { id: link.id }, data: { state: 'COMPLETED', completedAt: now, actedAt: now } })
+        // W0-9: one confirmation clears the unit everywhere — complete any sibling
+        // active HUB_RETURN links for the same unit so duplicates don't linger.
+        await tx.statusLink.updateMany({
+          where: { type: 'HUB_RETURN', inventoryUnitId: link.inventoryUnitId, id: { not: link.id }, state: { in: ['ISSUED', 'VIEWED', 'ACTED'] } },
+          data: { state: 'COMPLETED', completedAt: now, actedAt: now },
+        })
         await notifyAdmins(tx, {
           type: 'DAMAGE_REPORTED',
           title: `Hub confirmed receipt — ${itemName}`,

@@ -119,7 +119,7 @@ export interface OfflineQueueStatus {
 export type MutateResult<T = unknown> =
   | { ok: true; queued: false; data: T }
   | { ok: true; queued: true; data: null }
-  | { ok: false; queued: false; error: string; status: number }
+  | { ok: false; queued: false; error: string; status: number; reason?: 'storage' }
 
 // Dashboard stats
 export interface DashboardStats {

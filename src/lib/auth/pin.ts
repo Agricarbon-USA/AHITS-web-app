@@ -27,15 +27,17 @@ export async function verifyPin(userId: string, pin: string): Promise<boolean> {
   const valid = await bcrypt.compare(pin, user.pinHash)
 
   if (!valid) {
-    const attempts = user.failedPinAttempts + 1
-    await prisma.user.update({
+    const incremented = await prisma.user.update({
       where: { id: userId },
-      data: {
-        failedPinAttempts: attempts,
-        pinLockedAt: attempts >= MAX_ATTEMPTS ? new Date() : null,
-      },
+      data: { failedPinAttempts: { increment: 1 } },
+      select: { failedPinAttempts: true },
     })
+    const attempts = incremented.failedPinAttempts
     if (attempts >= MAX_ATTEMPTS) {
+      await prisma.user.update({
+        where: { id: userId },
+        data: { pinLockedAt: new Date() },
+      })
       createAlert('PIN_LOCKED', 'users', userId, { name: user.name, email: user.email }).catch(() => {})
     }
     return false

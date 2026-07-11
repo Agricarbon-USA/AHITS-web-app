@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
 import { withIdempotency } from '@/lib/idempotency'
 import { writeAudit } from '@/lib/audit'
+import { getActivePrimaryForRig, getRequiredPrimaryForRig, getActiveRigForOperator } from '@/lib/deployment-assignments'
 import { reassignPrimary, createHandoff } from '@/lib/deployment-handoffs'
 
 const schema = z.object({
@@ -21,12 +22,14 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { id } = await params
 
-  const rig = await prisma.rig.findUnique({ where: { id }, select: { id: true, operatorId: true, endedAt: true } })
+  const rig = await prisma.rig.findUnique({ where: { id }, select: { id: true, endedAt: true } })
   if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (rig.endedAt) return NextResponse.json({ error: 'Deployment has ended' }, { status: 409 })
 
   const isAdmin = session.role === 'ADMIN'
-  const isPrimary = rig.operatorId === session.userId
+  // W0-10 PR-1: PRIMARY-only — roster-PRIMARY (+ legacy fallback); primaryId reused below.
+  const primaryId = await getRequiredPrimaryForRig(id)
+  const isPrimary = primaryId === session.userId
   if (!isAdmin && !isPrimary) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const body = await req.json()
@@ -34,7 +37,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
   const { toOperatorId, note, force: forceRaw } = parsed.data
 
-  if (toOperatorId === rig.operatorId) {
+  if (toOperatorId === primaryId) {
     return NextResponse.json({ error: 'That operator is already the primary operator' }, { status: 409 })
   }
 
@@ -44,12 +47,12 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   }
 
   const force = isAdmin && forceRaw === true
-  const fromOperatorId = rig.operatorId
+  const fromOperatorId = primaryId
 
   let handoffId: string
   try {
     handoffId = await prisma.$transaction(async (tx) => {
-      const targetActive = await tx.rig.findFirst({ where: { operatorId: toOperatorId, endedAt: null } })
+      const targetActive = await getActiveRigForOperator(toOperatorId, tx)
       if (targetActive) throw new Error('TARGET_HAS_ACTIVE_RIG')
 
       if (force) {
@@ -80,7 +83,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
         type: 'HANDOFF_REQUESTED',
         title: 'Deployment handoff requested',
         body: `${session.name} wants to hand off a deployment to you.`,
-        link: '/operator/my-rig',
+        link: '/operator/my-deployment',
       },
     }).catch(() => {})
   }

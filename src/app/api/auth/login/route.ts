@@ -64,6 +64,7 @@ export async function POST(req: NextRequest) {
       name: user.name,
       email: user.email,
       tokenVersion: user.tokenVersion,
+      mustChangePin: user.mustChangePin, // UR-004: gate enforced in proxy.ts
     })
     await setSessionCookie(token)
 

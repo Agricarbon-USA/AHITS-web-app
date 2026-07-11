@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
+import { hydrateRigOperator } from '@/lib/deployment-assignments'
+import { getAuthorizedActiveRig } from '@/lib/deployment-auth'
 import { requireAuth } from '@/lib/auth/session'
 import { withIdempotency } from '@/lib/idempotency'
 
 const RIG_INCLUDE = {
-  operator: { select: { id: true, name: true } },
   project: { select: { id: true, name: true } },
   vehicles: {
     where: { removedAt: null },
-    include: { vehicle: { select: { id: true, name: true, type: true } } },
+    include: { vehicle: { select: { id: true, name: true, type: true, isRental: true, rentalAgreementUrl: true } } },
   },
   kits: {
     include: {
@@ -50,17 +51,6 @@ const removeSchema = z.object({
   note: z.string().min(1, 'Note is required'),
 })
 
-async function getAuthorizedActiveRig(id: string, session: { userId: string; role: string }) {
-  const rig = await prisma.rig.findUnique({ where: { id } })
-  if (!rig || rig.endedAt) return null
-  if (session.role === 'ADMIN') return rig
-  if (rig.operatorId === session.userId) return rig
-  const secondary = await prisma.rigOperator.findUnique({
-    where: { rigId_operatorId: { rigId: id, operatorId: session.userId } },
-  })
-  if (secondary) return rig
-  return null
-}
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAuth()
@@ -118,13 +108,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       })
     })
   } catch (err: unknown) {
+    // W0-10 PR-2b: a partial-unique violation (index C, one open RigVehicle per vehicle,
+    // or the concurrent-add race the pre-check can slip) surfaces as Prisma P2002 / PG
+    // 23505 — translate to a friendly 409 instead of a raw 500.
+    const code = (err as { code?: string }).code
+    if (code === 'P2002' || code === '23505') {
+      return NextResponse.json(
+        { error: 'One or more of those vehicles is already on an active deployment. Remove it there first.' },
+        { status: 409 }
+      )
+    }
     const msg = err instanceof Error ? err.message : 'Failed to add vehicles'
     console.error('[POST /api/deployments/[id]/vehicles]', err)
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 
   const updated = await prisma.rig.findUniqueOrThrow({ where: { id }, include: RIG_INCLUDE })
-  return NextResponse.json(updated)
+  return NextResponse.json(await hydrateRigOperator(updated))
 }
 
 export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
@@ -158,21 +158,9 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
   try {
     await prisma.$transaction(async (tx) => {
       for (const disp of vehicles) {
-        // Mark the RigVehicle as removed
-        await tx.rigVehicle.updateMany({
-          where: {
-            rigId: id,
-            vehicleId: disp.vehicleId,
-            removedAt: null,
-          },
-          data: {
-            removedAt: now,
-            removeNote: disp.note ?? note,
-          },
-        })
-
         if (disp.dispositionType === 'TRANSFER' && disp.toOperatorId) {
-          // Create a transfer request for the vehicle
+          // Keep the RigVehicle row open (removedAt: null) so the accept path's
+          // "still present" guard can find it. The row is closed when accepted.
           await tx.transferRequest.create({
             data: {
               fromRigId: id,
@@ -185,6 +173,18 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
           })
           // Don't clear assignedOperatorId yet — happens on acceptance
         } else {
+          // Mark the RigVehicle as removed for all non-TRANSFER dispositions
+          await tx.rigVehicle.updateMany({
+            where: {
+              rigId: id,
+              vehicleId: disp.vehicleId,
+              removedAt: null,
+            },
+            data: {
+              removedAt: now,
+              removeNote: disp.note ?? note,
+            },
+          })
           // Update vehicle status and clear assignment
           const statusMap: Record<string, 'ACTIVE' | 'IN_MAINTENANCE' | 'RETIRED'> = {
             AVAILABLE: 'ACTIVE',
@@ -208,5 +208,5 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
   }
 
   const updated = await prisma.rig.findUniqueOrThrow({ where: { id }, include: RIG_INCLUDE })
-  return NextResponse.json(updated)
+  return NextResponse.json(await hydrateRigOperator(updated))
 }

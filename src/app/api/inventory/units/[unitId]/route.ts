@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
+import { writeOr404 } from '@/lib/api-errors'
 
 const patchSchema = z.object({
   status: z.enum(['AVAILABLE', 'CHECKED_OUT', 'IN_MAINTENANCE', 'INOPERABLE', 'RETIRED']).optional(),
@@ -17,18 +18,22 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ un
   const parsed = patchSchema.safeParse(await req.json())
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const unit = await prisma.inventoryUnit.update({
-    where: { id: unitId },
-    data: parsed.data,
-    select: { id: true, qrCodeId: true, serialNumber: true, status: true, notes: true, createdAt: true, inventoryItemId: true },
-  })
+  let unit: { id: string; qrCodeId: string; serialNumber: string | null; status: string; notes: string | null; createdAt: Date; inventoryItemId: string } | undefined
+  const notFound = await writeOr404(async () => {
+    unit = await prisma.inventoryUnit.update({
+      where: { id: unitId },
+      data: parsed.data,
+      select: { id: true, qrCodeId: true, serialNumber: true, status: true, notes: true, createdAt: true, inventoryItemId: true },
+    })
+  }, 'Unit not found')
+  if (notFound) return notFound
 
   if (parsed.data.status) {
     const action = parsed.data.status === 'CHECKED_OUT' ? 'CHECK_OUT' : 'CHECK_IN'
     await prisma.checkLog.create({
       data: {
         action,
-        itemId: unit.inventoryItemId,
+        itemId: unit!.inventoryItemId,
         inventoryUnitId: unitId,
         operatorId: session.userId,
         notes: `Admin status change → ${parsed.data.status}`,
@@ -36,5 +41,5 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ un
     })
   }
 
-  return NextResponse.json({ data: unit })
+  return NextResponse.json({ data: unit! })
 }

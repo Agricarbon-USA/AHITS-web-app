@@ -17,7 +17,7 @@ vi.mock('../src/lib/auth/session', () => ({
   requireAuth: () => Promise.resolve(mockSession),
   requireAdmin: () => Promise.resolve((mockSession as { role?: string } | null)?.role === 'ADMIN' ? mockSession : null),
 }))
-vi.mock('../src/lib/alerts', () => ({ createAlert: vi.fn().mockResolvedValue({}) }))
+vi.mock('../src/lib/alerts', () => ({ createAlert: vi.fn().mockResolvedValue({}), resolveActiveAlert: vi.fn().mockResolvedValue({}) }))
 vi.mock('../src/lib/email/resend', () => ({ sendEmail: vi.fn().mockResolvedValue({}) }))
 
 function jsonReq(url: string, body: unknown) {
@@ -101,7 +101,7 @@ describe('Wave A — correctness blockers', () => {
 
   describe('H1 — vehicle cannot be stolen from another active deployment', () => {
     it('rejects adding a vehicle that has an open RigVehicle in a different active rig', async () => {
-      const vehicle = await createVehicle({ name: 'Truck-WA-1', assignedOperatorId: op1.id })
+      const vehicle = await createVehicle({ name: 'Truck-WA-1' })
       const { rig: rigA } = await createRig(op1.id)
       await addVehicleToRig(rigA.id, vehicle.id)
       const { rig: rigB } = await createRig(op2.id)
@@ -119,9 +119,9 @@ describe('Wave A — correctness blockers', () => {
       // Vehicle must NOT have been attached to rig B.
       const inB = await prisma.rigVehicle.findFirst({ where: { rigId: rigB.id, vehicleId: vehicle.id, removedAt: null } })
       expect(inB).toBeNull()
-      // And it stays assigned to op1.
-      const v = await prisma.vehicle.findUnique({ where: { id: vehicle.id } })
-      expect(v?.assignedOperatorId).toBe(op1.id)
+      // And it stays on rig A (the open RigVehicle is untouched).
+      const stillOnA = await prisma.rigVehicle.findFirst({ where: { rigId: rigA.id, vehicleId: vehicle.id, removedAt: null } })
+      expect(stillOnA).not.toBeNull()
     })
 
     it('allows adding a free vehicle', async () => {
@@ -152,7 +152,7 @@ describe('Wave A — correctness blockers', () => {
     const checklist = [{ key: 'tires', label: 'Tires', value: 'yes' as const }]
 
     it('accepts a daily check for a vehicle assigned to another operator (UR-033)', async () => {
-      const someoneElsesVehicle = await createVehicle({ name: 'Truck-WA-3', assignedOperatorId: op2.id })
+      const someoneElsesVehicle = await createVehicle({ name: 'Truck-WA-3' })
 
       mockSession = operatorSession(op1.id)
       const res = await dailyCheck(jsonReq('http://localhost/api/daily-check', {

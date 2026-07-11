@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { VehicleType, VehicleStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { getVehicleOperators } from '@/lib/deployment-assignments'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
+import { writeOr404 } from '@/lib/api-errors'
 
 // Whitelist of admin-editable fields. Excludes id/createdAt/updatedAt and
 // qrCodeId (QR association is set on create, not via a generic edit) to prevent
@@ -19,10 +21,22 @@ const vehicleUpdateSchema = z
     status: z.nativeEnum(VehicleStatus),
     location: z.string().nullable(),
     hubId: z.string().nullable(),
-    assignedOperatorId: z.string().nullable(),
     insuranceExpires: z.coerce.date().nullable(),
     registrationExpires: z.coerce.date().nullable(),
     notes: z.string().nullable(),
+    // NEW-5: rental metadata. isRental/rentalOneWay are NOT NULL columns, so they
+    // can be set but not nulled; the rest are clearable.
+    isRental: z.boolean(),
+    rentalCompany: z.string().nullable(),
+    rentalAgreementNumber: z.string().nullable(),
+    rentalAgreementUrl: z.string().nullable(),
+    rentalStartDate: z.coerce.date().nullable(),
+    rentalEndDate: z.coerce.date().nullable(),
+    rentalLocation: z.string().nullable(),
+    rentalReturnLocation: z.string().nullable(),
+    rentalCostAmount: z.number().nonnegative().nullable(),
+    rentalCostPeriod: z.enum(['DAY', 'WEEK', 'MONTH', 'FLAT']).nullable(),
+    rentalOneWay: z.boolean(),
   })
   .partial()
   .strict()
@@ -44,19 +58,21 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
   // Merge hub + assigned-operator names via raw SQL (hubId newer than client).
   let hubId: string | null = null
   let hubName: string | null = null
-  let assignedOperatorName: string | null = null
+  // W0-10 PR-1: derive the assigned operator once (id + name) from the assignment table.
+  const vehicleOp = (await getVehicleOperators([id])).get(id) ?? null
+  const assignedOperatorId = vehicleOp?.operatorId ?? null
+  const assignedOperatorName = vehicleOp?.operatorName ?? null
   try {
-    const rows = await prisma.$queryRaw<{ hubId: string | null; hubName: string | null; assignedOperatorName: string | null }[]>`
-      SELECT v."hubId", h."name" AS "hubName", u."name" AS "assignedOperatorName"
+    const rows = await prisma.$queryRaw<{ hubId: string | null; hubName: string | null }[]>`
+      SELECT v."hubId", h."name" AS "hubName"
       FROM "vehicles" v
       LEFT JOIN "hubs" h ON h."id" = v."hubId"
-      LEFT JOIN "users" u ON u."id" = v."assignedOperatorId"
       WHERE v."id" = ${id}
     `
-    if (rows[0]) { hubId = rows[0].hubId; hubName = rows[0].hubName; assignedOperatorName = rows[0].assignedOperatorName }
+    if (rows[0]) { hubId = rows[0].hubId; hubName = rows[0].hubName }
   } catch { /* hubId column missing pre-migration */ }
 
-  return NextResponse.json({ data: { ...vehicle, hubId, hubName, assignedOperatorName } })
+  return NextResponse.json({ data: { ...vehicle, assignedOperatorId, hubId, hubName, assignedOperatorName } })
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -87,6 +103,10 @@ export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id:
   const { id } = await params
   // Soft-delete (CR-8): never hard-delete a vehicle with check/maintenance
   // history — set the tombstone so reads hide it but history is preserved.
-  await prisma.vehicle.update({ where: { id }, data: { deletedAt: new Date() } })
+  const notFound = await writeOr404(
+    () => prisma.vehicle.update({ where: { id }, data: { deletedAt: new Date() } }),
+    'Vehicle not found',
+  )
+  if (notFound) return notFound
   return NextResponse.json({ ok: true })
 }

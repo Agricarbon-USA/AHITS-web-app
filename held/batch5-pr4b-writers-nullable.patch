@@ -1,0 +1,291 @@
+diff --git a/prisma/migrations/20260708022000_rig_operatorid_nullable/migration.sql b/prisma/migrations/20260708022000_rig_operatorid_nullable/migration.sql
+new file mode 100644
+index 0000000..b105b74
+--- /dev/null
++++ b/prisma/migrations/20260708022000_rig_operatorid_nullable/migration.sql
+@@ -0,0 +1,9 @@
++-- W0-10 PR-4b · make rigs.operatorId NULLABLE (column KEPT; dropped in PR-4c).
++-- Expand/contract, middle phase: this revision REMOVES the operatorId/assignedOperatorId/
++-- RigOperator fields from schema.prisma, so the generated Prisma client stops projecting
++-- (reading) and stops writing those columns — but the DB columns still physically exist.
++-- Relaxing NOT NULL lets rig.create (which no longer supplies operatorId) insert NULL while
++-- the column remains. Additive/backward-compatible; DROP NOT NULL is not in the CI
++-- migration-safety denylist. After this deploys, the live revision neither reads NOR writes
++-- the legacy columns (client no longer references them) -> PR-4c's DROP is fully gap-safe.
++ALTER TABLE "rigs" ALTER COLUMN "operatorId" DROP NOT NULL;
+diff --git a/prisma/schema.prisma b/prisma/schema.prisma
+index 0b8bc74..6921692 100644
+--- a/prisma/schema.prisma
++++ b/prisma/schema.prisma
+@@ -201,8 +201,6 @@ model User {
+   alerts             Alert[]
+   notifications      Notification[]
+   statusLinks        StatusLink[]
+-  rigs               Rig[]             @relation("OperatorRigs")
+-  secondaryRigs      RigOperator[]     @relation("RigSecondaryOperators")
+   transfersReceived  TransferRequest[] @relation("TransferTo")
+   transfersInitiated TransferRequest[] @relation("TransferBy")
+   auditActions       AccountAuditLog[] @relation("AuditActor")
+@@ -252,8 +250,6 @@ model Hub {
+ model Rig {
+   id         String    @id @default(cuid())
+   label      String?
+-  operatorId String
+-  operator   User      @relation("OperatorRigs", fields: [operatorId], references: [id])
+   projectId  String?
+   project    Project?  @relation(fields: [projectId], references: [id])
+   startedAt  DateTime  @default(now())
+@@ -265,28 +261,13 @@ model Rig {
+   vehicles           RigVehicle[]
+   kits               Kit[]
+   outgoingTransfers  TransferRequest[] @relation("FromRig")
+-  secondaryOperators RigOperator[]
+   checkLogs          CheckLog[]
+ 
+-  @@index([operatorId])
+   @@index([endedAt])
+   @@index([projectId])
+   @@map("rigs")
+ }
+ 
+-model RigOperator {
+-  id         String   @id @default(cuid())
+-  rigId      String
+-  operatorId String
+-  addedAt    DateTime @default(now())
+-
+-  rig      Rig  @relation(fields: [rigId], references: [id])
+-  operator User @relation("RigSecondaryOperators", fields: [operatorId], references: [id])
+-
+-  @@unique([rigId, operatorId])
+-  @@map("rig_operators")
+-}
+-
+ model RigVehicle {
+   id         String    @id @default(cuid())
+   rigId      String
+@@ -518,7 +499,6 @@ model Vehicle {
+   // client is regenerated locally (matches the Hub.email pattern).
+   location            String?
+   hubId               String?
+-  assignedOperatorId  String?
+   insuranceExpires    DateTime?
+   registrationExpires DateTime?
+   // NEW-5: rental vehicles are modeled as Vehicles (reusing daily-checks,
+diff --git a/src/app/api/deployments/[id]/end/route.ts b/src/app/api/deployments/[id]/end/route.ts
+index 71d44ed..0dcb7c8 100644
+--- a/src/app/api/deployments/[id]/end/route.ts
++++ b/src/app/api/deployments/[id]/end/route.ts
+@@ -264,13 +264,6 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
+       })
+     }
+ 
+-    const vehicleIds = rig.vehicles.map((rv) => rv.vehicleId)
+-    if (vehicleIds.length > 0) {
+-      await tx.vehicle.updateMany({
+-        where: { id: { in: vehicleIds } },
+-        data: { assignedOperatorId: null },
+-      })
+-    }
+     // W0-10 PR-2b: close the rig's open RigVehicle rows so each vehicle is freed for its
+     // next deployment. Previously these were left open on an ended rig and no path could
+     // ever close them (the vehicles DELETE route rejects ended rigs), stranding the row
+diff --git a/src/app/api/deployments/[id]/operators/route.ts b/src/app/api/deployments/[id]/operators/route.ts
+index 4639451..f6af7c3 100644
+--- a/src/app/api/deployments/[id]/operators/route.ts
++++ b/src/app/api/deployments/[id]/operators/route.ts
+@@ -34,17 +34,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
+   }
+ 
+   try {
+-    const assignment = await prisma.$transaction(async (tx) => {
+-      const result = await tx.rigOperator.upsert({
+-        where: { rigId_operatorId: { rigId: id, operatorId } },
+-        create: { rigId: id, operatorId },
+-        update: {},
+-        include: { operator: { select: { id: true, name: true, email: true } } },
+-      })
++    const operator = await prisma.$transaction(async (tx) => {
+       await ensureOpenAssignment({ rigId: id, operatorId, role: 'SECONDARY', addedById: session.userId }, tx)
+-      return result
++      return tx.user.findUnique({ where: { id: operatorId }, select: { id: true, name: true, email: true } })
+     })
+-    return NextResponse.json(assignment, { status: 201 })
++    return NextResponse.json({ operator }, { status: 201 })
+   } catch (err: unknown) {
+     // W0-10 PR-2b: index D (one open SECONDARY per rig+operator) violation under a
+     // concurrent double-add surfaces as P2002 / 23505 — friendly 409, not a raw 500.
+@@ -66,9 +60,6 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
+ 
+   const parsed = removeSchema.safeParse(await req.json())
+   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
+-  await prisma.$transaction(async (tx) => {
+-    await tx.rigOperator.deleteMany({ where: { rigId: id, operatorId: parsed.data.operatorId } })
+-    await endAssignmentByRole(id, parsed.data.operatorId, 'SECONDARY', tx)
+-  })
++  await endAssignmentByRole(id, parsed.data.operatorId, 'SECONDARY')
+   return NextResponse.json({ ok: true })
+ }
+diff --git a/src/app/api/deployments/[id]/vehicles/route.ts b/src/app/api/deployments/[id]/vehicles/route.ts
+index 083f957..baf7046 100644
+--- a/src/app/api/deployments/[id]/vehicles/route.ts
++++ b/src/app/api/deployments/[id]/vehicles/route.ts
+@@ -102,10 +102,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
+         })),
+         skipDuplicates: true,
+       })
+-      await tx.vehicle.updateMany({
+-        where: { id: { in: vehicleIds } },
+-        data: { assignedOperatorId: rig.operatorId },
+-      })
+     })
+   } catch (err: unknown) {
+     // W0-10 PR-2b: a partial-unique violation (index C, one open RigVehicle per vehicle,
+@@ -195,7 +191,6 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
+             where: { id: disp.vehicleId },
+             data: {
+               status: statusMap[disp.dispositionType] ?? 'ACTIVE',
+-              assignedOperatorId: null,
+             },
+           })
+         }
+diff --git a/src/app/api/deployments/route.ts b/src/app/api/deployments/route.ts
+index 5d1465d..9bf9411 100644
+--- a/src/app/api/deployments/route.ts
++++ b/src/app/api/deployments/route.ts
+@@ -117,6 +117,24 @@ export async function GET(req: NextRequest) {
+       WHERE "operatorId" = ${session.userId} AND "endedAt" IS NULL`
+     assignedRigIds = arows.map((r) => r.rigId)
+   }
++  // W0-10 PR-4b: admin operator-filter via the assignment table (successor to the legacy
++  // Rig.operatorId WHERE). Matches rigs whose CURRENT/FINAL primary is the filtered operator
++  // — the open PRIMARY for active rigs, else the last-closed PRIMARY for ended rigs (mirrors
++  // the display roster) — so the admin "show ended" + operator filter still returns history.
++  let adminFilterRigIds: string[] | null = null
++  if (session.role !== 'OPERATOR' && operatorId) {
++    const frows = await prisma.$queryRaw<{ rigId: string }[]>`
++      SELECT r."id" AS "rigId"
++      FROM "rigs" r
++      JOIN LATERAL (
++        SELECT a."operatorId" FROM "deployment_assignments" a
++        WHERE a."rigId" = r."id" AND a."role" = 'PRIMARY'
++        ORDER BY (a."endedAt" IS NULL) DESC, a."startedAt" DESC
++        LIMIT 1
++      ) lp ON TRUE
++      WHERE lp."operatorId" = ${operatorId}`
++    adminFilterRigIds = frows.map((r) => r.rigId)
++  }
+ 
+   const rigs = await prisma.rig.findMany({
+     where: {
+@@ -125,7 +143,7 @@ export async function GET(req: NextRequest) {
+       // Operators see deployments where they are primary OR secondary
+       ...(session.role === 'OPERATOR'
+         ? { id: { in: assignedRigIds } }
+-        : operatorId ? { operatorId } : {}),
++        : adminFilterRigIds !== null ? { id: { in: adminFilterRigIds } } : {}),
+     },
+     include: RIG_LIST_INCLUDE,
+     orderBy: { startedAt: 'desc' },
+@@ -185,7 +203,7 @@ async function _POST(req: NextRequest) {
+     }
+ 
+     const newRig = await tx.rig.create({
+-      data: { operatorId, projectId, label },
++      data: { projectId, label },
+     })
+ 
+     await ensureOpenAssignment({ rigId: newRig.id, operatorId, role: 'PRIMARY', addedById: session.userId }, tx)
+@@ -214,10 +232,6 @@ async function _POST(req: NextRequest) {
+           addNote: note,
+         })),
+       })
+-      await tx.vehicle.updateMany({
+-        where: { id: { in: vehicleIds } },
+-        data: { assignedOperatorId: operatorId },
+-      })
+     }
+ 
+     const kit = await tx.kit.create({ data: { rigId: newRig.id } })
+diff --git a/src/app/api/transfers/[id]/accept/route.ts b/src/app/api/transfers/[id]/accept/route.ts
+index c0163da..880ad18 100644
+--- a/src/app/api/transfers/[id]/accept/route.ts
++++ b/src/app/api/transfers/[id]/accept/route.ts
+@@ -119,7 +119,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
+     let destRig = destRigId ? await tx.rig.findUnique({ where: { id: destRigId } }) : null
+     if (!destRig) {
+       destRig = await tx.rig.create({
+-        data: { operatorId: toOperatorId, startedAt: now },
++        data: { startedAt: now },
+       })
+       await ensureOpenAssignment({ rigId: destRig.id, operatorId: toOperatorId, role: 'PRIMARY', addedById: session.userId, note: 'Created on transfer accept' }, tx)
+     }
+@@ -144,10 +144,6 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
+           photoUrls: transfer.photoUrls,
+         },
+       })
+-      await tx.vehicle.update({
+-        where: { id: tv.vehicleId },
+-        data: { assignedOperatorId: toOperatorId },
+-      })
+     }
+ 
+     // Transfer kit items (partial or full — remaining items stay in source rig)
+diff --git a/src/app/api/transfers/[id]/decline/route.ts b/src/app/api/transfers/[id]/decline/route.ts
+index 170ad47..9043e2b 100644
+--- a/src/app/api/transfers/[id]/decline/route.ts
++++ b/src/app/api/transfers/[id]/decline/route.ts
+@@ -111,10 +111,6 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
+           where: { rigId: transfer.fromRigId, vehicleId: { in: declinedVehicleIds }, removedAt: null },
+           data: { removedAt: now },
+         })
+-        await tx.vehicle.updateMany({
+-          where: { id: { in: declinedVehicleIds } },
+-          data: { assignedOperatorId: null },
+-        })
+       }
+     }
+     })
+diff --git a/src/app/api/transfers/[id]/route.ts b/src/app/api/transfers/[id]/route.ts
+index ebb3a98..3d1dcf6 100644
+--- a/src/app/api/transfers/[id]/route.ts
++++ b/src/app/api/transfers/[id]/route.ts
+@@ -47,16 +47,10 @@ export async function DELETE(
+     })
+     if (sourceRig?.endedAt) {
+       const vehicleIds = tvs.map((v) => v.vehicleId)
+-      await prisma.$transaction([
+-        prisma.rigVehicle.updateMany({
+-          where: { rigId: transfer.fromRigId, vehicleId: { in: vehicleIds }, removedAt: null },
+-          data: { removedAt: new Date() },
+-        }),
+-        prisma.vehicle.updateMany({
+-          where: { id: { in: vehicleIds } },
+-          data: { assignedOperatorId: null },
+-        }),
+-      ])
++      await prisma.rigVehicle.updateMany({
++        where: { rigId: transfer.fromRigId, vehicleId: { in: vehicleIds }, removedAt: null },
++        data: { removedAt: new Date() },
++      })
+     }
+   }
+ 
+diff --git a/src/lib/deployment-handoffs.ts b/src/lib/deployment-handoffs.ts
+index ef07f5e..adbdc49 100644
+--- a/src/lib/deployment-handoffs.ts
++++ b/src/lib/deployment-handoffs.ts
+@@ -36,11 +36,8 @@ export async function reassignPrimary(
+   const currentPrimary = await getRequiredPrimaryForRig(rig.id, tx)
+   await endAssignmentByRole(rig.id, currentPrimary, 'PRIMARY', tx)
+   await ensureOpenAssignment({ rigId: rig.id, operatorId: toOperatorId, role: 'PRIMARY', addedById: actorId, note }, tx)
+-  await tx.rig.update({ where: { id: rig.id }, data: { operatorId: toOperatorId } })
+-  const rvs = await tx.rigVehicle.findMany({ where: { rigId: rig.id, removedAt: null }, select: { vehicleId: true } })
+-  if (rvs.length) {
+-    await tx.vehicle.updateMany({ where: { id: { in: rvs.map((v) => v.vehicleId) } }, data: { assignedOperatorId: toOperatorId } })
+-  }
++  // W0-10 PR-4b: legacy Rig.operatorId + Vehicle.assignedOperatorId writes removed; the open
++  // PRIMARY assignment is the sole record. Columns are unwritten from here, dropped in PR-4c.
+ }
+ 
+ export async function createHandoff(input: {

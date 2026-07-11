@@ -67,7 +67,7 @@ describe('UR-001: bulk consumable return restores PER-HUB stock, not just the to
     const delRes = await bulkReturn(
       jsonReq(`http://localhost/api/deployments/${rig.id}/items`, 'DELETE', {
         note: 'return',
-        itemDispositions: [{ kitItemId: ki!.id, type: 'HUB', quantity: 3, returnCondition: 'GOOD' }],
+        itemDispositions: [{ kitItemId: ki!.id, type: 'HUB', quantity: 3, returnCondition: 'GOOD', hubId: hub.id }],
       }),
       { params: Promise.resolve({ id: rig.id }) },
     )
@@ -76,5 +76,50 @@ describe('UR-001: bulk consumable return restores PER-HUB stock, not just the to
     // Both stores restored to 10 and equal. (Pre-fix: total → 10 but per-hub → 7.)
     expect((await prisma.inventoryItem.findUnique({ where: { id: item.id } }))?.quantity).toBe(10)
     expect(await getStockAtHub(item.id, hub.id)).toBe(10)
+  })
+
+  it('A-1: two concurrent bulk returns of the same kit item restore stock ONCE (no double-restore)', async () => {
+    const op = await createOperator()
+    const cat = await createCategory()
+    const item = await createInventoryItem(cat.id, { itemType: 'CONSUMABLE', quantity: 10 })
+    const hub = await createHub()
+    await seedInventoryStock(item.id, hub.id, 10)
+    const { rig } = await createRig(op.id)
+    mockSession = operatorSession(op.id)
+
+    // Check out 3 → both stores drop to 7.
+    await addItems(
+      jsonReq(`http://localhost/api/deployments/${rig.id}/items`, 'POST', {
+        items: [{ itemType: 'CONSUMABLE', inventoryItemId: item.id, quantity: 3 }],
+        note: 'add', photoUrls: [], sourceHubId: hub.id,
+      }),
+      { params: Promise.resolve({ id: rig.id }) },
+    )
+    expect(await getStockAtHub(item.id, hub.id)).toBe(7)
+
+    const ki = await prisma.kitItem.findFirst({
+      where: { kit: { rigId: rig.id }, inventoryItemId: item.id, removedAt: null },
+    })
+
+    // Two concurrent bulk returns of the SAME kit item, each with a DISTINCT
+    // Idempotency-Key (jsonReq auto-increments), so server idempotency does NOT
+    // dedupe them — only the guarded per-line claim can. Pre-fix: both restored → 13.
+    const returnOnce = () =>
+      bulkReturn(
+        jsonReq(`http://localhost/api/deployments/${rig.id}/items`, 'DELETE', {
+          note: 'return',
+          itemDispositions: [{ kitItemId: ki!.id, type: 'HUB', quantity: 3, returnCondition: 'GOOD', hubId: hub.id }],
+        }),
+        { params: Promise.resolve({ id: rig.id }) },
+      )
+    const [r1, r2] = await Promise.all([returnOnce(), returnOnce()])
+    expect(r1.status).toBe(200)
+    expect(r2.status).toBe(200)
+
+    // Restored to exactly 10 — NOT 13. The guarded claim let only one return credit stock.
+    expect(await getStockAtHub(item.id, hub.id)).toBe(10)
+    expect((await prisma.inventoryItem.findUnique({ where: { id: item.id } }))?.quantity).toBe(10)
+    // The kit item is removed exactly once.
+    expect((await prisma.kitItem.findUnique({ where: { id: ki!.id } }))?.removedAt).not.toBeNull()
   })
 })

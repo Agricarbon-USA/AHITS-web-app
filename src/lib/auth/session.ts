@@ -26,6 +26,11 @@ type SignedClaims = {
   name: string
   email: string
   tokenVersion: number
+  // UR-004: signed so the edge middleware (proxy.ts, no DB access) can block a
+  // forced-PIN-reset operator from mutating API routes server-side. Kept FRESH
+  // because an admin PIN reset bumps tokenVersion (forcing re-login → a new token
+  // carrying mustChangePin=true), and the change-pin route re-mints with false.
+  mustChangePin?: boolean
 }
 
 function getSecret() {
@@ -35,7 +40,7 @@ function getSecret() {
 }
 
 export async function createSession(payload: SignedClaims): Promise<string> {
-  return new SignJWT({ ...payload })
+  return new SignJWT({ ...payload, mustChangePin: payload.mustChangePin === true })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime('24h')
@@ -68,6 +73,31 @@ export async function getSession(): Promise<SessionPayload | null> {
     return { userId: claims.userId, role: user.role, name: user.name, email: user.email, mustChangePin: user.mustChangePin }
   } catch {
     // If the DB is unreachable, fail closed (treat as unauthenticated).
+    return null
+  }
+}
+
+/**
+ * Verify the session JWT LOCALLY (no DB) and return its signed claims, or null
+ * if there is no valid/unexpired token.
+ *
+ * UR-007/026 (Option A): used ONLY by the server layout shell gate so a valid,
+ * unexpired token renders the app **offline** (the DB is unreachable, but the
+ * token is cryptographically verifiable on its own). It is deliberately NOT the
+ * authority for revocation/suspension/role/PIN — `getSession()` (DB-backed)
+ * stays the gate on every API route, so a revoked or demoted user is rejected on
+ * the next online action. `mustChangePin` is DB-only, reported false here; the
+ * PinChangeGate re-checks via /api/auth/me when online.
+ */
+export async function getSessionClaims(): Promise<SessionPayload | null> {
+  const cookieStore = await cookies()
+  const token = cookieStore.get(SESSION_COOKIE)?.value
+  if (!token) return null
+  try {
+    const { payload } = await jwtVerify(token, getSecret())
+    const c = payload as unknown as SignedClaims
+    return { userId: c.userId, role: c.role, name: c.name, email: c.email, mustChangePin: c.mustChangePin === true }
+  } catch {
     return null
   }
 }

@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
   // If the email fails to send, don't leave a dangling invite the admin thinks
   // went out — clean it up and surface the failure.
   try {
-    await sendEmail({
+    await sendEmail({ kind: 'INVITE',
       to: email,
       subject: `You've been invited to AHITS — Agricarbon`,
       html: inviteEmail(name, role, setupUrl),

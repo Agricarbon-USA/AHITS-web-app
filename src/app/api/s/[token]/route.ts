@@ -2,10 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { rateLimit, clientIp } from '@/lib/rate-limit'
 import { resolveStatusLink, markViewed, isLinkActionable, ALLOWED_ACTIONS } from '@/lib/status-links'
 import { getRequest, getLineChecklist } from '@/lib/deployment-requests'
+import { VEHICLE_TYPE_LABELS, type VehicleTypeValue } from '@/lib/vehicle-types'
 
-// Public, login-less context for a tokenized status link. Token-gated and
-// rate-limited (the token IS the credential). Returns only the scoped fields
-// the external party needs — never operator emails, costs, or unrelated data.
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params
 
@@ -35,7 +33,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
       serialNumber: t.unit?.serialNumber ?? null,
       problem: t.notes ?? null,
       shipToHub: t.repairHub ? `${t.repairHub.name} — ${t.repairHub.city}, ${t.repairHub.state}` : null,
-      photos: t.photos.map((p: { url: string }) => p.url),
+      // UR-005b: photos are NOT exposed on the login-less status page — they live
+      // in a private bucket served only through the auth-gated proxy. Cost and
+      // status are communicated in-app; external image sharing is deprioritized.
     }
   } else if (link.type === 'HUB_RETURN' && link.inventoryUnit) {
     subject = {
@@ -60,7 +60,14 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
         progress,
         lines: lines.map((l) => ({
           id: l.id,
-          name: l.specificItemName ?? l.categoryName ?? l.itemType ?? l.vehicleType ?? l.description ?? 'Item',
+          name:
+            l.specificItemName ??
+            l.specificVehicleName ??
+            l.categoryName ??
+            (l.vehicleType ? (VEHICLE_TYPE_LABELS[l.vehicleType as VehicleTypeValue] ?? l.vehicleType) : null) ??
+            l.itemType ??
+            l.description ??
+            'Item',
           requestedQty: l.requestedQty,
           kind: l.lineType,
           itemType: l.itemType,

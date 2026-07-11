@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
 import { hashPin, verifyPin } from '../src/lib/auth/pin'
-import { createSession, getSession } from '../src/lib/auth/session'
+import { createSession, getSession, getSessionClaims } from '../src/lib/auth/session'
 import { prisma } from '../src/lib/prisma'
 import { createOperator } from './helpers/fixtures'
 
@@ -125,5 +125,36 @@ describe('Session — getSession revocation & validation', () => {
     cookieToken = await tokenFor(op)
     await prisma.user.delete({ where: { id: op.id } })
     expect(await getSession()).toBeNull()
+  })
+})
+
+// UR-004 + UR-036 (Option A): getSessionClaims verifies the JWT locally (no DB)
+// and carries mustChangePin so the edge middleware can gate a forced-PIN-reset
+// operator server-side.
+describe('Session — getSessionClaims (local verify) + mustChangePin (UR-004)', () => {
+  it('reflects mustChangePin=true from the token without a DB read', async () => {
+    const op = await createOperator()
+    cookieToken = await createSession({
+      userId: op.id, role: 'OPERATOR', name: op.name, email: op.email, tokenVersion: 0, mustChangePin: true,
+    })
+    const c = await getSessionClaims()
+    expect(c?.userId).toBe(op.id)
+    expect(c?.mustChangePin).toBe(true)
+  })
+
+  it('defaults mustChangePin to false when not signed into the token', async () => {
+    const op = await createOperator()
+    cookieToken = await createSession({
+      userId: op.id, role: 'OPERATOR', name: op.name, email: op.email, tokenVersion: 0,
+    })
+    const c = await getSessionClaims()
+    expect(c?.mustChangePin).toBe(false)
+  })
+
+  it('returns null for a missing or malformed token', async () => {
+    cookieToken = undefined
+    expect(await getSessionClaims()).toBeNull()
+    cookieToken = 'not-a-jwt'
+    expect(await getSessionClaims()).toBeNull()
   })
 })

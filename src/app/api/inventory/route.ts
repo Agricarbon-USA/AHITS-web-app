@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
+import { getDeploymentRostersForDisplay } from '@/lib/deployment-assignments'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import type { EquipmentCategory, EquipmentStatus, ItemType } from '@prisma/client'
 import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions } from '@/lib/inventory'
-import { money } from '@/lib/validation'
+import { money, parsePagination } from '@/lib/validation'
 import { setStockAtHub, resyncItemTotal, listStockForItems } from '@/lib/inventory-stock'
 import type { ItemStockRow } from '@/lib/inventory-stock'
 import { getActiveProjectsForItems } from '@/lib/project-associations'
@@ -14,8 +15,7 @@ export async function GET(req: NextRequest) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = req.nextUrl
-  const page = parseInt(searchParams.get('page') ?? '1')
-  const pageSize = parseInt(searchParams.get('pageSize') ?? '25')
+  const { page, pageSize } = parsePagination(searchParams)
   const status = searchParams.get('status') as EquipmentStatus | null
   const category = searchParams.get('category') as EquipmentCategory | null
   const categoryId = searchParams.get('categoryId')
@@ -41,6 +41,17 @@ export async function GET(req: NextRequest) {
     projectItemIds = rows.map((r) => r.inventoryItemId)
   }
 
+  // W0-10 PR-1: "filter by active operator" via the assignment table (rig's open PRIMARY),
+  // not Rig.operatorId.
+  let operatorRigIds: string[] = []
+  if (operatorId) {
+    const arows = await prisma.$queryRaw<{ rigId: string }[]>`
+      SELECT a."rigId" FROM "deployment_assignments" a
+      JOIN "rigs" r ON r."id" = a."rigId" AND r."endedAt" IS NULL
+      WHERE a."operatorId" = ${operatorId} AND a."role" = 'PRIMARY' AND a."endedAt" IS NULL`
+    operatorRigIds = arows.map((r) => r.rigId)
+  }
+
   const where = {
     deletedAt: null,
     ...(status && { status }),
@@ -55,7 +66,7 @@ export async function GET(req: NextRequest) {
       kitItems: {
         some: {
           removedAt: null,
-          kit: { rig: { endedAt: null, operatorId } },
+          kit: { rigId: { in: operatorRigIds } },
         },
       },
     }),
@@ -89,8 +100,8 @@ export async function GET(req: NextRequest) {
               select: {
                 rig: {
                   select: {
+                    id: true,
                     endedAt: true,
-                    operator: { select: { id: true, name: true } },
                     project: { select: { id: true, name: true, location: true } },
                   },
                 },
@@ -114,6 +125,12 @@ export async function GET(req: NextRequest) {
   const activeProjectsMap = allItemIds.length > 0
     ? await getActiveProjectsForItems(allItemIds)
     : new Map<string, { id: string; name: string }[]>()
+
+  // W0-10 PR-1: each item's active-rig operator from the assignment roster.
+  const activeRigIds = items
+    .map((i) => i.kitItems.find((ki) => ki.kit.rig !== null && ki.kit.rig.endedAt === null)?.kit.rig?.id)
+    .filter((x): x is string => !!x)
+  const invRosters = await getDeploymentRostersForDisplay(activeRigIds)
 
   const data = items.map((item) => {
     const unitCounts = computeUnitCounts(item.units)
@@ -160,7 +177,7 @@ export async function GET(req: NextRequest) {
       // Per-hub stock rows for consumables — used by the operator picker to gate
       // quantity caps on the selected source hub rather than the cross-hub total.
       ...(item.itemType === 'CONSUMABLE' && { hubStock: stockRows }),
-      currentOperator: activeRig?.operator ?? null,
+      currentOperator: activeRig ? (invRosters.get(activeRig.id)?.operator ?? null) : null,
       currentProject: activeRig?.project ?? null,
       activeProjects: activeProjectsMap.get(item.id) ?? [],
     }

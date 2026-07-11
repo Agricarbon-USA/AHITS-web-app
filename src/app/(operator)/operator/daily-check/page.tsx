@@ -8,6 +8,7 @@ import {
 } from '@mui/material'
 import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
+import { businessDate } from '@/lib/business-date'
 import { DEFAULT_DAILY_CHECKLIST } from '@/types'
 
 // The full ~16-item inspection (PRD §11.4) is the single source of truth, shared
@@ -34,11 +35,15 @@ interface ActiveRig {
 
 export default function OperatorDailyCheckPage() {
   const showToast = useToast()
-  const { enqueue, pending, isOffline } = useOfflineQueue()
+  const { mutate, pending, isOffline } = useOfflineQueue()
 
   const [rig, setRig] = React.useState<ActiveRig | null>(null)
   const [vehicleId, setVehicleId] = React.useState('')
-  const [date, setDate] = React.useState(() => new Date().toISOString().slice(0, 10))
+  // P2-C: a vehicle scanned via QR may not be on the operator's active rig
+  // (UR-033 allows daily-checking any vehicle). Hold its details so it shows in
+  // the picker + name + checklist-type resolution instead of rendering as "—".
+  const [scannedVehicle, setScannedVehicle] = React.useState<{ id: string; name: string; type: string } | null>(null)
+  const [date, setDate] = React.useState(() => businessDate())
   const [odometer, setOdometer] = React.useState('')
   const [site, setSite] = React.useState('')
   const [checklist, setChecklist] = React.useState<ChecklistRow[]>(
@@ -50,6 +55,16 @@ export default function OperatorDailyCheckPage() {
   const [error, setError] = React.useState('')
   const [step, setStep] = React.useState(0)
 
+  // The selectable vehicles: the active-rig vehicles, plus a scanned vehicle that
+  // isn't on the rig (so QR-scanning any vehicle opens a usable daily check).
+  const vehicles = React.useMemo<RigVehicle[]>(() => {
+    const base = rig?.vehicles ?? []
+    if (scannedVehicle && !base.some((rv) => rv.vehicle.id === scannedVehicle.id)) {
+      return [{ id: scannedVehicle.id, vehicle: { id: scannedVehicle.id, name: scannedVehicle.name, type: scannedVehicle.type } }, ...base]
+    }
+    return base
+  }, [rig, scannedVehicle])
+
   React.useEffect(() => {
     // A scan of a vehicle label routes here as ?vehicleId=<id> (PRD §7.7) —
     // preselect it when present.
@@ -57,7 +72,18 @@ export default function OperatorDailyCheckPage() {
       typeof window !== 'undefined'
         ? new URLSearchParams(window.location.search).get('vehicleId')
         : null
-    if (preselect) setVehicleId(preselect)
+    if (preselect) {
+      setVehicleId(preselect)
+      // Fetch the scanned vehicle's details so it renders even if it's not on
+      // the operator's active rig (any-vehicle daily check, UR-033).
+      fetch(`/api/vehicles/${preselect}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          const v = d?.data
+          if (v?.id) setScannedVehicle({ id: v.id, name: v.name, type: v.type })
+        })
+        .catch(() => { /* offline / not found — fall back to rig vehicles */ })
+    }
     fetch('/api/deployments')
       .then((r) => r.json())
       .then((json) => {
@@ -68,14 +94,23 @@ export default function OperatorDailyCheckPage() {
       .catch(() => {})
   }, [])
 
+  // Q3: the selected vehicle's TYPE as a stable string. The checklist effect below
+  // keys off THIS, not the `vehicles` array ref — so it re-fetches the template only
+  // when the vehicle/type actually changes, not every time /api/deployments resolves
+  // and setRig produces a new `vehicles` reference. Depending on the array ref
+  // previously re-ran the effect and silently wiped the operator's entered picks/notes.
+  const selectedVehicleType = vehicles.find((rv) => rv.vehicle.id === vehicleId)?.vehicle.type ?? ''
+
   // M5-25: resolve the admin-configured checklist for the selected vehicle's
   // type, falling back to the built-in ~16-item default. Re-runs when the
   // operator switches vehicles. Offline / no template → keep the default list.
   React.useEffect(() => {
-    if (!vehicleId) return
-    const vt = rig?.vehicles?.find((rv) => rv.vehicle.id === vehicleId)?.vehicle.type ?? ''
+    // Wait until the vehicle's type is actually known before fetching, so we don't
+    // fire once with a blank type and then re-fetch (and reset the checklist) when it
+    // resolves — closes the narrow preselect/scan-path wipe. Unknown type keeps the default.
+    if (!vehicleId || !selectedVehicleType) return
     let active = true
-    fetch(`/api/checklist-templates?vehicleType=${encodeURIComponent(vt)}`)
+    fetch(`/api/checklist-templates?vehicleType=${encodeURIComponent(selectedVehicleType)}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (!active) return
@@ -85,7 +120,7 @@ export default function OperatorDailyCheckPage() {
       })
       .catch(() => { /* offline — keep the current (default) list */ })
     return () => { active = false }
-  }, [vehicleId, rig])
+  }, [vehicleId, selectedVehicleType])
 
   const passFail = checklist.every((item) => item.value !== 'no')
   const failingItems = checklist.filter((item) => item.value === 'no')
@@ -93,7 +128,7 @@ export default function OperatorDailyCheckPage() {
   // overall summary. Enforced client-side here and again server-side.
   const missingItemNote = failingItems.some((item) => !item.note.trim())
   const selectedVehicleName =
-    rig?.vehicles?.find((rv) => rv.vehicle.id === vehicleId)?.vehicle.name ?? ''
+    vehicles.find((rv) => rv.vehicle.id === vehicleId)?.vehicle.name ?? ''
 
   const buildPayload = () => ({
     vehicleId,
@@ -111,32 +146,25 @@ export default function OperatorDailyCheckPage() {
     if (!passFail && !issues.trim()) { setError('Describe the issue(s) that caused a fail'); return }
     setSubmitting(true)
     setError('')
-    try {
-      const res = await fetch('/api/daily-check', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildPayload()),
-      })
-      if (res.ok) {
-        setSubmitted(true)
-        showToast({ message: `Daily check submitted — ${passFail ? 'Pass ✓' : 'Fail ✗ — admin notified'}`, severity: passFail ? 'success' : 'warning' })
-      } else {
-        const d = await res.json().catch(() => ({}))
-        const fieldErr = d.error?.fieldErrors
-          ? Object.values(d.error.fieldErrors).flat()[0] as string | undefined
-          : undefined
-        setError(
-          d.error?.formErrors?.[0] ??
-          fieldErr ??
-          (typeof d.error === 'string' ? d.error : 'Submission failed')
-        )
-      }
-    } catch {
-      await enqueue({ endpoint: '/api/daily-check', method: 'POST', body: buildPayload() })
+    // UR-007: route through the durable offline queue (idempotency-keyed) instead
+    // of a raw fetch + manual enqueue. Offline → queued exactly-once; online →
+    // confirmed; a server-reached error is surfaced (the DB upsert on
+    // vehicle+date+operator makes any retry safe).
+    const result = await mutate({
+      endpoint: '/api/daily-check',
+      method: 'POST',
+      body: buildPayload(),
+      label: 'Daily check',
+    })
+    setSubmitting(false)
+    if (result.ok && result.queued) {
       setSubmitted(true)
       showToast({ message: 'No network — check queued, will sync when online', severity: 'info' })
-    } finally {
-      setSubmitting(false)
+    } else if (result.ok) {
+      setSubmitted(true)
+      showToast({ message: `Daily check submitted — ${passFail ? 'Pass ✓' : 'Fail ✗ — admin notified'}`, severity: passFail ? 'success' : 'warning' })
+    } else {
+      setError(result.error)
     }
   }
 
@@ -145,7 +173,7 @@ export default function OperatorDailyCheckPage() {
     setIssues('')
     setOdometer('')
     setSite('')
-    setDate(new Date().toISOString().slice(0, 10))
+    setDate(businessDate())
     setSubmitted(false)
     setError('')
     setStep(0)
@@ -188,7 +216,6 @@ export default function OperatorDailyCheckPage() {
     )
   }
 
-  const vehicles = rig?.vehicles ?? []
 
   return (
     <Box maxWidth={560}>

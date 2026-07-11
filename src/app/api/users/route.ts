@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
+import { isUniqueViolation } from '@/lib/api-errors'
 import { requireAdmin } from '@/lib/auth/session'
 import { hashPin } from '@/lib/auth/pin'
 import { writeAudit } from '@/lib/audit'
@@ -47,7 +48,13 @@ export async function POST(req: NextRequest) {
 
   const { pin, ...rest } = parsed.data
   const pinHash = await hashPin(pin)
-  const user = await prisma.user.create({ data: { ...rest, pinHash } })
+  let user
+  try {
+    user = await prisma.user.create({ data: { ...rest, pinHash } })
+  } catch (err) {
+    if (isUniqueViolation(err)) return NextResponse.json({ error: 'A user with this email already exists.' }, { status: 409 })
+    throw err
+  }
   await writeAudit(session.userId, 'BULK_IMPORT', user.id, { via: 'direct-create', email: user.email, role: user.role })
   const { pinHash: _, ...safeUser } = user
   return NextResponse.json({ data: safeUser }, { status: 201 })

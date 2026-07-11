@@ -111,6 +111,26 @@ export async function uploadPhotoBlob(blob: Blob, filename = `photo-${Date.now()
   return data.url as string
 }
 
+/**
+ * Upload a document (PDF or image) and return its URL. Used for rental
+ * agreements (NEW-5), where the upload route additionally allows PDF via
+ * `kind=document`. Content-type is still gated on the file's magic bytes
+ * server-side (never the client claim). Throws on failure.
+ */
+export async function uploadDocument(file: File): Promise<string> {
+  const form = new FormData()
+  form.append('file', file, file.name || `document-${Date.now()}`)
+  form.append('kind', 'document')
+  const res = await fetch('/api/uploads', { method: 'POST', body: form })
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}))
+    throw new Error(typeof detail.error === 'string' ? detail.error : `Upload failed (${res.status})`)
+  }
+  const data = await res.json()
+  if (!data || typeof data.url !== 'string') throw new Error('Upload returned no URL')
+  return data.url as string
+}
+
 export interface ResolveDeps {
   getBlob: (ref: string) => Promise<Blob | null>
   upload: (blob: Blob, filename?: string) => Promise<string>

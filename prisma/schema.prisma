@@ -24,6 +24,7 @@ enum VehicleType {
   CHRISTIE_DRILL
   ATV
   OTHER
+  BOBCAT
 }
 
 enum VehicleStatus {
@@ -31,6 +32,14 @@ enum VehicleStatus {
   IN_MAINTENANCE
   OUT_OF_SERVICE
   RETIRED
+}
+
+// NEW-5: how a rental's cost is quoted, for cost-to-date analysis in Reports.
+enum RentalCostPeriod {
+  DAY
+  WEEK
+  MONTH
+  FLAT
 }
 
 enum EquipmentCategory {
@@ -142,6 +151,8 @@ enum AlertType {
   PIN_LOCKED
   MATERIAL_REQUEST
   DAILY_CHECK_FAILED
+  DAILY_CHECK_MISSED
+  INVENTORY_DRIFT
 }
 
 enum PhotoContext {
@@ -261,6 +272,7 @@ model Rig {
 
   @@index([operatorId])
   @@index([endedAt])
+  @@index([projectId])
   @@map("rigs")
 }
 
@@ -303,6 +315,7 @@ model Kit {
 
   items KitItem[]
 
+  @@index([rigId])
   @@map("kits")
 }
 
@@ -355,6 +368,8 @@ model TransferRequest {
   vehicles TransferVehicle[]
   items    TransferItem[]
 
+  @@index([toOperatorId, status])
+  @@index([fromRigId])
   @@map("transfer_requests")
 }
 
@@ -365,6 +380,7 @@ model TransferVehicle {
   transferRequest   TransferRequest @relation(fields: [transferRequestId], references: [id])
   vehicle           Vehicle         @relation(fields: [vehicleId], references: [id])
 
+  @@index([transferRequestId])
   @@map("transfer_vehicles")
 }
 
@@ -378,6 +394,7 @@ model TransferItem {
   kitItem           KitItem         @relation(fields: [kitItemId], references: [id])
   inventoryUnit     InventoryUnit?  @relation(fields: [inventoryUnitId], references: [id])
 
+  @@index([transferRequestId])
   @@map("transfer_items")
 }
 
@@ -506,6 +523,20 @@ model Vehicle {
   assignedOperatorId  String?
   insuranceExpires    DateTime?
   registrationExpires DateTime?
+  // NEW-5: rental vehicles are modeled as Vehicles (reusing daily-checks,
+  // maintenance, deployment assignment, transfers, reports) with this extra
+  // rental block. All nullable; isRental flags the row.
+  isRental              Boolean           @default(false)
+  rentalCompany         String?
+  rentalAgreementNumber String?
+  rentalAgreementUrl    String?
+  rentalStartDate       DateTime?         @db.Date
+  rentalEndDate         DateTime?         @db.Date
+  rentalLocation        String?
+  rentalReturnLocation  String?
+  rentalCostAmount      Decimal?          @db.Decimal(10, 2)
+  rentalCostPeriod      RentalCostPeriod?
+  rentalOneWay          Boolean           @default(false)
   qrCodeId            String        @unique @default(cuid())
   notes               String?
   deletedAt           DateTime? // CR-8: soft-delete so history isn't orphaned
@@ -542,6 +573,8 @@ model DailyCheck {
   photos   Photo[]
 
   @@unique([vehicleId, date, operatorId])
+  @@index([operatorId])
+  @@index([submittedAt])
   @@map("daily_checks")
 }
 
@@ -624,8 +657,12 @@ model MaintenanceTask {
   photos    Photo[]
   statusLinks StatusLink[]
 
+  @@index([vehicleId])
+  @@index([itemId])
+  @@index([status, nextDue])
   @@index([inventoryUnitId])
   @@index([deletedAt])
+  @@index([repairHubId]) // UR-009: FK filtered by hub inbound / repair views
   @@map("maintenance_tasks")
 }
 
@@ -687,6 +724,9 @@ model Alert {
 
   admin User? @relation(fields: [adminId], references: [id])
 
+  @@index([resolved, triggeredAt])
+  @@index([sourceTable, sourceId])
+  @@index([resolved, notifiedAt]) // UR-009: the dispatch cron scans (resolved=false, notifiedAt=null) every run
   @@map("alerts")
 }
 
@@ -736,6 +776,12 @@ model Photo {
   inventoryItem   InventoryItem?   @relation(fields: [inventoryItemId], references: [id])
   vehicle         Vehicle?         @relation(fields: [vehicleId], references: [id])
 
+  @@index([dailyCheckId])
+  @@index([checkLogId])
+  @@index([maintenanceId])
+  @@index([inventoryItemId])
+  @@index([vehicleId])
+  @@index([uploadedById])
   @@map("photos")
 }
 
@@ -967,6 +1013,7 @@ model DeploymentRequest {
 
   @@index([status])
   @@index([requestType])
+  @@index([fulfillerHubId])
   @@map("deployment_requests")
 }
 
@@ -996,9 +1043,16 @@ model DeploymentRequestLine {
   // F2: shipping-label ship-to (raw SQL — no generated-client coupling).
   shipToHubId             String?
   shipToAddress           String?
+  // UR-010 (R4 hold-through-claim): raw SQL only — mirrors the migration columns.
+  heldQty                 Int             @default(0)
+  heldItemId              String?
+  heldHubId               String?
+  claimedQty              Int             @default(0)
+  releasedAt              DateTime?
   createdAt               DateTime        @default(now())
 
   @@index([requestId])
+  @@index([heldItemId, heldHubId])
   @@map("deployment_request_lines")
 }
 
@@ -1140,4 +1194,33 @@ model Shipment {
   @@index([deploymentRequestLineId])
   @@index([hubId])
   @@map("shipments")
+}
+
+enum EmailStatus {
+  SENT
+  FAILED
+  SKIPPED
+}
+
+/// FND-8: a delivery record for every outbound email attempt, so a failed
+/// shop/hub/invite/alert/invoice send is never silently swallowed and the
+/// invoice→processor email has an auditable trail. Written by sendEmail; read by
+/// the admin email-log surface. `kind` categorises the send; `status` is the
+/// outcome (SKIPPED = suppressed by the non-prod EMAIL_SANDBOX guard).
+model EmailLog {
+  id         String      @id @default(cuid())
+  to         String
+  subject    String
+  kind       String      @default("OTHER")
+  status     EmailStatus
+  attempts   Int         @default(0)
+  lastError  String?
+  providerId String?
+  sentAt     DateTime?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  @@index([status, createdAt])
+  @@index([kind, createdAt])
+  @@map("email_logs")
 }

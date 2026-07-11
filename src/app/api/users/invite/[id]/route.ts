@@ -40,7 +40,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
   const setupUrl = `${appUrl}/setup-account?token=${encodeURIComponent(rawToken)}`
   try {
-    await sendEmail({
+    await sendEmail({ kind: 'INVITE',
       to: updated.email,
       subject: `You've been invited to AHITS — Agricarbon`,
       html: inviteEmail(updated.name, updated.role, setupUrl),

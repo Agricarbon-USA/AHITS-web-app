@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import { prisma } from '@/lib/prisma'
+import { VEHICLE_TYPES, VehicleTypeValue } from '@/lib/vehicle-types'
 
 // M5 item 25: admin-configurable daily-check checklists. Read/written via raw
 // SQL so it needs no generated-client coupling (same approach as
@@ -20,12 +21,9 @@ export interface ChecklistTemplate {
   isActive: boolean
 }
 
-// The seven VehicleType enum values; a template's vehicleType must be one of
-// these or null. Guards the raw-SQL cast against an invalid enum literal.
-export const VEHICLE_TYPES = [
-  'TRUCK', 'TRAILER', 'POLARIS_UTV', 'CAN_AM_UTV', 'CHRISTIE_DRILL', 'ATV', 'OTHER',
-] as const
-export type VehicleTypeValue = (typeof VEHICLE_TYPES)[number]
+// Re-export so existing imports from checklist-templates keep working.
+export { VEHICLE_TYPES }
+export type { VehicleTypeValue }
 
 interface Row {
   id: string

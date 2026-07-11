@@ -2,15 +2,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
-import { getDeploymentRosters, ensureOpenAssignment, addProjectLink } from '@/lib/deployment-assignments'
-import { drawFromHub, getStockAtHub, totalStock, setStockAtHub } from '@/lib/inventory-stock'
+import { getDeploymentRostersForDisplay, ensureOpenAssignment, addProjectLink, getActiveRigForOperator, hydrateRigOperator } from '@/lib/deployment-assignments'
+import { drawFromHub, getStockAtHub, totalStock, setStockAtHub, resyncItemTotal } from '@/lib/inventory-stock'
+import { claimHeldStock } from '@/lib/deployment-requests'
+import { withIdempotency } from '@/lib/idempotency'
 
 const RIG_INCLUDE = {
-  operator: { select: { id: true, name: true } },
   project: { select: { id: true, name: true } },
   vehicles: {
     where: { removedAt: null },
-    include: { vehicle: { select: { id: true, name: true, type: true } } },
+    include: { vehicle: { select: { id: true, name: true, type: true, isRental: true, rentalAgreementUrl: true } } },
   },
   kits: {
     include: {
@@ -32,16 +33,13 @@ const RIG_INCLUDE = {
       },
     },
   },
-  secondaryOperators: {
-    include: { operator: { select: { id: true, name: true, email: true } } },
-  },
 } as const
 
 // Trimmed include for GET list — operator/project/secondaryOperators sourced from roster helpers
 const RIG_LIST_INCLUDE = {
   vehicles: {
     where: { removedAt: null },
-    include: { vehicle: { select: { id: true, name: true, type: true } } },
+    include: { vehicle: { select: { id: true, name: true, type: true, isRental: true, rentalAgreementUrl: true } } },
   },
   kits: {
     include: {
@@ -109,26 +107,46 @@ export async function GET(req: NextRequest) {
     projectRigIds = rows.map((r) => r.rigId)
   }
 
+  // W0-10 PR-1: rigs where this operator has an OPEN assignment (any role). Added to
+  // the visibility OR below alongside the legacy primary/secondary clauses — non-revoking
+  // (the two legacy clauses are removed at PR-4).
+  let assignedRigIds: string[] = []
+  if (session.role === 'OPERATOR') {
+    const arows = await prisma.$queryRaw<{ rigId: string }[]>`
+      SELECT DISTINCT "rigId" FROM "deployment_assignments"
+      WHERE "operatorId" = ${session.userId} AND "endedAt" IS NULL`
+    assignedRigIds = arows.map((r) => r.rigId)
+  }
+
   const rigs = await prisma.rig.findMany({
     where: {
       ...(active ? { endedAt: null } : { endedAt: { not: null } }),
       ...(projectRigIds !== undefined && { id: { in: projectRigIds } }),
       // Operators see deployments where they are primary OR secondary
       ...(session.role === 'OPERATOR'
-        ? { OR: [{ operatorId: session.userId }, { secondaryOperators: { some: { operatorId: session.userId } } }] }
+        ? { id: { in: assignedRigIds } }
         : operatorId ? { operatorId } : {}),
     },
     include: RIG_LIST_INCLUDE,
     orderBy: { startedAt: 'desc' },
   })
 
-  const rosters = await getDeploymentRosters(rigs.map((r) => r.id))
+  // UR-032: display roster so ENDED deployments (active=false / history) keep
+  // their operator attribution instead of serializing operator: null. Identical
+  // to the open roster for active deployments.
+  const rosters = await getDeploymentRostersForDisplay(rigs.map((r) => r.id))
+
+  // W0-10 PR-4: the display roster is the sole source of operator attribution. It returns
+  // the FINAL roster for ended deployments too (max_ended CTE), so historical attribution
+  // still shows. A rig with no PRIMARY assignment (should be impossible under PR-2 index B +
+  // the §6 Q1/Q2 drop gate) serializes operator:null rather than crashing.
   const out = rigs.map((r) => {
     const ro = rosters.get(r.id) ?? { operator: null, operatorId: null, secondaryOperators: [], projects: [] }
+    const operator = ro.operator ? { id: ro.operator.id, name: ro.operator.name } : { id: 'unknown', name: 'Unknown operator' }
     return {
       ...r,
-      operatorId: ro.operatorId ?? r.operatorId,
-      operator: ro.operator ? { id: ro.operator.id, name: ro.operator.name } : null,
+      operatorId: ro.operatorId ?? null,
+      operator,
       project: ro.projects[0] ?? null,
       secondaryOperators: ro.secondaryOperators,
     }
@@ -136,7 +154,15 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(out)
 }
 
+// UR-010 (C1): wrap create in withIdempotency so a replayed offline checkout
+// (the durable queue re-POSTs with the same Idempotency-Key) returns the first
+// committed rig instead of creating a second deployment and double-claiming the
+// operator's held stock. Body-hash bound; 5xx/409 are not cached (see idempotency.ts).
 export async function POST(req: NextRequest) {
+  return withIdempotency(req, 'deployments.POST', () => _POST(req))
+}
+
+async function _POST(req: NextRequest) {
   const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
@@ -153,10 +179,7 @@ export async function POST(req: NextRequest) {
     // CR-14: an operator may hold at most one active (un-ended) deployment.
     // Two active rigs make "my active rig" lookups ambiguous (findFirst silently
     // picks one) and strand items in the other. Reject up front.
-    const existingActive = await tx.rig.findFirst({
-      where: { operatorId, endedAt: null },
-      select: { id: true },
-    })
+    const existingActive = await getActiveRigForOperator(operatorId, tx)
     if (existingActive) {
       throw new Error('OPERATOR_HAS_ACTIVE_RIG')
     }
@@ -265,22 +288,29 @@ export async function POST(req: NextRequest) {
             if (existingTotal === 0 && (item.quantity ?? 0) >= quantity) {
               await setStockAtHub(ki.inventoryItemId, sourceHubId, item.quantity ?? 0, tx)
             }
-            const drawn = await drawFromHub(ki.inventoryItemId, sourceHubId, quantity, tx)
-            if (drawn < quantity) {
-              const atHub = await getStockAtHub(ki.inventoryItemId, sourceHubId, tx)
-              const hubRow = await tx.hub.findUnique({ where: { id: sourceHubId }, select: { name: true } })
-              throw Object.assign(new Error('INSUFFICIENT_HUB_STOCK'), {
-                available: atHub,
-                requested: quantity,
-                hubName: hubRow?.name ?? sourceHubId,
-              })
+            // UR-010: claim this operator's own HELD (reserved) stock at this hub first
+            // — converts reserve→draw — then draw any remainder from free hub stock.
+            // Normal reservation checkout: claimed === quantity, no free draw. Direct
+            // (no-reservation) checkout: claimed === 0, it all comes from free stock.
+            const claimed = await claimHeldStock(operatorId, ki.inventoryItemId, sourceHubId, quantity, tx)
+            const remainder = quantity - claimed
+            if (remainder > 0) {
+              const drawn = await drawFromHub(ki.inventoryItemId, sourceHubId, remainder, tx)
+              if (drawn < remainder) {
+                const atHub = await getStockAtHub(ki.inventoryItemId, sourceHubId, tx)
+                const hubRow = await tx.hub.findUnique({ where: { id: sourceHubId }, select: { name: true } })
+                throw Object.assign(new Error('INSUFFICIENT_HUB_STOCK'), {
+                  available: claimed + atHub,
+                  requested: quantity,
+                  hubName: hubRow?.name ?? sourceHubId,
+                })
+              }
             }
-            drawnQuantity = drawn
+            // Recompute the cross-hub total from stock rows — covers both the claimed
+            // reserve→draw and the free-stock draw in one authoritative pass.
+            await resyncItemTotal(ki.inventoryItemId, tx)
+            drawnQuantity = quantity
             drawnHubId = sourceHubId
-            await tx.inventoryItem.update({
-              where: { id: ki.inventoryItemId },
-              data: { quantity: { decrement: drawn } },
-            })
           }
           await tx.kitItem.create({
             data: { kitId: kit.id, inventoryItemId: ki.inventoryItemId, quantity, inventoryUnitId: null, drawnQuantity, drawnHubId },
@@ -333,11 +363,21 @@ export async function POST(req: NextRequest) {
         { status: 409 }
       )
     }
+    // W0-10 PR-2b: a partial-unique violation (index A one-open-PRIMARY-per-operator, or
+    // index C once live) that slipped the app guards under a concurrent race surfaces as
+    // Prisma P2002 / PG 23505 — translate to a friendly 409 rather than a raw 500.
+    const code = (err as { code?: string }).code
+    if (code === 'P2002' || code === '23505') {
+      return NextResponse.json(
+        { error: "Can't start this deployment — the operator or one of the vehicles is already on another active deployment. End or free it there first, then try again." },
+        { status: 409 }
+      )
+    }
     // Return the actual error as JSON instead of re-throwing (which produces non-JSON 500)
     const msg = err instanceof Error ? err.message : 'Failed to create deployment'
     console.error('[POST /api/deployments]', err)
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 
-  return NextResponse.json(rig, { status: 201 })
+  return NextResponse.json(await hydrateRigOperator(rig), { status: 201 })
 }

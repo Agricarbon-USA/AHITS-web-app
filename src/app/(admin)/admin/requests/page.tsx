@@ -21,6 +21,7 @@ import {
   type VehicleOption,
   type CategoryOption,
 } from '@/components/shared/RequestComposer'
+import { VEHICLE_TYPE_LABELS, type VehicleTypeValue } from '@/lib/vehicle-types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -73,10 +74,6 @@ interface OperatorOption { id: string; name: string }
 
 const TERMINAL = new Set(['FULFILLED', 'CANCELLED', 'DENIED'])
 
-const VEHICLE_TYPE_LABELS: Record<string, string> = {
-  TRUCK: 'Truck', TRAILER: 'Trailer', POLARIS_UTV: 'Polaris UTV',
-  CAN_AM_UTV: 'Can-Am UTV', CHRISTIE_DRILL: 'Christie Drill', ATV: 'ATV', OTHER: 'Other',
-}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -84,7 +81,7 @@ function lineDisplayName(l: LineRow): string {
   if (l.specificItemName) return `${l.specificItemName}${l.specificUnitSerial ? ` · #${l.specificUnitSerial}` : ''}`
   if (l.specificVehicleName) return l.specificVehicleName
   if (l.categoryName) return l.categoryName
-  if (l.vehicleType) return VEHICLE_TYPE_LABELS[l.vehicleType] ?? l.vehicleType
+  if (l.vehicleType) return VEHICLE_TYPE_LABELS[l.vehicleType as VehicleTypeValue] ?? l.vehicleType
   if (l.itemType) return l.itemType
   return l.description ?? 'Item'
 }
@@ -324,6 +321,10 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
     if (r.ok) {
       showToast({ message: 'Reservation staged.', severity: 'success' })
       onRefresh()
+    } else {
+      // Q4: surface the failure instead of silently returning — a rejected stage
+      // (e.g. insufficient stock / state mismatch) previously looked like nothing happened.
+      showToast({ message: r.error ?? 'Could not stage the reservation.', severity: 'error' })
     }
     return r
   }
@@ -537,7 +538,7 @@ export default function AdminRequestsPage() {
     void load()
     const loadMeta = async () => {
       const [hubsRes, opsRes] = await Promise.all([fetch('/api/hubs'), fetch('/api/operators')])
-      if (hubsRes.ok) setHubs((await hubsRes.json()) as HubOption[])
+      if (hubsRes.ok) { const hd = await hubsRes.json(); setHubs((Array.isArray(hd) ? hd : (hd?.data ?? [])) as HubOption[]) }
       if (opsRes.ok) {
         const d = await opsRes.json()
         setOperators((d.data as OperatorOption[]) ?? [])

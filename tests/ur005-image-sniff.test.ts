@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { sniffImageMime, extForImageMime } from '../src/lib/photo-security'
+import { sniffImageMime, extForImageMime, isPdf } from '../src/lib/photo-security'
 
 // UR-005: the upload route must trust magic bytes, not the client-supplied MIME.
 // SVG (which can carry <script>) and other mislabeled payloads must be rejected
@@ -33,5 +33,16 @@ describe('UR-005: image magic-byte sniffing', () => {
     expect(extForImageMime('image/png')).toBe('png')
     expect(extForImageMime('image/heic')).toBe('heic')
     expect(extForImageMime('image/svg+xml')).toBe('img')
+  })
+})
+
+describe('NEW-5: PDF detection for document uploads (rental agreements)', () => {
+  it('detects a real PDF by magic bytes', () => {
+    expect(isPdf(Buffer.from('%PDF-1.7\n...binary...'))).toBe(true)
+  })
+  it('rejects non-PDFs (including images and HTML masquerading as a doc)', () => {
+    expect(isPdf(Buffer.from([0xff, 0xd8, 0xff, 0xe0]))).toBe(false) // JPEG
+    expect(isPdf(Buffer.from('<html></html>'))).toBe(false)
+    expect(isPdf(Buffer.from('PD'))).toBe(false)
   })
 })

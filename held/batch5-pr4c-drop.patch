@@ -1,0 +1,117 @@
+diff --git a/prisma/migrations/20260708025000_archive_legacy_operators/migration.sql b/prisma/migrations/20260708025000_archive_legacy_operators/migration.sql
+new file mode 100644
+index 0000000..7b56dbf
+--- /dev/null
++++ b/prisma/migrations/20260708025000_archive_legacy_operators/migration.sql
+@@ -0,0 +1,23 @@
++-- W0-10 PR-4 · Pre-drop ARCHIVE of the legacy operator data (retained cold copy).
++--
++-- Snapshots the raw legacy operator values to a retained table BEFORE the drop, so the
++-- pre-migration truth survives for payroll/audit reconciliation and surgical recovery.
++-- This is REQUIRED (not optional): vehicles.assignedOperatorId was never mirrored into
++-- deployment_assignments, so this snapshot is its ONLY persisted successor. Additive
++-- (CREATE TABLE) — safe, and it must run in the migration ordering BEFORE the DROP.
++-- IF NOT EXISTS makes re-runs safe.
++
++CREATE TABLE IF NOT EXISTS "_archive_legacy_operators_20260708" AS
++SELECT 'rig_primary'      AS source, r."id"                 AS entity_id,
++       r."operatorId"     AS operator_id, r."startedAt"     AS started_at,
++       r."endedAt"        AS ended_at,    NULL::timestamp   AS added_at
++FROM "rigs" r
++UNION ALL
++SELECT 'rig_secondary'    AS source, ro."rigId"             AS entity_id,
++       ro."operatorId"    AS operator_id, NULL, NULL,        ro."addedAt"
++FROM "rig_operators" ro
++UNION ALL
++SELECT 'vehicle_assigned' AS source, v."id"                 AS entity_id,
++       v."assignedOperatorId" AS operator_id, NULL, NULL, NULL
++FROM "vehicles" v
++WHERE v."assignedOperatorId" IS NOT NULL;
+diff --git a/prisma/migrations/20260708030000_drop_legacy_operator_columns/migration.sql b/prisma/migrations/20260708030000_drop_legacy_operator_columns/migration.sql
+new file mode 100644
+index 0000000..9efccf0
+--- /dev/null
++++ b/prisma/migrations/20260708030000_drop_legacy_operator_columns/migration.sql
+@@ -0,0 +1,29 @@
++-- W0-10 PR-4 · DROP the retired legacy deployment-ownership columns + table.
++--
++-- migration-safety: acknowledged legacy deployment-ownership retirement — every reader was
++-- removed and DEPLOYED in a prior reader-free revision (the PR-4a reader-removal PR), the
++-- one-open-PRIMARY-per-rig invariant is enforced by the PR-2 partial unique indexes (which
++-- MUST be landed + live first), and all attribution now comes from deployment_assignments.
++--
++-- HARD PRECONDITIONS (verify on the TARGET DB before this runs — see the recovery playbook):
++--   1. The reader-free revision is the LIVE running revision (grep confirms zero Prisma AND
++--      raw-SQL reads of rigs.operatorId / rig_operators / vehicles.assignedOperatorId).
++--   2. §6 Q1/Q2 drop-safety gate is GREEN on PROD (every active rig has exactly one open
++--      PRIMARY; no active rig serializes operator:null).
++--   3. The pre-drop ARCHIVE migration (_archive_legacy_operators_20260708) has run — it is the
++--      ONLY retained copy of vehicles.assignedOperatorId, which has no successor in
++--      deployment_assignments and is otherwise unrecoverable.
++--   4. Prod PITR / a fresh backup restore point is confirmed.
++--
++-- DEPLOY ORDERING (non-atomic): the CI migrate job commits this BEFORE the new revision serves.
++-- Transactional DDL wrapper below makes the three statements atomic (no partial drop that would
++-- wedge future deploys); lock_timeout fails fast rather than piling on locks against rigs.
++
++BEGIN;
++SET LOCAL lock_timeout = '5s';
++
++DROP TABLE "rig_operators";
++ALTER TABLE "rigs" DROP COLUMN "operatorId";
++ALTER TABLE "vehicles" DROP COLUMN "assignedOperatorId";
++
++COMMIT;
+diff --git a/prisma/recovery/W0-10_forward_fix_readd_operator_columns.sql b/prisma/recovery/W0-10_forward_fix_readd_operator_columns.sql
+new file mode 100644
+index 0000000..c3d1c1f
+--- /dev/null
++++ b/prisma/recovery/W0-10_forward_fix_readd_operator_columns.sql
+@@ -0,0 +1,47 @@
++-- W0-10 BREAK-GLASS RECOVERY (do NOT place in prisma/migrations/ — apply by hand only if the
++-- PR-4b/4c DROP has to be undone). There is NO app-level rollback: rolling the app back reads
++-- the dropped columns and crashes harder. The ONLY forward recovery is re-add + backfill.
++-- Reconstructs each dropped field from deployment_assignments (+ the _archive table for the
++-- one field with no successor: vehicles.assignedOperatorId).
++
++BEGIN;
++
++-- 1. rigs.operatorId ← open PRIMARY assignment (LOSSLESS).
++ALTER TABLE "rigs" ADD COLUMN "operatorId" TEXT;
++UPDATE "rigs" r SET "operatorId" = da."operatorId"
++FROM "deployment_assignments" da
++WHERE da."rigId" = r."id" AND da."role" = 'PRIMARY' AND da."endedAt" IS NULL;
++-- if any rig is still null (no open PRIMARY), fall back to the pre-drop archive:
++UPDATE "rigs" r SET "operatorId" = a."operator_id"
++FROM "_archive_legacy_operators_20260708" a
++WHERE a."source" = 'rig_primary' AND a."entity_id" = r."id" AND r."operatorId" IS NULL;
++ALTER TABLE "rigs" ALTER COLUMN "operatorId" SET NOT NULL;
++ALTER TABLE "rigs" ADD CONSTRAINT "rigs_operatorId_fkey"
++  FOREIGN KEY ("operatorId") REFERENCES "users"("id") ON UPDATE CASCADE ON DELETE RESTRICT;
++CREATE INDEX "rigs_operatorId_idx" ON "rigs"("operatorId");
++
++-- 2. vehicles.assignedOperatorId ← archive (the ONLY persisted copy; derivation is lossy).
++ALTER TABLE "vehicles" ADD COLUMN "assignedOperatorId" TEXT;
++UPDATE "vehicles" v SET "assignedOperatorId" = a."operator_id"
++FROM "_archive_legacy_operators_20260708" a
++WHERE a."source" = 'vehicle_assigned' AND a."entity_id" = v."id";
++
++-- 3. rig_operators ← open SECONDARY assignments (addedAt ← startedAt; ids re-minted, nothing FKs them).
++CREATE TABLE "rig_operators" (
++  "id" TEXT NOT NULL, "rigId" TEXT NOT NULL, "operatorId" TEXT NOT NULL,
++  "addedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
++  CONSTRAINT "rig_operators_pkey" PRIMARY KEY ("id")
++);
++INSERT INTO "rig_operators" ("id","rigId","operatorId","addedAt")
++SELECT DISTINCT ON (da."rigId", da."operatorId")
++       gen_random_uuid()::text, da."rigId", da."operatorId", da."startedAt"
++FROM "deployment_assignments" da
++WHERE da."role" = 'SECONDARY' AND da."endedAt" IS NULL
++ORDER BY da."rigId", da."operatorId", da."startedAt";
++CREATE UNIQUE INDEX "rig_operators_rigId_operatorId_key" ON "rig_operators"("rigId","operatorId");
++ALTER TABLE "rig_operators" ADD CONSTRAINT "rig_operators_rigId_fkey"
++  FOREIGN KEY ("rigId") REFERENCES "rigs"("id") ON UPDATE CASCADE ON DELETE RESTRICT;
++ALTER TABLE "rig_operators" ADD CONSTRAINT "rig_operators_operatorId_fkey"
++  FOREIGN KEY ("operatorId") REFERENCES "users"("id") ON UPDATE CASCADE ON DELETE RESTRICT;
++
++COMMIT;

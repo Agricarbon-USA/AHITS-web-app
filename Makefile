@@ -20,6 +20,10 @@ MIN_INSTANCES ?= 0
 # secrets must exist in Secret Manager BEFORE the first prod deploy — Cloud Run
 # validates --set-secrets references at deploy time.
 SECRET_NS     ?= AHITS
+# Non-prod email guard (FND-16): staging sets this true so real shops/hubs/
+# operators are never emailed; prod sets it false. Kept in --set-env-vars so it
+# persists across deploys (an env var set only in the console is wiped next deploy).
+EMAIL_SANDBOX ?= false
 
 .PHONY: help dev build start lint typecheck verify \
         db-generate db-migrate db-migrate-dev db-studio db-seed db-reset \
@@ -128,8 +132,8 @@ cloud-run-deploy: ## Deploy image to Cloud Run. Set SERVICE, TAG, MIN_INSTANCES.
 	  --project $(GCP_PROJECT) \
 	  --allow-unauthenticated \
 	  --min-instances=$(MIN_INSTANCES) \
-	  --set-env-vars="NODE_ENV=production" \
-	  --set-secrets="DATABASE_URL=$(SECRET_NS)_DATABASE_URL:latest,DIRECT_URL=$(SECRET_NS)_DIRECT_URL:latest,NEXT_PUBLIC_SUPABASE_URL=$(SECRET_NS)_NEXT_PUBLIC_SUPABASE_URL:latest,NEXT_PUBLIC_SUPABASE_ANON_KEY=$(SECRET_NS)_NEXT_PUBLIC_SUPABASE_ANON_KEY:latest,SUPABASE_SERVICE_ROLE_KEY=$(SECRET_NS)_SUPABASE_SERVICE_ROLE_KEY:latest,PIN_SESSION_SECRET=$(SECRET_NS)_PIN_SESSION_SECRET:latest,RESEND_API_KEY=$(SECRET_NS)_RESEND_API_KEY:latest,EMAIL_FROM=$(SECRET_NS)_EMAIL_FROM:latest,ADMIN_EMAIL=$(SECRET_NS)_ADMIN_EMAIL:latest,NEXT_PUBLIC_APP_URL=$(SECRET_NS)_NEXT_PUBLIC_APP_URL:latest,CRON_SECRET=$(SECRET_NS)_CRON_SECRET:latest"
+	  --set-env-vars="NODE_ENV=production,APP_TIMEZONE=America/Chicago,EMAIL_SANDBOX=$(EMAIL_SANDBOX)" \
+	  --set-secrets="DATABASE_URL=$(SECRET_NS)_DATABASE_URL:latest,DIRECT_URL=$(SECRET_NS)_DIRECT_URL:latest,NEXT_PUBLIC_SUPABASE_URL=$(SECRET_NS)_NEXT_PUBLIC_SUPABASE_URL:latest,NEXT_PUBLIC_SUPABASE_ANON_KEY=$(SECRET_NS)_NEXT_PUBLIC_SUPABASE_ANON_KEY:latest,SUPABASE_SERVICE_ROLE_KEY=$(SECRET_NS)_SUPABASE_SERVICE_ROLE_KEY:latest,PIN_SESSION_SECRET=$(SECRET_NS)_PIN_SESSION_SECRET:latest,RESEND_API_KEY=$(SECRET_NS)_RESEND_API_KEY:latest,EMAIL_FROM=$(SECRET_NS)_EMAIL_FROM:latest,NEXT_PUBLIC_APP_URL=$(SECRET_NS)_NEXT_PUBLIC_APP_URL:latest,CRON_SECRET=$(SECRET_NS)_CRON_SECRET:latest"
 
 cloud-run-url: ## Print URL of a Cloud Run service. Set SERVICE.
 	@gcloud run services describe $(SERVICE) \
@@ -138,16 +142,16 @@ cloud-run-url: ## Print URL of a Cloud Run service. Set SERVICE.
 	  --format="value(status.url)"
 
 # Apply pending Prisma migrations to the deployed database BEFORE the new
-# revision serves traffic. Reads AHITS_MIGRATE_URL — the Supabase SESSION pooler
+# revision serves traffic. Reads $(SECRET_NS)_MIGRATE_URL — the Supabase SESSION pooler
 # (IPv4, port 5432, session mode), which is reachable from GitHub Actions runners
 # and supports the session semantics `prisma migrate deploy` needs. Do NOT point
-# this at AHITS_DATABASE_URL (the 6543 transaction pooler) — pgBouncer transaction
+# this at $(SECRET_NS)_DATABASE_URL (the 6543 transaction pooler) — pgBouncer transaction
 # mode breaks migration advisory locks. Requires the deployer service account to
-# have roles/secretmanager.secretAccessor on AHITS_MIGRATE_URL.
+# have roles/secretmanager.secretAccessor on $(SECRET_NS)_MIGRATE_URL.
 # `@` suppresses command echo so the connection string is never printed.
 cloud-run-migrate: ## Apply pending migrations to the deployed DB. Set GCP_PROJECT.
-	@DB_URL="$$(gcloud secrets versions access latest --secret=AHITS_MIGRATE_URL --project=$(GCP_PROJECT))"; \
-	  if [ -z "$$DB_URL" ]; then echo "❌ Could not read AHITS_MIGRATE_URL from Secret Manager"; exit 1; fi; \
+	@DB_URL="$$(gcloud secrets versions access latest --secret=$(SECRET_NS)_MIGRATE_URL --project=$(GCP_PROJECT))"; \
+	  if [ -z "$$DB_URL" ]; then echo "❌ Could not read $(SECRET_NS)_MIGRATE_URL from Secret Manager"; exit 1; fi; \
 	  echo "Applying migrations to the deployed database..."; \
 	  DATABASE_URL="$$DB_URL" DIRECT_URL="$$DB_URL" npx prisma migrate deploy
 
@@ -155,12 +159,12 @@ cloud-run-migrate: ## Apply pending migrations to the deployed DB. Set GCP_PROJE
 deploy-staging: ## Build, push, and deploy to staging. Override TAG as needed.
 	$(MAKE) docker-build
 	$(MAKE) docker-push
-	$(MAKE) cloud-run-deploy SERVICE=$(APP_NAME)-staging MIN_INSTANCES=0 SECRET_NS=AHITS
+	$(MAKE) cloud-run-deploy SERVICE=$(APP_NAME)-staging MIN_INSTANCES=0 SECRET_NS=AHITS EMAIL_SANDBOX=true
 
 deploy-prod: ## Build, push, and deploy to production (uses AHITS_PROD_* secrets).
 	$(MAKE) docker-build
 	$(MAKE) docker-push
-	$(MAKE) cloud-run-deploy SERVICE=$(APP_NAME) MIN_INSTANCES=1 SECRET_NS=AHITS_PROD
+	$(MAKE) cloud-run-deploy SERVICE=$(APP_NAME) MIN_INSTANCES=1 SECRET_NS=AHITS_PROD EMAIL_SANDBOX=false
 
 logs: ## Tail Cloud Run logs (staging by default; override SERVICE for prod)
 	gcloud run services logs tail $(SERVICE) \

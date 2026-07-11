@@ -87,7 +87,7 @@ export default function RequestsPage() {
         fetch('/api/vehicles'),
         fetch('/api/categories'),
       ])
-      if (hubsRes.ok) setHubs((await hubsRes.json()) as HubOption[])
+      if (hubsRes.ok) { const hd = await hubsRes.json(); setHubs((Array.isArray(hd) ? hd : (hd?.data ?? [])) as HubOption[]) }
       if (projectsRes.ok) {
         const d = await projectsRes.json()
         setProjects((d.data as ProjectOption[]) ?? [])

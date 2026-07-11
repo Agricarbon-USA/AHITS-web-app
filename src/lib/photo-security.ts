@@ -7,11 +7,59 @@
 // content-injection / phishing vector. We persist only URLs that point at our
 // own Supabase storage object endpoint.
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
+// UR-005b: photos live in a PRIVATE bucket. They are never rendered from a public
+// Supabase URL; instead every reference is rewritten to the auth-gated proxy
+// `/api/photos/<object-path>` (see src/app/api/photos/[...path]/route.ts), which
+// streams the object via the service-role key only for an authenticated session.
+export const PHOTO_PROXY_PREFIX = '/api/photos/'
+export const STORAGE_BUCKET = 'photos'
 
-/** True if `url` points at our Supabase storage object endpoint (public or signed). */
+/** Reject path traversal / absolute escapes in an object path. */
+function safeObjectPath(p: string): string | null {
+  const clean = p.replace(/^\/+/, '')
+  if (!clean || clean.includes('..') || clean.includes('\\') || clean.includes('\0')) return null
+  return clean
+}
+
+/**
+ * Extract the object path within our `photos` bucket from any photo reference:
+ *  - a render proxy URL  `/api/photos/<path>`
+ *  - a legacy Supabase URL `…/storage/v1/object/{public|sign}/photos/<path>`
+ * Returns null if the ref doesn't point at our bucket.
+ */
+export function extractStoragePath(ref: unknown): string | null {
+  if (typeof ref !== 'string' || ref.length === 0) return null
+  if (ref.startsWith(PHOTO_PROXY_PREFIX)) {
+    return safeObjectPath(decodeURIComponent(ref.slice(PHOTO_PROXY_PREFIX.length).split('?')[0]))
+  }
+  try {
+    const u = new URL(ref)
+    const marker = `/${STORAGE_BUCKET}/`
+    const idx = u.pathname.indexOf(marker)
+    if (u.pathname.includes('/storage/v1/object/') && idx !== -1) {
+      return safeObjectPath(decodeURIComponent(u.pathname.slice(idx + marker.length)))
+    }
+    return null
+  } catch {
+    return null // not an absolute URL (e.g. an unresolved "localphoto:" ref)
+  }
+}
+
+/** Same-origin, auth-gated proxy URL for rendering a stored photo. '' if invalid. */
+export function toPhotoSrc(ref: unknown): string {
+  const path = extractStoragePath(ref)
+  return path ? PHOTO_PROXY_PREFIX + path.split('/').map(encodeURIComponent).join('/') : ''
+}
+
+/**
+ * True if `url` is a photo reference we will persist: either the auth-gated proxy
+ * ref (`/api/photos/<path>`, what uploads now return) or a legacy Supabase storage
+ * URL (public or signed). Everything else — including `localphoto:` refs and
+ * arbitrary external URLs — is rejected.
+ */
 export function isAllowedPhotoUrl(url: unknown): url is string {
   if (typeof url !== 'string' || url.length === 0) return false
+  if (url.startsWith(PHOTO_PROXY_PREFIX)) return extractStoragePath(url) !== null
   let u: URL
   try {
     u = new URL(url)
@@ -21,14 +69,21 @@ export function isAllowedPhotoUrl(url: unknown): url is string {
   if (u.protocol !== 'https:') return false
   // Must hit a Supabase storage object path (…/storage/v1/object/{public|sign}/…).
   if (!u.pathname.includes('/storage/v1/object/')) return false
-  if (SUPABASE_URL) {
+  // Read at call time (not module load) so the check is deterministic under test.
+  // In production Next.js inlines NEXT_PUBLIC_* at build time, so this is a constant
+  // either way — no runtime behavior change; it only makes the host allowlist stubbable.
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
+  if (supabaseUrl) {
     try {
-      return u.host === new URL(SUPABASE_URL).host
+      return u.host === new URL(supabaseUrl).host
     } catch {
       /* fall through to the generic host check */
     }
   }
-  // No configured origin (tests/local) — require a Supabase-hosted bucket.
+  // No configured origin (tests/local) — require a Supabase-hosted bucket. NOTE: this
+  // generic fallback is deliberately looser and must NEVER be the production path:
+  // NEXT_PUBLIC_SUPABASE_URL is a required Cloud Run runtime secret (Makefile env-check
+  // hard-fails without it), so prod always takes the strict host-equality branch above.
   return u.hostname.endsWith('.supabase.co')
 }
 
@@ -87,4 +142,10 @@ export function sniffImageMime(buf: Buffer): string | null {
 /** Canonical file extension for a sniffed image MIME (for the stored object path). */
 export function extForImageMime(mime: string): string {
   return IMAGE_EXT_BY_MIME[mime] ?? 'img'
+}
+
+/** True if the buffer is a real PDF (magic bytes "%PDF-"). Used for document
+ *  uploads (e.g. rental agreements) where PDF is allowed alongside images. */
+export function isPdf(buf: Buffer): boolean {
+  return buf.length >= 5 && buf.toString('ascii', 0, 5) === '%PDF-'
 }

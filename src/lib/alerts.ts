@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import type { Prisma } from '@prisma/client'
 
 type AlertMeta = Record<string, string | number | boolean | null>
 
@@ -16,9 +17,16 @@ export async function createAlert(
   sourceTable: string,
   sourceId: string,
   metadata?: AlertMeta,
+  // FND-28: pass the caller's interactive-transaction client so the alert commits
+  // (or rolls back) atomically with the source write. Without it, an alert created
+  // inside a $transaction runs on the global connection and can outlive a rolled-back
+  // task (orphaned) — or be lost if the source write's own commit is what failed.
+  // Defaults to the global client for the many non-transactional callers; follows the
+  // `db = prisma` convention in lib/deployment-assignments.ts.
+  db: Prisma.TransactionClient = prisma,
 ) {
   const activeKey = `${type}:${sourceTable}:${sourceId}`
-  return prisma.alert.upsert({
+  return db.alert.upsert({
     where: { activeKey },
     create: {
       type: type as never,

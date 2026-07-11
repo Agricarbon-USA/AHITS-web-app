@@ -1,16 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
+import { getAuthorizedActiveRig } from '@/lib/deployment-auth'
+import { getActivePrimaryForRig, getRequiredPrimaryForRig, hydrateRigOperator } from '@/lib/deployment-assignments'
 import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { createAlert } from '@/lib/alerts'
 import { withIdempotency } from '@/lib/idempotency'
 import { issueHubReturnLinks } from '@/lib/status-links'
 import { filterAllowedPhotoUrls } from '@/lib/photo-security'
-import { drawFromHub, getStockAtHub, restoreToHub } from '@/lib/inventory-stock'
+import { drawFromHub, getStockAtHub, restoreToHub, resyncItemTotal } from '@/lib/inventory-stock'
+import { claimHeldStock } from '@/lib/deployment-requests'
 
 const RIG_INCLUDE = {
-  operator: { select: { id: true, name: true } },
   project: { select: { id: true, name: true } },
   vehicles: {
     where: { removedAt: null },
@@ -76,6 +78,16 @@ const dispositionSchema = z.object({
   repairHubId: z.string().optional(),
   inoperableNotes: z.string().optional(),
   photoUrls: z.array(z.string()).default([]),
+}).superRefine((v, ctx) => {
+  // G1: a "Return to Hub" disposition must name a destination hub, else the
+  // per-hub stock credit is skipped and the quantity vanishes from hub views.
+  if (v.type === 'HUB' && !v.hubId) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'A return hub is required', path: ['hubId'] })
+  }
+  // §11.10 / Phase-2: a damage report requires at least one photo.
+  if (v.type === 'INOPERABLE' && v.photoUrls.length === 0) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'At least one damage photo is required', path: ['photoUrls'] })
+  }
 })
 
 const removeSchema = z.object({
@@ -83,29 +95,6 @@ const removeSchema = z.object({
   itemDispositions: z.array(dispositionSchema).min(1),
 })
 
-async function getAuthorizedActiveRig(id: string, session: { userId: string; role: string }) {
-  const rig = await prisma.rig.findUnique({ where: { id } })
-  if (!rig || rig.endedAt) return null
-  if (session.role === 'ADMIN') return rig
-  if (rig.operatorId === session.userId) return rig
-  const secondary = await prisma.rigOperator.findUnique({
-    where: { rigId_operatorId: { rigId: id, operatorId: session.userId } },
-  })
-  if (secondary) return rig
-  return null
-}
-
-async function getAuthorizedRig(id: string, session: { userId: string; role: string }) {
-  const rig = await prisma.rig.findUnique({ where: { id } })
-  if (!rig) return null
-  if (session.role === 'ADMIN') return rig
-  if (rig.operatorId === session.userId) return rig
-  const secondary = await prisma.rigOperator.findUnique({
-    where: { rigId_operatorId: { rigId: id, operatorId: session.userId } },
-  })
-  if (secondary) return rig
-  return null
-}
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   return withIdempotency(req, 'deployments.items.POST', () => _POST(req, ctx))
@@ -117,6 +106,10 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   const { id } = await params
   const rig = await getAuthorizedActiveRig(id, session)
   if (!rig) return NextResponse.json({ error: 'Not found or forbidden' }, { status: 404 })
+  // W0-10 PR-1: attribution operator = the deployment's PRIMARY (roster) with legacy
+  // fallback — behavior-preserving (legacy used rig.operatorId = the primary). Whether
+  // CheckLog should instead record the ACTING user is a separate product question.
+  const primaryId = await getRequiredPrimaryForRig(id)
 
   const body = await req.json()
   const parsed = addSchema.safeParse(body)
@@ -194,22 +187,29 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
             if (!sourceHubId) {
               throw Object.assign(new Error('CONSUMABLE_NEEDS_HUB'), {})
             }
-            const drawn = await drawFromHub(entry.inventoryItemId, sourceHubId, entry.quantity, tx)
-            if (drawn < entry.quantity) {
-              const atHub = await getStockAtHub(entry.inventoryItemId, sourceHubId, tx)
-              const hubRow = await tx.hub.findUnique({ where: { id: sourceHubId }, select: { name: true } })
-              throw Object.assign(new Error('INSUFFICIENT_HUB_STOCK'), {
-                available: atHub,
-                requested: entry.quantity,
-                hubName: hubRow?.name ?? sourceHubId,
-              })
+            // UR-010: claim this rig operator's own HELD (reserved) stock at this hub
+            // first — converts reserve→draw — then draw any remainder from free stock.
+            // Normal reservation checkout: claimed === quantity, no free draw. Direct
+            // (no-reservation) add: claimed === 0, it all comes from free stock.
+            const claimed = await claimHeldStock(primaryId, entry.inventoryItemId, sourceHubId, entry.quantity, tx)
+            const remainder = entry.quantity - claimed
+            if (remainder > 0) {
+              const drawn = await drawFromHub(entry.inventoryItemId, sourceHubId, remainder, tx)
+              if (drawn < remainder) {
+                const atHub = await getStockAtHub(entry.inventoryItemId, sourceHubId, tx)
+                const hubRow = await tx.hub.findUnique({ where: { id: sourceHubId }, select: { name: true } })
+                throw Object.assign(new Error('INSUFFICIENT_HUB_STOCK'), {
+                  available: claimed + atHub,
+                  requested: entry.quantity,
+                  hubName: hubRow?.name ?? sourceHubId,
+                })
+              }
             }
-            drawnQuantity = drawn
+            // Recompute the cross-hub total from stock rows — covers both the claimed
+            // reserve→draw and the free-stock draw in one authoritative pass.
+            await resyncItemTotal(entry.inventoryItemId, tx)
+            drawnQuantity = entry.quantity
             drawnHubId = sourceHubId
-            await tx.inventoryItem.update({
-              where: { id: entry.inventoryItemId },
-              data: { quantity: { decrement: drawn } },
-            })
           }
           await tx.kitItem.create({
             data: {
@@ -279,7 +279,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   }
 
   const updated = await prisma.rig.findUniqueOrThrow({ where: { id }, include: RIG_INCLUDE })
-  return NextResponse.json(updated)
+  return NextResponse.json(await hydrateRigOperator(updated))
 }
 
 export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
@@ -292,6 +292,10 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
   const { id } = await params
   const rig = await getAuthorizedActiveRig(id, session)
   if (!rig) return NextResponse.json({ error: 'Not found or forbidden' }, { status: 404 })
+  // W0-10 PR-1: attribution operator = the deployment's PRIMARY (roster) with legacy
+  // fallback — behavior-preserving (legacy used rig.operatorId = the primary). Whether
+  // CheckLog should instead record the ACTING user is a separate product question.
+  const primaryId = await getRequiredPrimaryForRig(id)
 
   const body = await req.json()
   const parsed = removeSchema.safeParse(body)
@@ -321,18 +325,31 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
       const removeQty = isSerialized ? 1 : Math.min(disp.quantity ?? kitItem.quantity, kitItem.quantity)
       const fullRemoval = isSerialized || removeQty >= kitItem.quantity
 
+      // A-1 / CR-17: claim the removal conditionally so two concurrent bulk returns
+      // of the SAME kit item can't both restore stock. The loser matches 0 rows and
+      // skips this disposition (the winner already did the return + logs). The partial
+      // branch also decrements drawnQuantity so a later partial return can't over-restore.
       // TRANSFER removal is finalized only when the recipient ACCEPTS (the
-      // transfer/accept route decrements the source kit item then). Removing it
-      // here too would double-decrement the source quantity — so, exactly like
-      // end/route.ts, skip the kit-item mutation for TRANSFER dispositions.
+      // transfer/accept route decrements the source kit item then). Mutating it here
+      // too would double-decrement — so, exactly like end/route.ts, skip the kit-item
+      // mutation (and the claim) for TRANSFER dispositions.
+      const drawn = kitItem.drawnQuantity ?? 0
+      let restoreQty = 0
       if (disp.type !== 'TRANSFER') {
         if (fullRemoval) {
-          await tx.kitItem.update({ where: { id: disp.kitItemId }, data: { removedAt: now } })
-        } else {
-          await tx.kitItem.update({
-            where: { id: disp.kitItemId },
-            data: { quantity: kitItem.quantity - removeQty },
+          const claimed = await tx.kitItem.updateMany({
+            where: { id: disp.kitItemId, removedAt: null },
+            data: { removedAt: now },
           })
+          if (claimed.count === 0) continue
+          restoreQty = drawn
+        } else {
+          restoreQty = Math.min(removeQty, drawn)
+          const claimed = await tx.kitItem.updateMany({
+            where: { id: disp.kitItemId, removedAt: null, quantity: { gte: removeQty } },
+            data: { quantity: { decrement: removeQty }, drawnQuantity: { decrement: restoreQty } },
+          })
+          if (claimed.count === 0) continue
         }
       }
 
@@ -349,22 +366,21 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
           // every bulk return. Legacy null drawnHubId falls back to item.hubId;
           // if still null, skip the hub row but always restore the total so no
           // stock is lost.
-          const restoreQty = Math.min(removeQty, kitItem.drawnQuantity)
-          const hubForRestore = kitItem.drawnHubId ?? kitItem.item.hubId
+          // G1: chosen destination hub wins, then drawn hub, then home hub.
+          const hubForRestore = disp.hubId ?? kitItem.drawnHubId ?? kitItem.item.hubId
           if (hubForRestore && restoreQty > 0) {
             await restoreToHub(inventoryItemId, hubForRestore, restoreQty, tx)
           }
-          await tx.inventoryItem.update({
-            where: { id: inventoryItemId },
-            data: { quantity: { increment: restoreQty } },
-          })
+          if (restoreQty > 0) {
+            await resyncItemTotal(inventoryItemId, tx)
+          }
         }
         await tx.checkLog.create({
           data: {
             action: 'CHECK_IN',
             itemId: inventoryItemId,
             inventoryUnitId: kitItem.inventoryUnitId ?? undefined,
-            operatorId: rig.operatorId,
+            operatorId: primaryId,
             rigId: id,
             notes: note,
             condition: returnConditionToLogCondition(disp.returnCondition),
@@ -405,7 +421,7 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
             action: 'CHECK_IN',
             itemId: inventoryItemId,
             inventoryUnitId: kitItem.inventoryUnitId ?? undefined,
-            operatorId: rig.operatorId,
+            operatorId: primaryId,
             rigId: id,
             notes: note,
             condition: logCondition,
@@ -448,7 +464,7 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
           await createAlert('DAMAGE_REPORTED', 'maintenance_tasks', task.id, {
             itemName: kitItem.item.name,
             operatorId: session.userId,
-          })
+          }, tx)
           if (disp.photoUrls.length > 0) {
             await tx.photo.createMany({
               data: filterAllowedPhotoUrls(disp.photoUrls).map((url) => ({
@@ -530,5 +546,5 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
   }
 
   const updated = await prisma.rig.findUniqueOrThrow({ where: { id }, include: RIG_INCLUDE })
-  return NextResponse.json(updated)
+  return NextResponse.json(await hydrateRigOperator(updated))
 }

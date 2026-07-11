@@ -1,19 +1,66 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
+import { PrismaClient } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { getDeploymentRostersForDisplay } from '@/lib/deployment-assignments'
 import { createAlert, resolveActiveAlert } from '@/lib/alerts'
 import { dispatchPendingAlerts } from '@/lib/notifications'
 import { allHubStockForScan } from '@/lib/inventory-stock'
+import { releaseAllHeldForRequest } from '@/lib/deployment-requests'
+import { businessDateTime } from '@/lib/business-date'
+import { getNotificationConfig } from '@/lib/notification-config'
+
+// Stable i64 key for this handler's advisory lock. Arbitrary but unique per handler.
+const CRON_DISPATCH_LOCK = BigInt('7654321098')
+
+// Acquire a session-level PostgreSQL advisory lock via the DIRECT_URL connection
+// (session-mode pooler, port 5432) so the lock acquire/release land on the same
+// backend session. DATABASE_URL is a transaction-mode pgBouncer (port 6543); using
+// it for session-level advisory locks is unsafe because acquire and release can
+// hit different backends through the pool.
+// Returns null if DIRECT_URL is unavailable (dev/test envs that lack it skip the guard).
+async function tryAcquireCronLock(): Promise<PrismaClient | null> {
+  const directUrl = process.env.DIRECT_URL
+  if (!directUrl) return null
+
+  const lockClient = new PrismaClient({ datasourceUrl: directUrl })
+  try {
+    const rows = await lockClient.$queryRaw<{ acquired: boolean }[]>`
+      SELECT pg_try_advisory_lock(${CRON_DISPATCH_LOCK}) AS acquired
+    `
+    if (!rows[0]?.acquired) {
+      await lockClient.$disconnect()
+      return null
+    }
+    return lockClient
+  } catch {
+    await lockClient.$disconnect()
+    return null
+  }
+}
+
+async function releaseCronLock(lockClient: PrismaClient): Promise<void> {
+  try {
+    await lockClient.$queryRaw`SELECT pg_advisory_unlock(${CRON_DISPATCH_LOCK})`
+  } finally {
+    await lockClient.$disconnect()
+  }
+}
 
 // Notification dispatcher, hit on a schedule by an external scheduler (e.g.
 // GCP Cloud Scheduler). It is NOT behind the session auth — it is gated by a
 // shared secret instead. Provide it as `Authorization: Bearer <CRON_SECRET>`.
 function authorized(req: NextRequest): boolean {
-  const secret = process.env.CRON_SECRET
+  // .trim() both sides: a secret created with `echo` (or pasted in a console)
+  // often carries a trailing newline, which would make `Bearer <secret>` never
+  // match a clean header the scheduler sends — a 401 that's impossible to fix
+  // from the header box. Trimming surrounding whitespace removes that footgun
+  // without weakening the constant-time comparison of the high-entropy value.
+  const secret = process.env.CRON_SECRET?.trim()
   if (!secret) return false // refuse if unconfigured rather than running open
   // Header-only (never a query param, which would leak the secret into access
   // logs / URLs), compared in constant time.
-  const provided = Buffer.from(req.headers.get('authorization') ?? '')
+  const provided = Buffer.from((req.headers.get('authorization') ?? '').trim())
   const expected = Buffer.from(`Bearer ${secret}`)
   return provided.length === expected.length && timingSafeEqual(provided, expected)
 }
@@ -103,18 +150,268 @@ async function run() {
     }
   }
 
-  // 5) Dispatch: email admins + create in-app notifications for un-notified alerts.
+  // 5) Scan: per-operator DAILY_CHECK_MISSED alert. Raised once per day, after
+  // the configured cutoff, when an operator with an active rig hasn't submitted
+  // any daily check for today (local date in APP_TIMEZONE — must agree with how
+  // the client builds its date string; see UR-026 for the full alignment).
+  // Self-clears when the operator submits any check (see /api/daily-check POST).
+  const { dailyCheckCutoff } = await getNotificationConfig()
+  const [cutoffHour, cutoffMinute] = dailyCheckCutoff.split(':').map(Number)
+
+  // Shared business-date/-time helper (FND-7) so the cutoff scan and the client's
+  // check date can never drift out of the APP_TIMEZONE business day.
+  const { date: today, hour: localHour, minute: localMinute } = businessDateTime(now)
+
+  const pastCutoff =
+    localHour > cutoffHour ||
+    (localHour === cutoffHour && localMinute >= cutoffMinute)
+  let missedFlagged = 0
+
+  // W0-10 PR-1: enumerate every active rig (tsc-typed so the PR-4 column drop is a
+  // compile error here, not a silent miss) and resolve its PRIMARY from the assignment
+  // roster, falling back to the legacy Rig.operatorId. The fallback keeps the missed-
+  // daily-check scan from silently dropping a rig if an active rig ever lacks an open
+  // PRIMARY assignment (the alert path must not fail closed).
+  const activeRigs = await prisma.rig.findMany({
+    where: { endedAt: null },
+    select: { id: true },
+  })
+  const cronRosters = await getDeploymentRostersForDisplay(activeRigs.map((r) => r.id))
+
+  for (const rig of activeRigs) {
+    const roster = cronRosters.get(rig.id)
+    const operatorId = roster?.operatorId ?? null
+    if (!operatorId) continue
+    const operatorName = roster?.operator?.name ?? 'Operator'
+    const checkedToday = await prisma.dailyCheck.findFirst({
+      where: { operatorId, date: new Date(today) },
+      select: { id: true },
+    })
+    if (checkedToday) {
+      await resolveActiveAlert('DAILY_CHECK_MISSED', 'operators', operatorId)
+    } else if (pastCutoff) {
+      await createAlert('DAILY_CHECK_MISSED', 'operators', operatorId, {
+        operatorName,
+        date: today,
+        cutoff: dailyCheckCutoff,
+      })
+      missedFlagged++
+    }
+  }
+
+  // 7) UR-010 (M5): release STALE holds. A fulfilled reservation whose operator never
+  // claimed the held stock (or checked out at a different hub, H6) would otherwise
+  // freeze that hub's reserve forever. After HOLD_TTL_HOURS past fulfilledAt, release
+  // the unclaimed remainder back to free availability — guarded per-line by releasedAt
+  // (releaseAllHeldForRequest) so a repeat run / admin release / cancel can't
+  // double-release. Only reservedQty is freed (quantity totals untouched → no resync).
+  // Math.floor + finite/≥1 guard: make_interval(hours => …) takes an integer, so a
+  // mis-set non-integer/NaN env value must not throw or disable the sweep.
+  const ttlParsed = Math.floor(Number(process.env.HOLD_TTL_HOURS ?? 72))
+  const holdTtlHours = Number.isFinite(ttlParsed) && ttlParsed >= 1 ? ttlParsed : 72
+  let holdsReleased = 0
+  try {
+    const staleReqs = await prisma.$queryRaw<{ requestId: string; operatorId: string | null; label: string | null }[]>`
+      SELECT DISTINCT l."requestId" AS "requestId",
+             COALESCE(r."forOperatorId", r."requestedById") AS "operatorId",
+             r."label" AS "label"
+      FROM "deployment_request_lines" l
+      JOIN "deployment_requests" r ON r."id" = l."requestId"
+      WHERE l."releasedAt" IS NULL
+        AND l."heldQty" > l."claimedQty"
+        AND r."status" = 'FULFILLED'
+        AND r."fulfilledAt" < NOW() - make_interval(hours => ${holdTtlHours})
+    `
+    for (const row of staleReqs) {
+      const released = await prisma.$transaction((tx) => releaseAllHeldForRequest(row.requestId, tx))
+      if (released > 0) {
+        holdsReleased++
+        if (row.operatorId) {
+          await prisma.notification.create({
+            data: {
+              userId: row.operatorId,
+              type: 'RESERVATION_UPDATE',
+              title: 'Held items returned to stock',
+              body: row.label
+                ? `Unclaimed held items for "${row.label}" were returned to hub stock after ${holdTtlHours}h.`
+                : `Unclaimed held items were returned to hub stock after ${holdTtlHours}h.`,
+              link: '/operator/requests',
+            },
+          }).catch(() => {})
+        }
+      }
+    }
+  } catch {
+    /* held columns missing / transient — non-fatal */
+  }
+
+  // 8) #106: inventory drift assertion. For every consumable that participates in the
+  // multi-hub model (has ≥1 inventory_stock row), the cross-hub total
+  // inventory_items.quantity MUST equal Σ inventory_stock.quantity. A mismatch means a
+  // write path mis-maintained the dual write — log it (with the delta) so it's caught in
+  // monitoring instead of surfacing later as "disappearing inventory". Detection-only
+  // (no auto-heal) so a real bug isn't silently masked. Legacy items with no stock rows
+  // are excluded (their quantity legitimately predates per-hub tracking).
+  let inventoryDriftFlagged = 0
+  try {
+    const drift = await prisma.$queryRaw<{ id: string; name: string | null; total: number; sumStock: bigint | number }[]>`
+      SELECT ii."id", ii."name", ii."quantity" AS "total",
+             COALESCE((SELECT SUM(s."quantity") FROM "inventory_stock" s WHERE s."itemId" = ii."id"), 0) AS "sumStock"
+      FROM "inventory_items" ii
+      WHERE ii."itemType" = 'CONSUMABLE'
+        AND ii."deletedAt" IS NULL
+        AND EXISTS (SELECT 1 FROM "inventory_stock" s WHERE s."itemId" = ii."id")
+        AND ii."quantity" <> COALESCE((SELECT SUM(s."quantity") FROM "inventory_stock" s WHERE s."itemId" = ii."id"), 0)
+    `
+    inventoryDriftFlagged = drift.length
+    if (drift.length > 0) {
+      console.error(
+        '[cron] inventory drift detected (quantity != Σ stock):',
+        drift.map((d) => ({ id: d.id, name: d.name, total: Number(d.total), sumStock: Number(d.sumStock) })),
+      )
+      for (const d of drift) {
+        await createAlert('INVENTORY_DRIFT', 'inventory_items', d.id, {
+          itemName: d.name,
+          total: Number(d.total),
+          sumStock: Number(d.sumStock),
+        })
+      }
+    }
+  } catch {
+    /* inventory_stock missing / transient — non-fatal */
+  }
+
+  // 8b) Inventory invariant checks. Violations indicate a write-path bug — raise an
+  // alert per violation category so they surface in monitoring immediately.
+  let invariantViolations = 0
+  try {
+    // INV-1: stock non-negativity
+    const inv1 = await prisma.$queryRaw<{ itemId: string; hubId: string; quantity: number; reservedQty: number }[]>`
+      SELECT s."itemId", s."hubId", s."quantity", s."reservedQty"
+      FROM "inventory_stock" s
+      WHERE s."quantity" < 0 OR s."reservedQty" < 0
+    `
+    if (inv1.length > 0) {
+      invariantViolations += inv1.length
+      await createAlert('INVENTORY_DRIFT', 'inventory_stock', 'inv1-negative-stock', {
+        itemName: 'INV-1 negative stock/reservedQty',
+        count: inv1.length,
+        sample: JSON.stringify(inv1.slice(0, 3)),
+      })
+    }
+
+    // INV-2: reservedQty must never exceed quantity
+    const inv2 = await prisma.$queryRaw<{ itemId: string; hubId: string; quantity: number; reservedQty: number }[]>`
+      SELECT s."itemId", s."hubId", s."quantity", s."reservedQty"
+      FROM "inventory_stock" s
+      WHERE s."reservedQty" > s."quantity"
+    `
+    if (inv2.length > 0) {
+      invariantViolations += inv2.length
+      await createAlert('INVENTORY_DRIFT', 'inventory_stock', 'inv2-reserved-exceeds-stock', {
+        itemName: 'INV-2 reservedQty > quantity',
+        count: inv2.length,
+        sample: JSON.stringify(inv2.slice(0, 3)),
+      })
+    }
+
+    // INV-3: held↔reserved mirror
+    const inv3 = await prisma.$queryRaw<{ itemId: string; hubId: string; heldOutstanding: bigint | number; reservedQty: bigint | number }[]>`
+      SELECT h."itemId", h."hubId", h."heldOutstanding", COALESCE(s."reservedQty",0) AS "reservedQty"
+      FROM (
+        SELECT l."heldItemId" AS "itemId", l."heldHubId" AS "hubId",
+               SUM(l."heldQty" - l."claimedQty") AS "heldOutstanding"
+        FROM "deployment_request_lines" l
+        JOIN "deployment_requests" r ON r."id" = l."requestId"
+        WHERE l."releasedAt" IS NULL AND l."heldQty" > l."claimedQty"
+          AND r."status" = 'FULFILLED' AND l."heldItemId" IS NOT NULL
+        GROUP BY l."heldItemId", l."heldHubId"
+      ) h
+      LEFT JOIN "inventory_stock" s ON s."itemId" = h."itemId" AND s."hubId" = h."hubId"
+      WHERE h."heldOutstanding" <> COALESCE(s."reservedQty",0)
+    `
+    if (inv3.length > 0) {
+      invariantViolations += inv3.length
+      await createAlert('INVENTORY_DRIFT', 'inventory_stock', 'inv3-held-reserved-mismatch', {
+        itemName: 'INV-3 held↔reserved mismatch',
+        count: inv3.length,
+        sample: JSON.stringify(inv3.slice(0, 3).map((r) => ({ ...r, heldOutstanding: Number(r.heldOutstanding), reservedQty: Number(r.reservedQty) }))),
+      })
+    }
+
+    // INV-4: orphan holds (unreleased holds on non-FULFILLED requests)
+    const inv4 = await prisma.$queryRaw<{ id: string; requestId: string; status: string; heldQty: number; claimedQty: number }[]>`
+      SELECT l."id", l."requestId", r."status"::text AS "status", l."heldQty", l."claimedQty"
+      FROM "deployment_request_lines" l
+      JOIN "deployment_requests" r ON r."id" = l."requestId"
+      WHERE l."releasedAt" IS NULL AND l."heldQty" > l."claimedQty"
+        AND r."status" <> 'FULFILLED'
+    `
+    if (inv4.length > 0) {
+      invariantViolations += inv4.length
+      await createAlert('INVENTORY_DRIFT', 'deployment_request_lines', 'inv4-orphan-holds', {
+        itemName: 'INV-4 orphan holds on non-FULFILLED requests',
+        count: inv4.length,
+        sample: JSON.stringify(inv4.slice(0, 3)),
+      })
+    }
+
+    // INV-5: custody strands (IN_TRANSIT >14d or CHECKED_OUT/IN_TRANSIT with no open kit item)
+    const inv5 = await prisma.$queryRaw<{ id: string; inventoryItemId: string; serialNumber: string | null; status: string; updatedAt: Date }[]>`
+      SELECT u."id", u."inventoryItemId", u."serialNumber", u."status", u."updatedAt"
+      FROM "inventory_units" u
+      WHERE u."deletedAt" IS NULL
+        AND (
+          (u."status" = 'IN_TRANSIT' AND u."updatedAt" < NOW() - INTERVAL '14 days')
+          OR (u."status" IN ('CHECKED_OUT','IN_TRANSIT') AND NOT EXISTS (
+                SELECT 1 FROM "kit_items" ki
+                JOIN "kits" k ON k."id" = ki."kitId"
+                JOIN "rigs" rg ON rg."id" = k."rigId" AND rg."endedAt" IS NULL
+                WHERE ki."inventoryUnitId" = u."id" AND ki."removedAt" IS NULL))
+        )
+    `
+    if (inv5.length > 0) {
+      invariantViolations += inv5.length
+      await createAlert('INVENTORY_DRIFT', 'inventory_units', 'inv5-custody-strands', {
+        itemName: 'INV-5 stranded units (no active kit item)',
+        count: inv5.length,
+        sample: JSON.stringify(inv5.slice(0, 3)),
+      })
+    }
+  } catch {
+    /* schema missing / transient — non-fatal */
+  }
+
+  // 9) Dispatch: email admins + create in-app notifications for un-notified alerts.
   const dispatch = await dispatchPendingAlerts()
-  return { overdueFlagged: due.length, idempotencyReaped, lowInventoryFlagged: lowFlagged, expiryFlagged, ...dispatch }
+  return { overdueFlagged: due.length, idempotencyReaped, lowInventoryFlagged: lowFlagged, expiryFlagged, missedFlagged, holdsReleased, inventoryDriftFlagged, invariantViolations, ...dispatch }
+}
+
+async function handleCron(req: NextRequest) {
+  if (!authorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const lockClient = await tryAcquireCronLock()
+  // DIRECT_URL not configured (dev/test) — run without overlap guard.
+  if (lockClient === null && !process.env.DIRECT_URL) {
+    return NextResponse.json({ ok: true, ...(await run()) })
+  }
+  // Lock present but not acquired — another fire is already running.
+  if (lockClient === null) {
+    return NextResponse.json({ ok: true, skipped: 'advisory-lock', reason: 'concurrent run in progress' })
+  }
+
+  try {
+    return NextResponse.json({ ok: true, ...(await run()) })
+  } finally {
+    await releaseCronLock(lockClient)
+  }
 }
 
 export async function POST(req: NextRequest) {
-  if (!authorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  return NextResponse.json({ ok: true, ...(await run()) })
+  return handleCron(req)
 }
 
 // GET supported too, so a plain scheduler HTTP target works without a body.
 export async function GET(req: NextRequest) {
-  if (!authorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  return NextResponse.json({ ok: true, ...(await run()) })
+  return handleCron(req)
 }

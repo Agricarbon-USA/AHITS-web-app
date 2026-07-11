@@ -90,6 +90,80 @@ export async function getDeploymentRoster(
   return map.get(rigId) ?? { operator: null, operatorId: null, secondaryOperators: [], projects: [] }
 }
 
+/**
+ * UR-032: roster for DISPLAY / attribution. Identical to getDeploymentRosters for
+ * an ACTIVE deployment (has an open assignment → returns the open roster), but for
+ * an ENDED deployment (no open assignments) it returns the FINAL roster — the batch
+ * closed together by `endAllAssignmentsForRig`, which stamps every then-open
+ * assignment with the same `endedAt`. Without this, ended deployments serialize
+ * `operator: null`, losing "who ran this deployment" in history/reports.
+ */
+export async function getDeploymentRostersForDisplay(
+  rigIds: string[],
+  db: RawClient = prisma,
+): Promise<Map<string, DeploymentRoster>> {
+  const map = new Map<string, DeploymentRoster>()
+  if (rigIds.length === 0) return map
+  for (const id of rigIds) {
+    map.set(id, { operator: null, operatorId: null, secondaryOperators: [], projects: [] })
+  }
+
+  const assignments = await db.$queryRaw<
+    { rigId: string; operatorId: string; name: string | null; email: string | null; role: string }[]
+  >`
+    WITH agg AS (
+      SELECT "rigId",
+             bool_or("endedAt" IS NULL) AS has_open,
+             MAX("endedAt")            AS max_ended
+      FROM "deployment_assignments"
+      WHERE "rigId" IN (${Prisma.join(rigIds)})
+      GROUP BY "rigId"
+    )
+    SELECT a."rigId", a."operatorId", u."name", u."email", a."role"::text AS "role"
+    FROM "deployment_assignments" a
+    JOIN agg ON agg."rigId" = a."rigId"
+    LEFT JOIN "users" u ON u."id" = a."operatorId"
+    WHERE a."rigId" IN (${Prisma.join(rigIds)})
+      AND ( a."endedAt" IS NULL
+         OR (agg.has_open = false AND a."endedAt" = agg.max_ended) )
+  `
+  for (const a of assignments) {
+    const r = map.get(a.rigId)
+    if (!r) continue
+    if (a.role === 'PRIMARY') {
+      r.operator = { id: a.operatorId, name: a.name ?? '', email: a.email ?? '' }
+      r.operatorId = a.operatorId
+    } else {
+      r.secondaryOperators.push({ operator: { id: a.operatorId, name: a.name ?? '', email: a.email ?? '' } })
+    }
+  }
+
+  // Projects unchanged from the active roster (deployment_projects is gated on its
+  // own removedAt, independent of assignment end).
+  const projectRows = await db.$queryRaw<
+    { rigId: string; projectId: string; name: string | null }[]
+  >`
+    SELECT dp."rigId", dp."projectId", p."name"
+    FROM "deployment_projects" dp
+    LEFT JOIN "projects" p ON p."id" = dp."projectId"
+    WHERE dp."rigId" IN (${Prisma.join(rigIds)}) AND dp."removedAt" IS NULL
+  `
+  for (const p of projectRows) {
+    const r = map.get(p.rigId)
+    if (r) r.projects.push({ id: p.projectId, name: p.name ?? '' })
+  }
+
+  return map
+}
+
+export async function getDeploymentRosterForDisplay(
+  rigId: string,
+  db: RawClient = prisma,
+): Promise<DeploymentRoster> {
+  const map = await getDeploymentRostersForDisplay([rigId], db)
+  return map.get(rigId) ?? { operator: null, operatorId: null, secondaryOperators: [], projects: [] }
+}
+
 /** All (active + historical) project links for a deployment, newest first. */
 export async function listDeploymentProjects(rigId: string): Promise<DeploymentProjectRow[]> {
   return prisma.$queryRaw<DeploymentProjectRow[]>`
@@ -161,6 +235,95 @@ export async function getActivePrimary(operatorId: string): Promise<DeploymentAs
     LIMIT 1
   `
   return rows[0] ?? null
+}
+
+/** W0-10 PR-1: true if the operator has an OPEN assignment (any role) on this rig.
+ *  The role-agnostic authorization primitive that replaces the legacy
+ *  (Rig.operatorId primary + rig_operators secondary) ownership check. */
+export async function hasOpenAssignment(rigId: string, operatorId: string, db: RawClient = prisma): Promise<boolean> {
+  const rows = await db.$queryRaw<{ ok: number }[]>`
+    SELECT 1 AS ok FROM "deployment_assignments"
+    WHERE "rigId" = ${rigId} AND "operatorId" = ${operatorId} AND "endedAt" IS NULL
+    LIMIT 1`
+  return rows.length > 0
+}
+
+/** W0-10 PR-1: the open PRIMARY operatorId for a rig (null if none), from the
+ *  assignment table — the successor to reading Rig.operatorId as "who runs this rig". */
+export async function getActivePrimaryForRig(rigId: string, db: RawClient = prisma): Promise<string | null> {
+  const rows = await db.$queryRaw<{ operatorId: string }[]>`
+    SELECT "operatorId" FROM "deployment_assignments"
+    WHERE "rigId" = ${rigId} AND "role" = 'PRIMARY' AND "endedAt" IS NULL
+    ORDER BY "startedAt" DESC LIMIT 1`
+  return rows[0]?.operatorId ?? null
+}
+
+/** W0-10 PR-1: derive each vehicle's currently-assigned operator — the open PRIMARY of
+ *  the active rig the vehicle is in — the successor to Vehicle.assignedOperatorId. The
+ *  one-open-RigVehicle-per-vehicle invariant means at most one active rig per vehicle. */
+/** W0-10 PR-4: the open PRIMARY operator for a rig, REQUIRED. Throws if none — after the
+ *  legacy Rig.operatorId fallback is gone, the one-open-PRIMARY-per-rig invariant (PR-2
+ *  index B) guarantees an active rig has exactly one; a missing row is data corruption and
+ *  must fail loudly rather than silently mis-attribute. */
+/** W0-10 PR-4: the active rig an operator holds as open PRIMARY (successor to
+ *  `rig.findFirst({ operatorId, endedAt: null })`), or null. */
+/** W0-10 PR-4: attach roster-sourced operator/secondaryOperators/operatorId to a rig
+ *  response object (successor to the dropped `operator`/`secondaryOperators` includes). */
+export async function hydrateRigOperator<T extends { id: string }>(rig: T) {
+  const ro = await getDeploymentRosterForDisplay(rig.id)
+  return {
+    ...rig,
+    operatorId: ro.operatorId ?? null,
+    operator: ro.operator ? { id: ro.operator.id, name: ro.operator.name } : { id: 'unknown', name: 'Unknown operator' },
+    secondaryOperators: ro.secondaryOperators,
+  }
+}
+
+/** W0-10 PR-4: attach each transfer's source-rig PRIMARY operator (successor to the dropped
+ *  fromRig.operator include) for list/detail display. Batched. */
+export async function hydrateTransfersFromRig<T extends { fromRigId: string; fromRig: { id: string } }>(
+  transfers: T[],
+) {
+  const rosters = await getDeploymentRostersForDisplay(transfers.map((t) => t.fromRig.id))
+  return transfers.map((t) => ({
+    ...t,
+    fromRig: {
+      ...t.fromRig,
+      operator: rosters.get(t.fromRig.id)?.operator ?? null,
+    },
+  }))
+}
+
+export async function getActiveRigForOperator(operatorId: string, db: RawClient = prisma): Promise<string | null> {
+  const rows = await db.$queryRaw<{ rigId: string }[]>`
+    SELECT a."rigId" FROM "deployment_assignments" a
+    JOIN "rigs" r ON r."id" = a."rigId" AND r."endedAt" IS NULL
+    WHERE a."operatorId" = ${operatorId} AND a."role" = 'PRIMARY' AND a."endedAt" IS NULL
+    LIMIT 1`
+  return rows[0]?.rigId ?? null
+}
+
+export async function getRequiredPrimaryForRig(rigId: string, db: RawClient = prisma): Promise<string> {
+  const primary = await getActivePrimaryForRig(rigId, db)
+  if (!primary) throw new Error(`No open PRIMARY assignment for rig ${rigId}`)
+  return primary
+}
+
+export async function getVehicleOperators(
+  vehicleIds: string[], db: RawClient = prisma,
+): Promise<Map<string, { operatorId: string; operatorName: string | null }>> {
+  const m = new Map<string, { operatorId: string; operatorName: string | null }>()
+  if (vehicleIds.length === 0) return m
+  const rows = await db.$queryRaw<{ vehicleId: string; operatorId: string; operatorName: string | null }[]>`
+    SELECT rv."vehicleId", a."operatorId", u."name" AS "operatorName"
+    FROM "rig_vehicles" rv
+    JOIN "rigs" r ON r."id" = rv."rigId" AND r."endedAt" IS NULL
+    JOIN "deployment_assignments" a ON a."rigId" = r."id" AND a."role" = 'PRIMARY' AND a."endedAt" IS NULL
+    LEFT JOIN "users" u ON u."id" = a."operatorId"
+    WHERE rv."vehicleId" IN (${Prisma.join(vehicleIds)}) AND rv."removedAt" IS NULL
+    ORDER BY a."startedAt" DESC`
+  for (const r of rows) if (!m.has(r.vehicleId)) m.set(r.vehicleId, { operatorId: r.operatorId, operatorName: r.operatorName })
+  return m
 }
 
 /** Open a new operator assignment on a deployment. */

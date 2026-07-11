@@ -15,7 +15,15 @@ const moveSchema = z.object({
   qty: z.number().int().min(1),
 })
 
-const bodySchema = z.union([setSchema, moveSchema])
+// FND-13: additive seed of first (or additional) stock at a hub. Additive (not the
+// absolute `set`) so a concurrent seed at the same hub accumulates instead of
+// clobbering — no lost update. Distinct from the row-editor's `set`.
+const receiveSchema = z.object({
+  hubId: z.string().min(1),
+  addQty: z.number().int().min(1),
+})
+
+const bodySchema = z.union([setSchema, moveSchema, receiveSchema])
 
 export async function GET(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAuth()
@@ -51,8 +59,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         { status: 409 },
       )
     }
+  } else if ('addQty' in body) {
+    // Receive: additively add stock at a hub (seed first stock or top up), then re-sync.
+    const { hubId, addQty } = body
+    await prisma.$transaction(async (tx) => {
+      await restoreToHub(id, hubId, addQty, tx)
+      await resyncItemTotal(id, tx)
+    })
   } else {
-    // Set: overwrite hub stock then re-sync item total
+    // Set: overwrite hub stock (row editor) then re-sync item total
     const { hubId, quantity } = body
     await prisma.$transaction(async (tx) => {
       await setStockAtHub(id, hubId, quantity, tx)
