@@ -189,11 +189,11 @@ export default function AdminReportsPage() {
                       Asset
                     </TableSortLabel>
                   </TableCell>
-                  <TableCell>Identifier</TableCell>
-                  <TableCell>Kind</TableCell>
+                  <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>Identifier</TableCell>
+                  <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>Kind</TableCell>
                   <TableCell>Status</TableCell>
                   {numCols.map((c) => (
-                    <TableCell key={c.key} align="right" sortDirection={sortKey === c.key ? sortDir : false}>
+                    <TableCell key={c.key} sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right" sortDirection={sortKey === c.key ? sortDir : false}>
                       <TableSortLabel active={sortKey === c.key} direction={sortKey === c.key ? sortDir : 'desc'} onClick={() => handleSort(c.key)}>
                         {c.label}
                       </TableSortLabel>
@@ -215,16 +215,16 @@ export default function AdminReportsPage() {
                         {r.isRental && r.rentalCostBasis ? ` · ${r.rentalCostBasis}` : ''}
                       </Typography>
                     </TableCell>
-                    <TableCell>{r.identifier ?? '—'}</TableCell>
-                    <TableCell>{r.kind}</TableCell>
+                    <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>{r.identifier ?? '—'}</TableCell>
+                    <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>{r.kind}</TableCell>
                     <TableCell><StatusChip status={r.status} kind={r.assetType === 'VEHICLE' ? 'vehicle' : 'equipment'} /></TableCell>
-                    <TableCell align="right">{r.deployments}</TableCell>
-                    <TableCell align="right">{r.daysDeployed}</TableCell>
-                    <TableCell align="right">{r.utilizationPct}%</TableCell>
-                    <TableCell align="right">{r.maintenanceEvents}</TableCell>
-                    <TableCell align="right">{r.maintenanceSpend > 0 ? money(r.maintenanceSpend) : '—'}</TableCell>
-                    <TableCell align="right">{r.downtimeDays || '—'}</TableCell>
-                    <TableCell align="right">{r.isRental ? money(r.rentalCost) : '—'}</TableCell>
+                    <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{r.deployments}</TableCell>
+                    <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{r.daysDeployed}</TableCell>
+                    <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{r.utilizationPct}%</TableCell>
+                    <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{r.maintenanceEvents}</TableCell>
+                    <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{r.maintenanceSpend > 0 ? money(r.maintenanceSpend) : '—'}</TableCell>
+                    <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{r.downtimeDays || '—'}</TableCell>
+                    <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{r.isRental ? money(r.rentalCost) : '—'}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

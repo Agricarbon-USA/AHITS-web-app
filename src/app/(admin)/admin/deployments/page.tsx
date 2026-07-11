@@ -675,7 +675,7 @@ function DeploymentDrawer({
 
   return (
     <>
-      <Drawer anchor="right" open={true} onClose={onClose} PaperProps={{ sx: { width: 560 } }}>
+      <Drawer anchor="right" open={true} onClose={onClose} PaperProps={{ sx: { width: { xs: '100%', sm: 560 } } }}>
         <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
           <Box px={3} pt={3} pb={2}>
             <Stack direction="row" alignItems="center" spacing={1.5} mb={1}>

@@ -132,16 +132,16 @@ export default function AdminProjectsPage() {
               <TableHead>
                 <TableRow>
                   <TableCell>Name</TableCell>
-                  <TableCell>Type</TableCell>
+                  <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>Type</TableCell>
                   <TableCell>Status</TableCell>
-                  <TableCell>Customer</TableCell>
-                  <TableCell>Code</TableCell>
-                  <TableCell>Location</TableCell>
-                  <TableCell align="right">Size (ha)</TableCell>
-                  <TableCell align="right"># Samples</TableCell>
-                  <TableCell>Dates</TableCell>
-                  <TableCell>Lead</TableCell>
-                  <TableCell align="right">Deployments</TableCell>
+                  <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>Customer</TableCell>
+                  <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Code</TableCell>
+                  <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Location</TableCell>
+                  <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">Size (ha)</TableCell>
+                  <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right"># Samples</TableCell>
+                  <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>Dates</TableCell>
+                  <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>Lead</TableCell>
+                  <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }} align="right">Deployments</TableCell>
                   <TableCell />
                 </TableRow>
               </TableHead>
@@ -149,16 +149,16 @@ export default function AdminProjectsPage() {
                 {projects.map((p) => (
                   <TableRow key={p.id} hover sx={{ cursor: 'pointer' }} onClick={() => openDetail(p.id)}>
                     <TableCell><Typography variant="body2" fontWeight={500}>{p.name}</Typography></TableCell>
-                    <TableCell>{p.type.replace(/_/g, ' ')}</TableCell>
+                    <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>{p.type.replace(/_/g, ' ')}</TableCell>
                     <TableCell><StatusPill status={p.status} /></TableCell>
-                    <TableCell>{p.customer ?? '—'}</TableCell>
-                    <TableCell>{p.code ?? '—'}</TableCell>
-                    <TableCell>{p.location ?? '—'}</TableCell>
-                    <TableCell align="right">{p.sizeHa ?? '—'}</TableCell>
-                    <TableCell align="right">{p.sampleCount ?? '—'}</TableCell>
-                    <TableCell>{p.startDate || p.endDate ? `${fmt(p.startDate)} – ${fmt(p.endDate)}` : '—'}</TableCell>
-                    <TableCell>{p.lead?.name ?? '—'}</TableCell>
-                    <TableCell align="right">{p._count?.rigs ?? 0}</TableCell>
+                    <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>{p.customer ?? '—'}</TableCell>
+                    <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>{p.code ?? '—'}</TableCell>
+                    <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>{p.location ?? '—'}</TableCell>
+                    <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{p.sizeHa ?? '—'}</TableCell>
+                    <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{p.sampleCount ?? '—'}</TableCell>
+                    <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>{p.startDate || p.endDate ? `${fmt(p.startDate)} – ${fmt(p.endDate)}` : '—'}</TableCell>
+                    <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>{p.lead?.name ?? '—'}</TableCell>
+                    <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }} align="right">{p._count?.rigs ?? 0}</TableCell>
                     <TableCell align="right" onClick={(e) => e.stopPropagation()}>
                       <MutationIconButton size="small" tooltip="Edit" onClick={() => { setEditing(p); setFormOpen(true) }}><EditIcon fontSize="small" /></MutationIconButton>
                       <MutationIconButton size="small" tooltip="Delete" onClick={() => setConfirmDelete(p)}><DeleteIcon fontSize="small" /></MutationIconButton>

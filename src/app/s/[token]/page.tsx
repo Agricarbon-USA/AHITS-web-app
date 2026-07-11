@@ -207,7 +207,7 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
           </div>
         ) : (
           <div style={card}>
-            <h3 style={{ marginTop: 0 }}>Loading checklist</h3>
+            <h3 style={{ marginTop: 0 }}>Checklist</h3>
             <label style={{ fontSize: 13, color: '#555' }}>Your name</label>
             <input
               value={actorLabel}
