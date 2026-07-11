@@ -1,0 +1,262 @@
+From e9ff73234e8af0c10583942f6c5830585ee90277 Mon Sep 17 00:00:00 2001
+From: Fable <fable@local>
+Date: Wed, 8 Jul 2026 21:21:02 -0700
+Subject: [PATCH] W0-10 PR-2b: free vehicles on deployment end (+ transfer
+ terminal states)
+
+Root-cause fix so the one-open-RigVehicle-per-vehicle invariant (index C, PR-2c)
+becomes true and creatable. deployments/[id]/end now closes the rig's open
+rig_vehicles rows, freeing each vehicle for its next deployment; previously they
+were left open forever on the ended rig (no path could close them), which both
+blocked reuse and would trip index C. A backfill migration closes historical
+ended-rig rows (removedAt = rig.endedAt).
+
+Four-agent review caught a regression in the first cut: unconditionally closing
+the rows bricked in-flight vehicle transfers (accept's stillPresent guard needs
+removedAt IS NULL). Fixed by excluding vehicles with a PENDING outbound transfer
+from the end close-out AND the backfill, and by closing the source rows on the
+decline/cancel terminal paths when the source rig already ended (mirrors the
+existing ended-rig kit-item reconciliation) so no vehicle strands.
+
+Also adds 23505/P2002 -> friendly 409 translation to the vehicle/deployment/
+operator writers (dormant until the indexes ship; removes the raw-500 edge).
+
+Index C itself is deferred to PR-2c: it is created only AFTER this close-out
+fix is deployed and confirmed live (writer-before-constraint ordering), with a
+prod pre-flight that must also catch active/active duplicates the backfill can't.
+---
+ .../migration.sql                             | 31 +++++++++++++++++++
+ src/app/api/deployments/[id]/end/route.ts     | 18 +++++++++++
+ .../api/deployments/[id]/operators/route.ts   | 31 +++++++++++++------
+ .../api/deployments/[id]/vehicles/route.ts    | 10 ++++++
+ src/app/api/deployments/route.ts              | 10 ++++++
+ src/app/api/transfers/[id]/decline/route.ts   | 15 +++++++++
+ src/app/api/transfers/[id]/route.ts           | 28 +++++++++++++++++
+ 7 files changed, 133 insertions(+), 10 deletions(-)
+ create mode 100644 prisma/migrations/20260708010000_backfill_close_ended_rig_vehicles/migration.sql
+
+diff --git a/prisma/migrations/20260708010000_backfill_close_ended_rig_vehicles/migration.sql b/prisma/migrations/20260708010000_backfill_close_ended_rig_vehicles/migration.sql
+new file mode 100644
+index 0000000..b407177
+--- /dev/null
++++ b/prisma/migrations/20260708010000_backfill_close_ended_rig_vehicles/migration.sql
+@@ -0,0 +1,31 @@
++-- W0-10 PR-2b · Backfill: close historical open RigVehicle rows on already-ended rigs.
++--
++-- Before PR-2b, `deployments/[id]/end` ended a rig without stamping rig_vehicles.removedAt,
++-- so ended rigs accumulated permanently-open vehicle rows. This backfill retroactively
++-- closes them, stamping removedAt with the rig's own endedAt (the moment the vehicle
++-- actually left service on that deployment) — so `removedAt IS NULL` becomes a true proxy
++-- for "on an active rig", which the getVehicleOperators derivation and index C (PR-2c) need.
++--
++-- Idempotent: only touches rows that are still open on an ended rig, so a re-run is a no-op.
++-- Additive/data-only (no schema change, no drop) — passes migration-safety. This ships in
++-- PR-2b WITH the end-route close-out code fix; index C is created separately in PR-2c, only
++-- AFTER the close-out fix is deployed and confirmed live (writer-before-constraint ordering,
++-- mirroring PR-1-readers-before-PR-4-drop), so no new strands accumulate under the index.
++
++UPDATE "rig_vehicles" rv
++SET "removedAt" = r."endedAt",
++    "removeNote" = COALESCE(rv."removeNote", '') || ' [closed: PR-2b backfill of ended-rig vehicle rows]'
++FROM "rigs" r
++WHERE rv."rigId" = r."id"
++  AND r."endedAt" IS NOT NULL
++  AND rv."removedAt" IS NULL
++  -- Keep the source row OPEN for a vehicle with a still-PENDING outbound transfer from
++  -- this rig — closing it would brick the recipient's accept (stillPresent guard). Such a
++  -- vehicle has exactly one open row, so it does not violate the one-open-per-vehicle index.
++  AND NOT EXISTS (
++    SELECT 1 FROM "transfer_vehicles" tv
++    JOIN "transfer_requests" tr ON tr."id" = tv."transferRequestId"
++    WHERE tv."vehicleId" = rv."vehicleId"
++      AND tr."fromRigId" = rv."rigId"
++      AND tr."status" = 'PENDING'
++  );
+diff --git a/src/app/api/deployments/[id]/end/route.ts b/src/app/api/deployments/[id]/end/route.ts
+index 067d8b5..3c1812a 100644
+--- a/src/app/api/deployments/[id]/end/route.ts
++++ b/src/app/api/deployments/[id]/end/route.ts
+@@ -273,6 +273,24 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
+         data: { assignedOperatorId: null },
+       })
+     }
++    // W0-10 PR-2b: close the rig's open RigVehicle rows so each vehicle is freed for its
++    // next deployment. Previously these were left open on an ended rig and no path could
++    // ever close them (the vehicles DELETE route rejects ended rigs), stranding the row
++    // forever — which breaks the one-open-RigVehicle-per-vehicle invariant index C (PR-2c)
++    // enforces and blocks the routine "reuse this vehicle next time".
++    // EXCEPTION: a vehicle with a still-PENDING outbound transfer must keep its source row
++    // OPEN — the accept path's stillPresent guard requires removedAt IS NULL to move it to
++    // the recipient (mirrors how end skips removedAt for TRANSFER kit items). Closing it
++    // would brick the transfer and orphan the vehicle.
++    const pendingXfer = await tx.transferRequest.findMany({
++      where: { fromRigId: id, status: 'PENDING' },
++      select: { vehicles: { select: { vehicleId: true } } },
++    })
++    const keepOpenVehicleIds = pendingXfer.flatMap((t) => t.vehicles.map((v) => v.vehicleId))
++    await tx.rigVehicle.updateMany({
++      where: { rigId: id, removedAt: null, vehicleId: { notIn: keepOpenVehicleIds } },
++      data: { removedAt: now },
++    })
+   })
+ 
+   // Wave F-R (soft-gate, best-effort): issue HUB_RETURN confirmation links for
+diff --git a/src/app/api/deployments/[id]/operators/route.ts b/src/app/api/deployments/[id]/operators/route.ts
+index 5b98f11..b0a9173 100644
+--- a/src/app/api/deployments/[id]/operators/route.ts
++++ b/src/app/api/deployments/[id]/operators/route.ts
+@@ -32,17 +32,28 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
+     return NextResponse.json({ error: 'Operator is already the primary operator' }, { status: 409 })
+   }
+ 
+-  const assignment = await prisma.$transaction(async (tx) => {
+-    const result = await tx.rigOperator.upsert({
+-      where: { rigId_operatorId: { rigId: id, operatorId } },
+-      create: { rigId: id, operatorId },
+-      update: {},
+-      include: { operator: { select: { id: true, name: true, email: true } } },
++  try {
++    const assignment = await prisma.$transaction(async (tx) => {
++      const result = await tx.rigOperator.upsert({
++        where: { rigId_operatorId: { rigId: id, operatorId } },
++        create: { rigId: id, operatorId },
++        update: {},
++        include: { operator: { select: { id: true, name: true, email: true } } },
++      })
++      await ensureOpenAssignment({ rigId: id, operatorId, role: 'SECONDARY', addedById: session.userId }, tx)
++      return result
+     })
+-    await ensureOpenAssignment({ rigId: id, operatorId, role: 'SECONDARY', addedById: session.userId }, tx)
+-    return result
+-  })
+-  return NextResponse.json(assignment, { status: 201 })
++    return NextResponse.json(assignment, { status: 201 })
++  } catch (err: unknown) {
++    // W0-10 PR-2b: index D (one open SECONDARY per rig+operator) violation under a
++    // concurrent double-add surfaces as P2002 / 23505 — friendly 409, not a raw 500.
++    const code = (err as { code?: string }).code
++    if (code === 'P2002' || code === '23505') {
++      return NextResponse.json({ error: 'That operator is already assigned to this deployment.' }, { status: 409 })
++    }
++    console.error('[POST /api/deployments/[id]/operators]', err)
++    return NextResponse.json({ error: 'Failed to add operator' }, { status: 500 })
++  }
+ }
+ 
+ const removeSchema = z.object({ operatorId: z.string() })
+diff --git a/src/app/api/deployments/[id]/vehicles/route.ts b/src/app/api/deployments/[id]/vehicles/route.ts
+index fa51fce..0151e87 100644
+--- a/src/app/api/deployments/[id]/vehicles/route.ts
++++ b/src/app/api/deployments/[id]/vehicles/route.ts
+@@ -118,6 +118,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
+       })
+     })
+   } catch (err: unknown) {
++    // W0-10 PR-2b: a partial-unique violation (index C, one open RigVehicle per vehicle,
++    // or the concurrent-add race the pre-check can slip) surfaces as Prisma P2002 / PG
++    // 23505 — translate to a friendly 409 instead of a raw 500.
++    const code = (err as { code?: string }).code
++    if (code === 'P2002' || code === '23505') {
++      return NextResponse.json(
++        { error: 'One or more of those vehicles is already on an active deployment. Remove it there first.' },
++        { status: 409 }
++      )
++    }
+     const msg = err instanceof Error ? err.message : 'Failed to add vehicles'
+     console.error('[POST /api/deployments/[id]/vehicles]', err)
+     return NextResponse.json({ error: msg }, { status: 500 })
+diff --git a/src/app/api/deployments/route.ts b/src/app/api/deployments/route.ts
+index 0b4ca12..1f2ebd3 100644
+--- a/src/app/api/deployments/route.ts
++++ b/src/app/api/deployments/route.ts
+@@ -374,6 +374,16 @@ async function _POST(req: NextRequest) {
+         { status: 409 }
+       )
+     }
++    // W0-10 PR-2b: a partial-unique violation (index A one-open-PRIMARY-per-operator, or
++    // index C once live) that slipped the app guards under a concurrent race surfaces as
++    // Prisma P2002 / PG 23505 — translate to a friendly 409 rather than a raw 500.
++    const code = (err as { code?: string }).code
++    if (code === 'P2002' || code === '23505') {
++      return NextResponse.json(
++        { error: "Can't start this deployment — the operator or one of the vehicles is already on another active deployment. End or free it there first, then try again." },
++        { status: 409 }
++      )
++    }
+     // Return the actual error as JSON instead of re-throwing (which produces non-JSON 500)
+     const msg = err instanceof Error ? err.message : 'Failed to create deployment'
+     console.error('[POST /api/deployments]', err)
+diff --git a/src/app/api/transfers/[id]/decline/route.ts b/src/app/api/transfers/[id]/decline/route.ts
+index 62e15d2..170ad47 100644
+--- a/src/app/api/transfers/[id]/decline/route.ts
++++ b/src/app/api/transfers/[id]/decline/route.ts
+@@ -29,6 +29,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
+           },
+         },
+       },
++      vehicles: { select: { vehicleId: true } },
+     },
+   })
+   if (!transfer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+@@ -101,6 +102,20 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
+           },
+         })
+       }
++      // W0-10 PR-2b: the source deployment already ended, so close the vehicle rows this
++      // declined transfer was holding open (end-of-deployment keeps a pending transfer's
++      // vehicles open) — otherwise the vehicle strands as "on an active deployment".
++      const declinedVehicleIds = transfer.vehicles.map((v) => v.vehicleId)
++      if (declinedVehicleIds.length > 0) {
++        await tx.rigVehicle.updateMany({
++          where: { rigId: transfer.fromRigId, vehicleId: { in: declinedVehicleIds }, removedAt: null },
++          data: { removedAt: now },
++        })
++        await tx.vehicle.updateMany({
++          where: { id: { in: declinedVehicleIds } },
++          data: { assignedOperatorId: null },
++        })
++      }
+     }
+     })
+   } catch (err) {
+diff --git a/src/app/api/transfers/[id]/route.ts b/src/app/api/transfers/[id]/route.ts
+index 4d85726..ebb3a98 100644
+--- a/src/app/api/transfers/[id]/route.ts
++++ b/src/app/api/transfers/[id]/route.ts
+@@ -32,5 +32,33 @@ export async function DELETE(
+     return NextResponse.json({ error: 'Transfer is no longer pending' }, { status: 409 })
+   }
+ 
++  // W0-10 PR-2b: if the source deployment already ended, close the vehicle rows this
++  // cancelled transfer was holding open (end-of-deployment keeps a pending transfer's
++  // vehicles open) so the vehicle is freed instead of stranding as "on an active
++  // deployment". Mirrors the decline path.
++  const tvs = await prisma.transferVehicle.findMany({
++    where: { transferRequestId: id },
++    select: { vehicleId: true },
++  })
++  if (tvs.length > 0) {
++    const sourceRig = await prisma.rig.findUnique({
++      where: { id: transfer.fromRigId },
++      select: { endedAt: true },
++    })
++    if (sourceRig?.endedAt) {
++      const vehicleIds = tvs.map((v) => v.vehicleId)
++      await prisma.$transaction([
++        prisma.rigVehicle.updateMany({
++          where: { rigId: transfer.fromRigId, vehicleId: { in: vehicleIds }, removedAt: null },
++          data: { removedAt: new Date() },
++        }),
++        prisma.vehicle.updateMany({
++          where: { id: { in: vehicleIds } },
++          data: { assignedOperatorId: null },
++        }),
++      ])
++    }
++  }
++
+   return NextResponse.json({ ok: true })
+ }
+-- 
+2.34.1
+

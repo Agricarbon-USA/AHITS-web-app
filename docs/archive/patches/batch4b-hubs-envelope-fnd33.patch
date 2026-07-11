@@ -1,0 +1,74 @@
+From 82b9336f3a28e2d18d47bf01e775dd58645b0486 Mon Sep 17 00:00:00 2001
+From: maxwellslater <maxtslater@gmail.com>
+Date: Tue, 7 Jul 2026 11:50:26 -0600
+Subject: [PATCH] fix(api): normalize GET /api/hubs to a {data} envelope +
+ guard last 2 consumers (FND-33)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+GET /api/hubs returned a bare array on success but {error} on 401/500, so consumers
+had to special-case the shape. Wrap success in {data} (matching /api/projects,
+/api/operators, /api/inventory) so success and error are both objects. Six of eight
+consumers already tolerated both shapes (Array.isArray(d) ? d : d.data); the two that
+cast the body directly — operator/requests and admin/requests composers — are guarded
+here so the source-hub dropdown can't crash. All three edits ship atomically.
+
+3-agent review (antagonist exhaustive consumer audit): all 8 GET consumers enumerated;
+the two edited here were the only unguarded ones; POST /api/hubs is a distinct shape and
+correctly unchanged; no test or service-worker body-cache depends on the array shape.
+tsc clean; CI runs the suite.
+---
+ src/app/(admin)/admin/requests/page.tsx       | 2 +-
+ src/app/(operator)/operator/requests/page.tsx | 2 +-
+ src/app/api/hubs/route.ts                     | 6 ++++--
+ 3 files changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/src/app/(admin)/admin/requests/page.tsx b/src/app/(admin)/admin/requests/page.tsx
+index b6f5995..9afc079 100644
+--- a/src/app/(admin)/admin/requests/page.tsx
++++ b/src/app/(admin)/admin/requests/page.tsx
+@@ -541,7 +541,7 @@ export default function AdminRequestsPage() {
+     void load()
+     const loadMeta = async () => {
+       const [hubsRes, opsRes] = await Promise.all([fetch('/api/hubs'), fetch('/api/operators')])
+-      if (hubsRes.ok) setHubs((await hubsRes.json()) as HubOption[])
++      if (hubsRes.ok) { const hd = await hubsRes.json(); setHubs((Array.isArray(hd) ? hd : (hd?.data ?? [])) as HubOption[]) }
+       if (opsRes.ok) {
+         const d = await opsRes.json()
+         setOperators((d.data as OperatorOption[]) ?? [])
+diff --git a/src/app/(operator)/operator/requests/page.tsx b/src/app/(operator)/operator/requests/page.tsx
+index c61c4ac..a77281f 100644
+--- a/src/app/(operator)/operator/requests/page.tsx
++++ b/src/app/(operator)/operator/requests/page.tsx
+@@ -87,7 +87,7 @@ export default function RequestsPage() {
+         fetch('/api/vehicles'),
+         fetch('/api/categories'),
+       ])
+-      if (hubsRes.ok) setHubs((await hubsRes.json()) as HubOption[])
++      if (hubsRes.ok) { const hd = await hubsRes.json(); setHubs((Array.isArray(hd) ? hd : (hd?.data ?? [])) as HubOption[]) }
+       if (projectsRes.ok) {
+         const d = await projectsRes.json()
+         setProjects((d.data as ProjectOption[]) ?? [])
+diff --git a/src/app/api/hubs/route.ts b/src/app/api/hubs/route.ts
+index 8357d40..f530038 100644
+--- a/src/app/api/hubs/route.ts
++++ b/src/app/api/hubs/route.ts
+@@ -18,10 +18,12 @@ export async function GET() {
+     const rows = await prisma.$queryRaw<ExtraRow[]>`SELECT "id", "email", "street1", "street2", "zip", "country" FROM "hubs"`
+     extraById = new Map(rows.map((r) => [r.id, r]))
+   } catch { /* columns missing pre-migration */ }
+-  return NextResponse.json(hubs.map((h) => {
++  // FND-33: return a { data } envelope so success and error (401/500 → { error })
++  // are both objects. Every consumer is shape-tolerant (Array.isArray(d) ? d : d.data).
++  return NextResponse.json({ data: hubs.map((h) => {
+     const extra = extraById.get(h.id)
+     return { ...h, email: extra?.email ?? null, street1: extra?.street1 ?? null, street2: extra?.street2 ?? null, zip: extra?.zip ?? null, country: extra?.country ?? 'US' }
+-  }))
++  }) })
+ }
+ 
+ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+-- 
+2.34.1
+

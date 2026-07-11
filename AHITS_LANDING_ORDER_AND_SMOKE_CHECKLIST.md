@@ -2,7 +2,8 @@
 ### Keep this next to Claude Code · 2026-07-10
 
 > ## ⛔️ PROD CUTOVER (CC-04, CC-05) IS DEFERRED — skip both for now
-> **Postponed by decision 2026-07-10. It's its own separate step for actual go-live, and it gates nothing.** Do NOT run CC-04 or CC-05, don't create `AHITS_PROD_*` secrets, don't merge PR #144, leave the held W0-10 patches held. Everything else runs on staging without it. Full context: `AHITS_PROD_CUTOVER_DEFERRED.md`.
+> **Postponed by decision 2026-07-10. It's its own separate step for actual go-live, and it gates nothing.** Do NOT run CC-04 or CC-05. Leave the held W0-10 patches held. Everything else runs on staging without it. Full context: `AHITS_PROD_CUTOVER_DEFERRED.md` and `DECISIONS.md` D1.
+> **PR #144 was merged 2026-07-11** — the `production` branch is current, but the production environment/DB does not exist yet. The remaining work is the from-scratch standup, not one secret.
 
 **The loop for every packet:** branch → change → verify gate (`make db-generate && npx tsc --noEmit && npx eslint src && npm test`) → PR to `development` → CI green → merge → **auto-deploys to staging** → smoke on staging → next packet. **One packet = one PR = one staging deploy.** Never stack packets into one PR. Production never moves automatically — only CC-04/CC-05 touch it, and only on your explicit go.
 

@@ -1,0 +1,110 @@
+From 9ed9d83706307dd996aeeb88d70a50a8d73bb892 Mon Sep 17 00:00:00 2001
+From: Fable <fable@local>
+Date: Wed, 8 Jul 2026 15:37:01 -0700
+Subject: [PATCH] W0-10 PR-2: FND-23 assignment-invariant indexes (A/B/D)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Three partial UNIQUE indexes on deployment_assignments enforcing the ownership
+invariants PR-1's readers assume: one open PRIMARY per operator (A), one open
+PRIMARY per rig (B, makes the missed-check alert path structurally unambiguous),
+one open SECONDARY per (rig,operator) (D). Additive, non-concurrent, IF NOT
+EXISTS for re-run safety. No schema.prisma change (Prisma can't model filtered
+unique indexes) so no migrate-dev needed.
+
+Four-agent review: index C (one open RigVehicle per vehicle) was found to be a
+ship-blocker as written — the end-of-deployment route never stamps
+rig_vehicles.removedAt, so ended rigs keep open vehicle rows and 'removedAt IS
+NULL' is not a proxy for 'on an active rig'. C would abort the deploy on
+historical residue and 500 the routine vehicle-reuse flow. C is deferred to
+PR-2b (end-route close-out + historical backfill + 23505->409 translation, then
+the index). A/B/D were unanimously cleared.
+
+reassignPrimary gains a load-bearing-ordering comment (index B depends on
+end-before-add). Pre-flights are a HARD PROD GATE (staging-only parity earlier);
+run + reconcile by hand on prod before merge.
+---
+ .../migration.sql                             | 54 +++++++++++++++++++
+ src/lib/deployment-handoffs.ts                |  4 ++
+ 2 files changed, 58 insertions(+)
+ create mode 100644 prisma/migrations/20260708000000_fnd23_assignment_invariants/migration.sql
+
+diff --git a/prisma/migrations/20260708000000_fnd23_assignment_invariants/migration.sql b/prisma/migrations/20260708000000_fnd23_assignment_invariants/migration.sql
+new file mode 100644
+index 0000000..8965bad
+--- /dev/null
++++ b/prisma/migrations/20260708000000_fnd23_assignment_invariants/migration.sql
+@@ -0,0 +1,54 @@
++-- W0-10 PR-2 · FND-23 assignment invariants — indexes A, B, D (additive; precede PR-4 DROP).
++--
++-- Three partial UNIQUE indexes that structurally enforce the ownership invariants the
++-- deployment_assignments readers (shipped in PR-1) rely on. DB-level only: Prisma cannot
++-- model a filtered (WHERE) unique index in schema.prisma, so there is NO schema change in
++-- this PR and `prisma migrate dev` must NOT be run to "sync" them (matches the repo's
++-- existing raw-SQL partial-index migrations, e.g. deployment_handoffs_one_pending_per_rig).
++-- Applied by `prisma migrate deploy` (the CI migrate job) only. IF NOT EXISTS makes the
++-- migration safe to re-run after a manual duplicate reconciliation created an index by hand.
++--
++-- NON-CONCURRENT by design: these tables are small in this workload, so the brief lock is
++-- negligible, and non-concurrent CREATE runs safely inside migrate (CREATE INDEX
++-- CONCURRENTLY cannot run in a transaction). Each statement FAILS LOUDLY if the data already
++-- violates the invariant — intended: a failed migrate blocks the deploy rather than silently
++-- corrupting operator attribution. So the pre-flights below MUST return ZERO rows on the
++-- TARGET DB, and this is a HARD PROD GATE: the prior parity gate ran on STAGING ONLY — run
++-- these on PROD, reconcile any rows BY HAND (operator/payroll attribution decision — never
++-- auto-close), and re-run immediately before the production merge (legacy writers still run
++-- pre-PR-4, so data can drift between an earlier check and the deploy).
++--
++-- Pre-flight (Supabase SQL editor; each must return zero rows):
++--   -- (A) SELECT "operatorId",COUNT(*) FROM "deployment_assignments" WHERE "role"='PRIMARY' AND "endedAt" IS NULL GROUP BY 1 HAVING COUNT(*)>1;
++--   -- (B) SELECT "rigId",COUNT(*)      FROM "deployment_assignments" WHERE "role"='PRIMARY' AND "endedAt" IS NULL GROUP BY 1 HAVING COUNT(*)>1;
++--   -- (D) SELECT "rigId","operatorId",COUNT(*) FROM "deployment_assignments" WHERE "role"='SECONDARY' AND "endedAt" IS NULL GROUP BY 1,2 HAVING COUNT(*)>1;
++--
++-- NOTE — index C (one open RigVehicle per vehicle) is intentionally DEFERRED to PR-2b.
++-- `deployments/[id]/end/route.ts` ends a rig without stamping rig_vehicles.removedAt, so
++-- ended rigs retain open vehicle rows; `WHERE removedAt IS NULL` is therefore NOT a proxy
++-- for "on an active rig". Adding C here would (1) abort the deploy on historical residue
++-- and (2) 500 the routine "reuse a vehicle on the next deployment" action. PR-2b fixes the
++-- end/transfer close-out + backfills historical rows + adds 23505->409 translation, THEN
++-- creates C with the corrected data.
++
++-- (A) One OPEN PRIMARY per operator — "one active deployment per operator" (FND-23 core).
++--     The create-deployment / handoff-accept / transfer-accept paths already enforce this
++--     with a friendly 409 guard; the index is the structural backstop (a rare concurrent
++--     race that slips the guard becomes a unique violation instead of a second open PRIMARY).
++CREATE UNIQUE INDEX IF NOT EXISTS "deployment_assignments_one_open_primary_per_operator"
++  ON "deployment_assignments" ("operatorId") WHERE "role" = 'PRIMARY' AND "endedAt" IS NULL;
++
++-- (B) One OPEN PRIMARY per rig — makes the missed-check alert path (cron/dispatch,
++--     dashboard/feeds) structurally unambiguous: the "roster PRIMARY" the readers resolve is
++--     now guaranteed unique per active rig. Safe because reassignPrimary ends the old open
++--     PRIMARY BEFORE inserting the new one within one transaction (deployment-handoffs.ts).
++--     (B removes the "duplicate PRIMARY" risk; the "missing PRIMARY" risk is still covered by
++--     PR-1's `?? rig.operatorId` fallback — correct division of responsibility.)
++CREATE UNIQUE INDEX IF NOT EXISTS "deployment_assignments_one_open_primary_per_rig"
++  ON "deployment_assignments" ("rigId") WHERE "role" = 'PRIMARY' AND "endedAt" IS NULL;
++
++-- (D) One OPEN SECONDARY per (rig, operator) — mirrors the old rig_operators PK, relaxed to
++--     allow many CLOSED secondary rows per pair but one open. ensureOpenAssignment's SECONDARY
++--     guard keys on exactly (rigId, operatorId), matching this index.
++CREATE UNIQUE INDEX IF NOT EXISTS "deployment_assignments_one_open_secondary_per_rig_op"
++  ON "deployment_assignments" ("rigId", "operatorId") WHERE "role" = 'SECONDARY' AND "endedAt" IS NULL;
+diff --git a/src/lib/deployment-handoffs.ts b/src/lib/deployment-handoffs.ts
+index 942088c..32a00f6 100644
+--- a/src/lib/deployment-handoffs.ts
++++ b/src/lib/deployment-handoffs.ts
+@@ -32,6 +32,10 @@ export async function reassignPrimary(
+   actorId: string,
+   note: string,
+ ): Promise<void> {
++  // ORDER IS LOAD-BEARING: end the current open PRIMARY BEFORE opening the new one.
++  // The W0-10 PR-2 partial unique index `one_open_primary_per_rig` permits at most one
++  // open PRIMARY per rig; reversing these two lines would momentarily create a second
++  // open PRIMARY and violate the index. Keep end-before-add.
+   await endAssignmentByRole(rig.id, rig.operatorId, 'PRIMARY', tx)
+   await ensureOpenAssignment({ rigId: rig.id, operatorId: toOperatorId, role: 'PRIMARY', addedById: actorId, note }, tx)
+   await tx.rig.update({ where: { id: rig.id }, data: { operatorId: toOperatorId } })
+-- 
+2.34.1
+

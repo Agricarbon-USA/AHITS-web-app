@@ -36,11 +36,11 @@ _2026-07-03. A one-page distillation of `AHITS_MASTER_ROADMAP.md` (the executabl
 | **X · Parked** | Field-ops OS white-label, contractor network, multi-region, sample territory | No design work; one-line-with-trigger only |
 
 ### The non-negotiable gates (sequence that cannot be reordered)
-- **Legacy-column retirement (W0-10)** → *before* invoicing attribution
+- **W0-10 readers (PR-4a, landed)** gate invoicing attribution; the **DROP** (4b′/4c) is elective and does NOT gate the money loop
 - **Email reliability (FND-8)** → *before* the invoice email
 - **Business-date + offline-queue fixes (FND-7 / FND-14)** → *before* any offline-first money write
 - **Public-link state gate (FND-6)** → *before* the public QR form
-- **A6 device pass** → *before* the pilot · **full `AHITS_PROD_*` secret set** → *before* prod (see `PROD_CUTOVER_RUNBOOK.md`; **PR #144 stays a Draft** until then)
+- **A6 device pass** → *before* the pilot · **prod environment standup** → *before* prod (see `PROD_CUTOVER_RUNBOOK.md` + `DECISIONS.md` D1; **PR #144 was merged 2026-07-11** — `production` branch is current, but the environment is still deferred)
 
 ### Anti-goals (deliberately NOT built)
 Sample/LIMS system · real-time GPS tracking (GPS only on an attestation the operator chose to perform) · accounting or routing engine · speculative multi-tenancy · a scheduling engine (dispatch **ranks**, humans schedule; the week board is a **view**).

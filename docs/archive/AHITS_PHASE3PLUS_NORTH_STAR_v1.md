@@ -1,3 +1,5 @@
+> **⚠️ SUPERSEDED — archived for history.** This is **v1** of the North Star. Its central thesis — AHITS as the provenance spine of the soil **sample** — was rejected as overreach (the sample is owned by an existing system). Superseded by **`AHITS_PHASE3PLUS_NORTH_STAR_v3.md`** (via v2). Read v3; this is kept only for lineage.
+
 # AHITS — Phase 3+ North Star · What This System Is Actually Becoming
 
 _Prepared 2026-07-03. Companion to `AHITS_PHASE3_WORKPLAN_v2.md` (the canonical Phase-3 entry document). That plan is the ground truth for what exists and what is queued; **nothing in this document jumps the Wave-0 queue or reorders the Map → QR → Time/Invoicing sequence.** This document answers the question the workplan deliberately does not: what is the most advanced version of this system, what latent value is already accruing in its tables, and which forward bets deserve a line in the plan before someone else names them._

@@ -1,10 +1,13 @@
+> STATUS: reference (DEFERRED — prod environment does not yet exist)   ·   UPDATED: 2026-07-03
+> SUPERSEDES: docs/archive/AHITS_PIPE2_PROD_DB_RUNBOOK.md   ·   SUPERSEDED-BY: —
+> READ-WITH: AHITS_PROD_CUTOVER_DEFERRED.md, DECISIONS.md (D1)
+
 # AHITS — Production Cutover Runbook
 
-> # ⛔ DO NOT MERGE PR #144 YET
-> PR #144 promotes `development` → `production`, which **deploys to prod**. Merging it
-> before this runbook is complete will try to migrate + deploy against a production
-> environment that **does not exist yet**, and the release will fail. **Keep #144 open
-> (mark it a Draft — see Step 1) until every box below is checked.**
+> # ℹ️ PR #144 WAS MERGED 2026-07-11
+> The `production` branch is now current with `development`. The production **environment/DB
+> does not yet exist** — the from-scratch standup is deferred (DECISIONS.md D1). Come back
+> here when you are ready to stand up the real production environment.
 
 ---
 
@@ -29,12 +32,10 @@ Cloud Run service — that real users depend on. This runbook stands that up, on
 
 ---
 
-## Step 1 — Safeguard: make #144 un-mergeable until you're ready
-Convert #144 to a **Draft** PR — GitHub blocks merging drafts, so you can't do it by accident:
-```bash
-gh pr ready 144 --undo        # marks #144 as Draft
-```
-When you finish this runbook and truly want to ship prod: `gh pr ready 144`, then merge.
+## Step 1 — ~~Safeguard: make #144 un-mergeable until you're ready~~ (done — #144 merged 2026-07-11)
+> **#144 was already merged.** The `production` branch is current. There is no longer a PR to guard.
+> The safeguard now is simply: do not create another `development → production` promote PR
+> until you have finished Steps 2–8 below and the environment actually exists.
 
 ## Step 2 — Provision a production Supabase project
 Create a **new** Supabase project (separate from the staging project). Choose a region near

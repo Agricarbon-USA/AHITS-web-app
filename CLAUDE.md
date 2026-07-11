@@ -1,5 +1,7 @@
 @AGENTS.md
 
+> **Before re-opening any settled "should we…" question, read `DECISIONS.md`.** If it's an ACTIVE decision you may not act against it — only propose a superseding entry with owner sign-off. First read for state: `STATUS.md` and `00_START_HERE.md`. If `git status` shows untracked `*.md`, commit before proceeding.
+
 # Deployment Workflow
 
 When a user says **"make this change then deploy it to cloud"** (or any variation like "deploy to staging", "push this to staging", "ship it"), follow this exact sequence:
@@ -88,7 +90,7 @@ gh pr view --comments
 - You can also trigger an on-demand staging preview by adding the `deploy-staging` label to any open PR: `gh pr edit $PR_NUMBER --add-label deploy-staging` (runs `pr-staging-deploy.yml`).
 - **Auto-deploys (`deploy.yml`):** landing changes on `development` deploys to **staging**; landing changes on `production` deploys to **prod**. Each run is `verify` (lint, type-check, build, tests) → **`migrate`** (`make cloud-run-migrate`) → `deploy`, and will not deploy if an earlier job fails. Promote staging → prod by merging `development` into `production` (e.g. a PR with `--base production`).
 - Migrate-on-deploy **is live** (the `migrate` job in `deploy.yml`), superseding the old manual step. The Docker image itself still does not run migrations.
-- ✅ **Prod migrate-secret namespacing — FIXED (was a known bug).** `make cloud-run-migrate` reads `$(SECRET_NS)_MIGRATE_URL` (not the hardcoded staging secret), and `deploy.yml` passes `SECRET_NS=AHITS_PROD` on the `production` branch (staging uses the default `AHITS`). **Remaining pre-prod operational step:** create `AHITS_PROD_MIGRATE_URL` in Secret Manager (prod session pooler, port 5432, IPv4) with an ENABLED version **before** the first production promote — `cloud-run-migrate` reads it at migrate time and fails hard if it's absent.
+- ✅ **Prod migrate-secret namespacing — FIXED.** `make cloud-run-migrate` reads `$(SECRET_NS)_MIGRATE_URL`, and `deploy.yml` passes `SECRET_NS=AHITS_PROD` on the `production` branch. **Prod cutover is deferred — see DECISIONS.md D1.** The real remaining work is the from-scratch Cloud Run + DB standup, not one secret. When you are ready for prod go-live, follow `PROD_CUTOVER_RUNBOOK.md`.
 - Do **not** deploy directly from a local machine to production; always go through the PR + GitHub Actions flow.
 
 ## Database & migration rules (non-negotiable)
@@ -119,5 +121,16 @@ outage, and manual-migration/secret ordering has repeatedly stalled deploys.
   next deploy silently drops it.
 - Migrate-on-deploy automation (the authenticated `migrate` job in `deploy.yml`) has
   **shipped** and retires most of the old manual ceremony. The prod migrate-secret
-  namespacing is fixed (`$(SECRET_NS)_MIGRATE_URL`); the only remaining pre-prod step is
-  creating the `AHITS_PROD_MIGRATE_URL` secret (ENABLED) before the first promote.
+  namespacing is fixed (`$(SECRET_NS)_MIGRATE_URL`). Prod cutover is deferred — see
+  `DECISIONS.md` D1 and `PROD_CUTOVER_RUNBOOK.md` for the full from-scratch standup steps.
+
+---
+
+## SESSION CLOSE — do all 6 (≈5 min). This is the durability contract.
+
+1. **`STATUS.md`** — update §1 state, §3 active work, §4 next actions, and the date line.
+2. **`DECISIONS.md`** — append any decision made this session (new `Dn`); mark superseded ones.
+3. **`00_START_HERE.md` / `docs/INDEX.md`** — if you added/superseded/moved a doc, fix the row.
+4. **Handoff** — write `AHITS_SESSION_HANDOFF_<date>.md`: what shipped + resume points; reference decisions by `Dn`, don't re-narrate them.
+5. **Commit + push** all docs to git. (`git add -A && git commit && git push`.)
+6. **Sanity:** `git status` clean, and confirm the docs you wrote appear in `git ls-files '*.md'`. **If a doc you wrote isn't tracked, it does not exist for the next session.**

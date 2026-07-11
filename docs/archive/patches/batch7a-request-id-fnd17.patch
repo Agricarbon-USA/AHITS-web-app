@@ -1,0 +1,117 @@
+From 7da9f272a517515eea868392affafade4049e412 Mon Sep 17 00:00:00 2001
+From: maxwellslater <maxtslater@gmail.com>
+Date: Tue, 7 Jul 2026 14:39:12 -0600
+Subject: [PATCH] feat(observability): per-request x-request-id in the edge
+ middleware (FND-17)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Mint a request id once in the proxy() middleware entry and stamp it on every
+response the middleware returns (via a single wrapper, so redirects, the 403 JSON,
+static, and CSP/HTML pass-through paths are all covered) plus the forwarded request
+headers (so route handlers / server components can read headers().get('x-request-id')).
+Unhandled middleware errors are logged with the id and rethrown (Next's edge error
+handling unchanged) — the error case is exactly what needs correlating.
+
+Also documents, at the top of the file, that this IS the app's middleware: Next.js 16
+renamed the 'middleware' file convention to 'proxy', so the build auto-registers
+src/proxy.ts (no middleware.ts — adding one is a hard E900 build error in Next 16;
+a downgrade below Next 16 would silently disable CSP + edge auth, hence the ^16 pin).
+Root-caused by a Fable agent against node_modules/next/dist/build.
+
+3-agent review: antagonist — no blocker, every response path stamped, client id is
+overwritten (no log spoofing), CSP/nonce/matcher untouched; added the try/catch so a
+500 is at least logged with the id. Fable — SOUND; console.error matches the house
+logging pattern (no server structured logger exists); ages cleanly into the Sentry
+follow-on (add Sentry.captureException in the catch + teach handlers to read the id).
+Calibration — safe behavior-preserving hardening in the highest-blast-radius file.
+
+VERIFY ON STAGING (not provable in-sandbox — no build/runtime): x-request-id present
+on responses (incl. redirects/403/static); CSP nonces + all auth/role redirects still
+work; no stray middleware.ts (would fail the build). Id-generation uses crypto.randomUUID,
+already proven available in this edge middleware (used for the nonce).
+---
+ src/proxy.ts | 37 ++++++++++++++++++++++++++++++++++---
+ 1 file changed, 34 insertions(+), 3 deletions(-)
+
+diff --git a/src/proxy.ts b/src/proxy.ts
+index f7a8a38..331eee7 100644
+--- a/src/proxy.ts
++++ b/src/proxy.ts
+@@ -2,6 +2,14 @@ import { NextResponse } from 'next/server'
+ import type { NextRequest } from 'next/server'
+ import { jwtVerify } from 'jose'
+ 
++// NOTE: this file is the app's Next.js middleware. Next.js 16 renamed the
++// `middleware` file convention to `proxy` (this repo is on next@^16), so the build
++// auto-registers `src/proxy.ts` as the edge middleware via its `proxy` export +
++// `config.matcher` below — there is deliberately NO `middleware.ts` (adding one
++// alongside this file is a hard build error in Next 16). CSP nonces, edge auth,
++// and the request-id all run here; a downgrade below Next 16 would silently disable
++// them, which is why `next` is pinned to the 16.x range.
++
+ const PUBLIC_PATHS = [
+   '/login',
+   '/setup-account',
+@@ -63,23 +71,46 @@ function buildCsp(nonce: string): string {
+ // x-nonce carries the bare nonce value for the root layout to read — that
+ // `headers()` call opts the entire app into per-request dynamic rendering,
+ // which is required for Next.js to stamp the nonce on generated <script> tags.
+-function nextWithCsp(request: NextRequest, csp: string, nonce: string): NextResponse {
++function nextWithCsp(request: NextRequest, csp: string, nonce: string, requestId: string): NextResponse {
+   const requestHeaders = new Headers(request.headers)
+   requestHeaders.set('content-security-policy', csp)
+   requestHeaders.set('x-nonce', nonce)
++  requestHeaders.set('x-request-id', requestId)
+   const response = NextResponse.next({ request: { headers: requestHeaders } })
+   response.headers.set('Content-Security-Policy', csp)
+   return response
+ }
+ 
++// FND-17: a per-request id, generated once here and stamped on every response the
++// middleware returns (via the wrapper below) plus the forwarded request (in
++// nextWithCsp), so client reports, server logs, and error trackers can be correlated.
+ export async function proxy(request: NextRequest) {
++  // Generated fresh, NOT read from the client's x-request-id, so a caller can't
++  // inject an id into our logs (the forwarded value is overwritten in nextWithCsp).
++  // Follow-on (Sentry work): route handlers can read headers().get('x-request-id')
++  // to tag their own error logs so server-side 500s correlate to what the client saw.
++  const requestId = crypto.randomUUID()
++  try {
++    const res = await handleRequest(request, requestId)
++    res.headers.set('x-request-id', requestId)
++    return res
++  } catch (err) {
++    // FND-17: an unhandled middleware error still surfaces as Next's edge error
++    // (rethrown, behavior unchanged), but log it WITH the request id first so the
++    // 500 is correlatable — the error case correlation is exactly the point.
++    console.error(`[proxy] unhandled middleware error requestId=${requestId} path=${request.nextUrl.pathname}`, err)
++    throw err
++  }
++}
++
++async function handleRequest(request: NextRequest, requestId: string) {
+   const { pathname } = request.nextUrl
+   const nonce = btoa(crypto.randomUUID())
+   const csp = buildCsp(nonce)
+ 
+   // Public paths render HTML (login, invite, /s/* token pages) — need the nonce.
+   if (PUBLIC_PATHS.some((p) => pathname.startsWith(p))) {
+-    return nextWithCsp(request, csp, nonce)
++    return nextWithCsp(request, csp, nonce, requestId)
+   }
+ 
+   // Static assets that bypass auth — no HTML body, nonce not needed.
+@@ -153,7 +184,7 @@ export async function proxy(request: NextRequest) {
+       )
+     }
+ 
+-    return nextWithCsp(request, csp, nonce)
++    return nextWithCsp(request, csp, nonce, requestId)
+   } catch {
+     return NextResponse.redirect(new URL('/login', request.url))
+   }
+-- 
+2.34.1
+

@@ -1,3 +1,5 @@
+-- NOTE (2026-07-11): Superseded for the operator columns by held/batch5-pr4c (docs/archive/patches/);
+-- remains the only written plan for the separate `rigs.projectId` drop (not covered by W0-10).
 -- =============================================================================
 -- #29 SLICE 4 (CONTRACT) — PRE-CHECK
 -- Run these READ-ONLY queries against the TARGET database BEFORE applying the
