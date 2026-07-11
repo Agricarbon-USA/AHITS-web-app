@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
+import { PrismaClient } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getDeploymentRostersForDisplay } from '@/lib/deployment-assignments'
 import { createAlert, resolveActiveAlert } from '@/lib/alerts'
@@ -8,6 +9,43 @@ import { allHubStockForScan } from '@/lib/inventory-stock'
 import { releaseAllHeldForRequest } from '@/lib/deployment-requests'
 import { businessDateTime } from '@/lib/business-date'
 import { getNotificationConfig } from '@/lib/notification-config'
+
+// Stable i64 key for this handler's advisory lock. Arbitrary but unique per handler.
+const CRON_DISPATCH_LOCK = BigInt('7654321098')
+
+// Acquire a session-level PostgreSQL advisory lock via the DIRECT_URL connection
+// (session-mode pooler, port 5432) so the lock acquire/release land on the same
+// backend session. DATABASE_URL is a transaction-mode pgBouncer (port 6543); using
+// it for session-level advisory locks is unsafe because acquire and release can
+// hit different backends through the pool.
+// Returns null if DIRECT_URL is unavailable (dev/test envs that lack it skip the guard).
+async function tryAcquireCronLock(): Promise<PrismaClient | null> {
+  const directUrl = process.env.DIRECT_URL
+  if (!directUrl) return null
+
+  const lockClient = new PrismaClient({ datasourceUrl: directUrl })
+  try {
+    const rows = await lockClient.$queryRaw<{ acquired: boolean }[]>`
+      SELECT pg_try_advisory_lock(${CRON_DISPATCH_LOCK}) AS acquired
+    `
+    if (!rows[0]?.acquired) {
+      await lockClient.$disconnect()
+      return null
+    }
+    return lockClient
+  } catch {
+    await lockClient.$disconnect()
+    return null
+  }
+}
+
+async function releaseCronLock(lockClient: PrismaClient): Promise<void> {
+  try {
+    await lockClient.$queryRaw`SELECT pg_advisory_unlock(${CRON_DISPATCH_LOCK})`
+  } finally {
+    await lockClient.$disconnect()
+  }
+}
 
 // Notification dispatcher, hit on a schedule by an external scheduler (e.g.
 // GCP Cloud Scheduler). It is NOT behind the session auth — it is gated by a
@@ -241,13 +279,31 @@ async function run() {
   return { overdueFlagged: due.length, idempotencyReaped, lowInventoryFlagged: lowFlagged, expiryFlagged, missedFlagged, holdsReleased, inventoryDriftFlagged, ...dispatch }
 }
 
-export async function POST(req: NextRequest) {
+async function handleCron(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  return NextResponse.json({ ok: true, ...(await run()) })
+
+  const lockClient = await tryAcquireCronLock()
+  // DIRECT_URL not configured (dev/test) — run without overlap guard.
+  if (lockClient === null && !process.env.DIRECT_URL) {
+    return NextResponse.json({ ok: true, ...(await run()) })
+  }
+  // Lock present but not acquired — another fire is already running.
+  if (lockClient === null) {
+    return NextResponse.json({ ok: true, skipped: 'advisory-lock', reason: 'concurrent run in progress' })
+  }
+
+  try {
+    return NextResponse.json({ ok: true, ...(await run()) })
+  } finally {
+    await releaseCronLock(lockClient)
+  }
+}
+
+export async function POST(req: NextRequest) {
+  return handleCron(req)
 }
 
 // GET supported too, so a plain scheduler HTTP target works without a body.
 export async function GET(req: NextRequest) {
-  if (!authorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  return NextResponse.json({ ok: true, ...(await run()) })
+  return handleCron(req)
 }
