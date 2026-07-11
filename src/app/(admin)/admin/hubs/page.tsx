@@ -695,8 +695,9 @@ export default function AdminHubsPage() {
         </DialogTitle>
         <DialogContent>
           <Typography variant="body2" sx={{ mb: 2 }}>
-            The unit{dismissTarget?.length !== 1 ? 's' : ''} will be marked available and removed from the inbound
-            queue. This can be viewed later under "Dismissed &amp; Received".
+            {dismissTarget && dismissTarget.length !== 1 ? 'The units' : 'The unit'}{' '}
+            will be marked available and removed from the inbound queue.
+            Viewable later under &quot;Dismissed &amp; Received&quot;.
           </Typography>
           <TextField
             label="Resolution note (optional)"
