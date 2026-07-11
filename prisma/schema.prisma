@@ -24,6 +24,7 @@ enum VehicleType {
   CHRISTIE_DRILL
   ATV
   OTHER
+  BOBCAT
 }
 
 enum VehicleStatus {
