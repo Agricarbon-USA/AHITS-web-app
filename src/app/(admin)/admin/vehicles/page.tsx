@@ -89,6 +89,15 @@ export default function AdminVehiclesPage() {
   const [formOpen, setFormOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<VehicleRow | null>(null)
   const [confirmDelete, setConfirmDelete] = React.useState<VehicleRow | null>(null)
+  // CC-10: field-fix dialog
+  const [fieldFixOpen, setFieldFixOpen] = React.useState(false)
+  const [fieldFixNotes, setFieldFixNotes] = React.useState('')
+  const [fieldFixSaving, setFieldFixSaving] = React.useState(false)
+  // CC-10: report-damage dialog
+  const [reportDamageOpen, setReportDamageOpen] = React.useState(false)
+  const [reportDamageNotes, setReportDamageNotes] = React.useState('')
+  const [reportDamageRepairType, setReportDamageRepairType] = React.useState('')
+  const [reportDamageSaving, setReportDamageSaving] = React.useState(false)
 
   // Filters & sorting (client-side; the fleet is small).
   const [search, setSearch] = React.useState('')
@@ -193,6 +202,58 @@ export default function AdminVehiclesPage() {
     } else {
       const d = await res.json().catch(() => ({}))
       showToast({ message: typeof d.error === 'string' ? d.error : 'Delete failed (vehicle may have history)', severity: 'error' })
+    }
+  }
+
+  async function submitFieldFix() {
+    if (!detail || !fieldFixNotes.trim()) return
+    setFieldFixSaving(true)
+    try {
+      const res = await fetch('/api/maintenance/field-fix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vehicleId: detail.id, notes: fieldFixNotes.trim() }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not log fix.', severity: 'error' })
+        return
+      }
+      showToast({ message: 'Field fix logged.', severity: 'success' })
+      setFieldFixOpen(false)
+      openDetail(detail.id)
+    } catch {
+      showToast({ message: 'Network error. Please try again.', severity: 'error' })
+    } finally {
+      setFieldFixSaving(false)
+    }
+  }
+
+  async function submitReportDamage() {
+    if (!detail || !reportDamageNotes.trim()) return
+    setReportDamageSaving(true)
+    try {
+      const res = await fetch(`/api/vehicles/${detail.id}/report-damage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          notes: reportDamageNotes.trim(),
+          repairType: reportDamageRepairType || undefined,
+        }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not report damage.', severity: 'error' })
+        return
+      }
+      showToast({ message: 'Damage reported — vehicle is now IN MAINTENANCE.', severity: 'success' })
+      setReportDamageOpen(false)
+      load()
+      openDetail(detail.id)
+    } catch {
+      showToast({ message: 'Network error. Please try again.', severity: 'error' })
+    } finally {
+      setReportDamageSaving(false)
     }
   }
 
@@ -499,13 +560,111 @@ export default function AdminVehiclesPage() {
               )}
             </Box>
 
-            <Stack direction="row" spacing={1} pt={1}>
+            <Stack direction="row" spacing={1} pt={1} flexWrap="wrap" useFlexGap>
               <MutationButton variant="outlined" startIcon={<EditIcon />} onClick={() => { setEditing(detail); setFormOpen(true) }}>Edit</MutationButton>
               <MutationButton variant="outlined" color="error" startIcon={<DeleteIcon />} onClick={() => setConfirmDelete(detail)}>Delete</MutationButton>
+            </Stack>
+            <Divider />
+            <Stack spacing={1}>
+              <MutationButton
+                variant="outlined"
+                color="success"
+                size="small"
+                onClick={() => { setFieldFixNotes(''); setFieldFixOpen(true) }}
+              >
+                Log fixed issue
+              </MutationButton>
+              <MutationButton
+                variant="outlined"
+                color="warning"
+                size="small"
+                onClick={() => { setReportDamageNotes(''); setReportDamageRepairType(''); setReportDamageOpen(true) }}
+              >
+                Report damage
+              </MutationButton>
             </Stack>
           </Stack>
         ) : null}
       </Drawer>
+
+      {/* CC-10: Log field fix */}
+      <Dialog open={fieldFixOpen} onClose={() => setFieldFixOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Log fixed issue — {detail?.name}</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} pt={0.5}>
+            <Typography variant="body2" color="text.secondary">
+              Record an issue that was noticed and fixed on the spot. No repair task is opened and no alert is fired.
+            </Typography>
+            <TextField
+              label="What was fixed"
+              value={fieldFixNotes}
+              onChange={(e) => setFieldFixNotes(e.target.value)}
+              multiline
+              rows={3}
+              fullWidth
+              required
+              placeholder="Brief description of the issue and what was done"
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setFieldFixOpen(false)} disabled={fieldFixSaving}>Cancel</Button>
+          <Button
+            color="success"
+            variant="contained"
+            disabled={fieldFixSaving || !fieldFixNotes.trim()}
+            onClick={submitFieldFix}
+          >
+            {fieldFixSaving ? 'Saving…' : 'Log fix'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* CC-10: Report damage */}
+      <Dialog open={reportDamageOpen} onClose={() => setReportDamageOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Report damage — {detail?.name}</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} pt={0.5}>
+            <Typography variant="body2" color="text.secondary">
+              Opens a repair task and marks this vehicle IN MAINTENANCE. An admin will assign a shop or hub and close it out.
+            </Typography>
+            <TextField
+              select
+              label="Repair type (optional)"
+              value={reportDamageRepairType}
+              onChange={(e) => setReportDamageRepairType(e.target.value)}
+              fullWidth
+            >
+              <MenuItem value="">Not set</MenuItem>
+              <MenuItem value="IN_FIELD">Fixed in field</MenuItem>
+              <MenuItem value="AT_SHOP">At a shop</MenuItem>
+              <MenuItem value="SHIP_TO_HUB">Ship to hub</MenuItem>
+              <MenuItem value="SHIP_FOR_REPAIR">Ship for repair</MenuItem>
+            </TextField>
+            <TextField
+              label="What happened"
+              value={reportDamageNotes}
+              onChange={(e) => setReportDamageNotes(e.target.value)}
+              multiline
+              rows={3}
+              fullWidth
+              required
+              placeholder="Describe the damage"
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setReportDamageOpen(false)} disabled={reportDamageSaving}>Cancel</Button>
+          <Button
+            color="warning"
+            variant="contained"
+            disabled={reportDamageSaving || !reportDamageNotes.trim()}
+            onClick={submitReportDamage}
+          >
+            {reportDamageSaving ? 'Reporting…' : 'Report damage'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {formOpen && (
         <VehicleFormDialog
