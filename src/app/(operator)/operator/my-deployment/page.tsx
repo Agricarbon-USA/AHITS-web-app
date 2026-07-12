@@ -162,12 +162,21 @@ const availFor = (i: { itemType: string; unitCounts?: { available?: number } | n
 // Transfer Dialog now lives in components/shared/TransferDialog.tsx (UX-5).
 // ── New Deployment Dialog (operator) ──────────────────────────────
 
+// CC-09: pre-fill data from a fulfilled reservation's awaiting-pickup surface.
+interface PickupPreset {
+  requestId: string
+  label: string | null
+  hubId: string | null
+  lines: Array<{ itemId: string; qty: number }>
+}
+
 function NewDeploymentDialog({
   vehicles,
   inventoryItems,
   operators,
   hubs,
   homeHubId,
+  pickupPreset,
   onClose,
   onSuccess,
 }: {
@@ -176,23 +185,34 @@ function NewDeploymentDialog({
   operators: UserOption[]
   hubs: HubOption[]
   homeHubId?: string | null
+  pickupPreset?: PickupPreset | null
   onClose: () => void
   onSuccess: () => void
 }) {
   const { mutate } = useOfflineQueue()
   const showToast = useToast()
   const [step, setStep] = React.useState(0)
-  const [label, setLabel] = React.useState('')
+  const [label, setLabel] = React.useState(() => pickupPreset?.label ?? '')
   const [selVehicles, setSelVehicles] = React.useState<Set<string>>(new Set())
-  const [kitItems, setKitItems] = React.useState<Map<string, PendingItemEntry>>(new Map())
+  const [kitItems, setKitItems] = React.useState<Map<string, PendingItemEntry>>(() => {
+    if (!pickupPreset?.lines.length) return new Map()
+    const m = new Map<string, PendingItemEntry>()
+    for (const line of pickupPreset.lines) {
+      m.set(line.itemId, { itemType: 'CONSUMABLE', quantity: line.qty, inventoryUnitId: null, unitLabel: null })
+    }
+    return m
+  })
   const [unitManualQR, setUnitManualQR] = React.useState<Record<string, string>>({})
   const [unitQrLoading, setUnitQrLoading] = React.useState<Record<string, boolean>>({})
   const [note, setNote] = React.useState('')
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState('')
-  // Prefer operator's home hub if it's in the active hub list; fall back to first hub.
+  // CC-09: prefer the pickup hub when picking up a reservation; otherwise fall back to home hub or first hub.
   const [sourceHubId, setSourceHubId] = React.useState(
-    () => (homeHubId && hubs.some((h) => h.id === homeHubId) ? homeHubId : hubs[0]?.id) ?? '',
+    () => {
+      if (pickupPreset?.hubId && hubs.some((h) => h.id === pickupPreset.hubId)) return pickupPreset.hubId
+      return (homeHubId && hubs.some((h) => h.id === homeHubId) ? homeHubId : hubs[0]?.id) ?? ''
+    },
   )
 
   // When hub changes, re-cap consumable quantities that exceed the new hub's available.
@@ -300,6 +320,8 @@ function NewDeploymentDialog({
             : { inventoryItemId, quantity: entry.quantity }
         ),
         ...(sourceHubId && { sourceHubId }),
+        // CC-09: include fromRequestId so the server releases residual holds (acceptance #4)
+        ...(pickupPreset?.requestId && { fromRequestId: pickupPreset.requestId }),
       },
     })
     setLoading(false)
@@ -327,7 +349,7 @@ function NewDeploymentDialog({
 
   return (
     <Dialog open={true} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Start Deployment</DialogTitle>
+      <DialogTitle>{pickupPreset ? 'Pick Up Reservation' : 'Start Deployment'}</DialogTitle>
       <DialogContent>
         <Stepper activeStep={step} sx={{ mb: 3, mt: 1 }}>
           <Step><StepLabel>Details</StepLabel></Step>
@@ -560,7 +582,7 @@ function NewDeploymentDialog({
         ) : (
           <Button variant="contained" onClick={launch} disabled={!note.trim() || loading || hasUnselectedSerialized || (hasConsumableInKit && !sourceHubId)}
             startIcon={loading ? <CircularProgress size={16} color="inherit" /> : null}>
-            {loading ? 'Launching…' : !note.trim() ? 'Enter a note to launch' : 'Launch Deployment'}
+            {loading ? 'Launching…' : !note.trim() ? 'Enter a note to launch' : pickupPreset ? 'Pick Up' : 'Launch Deployment'}
           </Button>
         )}
       </DialogActions>
@@ -581,6 +603,8 @@ export default function MyRigPage() {
   const { mutate, pendingDeployCreate, refresh: refreshQueue } = useOfflineQueue()
   const { user } = useAuth()
   const [newOpen, setNewOpen] = React.useState(false)
+  // CC-09: pickup preset — set when navigated from an AwaitingPickupCard
+  const [pickupPreset, setPickupPreset] = React.useState<PickupPreset | null>(null)
   const [transferOpen, setTransferOpen] = React.useState(false)
 
   // Transfers
@@ -687,6 +711,34 @@ export default function MyRigPage() {
     }).catch(() => {})
     fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(Array.isArray(d) ? d : (d?.data ?? []))).catch(() => {})
   }, [load])
+
+  // CC-09: when navigated from an AwaitingPickupCard (/operator/my-deployment?fromRequestId=xxx),
+  // fetch the pickup data and auto-open the dialog pre-seeded. window.location.search is used
+  // (not useSearchParams) to avoid the Suspense requirement on this large client component.
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return
+    const params = new URLSearchParams(window.location.search)
+    const fromRequestId = params.get('fromRequestId')
+    if (!fromRequestId) return
+    fetch('/api/deployment-requests/awaiting-pickup')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const req = (d?.data ?? []).find((r: { id: string }) => r.id === fromRequestId)
+        if (!req) return
+        setPickupPreset({
+          requestId: req.id,
+          label: req.label ?? null,
+          hubId: req.hubId ?? null,
+          lines: (req.lines ?? []).map((l: { heldItemId: string; remainingQty: number }) => ({
+            itemId: l.heldItemId,
+            qty: l.remainingQty,
+          })),
+        })
+        setNewOpen(true)
+      })
+      .catch(() => {})
+  // Run once on mount — URL params don't change during the page lifecycle.
+  }, [])
 
   const handleRespond = async () => {
     if (!respondDialog) return
@@ -1054,7 +1106,8 @@ export default function MyRigPage() {
                 operators={operators}
                 hubs={hubs}
                 homeHubId={user?.homeHubId}
-                onClose={() => { setNewOpen(false); void refreshQueue() }}
+                pickupPreset={pickupPreset}
+                onClose={() => { setNewOpen(false); setPickupPreset(null); void refreshQueue() }}
                 onSuccess={load}
               />
             )}

@@ -262,6 +262,9 @@ model Rig {
   startedAt  DateTime  @default(now())
   endedAt    DateTime?
   notes      String?
+  // CC-09: traceability — which fulfilled reservation seeded this deployment's pickup flow.
+  // Nullable; raw SQL only (no @relation). Scalar FK pointing at deployment_requests.
+  fromRequestId String?
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
 
@@ -1007,6 +1010,11 @@ model DeploymentRequest {
   decidedAt           DateTime?
   fulfilledAt         DateTime?
   stockReservedAt     DateTime?
+  // CC-09: protect held stock for the pickup surface. Set at fulfill time to
+  // fulfilledAt + PICKUP_HOLD_TTL_HOURS (default 168h / 7 days) so the TTL
+  // sweep never releases a hold that is still visible in the Awaiting Pickup
+  // surface, even with no operator app activity over a weekend. Raw SQL only.
+  holdExpiresAt       DateTime?
   createdAt           DateTime                @default(now())
   updatedAt           DateTime                @default(now())
 

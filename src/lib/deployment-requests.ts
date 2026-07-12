@@ -890,6 +890,10 @@ export async function claimHeldStock(
  * same effective-type post-check — so immediately after fulfill
  * reservedQty(item,hub) == Σ heldQty(item,hub) with claimedQty 0. Per-line so
  * `claimedQty` and release can operate line-by-line.
+ *
+ * CC-09: also sets holdExpiresAt on the request so the TTL sweep cannot release
+ * held stock while the Awaiting Pickup surface is visible, even with no operator
+ * app activity over a weekend.
  */
 async function snapshotHeldLines(requestId: string, fulfillerHubId: string, tx: RawTx): Promise<void> {
   const held = await tx.$queryRaw<{ id: string; effItem: string; effQty: bigint | number }[]>`
@@ -914,6 +918,107 @@ async function snapshotHeldLines(requestId: string, fulfillerHubId: string, tx: 
       WHERE "id" = ${h.id}
     `
   }
+  if (held.length > 0) {
+    // CC-09: protect this hold from the TTL sweep for PICKUP_HOLD_TTL_HOURS (default
+    // 168h = 7 days) regardless of operator app activity. A Friday-fulfilled hold will
+    // not be swept before the following Friday, covering Mon/Tue/Wed pickup windows.
+    // Use a JavaScript Date to avoid make_interval(hours=>bigint) type mismatch in Prisma.
+    const ttlParsed = Math.floor(Number(process.env.PICKUP_HOLD_TTL_HOURS ?? 168))
+    const pickupTtlHours = Number.isFinite(ttlParsed) && ttlParsed >= 1 ? ttlParsed : 168
+    const holdExpiresAt = new Date(Date.now() + pickupTtlHours * 60 * 60 * 1000)
+    await tx.$executeRaw`
+      UPDATE "deployment_requests"
+      SET "holdExpiresAt" = ${holdExpiresAt}
+      WHERE "id" = ${requestId}
+    `.catch(() => {})
+  }
+}
+
+// ── CC-09 Awaiting Pickup ─────────────────────────────────────────────────────
+
+export interface AwaitingPickupLine {
+  id: string
+  heldItemId: string
+  itemName: string | null
+  remainingQty: number
+  heldHubId: string
+}
+
+export interface AwaitingPickupRequest {
+  id: string
+  label: string | null
+  fulfilledAt: Date | null
+  holdExpiresAt: Date | null
+  hubId: string | null
+  hubName: string | null
+  lines: AwaitingPickupLine[]
+}
+
+/**
+ * CC-09: returns FULFILLED reservation requests for an operator that still have
+ * unclaimed held stock (the "Awaiting Pickup" surface). The operator can either
+ * be requestedById or forOperatorId.
+ */
+export async function getAwaitingPickupForOperator(operatorId: string): Promise<AwaitingPickupRequest[]> {
+  const reqs = await prisma.$queryRaw<{
+    id: string
+    label: string | null
+    fulfilledAt: Date | null
+    holdExpiresAt: Date | null
+    hubId: string | null
+    hubName: string | null
+  }[]>`
+    SELECT DISTINCT r."id", r."label", r."fulfilledAt", r."holdExpiresAt",
+           h."id" AS "hubId", h."name" AS "hubName"
+    FROM "deployment_requests" r
+    JOIN "deployment_request_lines" l ON l."requestId" = r."id"
+    LEFT JOIN "hubs" h ON h."id" = r."fulfillerHubId"
+    WHERE r."status" = 'FULFILLED'
+      AND (r."requestedById" = ${operatorId} OR r."forOperatorId" = ${operatorId})
+      AND l."releasedAt" IS NULL
+      AND l."heldQty" > l."claimedQty"
+    ORDER BY r."fulfilledAt" ASC NULLS LAST
+  `
+  if (reqs.length === 0) return []
+
+  const reqIds = reqs.map((r) => r.id)
+  const lines = await prisma.$queryRaw<{
+    requestId: string
+    id: string
+    heldItemId: string | null
+    itemName: string | null
+    remainingQty: bigint | number
+    heldHubId: string | null
+  }[]>`
+    SELECT l."requestId", l."id", l."heldItemId",
+           ii."name" AS "itemName",
+           (l."heldQty" - l."claimedQty") AS "remainingQty",
+           l."heldHubId"
+    FROM "deployment_request_lines" l
+    LEFT JOIN "inventory_items" ii ON ii."id" = l."heldItemId"
+    WHERE l."requestId" IN (${Prisma.join(reqIds)})
+      AND l."releasedAt" IS NULL
+      AND l."heldQty" > l."claimedQty"
+    ORDER BY l."createdAt" ASC
+  `
+
+  const linesByReq = new Map<string, AwaitingPickupLine[]>()
+  for (const l of lines) {
+    if (!l.heldItemId || !l.heldHubId) continue
+    const list = linesByReq.get(l.requestId) ?? []
+    list.push({
+      id: l.id,
+      heldItemId: l.heldItemId,
+      itemName: l.itemName,
+      remainingQty: Number(l.remainingQty),
+      heldHubId: l.heldHubId,
+    })
+    linesByReq.set(l.requestId, list)
+  }
+
+  return reqs
+    .map((r) => ({ ...r, lines: linesByReq.get(r.id) ?? [] }))
+    .filter((r) => r.lines.length > 0)
 }
 
 /**
