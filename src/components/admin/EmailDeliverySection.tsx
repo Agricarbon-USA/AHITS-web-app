@@ -1,5 +1,6 @@
 'use client'
 import * as React from 'react'
+import { formatDateTime } from '@/lib/utils'
 import { Card, CardContent, Typography, Stack, Chip, Box, Button, CircularProgress } from '@mui/material'
 
 interface EmailRow {
@@ -73,7 +74,7 @@ export default function EmailDeliverySection() {
                   <Typography variant="body2" sx={{ fontWeight: 500 }}>{r.subject}</Typography>
                 </Stack>
                 <Typography variant="caption" color="text.secondary">
-                  → {r.to} · {new Date(r.createdAt).toLocaleString()}{r.attempts > 1 ? ` · ${r.attempts} attempts` : ''}
+                  → {r.to} · {formatDateTime(r.createdAt)}{r.attempts > 1 ? ` · ${r.attempts} attempts` : ''}
                 </Typography>
                 {r.lastError && (
                   <Typography variant="caption" color="error.main" display="block">{r.lastError}</Typography>

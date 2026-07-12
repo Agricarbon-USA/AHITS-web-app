@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { formatDateTime } from '@/lib/utils'
 import { Box, Stack, Dialog, IconButton, Chip, Typography } from '@mui/material'
 import CloseIcon from '@mui/icons-material/Close'
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft'
@@ -94,7 +95,7 @@ export function PhotoGallery({ photos, size = 80 }: { photos: GalleryPhoto[]; si
             <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1} sx={{ p: 1, color: 'common.white' }}>
               <Typography variant="caption">{photos.length > 1 ? `${(openIdx ?? 0) + 1} / ${photos.length}` : ''}</Typography>
               {isDamage(current) && <Chip icon={<WarningAmberIcon sx={{ fontSize: 14 }} />} label="Damage" size="small" color="error" />}
-              <Typography variant="caption">{current.takenAt ? new Date(current.takenAt).toLocaleString() : ''}</Typography>
+              <Typography variant="caption">{current.takenAt ? formatDateTime(current.takenAt) : ''}</Typography>
             </Stack>
           </Box>
         )}

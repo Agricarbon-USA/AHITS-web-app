@@ -15,7 +15,7 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { useToast } from '@/components/shared/useToast'
 import { useCanEdit, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
-import { groupBy } from '@/lib/utils'
+import { groupBy, formatDate } from '@/lib/utils'
 import { uploadDocument } from '@/lib/photoStore'
 import { VEHICLE_TYPES, vehicleTypeLabel } from '@/lib/vehicle-types'
 
@@ -70,7 +70,7 @@ function expiryMeta(iso: string | null): { label: string; color: 'default' | 'wa
   if (!iso) return { label: '—', color: 'default' }
   const d = new Date(iso)
   const days = Math.ceil((d.getTime() - Date.now()) / 86_400_000)
-  const label = d.toLocaleDateString()
+  const label = formatDate(d)
   if (days < 0) return { label: `${label} · expired`, color: 'error' }
   if (days <= 30) return { label: `${label} · ${days}d`, color: 'warning' }
   return { label, color: 'default' }
@@ -436,7 +436,7 @@ export default function AdminVehiclesPage() {
                     />
                     <Detail label="Rental dates" value={
                       detail.rentalStartDate || detail.rentalEndDate
-                        ? `${detail.rentalStartDate ? new Date(detail.rentalStartDate).toLocaleDateString() : '—'} → ${detail.rentalEndDate ? new Date(detail.rentalEndDate).toLocaleDateString() : '—'}`
+                        ? `${formatDate(detail.rentalStartDate)} → ${formatDate(detail.rentalEndDate)}`
                         : '—'
                     } />
                     <Detail label="Pickup location" value={detail.rentalLocation ?? '—'} />
@@ -472,7 +472,7 @@ export default function AdminVehiclesPage() {
                     <Stack key={t.id} direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
                       <Box flexGrow={1}>
                         <Typography variant="body2">{t.taskName}</Typography>
-                        {t.nextDue && <Typography variant="caption" color="text.secondary">Due {new Date(t.nextDue).toLocaleDateString()}</Typography>}
+                        {t.nextDue && <Typography variant="caption" color="text.secondary">Due {formatDate(t.nextDue)}</Typography>}
                       </Box>
                       {t.actualCost && <Typography variant="caption">${Number(t.actualCost).toLocaleString()}</Typography>}
                       <StatusChip status={t.status} kind="maintenance" />
@@ -491,7 +491,7 @@ export default function AdminVehiclesPage() {
                 <Stack spacing={0.5}>
                   {detail.dailyChecks.map((c) => (
                     <Stack key={c.id} direction="row" justifyContent="space-between">
-                      <Typography variant="body2">{new Date(c.date).toLocaleDateString()}</Typography>
+                      <Typography variant="body2">{formatDate(c.date)}</Typography>
                       <Typography variant="caption" color="text.secondary">{c.operator?.name ?? 'Unknown'}</Typography>
                     </Stack>
                   ))}

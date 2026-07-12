@@ -26,7 +26,7 @@ import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 import { newPlaceholderId } from '@/lib/offline-remap'
 import { useAuth } from '@/hooks/useAuth'
-import { groupBy } from '@/lib/utils'
+import { groupBy, formatDate } from '@/lib/utils'
 import { stockAvailabilityLabel } from '@/lib/stock-format'
 import { VEHICLE_TYPE_ORDER, vehicleTypeLabel } from '@/lib/vehicle-types'
 
@@ -1206,7 +1206,7 @@ export default function MyRigPage() {
           <Stack direction="row" spacing={1} mt={0.5} alignItems="center">
             {rig.project && <Chip size="small" label={rig.project.name} color="primary" />}
             <Typography variant="body2" color="text.secondary">
-              Started {new Date(rig.startedAt).toLocaleDateString()}
+              Started {formatDate(rig.startedAt)}
             </Typography>
           </Stack>
         </Box>

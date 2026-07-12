@@ -28,7 +28,7 @@ import { PhotoGallery } from '@/components/shared/PhotoGallery'
 import { RepairReviewDialog } from '@/components/shared/RepairReviewDialog'
 import { EQUIPMENT_STATUS } from '@/lib/status'
 import { useCanEdit, EditGuard, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
-import { groupBy } from '@/lib/utils'
+import { groupBy, formatDate } from '@/lib/utils'
 
 // FND-48: URL-persisted filter keys for the inventory list (stable object so the
 // useUrlFilters setter callback stays referentially stable).
@@ -924,7 +924,7 @@ function DetailDrawer({
                                           />
                                           <Typography variant="caption">{log.operator?.name ?? 'Unknown'}</Typography>
                                           <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto !important' }}>
-                                            {new Date(log.submittedAt).toLocaleDateString()}
+                                            {formatDate(log.submittedAt)}
                                           </Typography>
                                         </Stack>
                                       ))}
@@ -990,7 +990,7 @@ function DetailDrawer({
                         <Typography variant="body2">{log.operator?.name ?? 'Unknown'}</Typography>
                         {log.condition && <Chip size="small" label={log.condition.replace(/_/g, ' ')} variant="outlined" />}
                         <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto !important' }}>
-                          {new Date(log.submittedAt).toLocaleDateString()}
+                          {formatDate(log.submittedAt)}
                         </Typography>
                       </Stack>
                     ))}

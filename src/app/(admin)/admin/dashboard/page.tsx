@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { formatDate } from '@/lib/utils'
 import {
   Grid, Typography, Box, List, ListItem, ListItemText, Button,
   Chip, CircularProgress, Divider, Alert, Paper, Stack,
@@ -46,7 +47,7 @@ function relativeTime(iso: string) {
   return `${Math.floor(hrs / 24)}d ago`
 }
 
-const fmtDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString() : '—')
+const fmtDate = (iso: string | null) => formatDate(iso)
 
 export default function AdminDashboardPage() {
   const canEdit = useCanEdit()
