@@ -5,19 +5,17 @@ _Last updated: **2026-07-12 (session 4)**. If this date is more than a session o
 > **Before re-opening any settled "should we…" question, read `DECISIONS.md`.** The big ones (prod deferred, Map scope, admin exclusion, W0-10 sequencing) are settled — don't re-litigate them.
 
 ## 1. One-paragraph state
-AHITS is at the pilot doorstep, running on **staging**. The hard architecture is done and audit-verified. Merged to `development` (→ staging): CC-01 through CC-09, Wave-0 patches, and the doc-cleanup corpus. **CC-10 field-fix log + vehicle damage path in review (PR #180):** operators can log a fixed-in-field issue on any vehicle or unit (COMPLETED task, no alert, no status flip) or report vehicle damage (IN_PROGRESS task, vehicle → IN_MAINTENANCE, DAMAGE_REPORTED alert). The admin maintenance close route now handles vehicle repairs without a return destination. Production is deliberately deferred (see D1).
+AHITS is at the pilot doorstep, running on **staging**. The hard architecture is done and audit-verified. Merged to `development` (→ staging): CC-01 through CC-09, Wave-0 patches, and the doc-cleanup corpus. **CC-10 field-fix log + vehicle damage path shipped (PR #180, `f2c05a0`):** operators can log a fixed-in-field issue on any vehicle or unit (COMPLETED task, no alert, no status flip) or report vehicle damage (IN_PROGRESS task, vehicle → IN_MAINTENANCE, DAMAGE_REPORTED alert). The admin maintenance close route now handles vehicle repairs without a return destination. Production is deliberately deferred (see D1).
 
 ## 2. Environments
 - **development → staging:** the live working line. Has the full Wave-0 hardening + W0-10 through PR-4a + this session's CC-01/02/03 + CC-06. **Smoke on staging after every merge.**
 - **production:** the git branch is now *current* (PR #144 merged 2026-07-11, `c0d231b`) but there is **NO prod environment** — no Supabase project, no `AHITS_PROD_*` secrets — so nothing is deployed and the triggered deploy failed harmlessly. **Prod is deferred; see `DECISIONS.md` D1 before touching anything prod.**
 
 ## 3. Active work — in flight right now
-- **CC-10 PR #180** — field-fix log + vehicle damage path; staging deploy triggered; pending CI + smoke.
 - **A6 device pass** — the pilot gate; human-run on real iOS + Android hardware; **not started — run in parallel with Wave B**.
 
 ## 4. Next actions (ordered)
-1. **Merge CC-10 (PR #180)** — wait for CI green + staging smoke, then merge to `development`.
-2. **CC-11 (admin-as-operator)** — built on `deployment_assignments`; admin-held rigs excluded from payroll per D3.
+1. **CC-11 (admin-as-operator)** — built on `deployment_assignments`; admin-held rigs excluded from payroll per D3.
 3. Run the **A6 device pass** in parallel with Wave B.
 4. Then the structural work: Batch 6b / Perf + the operator's **Today** view (CC-14), then the capstones (Map → QR → Time/Invoicing).
 
