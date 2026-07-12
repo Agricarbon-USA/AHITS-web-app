@@ -92,10 +92,18 @@ export async function GET() {
     // dropped from the admin missed-check list.
     .map((r) => {
       const roster = rigRosters.get(r.id)
-      return { r, operatorId: roster?.operatorId ?? null, operatorName: roster?.operator?.name ?? 'Unassigned' }
+      return {
+        r,
+        operatorId: roster?.operatorId ?? null,
+        operatorName: roster?.operator?.name ?? 'Unassigned',
+        // D3: this feed is independent of the DAILY_CHECK_MISSED Alert row the cron
+        // writes (and its isAdminHeld metadata) — carry the same distinction here so
+        // an admin-held rig's miss isn't shown identically to an operator's.
+        isAdminHeld: roster?.operator?.role === 'ADMIN',
+      }
     })
     .filter(({ operatorId }) => operatorId && !checkedToday.has(operatorId))
-    .map(({ r, operatorName }) => ({ rigId: r.id, operator: operatorName, label: r.label, startedAt: r.startedAt }))
+    .map(({ r, operatorName, isAdminHeld }) => ({ rigId: r.id, operator: operatorName, isAdminHeld, label: r.label, startedAt: r.startedAt }))
 
   const maintenanceDueSoon = dueTasks.map((t) => ({
     id: t.id,

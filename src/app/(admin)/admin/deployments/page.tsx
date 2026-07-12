@@ -1379,7 +1379,7 @@ function AdminDeploymentsContent() {
         <TextField select size="small" label="All Operators" value={!filterOperator || operators.some((o) => o.id === filterOperator) ? filterOperator : ''}
           onChange={(e) => setFilters({ operatorId: e.target.value })} sx={{ minWidth: 160 }}>
           <MenuItem value="">All Operators</MenuItem>
-          {operators.filter((o) => o.role === 'OPERATOR').map((o) => (
+          {operators.filter((o) => o.role === 'OPERATOR' || o.role === 'ADMIN').map((o) => (
             <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>
           ))}
         </TextField>
