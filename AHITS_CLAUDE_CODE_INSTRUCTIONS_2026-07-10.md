@@ -209,19 +209,10 @@ The structural performance workstream. Feature branch(es); this is large — pro
 
 ---
 
-### CC-13 · Documentation hygiene
+### CC-13 · Documentation hygiene — ⛔️ SUPERSEDED by `AHITS_DOC_CLEANUP_INSTRUCTIONS.md`
 **Review seats:** Calibration.
 
-```
-Tidy the documentation without losing anything. Feature branch. This is doc-only — no code, no verify gate needed beyond confirming nothing under src/ changed.
-1. Delete the ~37 markdown files in the repo root that are byte-identical duplicates of copies already in docs/archive/ (verify each with `cmp` before deleting; if a root file DIFFERS from its archive copy, keep the newer and note it — do NOT blind-delete).
-2. Archive (move to docs/archive/, don't delete) the superseded strategy docs: AHITS_PHASE3PLUS_NORTH_STAR.md (v1) and AHITS_PHASE3PLUS_NORTH_STAR_v2.md — v3 supersedes them; diff the root v2 against the archive v2 first and keep the newer.
-3. Archive the historical current-cycle records: AHITS_SESSION_RECORD_2026-06-29/06-30, the WAVE0_BATCH1..4 execution logs, AHITS_CODEBASE_SWEEP_2026-07-03.
-4. Archive the 10 verified-landed .patch files (batch4b, batch4c, batch5-pr1/pr2/pr2b/pr2c/pr4a, batch7a, batch8-url-filters-fnd48, fix-ur005b). KEEP in place: the held patches (now under held/) and the 3 pending patches (emaillog-failed-alert, batch8-urlfilters-rollout, batch6a-date-unify).
-5. Update docs/INDEX.md — it's frozen at 2026-07-03 and still lists North Star v1 as current; make it reflect v3, the Master Roadmap, the W0-10 migration plan, the 07-10 handoff/fix-plan, and this session's new docs.
-6. Annotate docs/prepared/slice4_drop_legacy.sql + slice4_precheck.sql: note they're superseded for the operator columns by the held batch5-pr4c, but remain the only written plan for the separate rigs.projectId drop (which W0-10 does not cover).
-7. Correct the PROD_CUTOVER_RUNBOOK.md banner that says production "does not exist yet" — production exists (frozen at the 2026-06-26 promote); reconcile the banner with the current state.
-```
+> **Do not run this packet — it has been absorbed into the more comprehensive `AHITS_DOC_CLEANUP_INSTRUCTIONS.md`** (produced by the 6-agent documentation pass on 2026-07-11). That packet does everything CC-13 listed — delete the ~38 byte-identical root duplicates, archive the superseded North Stars + historical records + the 10 landed `.patch` files, annotate the `slice4` SQL, rewrite `docs/INDEX.md`, and reconcile the `PROD_CUTOVER_RUNBOOK.md` banner with `DECISIONS.md` D1 — **plus** it adds the `00_START_HERE`/`STATUS`/`DECISIONS` entry docs, status banners, the cross-doc contradiction fixes, and the session-close durability process. Run `AHITS_DOC_CLEANUP_INSTRUCTIONS.md` instead; this stub remains only so the CC-13 reference resolves.
 
 ---
 

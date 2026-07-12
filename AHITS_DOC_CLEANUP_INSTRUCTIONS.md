@@ -69,6 +69,7 @@ Apply specifically:
 - `docs/archive/AHITS_PHASE3_DETAILED_WORKPLAN.md` → `superseded`, SUPERSEDED-BY `AHITS_PHASE3_WORKPLAN_2026-07-10.md`; note the three decisions (D1/D2/D3) it predates.
 - `AHITS_PHASE3_WORKPLAN_v2.md` → `canonical (ID register)`; add "re-baselined in *ordering* by `AHITS_PHASE3_WORKPLAN_2026-07-10.md`; strategy = `AHITS_PHASE3PLUS_NORTH_STAR_v3.md`."
 - `PROD_CUTOVER_RUNBOOK.md` → `reference (DEFERRED)`, READ-WITH `AHITS_PROD_CUTOVER_DEFERRED.md` + `DECISIONS.md` D1.
+- `AHITS_PRD_v2.md` + `AHITS_PRD_v2.1_ADDENDUM.md` → `reference (frozen spec)`. Add: `> Frozen 2026-06-25. Consulted by section, not edited. The money models §11.12/§18 are the live contract for the Time/Invoicing capstone (CC-17). §14 (scheduling) is parked; §F (requests) is superseded by the Requests redesign. Known divergence: the `Settings` model here is a phantom (only `NotificationConfig` exists in schema) — reconcile at 2C. Where this doc and the code disagree, the code wins.`
 
 ## Part 5 — Fix the cross-doc contradictions (the Antagonist register)
 1. **Money loop un-gated.** In `AHITS_ROADMAP_EXEC_SUMMARY.md` (the non-negotiable-gates line) and `AHITS_MASTER_ROADMAP.md` §1.2, change "W0-10 retirement → before invoicing (cannot be reordered)" to: *"W0-10 **readers** (PR-4a, landed) gate invoicing attribution; the **DROP** (4b′/4c) is elective and does NOT gate the money loop."*

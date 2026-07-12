@@ -1,11 +1,11 @@
 # AHITS — STATUS  ·  the one always-current doc — read me first
 
-_Last updated: **2026-07-11 (session 2)**. If this date is more than a session old, trust the code and `git log` over this file, and update it._
+_Last updated: **2026-07-11 (session 3)**. If this date is more than a session old, trust the code and `git log` over this file, and update it._
 
 > **Before re-opening any settled "should we…" question, read `DECISIONS.md`.** The big ones (prod deferred, Map scope, admin exclusion, W0-10 sequencing) are settled — don't re-litigate them.
 
 ## 1. One-paragraph state
-AHITS is at the pilot doorstep, running on **staging**. The hard architecture is done and audit-verified. Merged to `development` (→ staging): CC-01 release-safety hardening, CC-02 data-integrity cluster, CC-03 offline/trust one-liners, CC-06 dashboard-fix + BOBCAT-enum, CC-07 mobile quick-wins, CC-08 hubs inbound (discrepancy review, deliberate dismiss, bulk select/verify). Also merged: the doc-cleanup corpus (PR #175, 72 files, banners + dedup + session-close process). Three pending Wave-0 patches (emaillog-FAILED alert, URL-filters rollout, batch6a date-unify) are reviewed and ready. Production is deliberately deferred (see D1).
+AHITS is at the pilot doorstep, running on **staging**. The hard architecture is done and audit-verified. Merged to `development` (→ staging): CC-01 release-safety hardening, CC-02 data-integrity cluster, CC-03 offline/trust one-liners, CC-06 dashboard-fix + BOBCAT-enum, CC-07 mobile quick-wins, CC-08 hubs inbound (discrepancy review, deliberate dismiss, bulk select/verify). Also merged: the doc-cleanup corpus (PR #175, 72 files, banners + dedup + session-close process); Wave-0 patches emaillog-FAILED alert (PR #176), URL-filters rollout (PR #177), date-unify (PR #178). **CC-09 Awaiting Pickup shipped (PR #179):** operator sees "Ready for Pickup" cards after reservations are fulfilled, pickup pre-seeds the checkout flow with held lines, TTL race fixed via `holdExpiresAt`, residual holds released on checkout. Production is deliberately deferred (see D1).
 
 ## 2. Environments
 - **development → staging:** the live working line. Has the full Wave-0 hardening + W0-10 through PR-4a + this session's CC-01/02/03 + CC-06. **Smoke on staging after every merge.**
@@ -13,13 +13,12 @@ AHITS is at the pilot doorstep, running on **staging**. The hard architecture is
 
 ## 3. Active work — in flight right now
 - **A6 device pass** — the pilot gate; human-run on real iOS + Android hardware; **not started — run in parallel with Wave B**.
-- **Three pending Wave-0 patches** — `emaillog-failed-alert.patch`, `batch8-urlfilters-rollout.patch`, `batch6a-date-unify.patch` — reviewed, ready to apply; untracked in repo root.
 
 ## 4. Next actions (ordered)
-1. Apply the three pending patches (EmailLog-FAILED alert, URL-filters rollout, date-unify) as individual PRs to `development`.
-2. **Wave B:** CC-09 (Awaiting-Pickup thread) → CC-10 (field-fix log) → CC-11 (admin-as-operator, built on `deployment_assignments`, money-loop excluded per D3).
+1. **CC-10 (field-fix log)** — field-fix logging without triggering maintenance state or damage alert.
+2. **CC-11 (admin-as-operator)** — built on `deployment_assignments`; admin-held rigs excluded from payroll per D3.
 3. Run the **A6 device pass** in parallel with Wave B.
-4. Then the structural work: Batch 6b / Perf + the operator's **Today** view, then the capstones (Map → QR → Time/Invoicing).
+4. Then the structural work: Batch 6b / Perf + the operator's **Today** view (CC-14), then the capstones (Map → QR → Time/Invoicing).
 
 ## 5. Open decisions (undecided — need a human)
 - Governance sweep items (push vs 45s polling; CARRY-* build-or-descope) — see workplan §13.
@@ -34,7 +33,7 @@ AHITS is at the pilot doorstep, running on **staging**. The hard architecture is
 - **Start here / corpus map:** `00_START_HERE.md`
 - **Plan of record:** `AHITS_PHASE3_WORKPLAN_2026-07-10.md` · **Paste-ready packets:** `AHITS_CLAUDE_CODE_INSTRUCTIONS_2026-07-10.md` · **Landing order + smoke:** `AHITS_LANDING_ORDER_AND_SMOKE_CHECKLIST.md`
 - **Deep assessment:** `AHITS_STATE_OF_THE_APP_2026-07-10.md` · **Strategy:** `AHITS_PHASE3PLUS_NORTH_STAR_v3.md` · **Sequence:** `AHITS_MASTER_ROADMAP.md` · **One-pager:** `AHITS_ROADMAP_EXEC_SUMMARY.md`
-- **Decisions:** `DECISIONS.md` · **Latest handoff:** `AHITS_SESSION_HANDOFF_2026-07-11.md` · **Rules for changing code:** `CLAUDE.md`
+- **Decisions:** `DECISIONS.md` · **Latest handoff:** `AHITS_SESSION_HANDOFF_2026-07-11b.md` · **Rules for changing code:** `CLAUDE.md`
 
 ---
 
