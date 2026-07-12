@@ -382,9 +382,58 @@ async function run() {
     /* schema missing / transient — non-fatal */
   }
 
+  // 8c) FND-8/FND-17: surface FAILED outbound emails (a swallowed invoice / shop / hub /
+  // invite / work-order / reservation send) as EMAIL_FAILED alerts so admins can see and
+  // re-action them. Excludes kind='ALERT' (the alert-dispatch emails themselves) so a down
+  // mail channel can't create a self-amplifying loop; those failures stay visible in the
+  // email-log surface and admins still get every alert in-app regardless of email health.
+  let emailFailedFlagged = 0
+  try {
+    // Recovery = a LATER successful send of the SAME (to, kind, subject): the specific
+    // message got through on a retry/resend, not merely "the channel is up again".
+    const recovered = async (r: { to: string; kind: string; subject: string; createdAt: Date }) =>
+      (await prisma.emailLog.findFirst({
+        where: { status: 'SENT', to: r.to, kind: r.kind, subject: r.subject, createdAt: { gt: r.createdAt } },
+        select: { id: true },
+      })) !== null
+    // CREATE pass: newest FAILED rows not yet recovered -> one alert per failed send (dedups on row id).
+    const failed = await prisma.emailLog.findMany({
+      where: { status: 'FAILED', kind: { not: 'ALERT' } },
+      select: { id: true, to: true, subject: true, kind: true, attempts: true, lastError: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    })
+    for (const e of failed) {
+      if (await recovered(e)) continue
+      await createAlert('EMAIL_FAILED', 'email_logs', e.id, {
+        to: e.to, subject: e.subject, kind: e.kind, attempts: e.attempts, lastError: e.lastError ?? null,
+      })
+      emailFailedFlagged++
+    }
+    // RESOLVE pass: driven off the ACTIVE alerts (not the capped scan) so nothing orphans -
+    // an old failure whose recovery lands after it ages past the newest-200 still clears.
+    // (sourceTable 'email_logs' is unique to EMAIL_FAILED, so no enum filter is needed.)
+    const activeEmailAlerts = await prisma.alert.findMany({
+      where: { sourceTable: 'email_logs', resolved: false },
+      select: { sourceId: true },
+    })
+    for (const a of activeEmailAlerts) {
+      if (!a.sourceId) continue
+      const row = await prisma.emailLog.findUnique({
+        where: { id: a.sourceId },
+        select: { to: true, kind: true, subject: true, createdAt: true },
+      })
+      if (row === null || (await recovered(row))) {
+        await resolveActiveAlert('EMAIL_FAILED', 'email_logs', a.sourceId)
+      }
+    }
+  } catch {
+    /* email_logs missing / transient — non-fatal */
+  }
+
   // 9) Dispatch: email admins + create in-app notifications for un-notified alerts.
   const dispatch = await dispatchPendingAlerts()
-  return { overdueFlagged: due.length, idempotencyReaped, lowInventoryFlagged: lowFlagged, expiryFlagged, missedFlagged, holdsReleased, inventoryDriftFlagged, invariantViolations, ...dispatch }
+  return { overdueFlagged: due.length, idempotencyReaped, lowInventoryFlagged: lowFlagged, expiryFlagged, missedFlagged, holdsReleased, inventoryDriftFlagged, invariantViolations, emailFailedFlagged, ...dispatch }
 }
 
 async function handleCron(req: NextRequest) {
