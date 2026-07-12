@@ -3,12 +3,12 @@ import { timingSafeEqual } from 'crypto'
 import { PrismaClient } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getDeploymentRostersForDisplay } from '@/lib/deployment-assignments'
-import { createAlert, resolveActiveAlert } from '@/lib/alerts'
+import { createAlert, resolveActiveAlert, CRON_SILENT_SOURCE_TABLE, CRON_SILENT_SOURCE_ID } from '@/lib/alerts'
 import { dispatchPendingAlerts } from '@/lib/notifications'
 import { allHubStockForScan } from '@/lib/inventory-stock'
 import { releaseAllHeldForRequest } from '@/lib/deployment-requests'
 import { businessDateTime } from '@/lib/business-date'
-import { getNotificationConfig } from '@/lib/notification-config'
+import { getNotificationConfig, recordCronHeartbeat } from '@/lib/notification-config'
 
 // Stable i64 key for this handler's advisory lock. Arbitrary but unique per handler.
 const CRON_DISPATCH_LOCK = BigInt('7654321098')
@@ -439,6 +439,24 @@ async function run() {
 
   // 9) Dispatch: email admins + create in-app notifications for un-notified alerts.
   const dispatch = await dispatchPendingAlerts()
+
+  // 10) CC-22 dead-man heartbeat. Last step, so it only fires once every scan above
+  // has completed without an uncaught throw — a partial/crashed run must NOT stamp
+  // the heartbeat, or a broken cron would look alive.
+  //   (a) External primary signal: ping healthchecks.io (or equivalent) if configured.
+  //       No-op when CRON_HEARTBEAT_URL is unset; 3s timeout; failure never fails the
+  //       run (fire-and-forget from the run's perspective, but awaited so the ping
+  //       actually leaves the process before the response is sent).
+  //   (b) In-app secondary signal: persist lastRunAt (read by the admin alerts route's
+  //       staleness check, since a dead cron can't self-report its own silence).
+  //   (c) Required re-arm: resolve CRON_SILENT if the previous run(s) left it active.
+  const heartbeatUrl = process.env.CRON_HEARTBEAT_URL
+  if (heartbeatUrl) {
+    await fetch(heartbeatUrl, { signal: AbortSignal.timeout(3000) }).catch(() => {})
+  }
+  await recordCronHeartbeat().catch(() => {})
+  await resolveActiveAlert('CRON_SILENT', CRON_SILENT_SOURCE_TABLE, CRON_SILENT_SOURCE_ID).catch(() => {})
+
   return { overdueFlagged: due.length, idempotencyReaped, lowInventoryFlagged: lowFlagged, expiryFlagged, missedFlagged, holdsReleased, inventoryDriftFlagged, invariantViolations, emailFailedFlagged, ...dispatch }
 }
 

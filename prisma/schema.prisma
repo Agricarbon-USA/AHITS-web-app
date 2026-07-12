@@ -154,6 +154,7 @@ enum AlertType {
   DAILY_CHECK_MISSED
   EMAIL_FAILED
   INVENTORY_DRIFT
+  CRON_SILENT
 }
 
 enum PhotoContext {
@@ -863,11 +864,14 @@ model RateLimitHit {
 // `disabledAlertTypes` is a comma-separated list of AlertType values the
 // dispatcher should NOT notify on; empty = all enabled.
 model NotificationConfig {
-  id                 String   @id @default("global")
-  dailyCheckCutoff   String   @default("18:00")
-  disabledAlertTypes String   @default("")
-  updatedAt          DateTime @default(now())
-  createdAt          DateTime @default(now())
+  id                 String    @id @default("global")
+  dailyCheckCutoff   String    @default("18:00")
+  disabledAlertTypes String    @default("")
+  // CC-22: last time the cron dispatcher completed a successful run, used by the
+  // admin alerts read path to detect a silent (dead) cron and raise CRON_SILENT.
+  cronLastRunAt      DateTime?
+  updatedAt          DateTime  @default(now())
+  createdAt          DateTime  @default(now())
 
   @@map("notification_config")
 }

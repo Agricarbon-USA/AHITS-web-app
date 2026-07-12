@@ -48,3 +48,30 @@ export async function updateNotificationConfig(input: {
     WHERE "id" = 'global'
   `
 }
+
+/**
+ * CC-22: stamp the in-app cron dead-man's-switch. Called at the end of every
+ * successful cron dispatcher run, alongside the external healthchecks.io ping.
+ * Upserts so a fresh environment (no row yet) still records the first run.
+ */
+export async function recordCronHeartbeat(): Promise<void> {
+  await prisma.$executeRaw`
+    INSERT INTO "notification_config" ("id", "cronLastRunAt")
+    VALUES ('global', now())
+    ON CONFLICT ("id") DO UPDATE SET "cronLastRunAt" = now()
+  `
+}
+
+/** CC-22: last successful cron run, or null if the row/table doesn't exist yet. */
+export async function getCronLastRunAt(): Promise<Date | null> {
+  try {
+    const rows = await prisma.$queryRaw<{ cronLastRunAt: Date | null }[]>`
+      SELECT "cronLastRunAt" FROM "notification_config" WHERE "id" = 'global'
+    `
+    return rows[0]?.cronLastRunAt ?? null
+  } catch {
+    // Table/column missing (pre-migration) — treat as "never run" rather than
+    // blocking the alerts read path.
+    return null
+  }
+}

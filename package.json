@@ -30,6 +30,7 @@
     "@mui/material": "^6.1.6",
     "@mui/x-date-pickers": "^7.22.1",
     "@prisma/client": "^5.22.0",
+    "@sentry/nextjs": "^10.65.0",
     "@serwist/next": "^9.5.11",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.46.1",

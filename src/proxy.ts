@@ -59,7 +59,13 @@ function buildCsp(nonce: string): string {
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
-    "connect-src 'self' https://*.supabase.co",
+    // CC-22: Sentry's browser SDK reports errors via a direct fetch/beacon to its
+    // ingest host from the client bundle (SentryProvider.tsx) — wildcarded because
+    // the exact org/region subdomain in AHITS_SENTRY_DSN isn't known at CSP-build
+    // time here (proxy.ts has no access to env-derived per-org values beyond what's
+    // hardcoded). Harmless when AHITS_SENTRY_DSN is unset: nothing ever calls out to
+    // it since Sentry.init() is never invoked (see SentryProvider.tsx).
+    "connect-src 'self' https://*.supabase.co https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io",
     "worker-src 'self' blob:",
     "manifest-src 'self'",
   ].join('; ')
@@ -87,8 +93,10 @@ function nextWithCsp(request: NextRequest, csp: string, nonce: string, requestId
 export async function proxy(request: NextRequest) {
   // Generated fresh, NOT read from the client's x-request-id, so a caller can't
   // inject an id into our logs (the forwarded value is overwritten in nextWithCsp).
-  // Follow-on (Sentry work): route handlers can read headers().get('x-request-id')
-  // to tag their own error logs so server-side 500s correlate to what the client saw.
+  // CC-22: src/instrumentation.ts's onRequestError reads this off the forwarded
+  // request to tag server-side Sentry captures; src/app/layout.tsx reads it to
+  // tag client-side captures via SentryProvider — so a client + server error for
+  // the same request correlate under one request_id in Sentry.
   const requestId = crypto.randomUUID()
   try {
     const res = await handleRequest(request, requestId)

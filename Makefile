@@ -124,6 +124,15 @@ docker-run: ## Run container locally
 # Required overrides: SERVICE, TAG
 # Optional override:  MIN_INSTANCES (default 0)
 #
+# CC-22 adds two OPTIONAL secrets (app no-ops cleanly when either is absent, so
+# a missing secret does not break the app at runtime — but Cloud Run validates
+# --set-secrets references at DEPLOY time, so both must exist as ENABLED Secret
+# Manager versions before this target is next run, or the deploy itself fails):
+#   CRON_HEARTBEAT_URL=$(SECRET_NS)_CRON_HEARTBEAT_URL   (e.g. AHITS_CRON_HEARTBEAT_URL)
+#   AHITS_SENTRY_DSN=$(SECRET_NS)_AHITS_SENTRY_DSN        (e.g. AHITS_AHITS_SENTRY_DSN —
+#     the container env var is literally named AHITS_SENTRY_DSN per the CC-22 spec, so
+#     the mechanical NAME=$(SECRET_NS)_NAME pattern doubles the AHITS_ prefix in the
+#     Secret Manager resource name; that's expected, not a typo)
 cloud-run-deploy: ## Deploy image to Cloud Run. Set SERVICE, TAG, MIN_INSTANCES.
 	gcloud run deploy $(SERVICE) \
 	  --image $(IMAGE):$(TAG) \
@@ -133,7 +142,7 @@ cloud-run-deploy: ## Deploy image to Cloud Run. Set SERVICE, TAG, MIN_INSTANCES.
 	  --allow-unauthenticated \
 	  --min-instances=$(MIN_INSTANCES) \
 	  --set-env-vars="NODE_ENV=production,APP_TIMEZONE=America/Chicago,EMAIL_SANDBOX=$(EMAIL_SANDBOX)" \
-	  --set-secrets="DATABASE_URL=$(SECRET_NS)_DATABASE_URL:latest,DIRECT_URL=$(SECRET_NS)_DIRECT_URL:latest,NEXT_PUBLIC_SUPABASE_URL=$(SECRET_NS)_NEXT_PUBLIC_SUPABASE_URL:latest,NEXT_PUBLIC_SUPABASE_ANON_KEY=$(SECRET_NS)_NEXT_PUBLIC_SUPABASE_ANON_KEY:latest,SUPABASE_SERVICE_ROLE_KEY=$(SECRET_NS)_SUPABASE_SERVICE_ROLE_KEY:latest,PIN_SESSION_SECRET=$(SECRET_NS)_PIN_SESSION_SECRET:latest,RESEND_API_KEY=$(SECRET_NS)_RESEND_API_KEY:latest,EMAIL_FROM=$(SECRET_NS)_EMAIL_FROM:latest,NEXT_PUBLIC_APP_URL=$(SECRET_NS)_NEXT_PUBLIC_APP_URL:latest,CRON_SECRET=$(SECRET_NS)_CRON_SECRET:latest"
+	  --set-secrets="DATABASE_URL=$(SECRET_NS)_DATABASE_URL:latest,DIRECT_URL=$(SECRET_NS)_DIRECT_URL:latest,NEXT_PUBLIC_SUPABASE_URL=$(SECRET_NS)_NEXT_PUBLIC_SUPABASE_URL:latest,NEXT_PUBLIC_SUPABASE_ANON_KEY=$(SECRET_NS)_NEXT_PUBLIC_SUPABASE_ANON_KEY:latest,SUPABASE_SERVICE_ROLE_KEY=$(SECRET_NS)_SUPABASE_SERVICE_ROLE_KEY:latest,PIN_SESSION_SECRET=$(SECRET_NS)_PIN_SESSION_SECRET:latest,RESEND_API_KEY=$(SECRET_NS)_RESEND_API_KEY:latest,EMAIL_FROM=$(SECRET_NS)_EMAIL_FROM:latest,NEXT_PUBLIC_APP_URL=$(SECRET_NS)_NEXT_PUBLIC_APP_URL:latest,CRON_SECRET=$(SECRET_NS)_CRON_SECRET:latest,CRON_HEARTBEAT_URL=$(SECRET_NS)_CRON_HEARTBEAT_URL:latest,AHITS_SENTRY_DSN=$(SECRET_NS)_AHITS_SENTRY_DSN:latest"
 
 cloud-run-url: ## Print URL of a Cloud Run service. Set SERVICE.
 	@gcloud run services describe $(SERVICE) \

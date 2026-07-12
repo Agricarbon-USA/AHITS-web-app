@@ -11,6 +11,7 @@ import {
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { ChecklistTemplatesSection } from '@/components/admin/ChecklistTemplatesSection'
 import EmailDeliverySection from '@/components/admin/EmailDeliverySection'
+import SentryDiagnosticsSection from '@/components/admin/SentryDiagnosticsSection'
 import { ALERT_LABELS } from '@/lib/alert-display'
 import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
@@ -213,6 +214,9 @@ export default function SettingsPage() {
       <div id="email-delivery">
         <EmailDeliverySection />
       </div>
+
+      {/* CC-22: manual Sentry capture verification */}
+      <SentryDiagnosticsSection />
 
       {/* Daily-Check Checklists (M5-25) */}
       <ChecklistTemplatesSection onToast={showToast} onError={showError} />

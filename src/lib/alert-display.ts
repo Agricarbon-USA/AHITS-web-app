@@ -18,6 +18,7 @@ export const ALERT_LABELS: Record<string, string> = {
   DAILY_CHECK_FAILED: 'Daily check failed',
   DAILY_CHECK_MISSED: 'Daily check missed',
   EMAIL_FAILED: 'Email delivery failed',
+  CRON_SILENT: 'Cron heartbeat silent',
 }
 
 export function alertLabel(type: string): string {
