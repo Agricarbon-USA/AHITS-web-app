@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { formatDate } from '@/lib/utils'
 import {
   Box, Typography, Stack, Chip, Drawer, Divider, Button, TextField, MenuItem,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper,
@@ -73,7 +74,7 @@ const REPAIR_TYPES = [
 ]
 
 const fmtDate = (s: string | null | undefined) =>
-  s ? new Date(s).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '—'
+  formatDate(s)
 const fmtMoney = (s: string | null | undefined) =>
   s != null && s !== '' ? `$${Number(s).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'
 const toDateInput = (s: string | null | undefined) => (s ? new Date(s).toISOString().slice(0, 10) : '')

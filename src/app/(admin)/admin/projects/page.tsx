@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { formatDate } from '@/lib/utils'
 import {
   Box, Typography, Paper, Stack, Button, IconButton, CircularProgress, Chip, Divider,
   Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
@@ -46,7 +47,7 @@ interface ProjectDetail extends ProjectRow {
   rigs: { id: string; label: string | null; startedAt: string; endedAt: string | null; operator: { id: string; name: string } | null }[]
 }
 
-const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString() : '—')
+const fmt = (iso: string | null) => formatDate(iso)
 const dateInput = (iso: string | null | undefined) => (iso ? iso.slice(0, 10) : '')
 
 function StatusPill({ status }: { status: string }) {

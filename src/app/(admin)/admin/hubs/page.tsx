@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { formatDate } from '@/lib/utils'
 import {
   Box, Typography, Card, CardContent, Stack, Chip, Alert, CircularProgress,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Divider,
@@ -64,8 +65,7 @@ interface HubGroup {
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-const fmtDate = (iso: string) =>
-  new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+const fmtDate = (iso: string) => formatDate(iso)
 const fmtDateTime = (iso: string) =>
   new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 const daysAgo = (iso: string) =>

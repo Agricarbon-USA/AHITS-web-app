@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { formatDate } from '@/lib/utils'
 import {
   Box,
   Typography,
@@ -224,7 +225,7 @@ export default function RequestsPage() {
                         <Typography variant="caption" color="text.secondary">
                           {req.lineCount} line{req.lineCount !== 1 ? 's' : ''}
                           {req.neededBy &&
-                            ` · Needed ${new Date(req.neededBy).toLocaleDateString()}`}
+                            ` · Needed ${formatDate(req.neededBy)}`}
                           {req.projectName && ` · ${req.projectName}`}
                         </Typography>
                         {req.decisionNote && (
