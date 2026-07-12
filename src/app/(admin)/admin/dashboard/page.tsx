@@ -211,6 +211,7 @@ export default function AdminDashboardPage() {
               const context = [
                 meta.itemName ? String(meta.itemName) : null,
                 meta.taskName ? String(meta.taskName) : null,
+                meta.operatorName ? `Operator: ${meta.operatorName}` : null,
                 meta.name ? `User: ${meta.name}` : null,
               ].filter(Boolean).join(' · ')
               return (
@@ -239,6 +240,11 @@ export default function AdminDashboardPage() {
                       primary={
                         <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                           <Chip label={alertLabel(alert.type)} size="small" color="error" variant="outlined" />
+                          {meta.isAdminHeld === true && (
+                            // D3: distinguishes an admin-held rig's missed check from a
+                            // payroll-eligible operator's — never conflate the two.
+                            <Chip label="Admin-held" size="small" color="default" variant="outlined" />
+                          )}
                           <Typography variant="caption" color="text.secondary">{relativeTime(alert.triggeredAt)}</Typography>
                         </Box>
                       }
