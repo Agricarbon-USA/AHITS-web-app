@@ -34,6 +34,7 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Decision:** Admins may own and operate a rig (built on `deployment_assignments`, not the legacy column). Admin-held rigs are **excluded from payroll attribution** and flagged distinctly in missed-check scans and dashboards. This policy is written into the attribution resolver and the cron scan **before** the role gates are relaxed.
 - **Rationale:** admins acting as operators for coverage must not contaminate payroll/invoicing attribution — the exact cleanliness W0-10 was built to protect.
 - **Detail:** CC-11 / workplan §5 A-5.
+- **Note (2026-07-12, Max):** Role gates relaxed in PR #181 with the cron missed-check exclusion landing in the same PR. No attribution resolver exists yet (money models unbuilt), so D3's resolver-side exclusion transfers forward as a HARD acceptance criterion on CC-17 (Time/Invoicing): attribution via deployment_assignments MUST exclude admin-held rigs, verified at review. Any CC-17 implementation without this exclusion violates D3.
 
 ### D4 · W0-10 legacy-column retirement runs 4a → 4b′ → 4c; DROP guarded by human sequencing
 - **Date:** 2026-07-10 (inherited from the W0-10 plan) · **Owner:** Max · **Status:** ACTIVE
