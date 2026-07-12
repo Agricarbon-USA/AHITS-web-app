@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
 import { getDeploymentRostersForDisplay, ensureOpenAssignment, addProjectLink, getActiveRigForOperator, hydrateRigOperator } from '@/lib/deployment-assignments'
 import { drawFromHub, getStockAtHub, totalStock, setStockAtHub, resyncItemTotal } from '@/lib/inventory-stock'
-import { claimHeldStock } from '@/lib/deployment-requests'
+import { claimHeldStock, releaseAllHeldForRequest } from '@/lib/deployment-requests'
 import { withIdempotency } from '@/lib/idempotency'
 
 const RIG_INCLUDE = {
@@ -82,6 +82,9 @@ const createSchema = z.object({
     }),
   ])).default([]),
   sourceHubId: z.string().optional(),
+  // CC-09: which fulfilled reservation seeded this pickup. When set, any held lines
+  // not covered by this checkout are released (acceptance #4 — residual-hold zombie fix).
+  fromRequestId: z.string().optional(),
 })
 
 export async function GET(req: NextRequest) {
@@ -170,7 +173,7 @@ async function _POST(req: NextRequest) {
   const parsed = createSchema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const { note, vehicleIds, kitItems, projectId, label, sourceHubId } = parsed.data
+  const { note, vehicleIds, kitItems, projectId, label, sourceHubId, fromRequestId } = parsed.data
   const operatorId = session.role === 'OPERATOR' ? session.userId : (parsed.data.operatorId ?? session.userId)
 
   let rig
@@ -377,6 +380,17 @@ async function _POST(req: NextRequest) {
     const msg = err instanceof Error ? err.message : 'Failed to create deployment'
     console.error('[POST /api/deployments]', err)
     return NextResponse.json({ error: msg }, { status: 500 })
+  }
+
+  // CC-09 acceptance #4: release any held lines the operator did not claim
+  // (removed from the pickup form). claimHeldStock already advanced claimedQty for
+  // items that WERE included; releaseAllHeldForRequest then frees only unclaimed
+  // remainder (heldQty > claimedQty AND releasedAt IS NULL) so the card disappears.
+  if (fromRequestId) {
+    await prisma.$transaction((tx) => releaseAllHeldForRequest(fromRequestId, tx)).catch(() => {})
+    await prisma.$executeRaw`
+      UPDATE "rigs" SET "fromRequestId" = ${fromRequestId} WHERE "id" = ${rig.id}
+    `.catch(() => {})
   }
 
   return NextResponse.json(await hydrateRigOperator(rig), { status: 201 })

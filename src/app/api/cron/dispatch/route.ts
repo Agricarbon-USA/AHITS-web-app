@@ -221,6 +221,7 @@ async function run() {
         AND l."heldQty" > l."claimedQty"
         AND r."status" = 'FULFILLED'
         AND r."fulfilledAt" < NOW() - make_interval(hours => ${holdTtlHours})
+        AND (r."holdExpiresAt" IS NULL OR r."holdExpiresAt" < NOW())
     `
     for (const row of staleReqs) {
       const released = await prisma.$transaction((tx) => releaseAllHeldForRequest(row.requestId, tx))

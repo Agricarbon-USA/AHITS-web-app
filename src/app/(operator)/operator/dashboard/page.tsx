@@ -10,6 +10,7 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/hooks/useAuth'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 import { StatusChip } from '@/components/shared/StatusChip'
+import { AwaitingPickupCard, AwaitingPickupRequest } from '@/components/shared/AwaitingPickupCard'
 
 const TERMINAL = new Set(['FULFILLED', 'CANCELLED', 'DENIED'])
 
@@ -30,6 +31,7 @@ export default function OperatorDashboardPage() {
   // placeholder — no React #418 mismatch, Sign Out onClick fires reliably (S7/S8).
   const [mounted, setMounted] = React.useState(false)
   const [openRequests, setOpenRequests] = React.useState<RequestRow[]>([])
+  const [pickupRequests, setPickupRequests] = React.useState<AwaitingPickupRequest[]>([])
 
   React.useEffect(() => {
     setMounted(true)
@@ -40,6 +42,11 @@ export default function OperatorDashboardPage() {
         const all: RequestRow[] = d.data ?? []
         setOpenRequests(all.filter((r) => !TERMINAL.has(r.status)))
       })
+      .catch(() => {})
+    // CC-09: load awaiting-pickup reservations
+    fetch('/api/deployment-requests/awaiting-pickup')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d?.data) setPickupRequests(d.data) })
       .catch(() => {})
   }, [])
 
@@ -59,6 +66,14 @@ export default function OperatorDashboardPage() {
       )}
 
       <Stack spacing={2}>
+        {mounted && pickupRequests.map((req) => (
+          <AwaitingPickupCard
+            key={req.id}
+            request={req}
+            onPickUp={(r) => router.push(`/operator/my-deployment?fromRequestId=${r.id}`)}
+          />
+        ))}
+
         <Card sx={{ cursor: 'pointer' }} onClick={() => router.push('/operator/daily-check')}>
           <CardContent sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <ChecklistIcon sx={{ fontSize: 40, color: 'primary.main' }} />
