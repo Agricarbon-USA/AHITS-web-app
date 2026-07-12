@@ -862,7 +862,7 @@ function DeploymentDrawer({
                     onChange={(e) => setOperatorToAdd(e.target.value)} sx={{ flex: 1 }}
                   >
                     {operators
-                      .filter((u) => u.role === 'OPERATOR' && u.id !== rig.operator.id && !rig.secondaryOperators?.some((ro) => ro.operatorId === u.id))
+                      .filter((u) => (u.role === 'OPERATOR' || u.role === 'ADMIN') && u.id !== rig.operator.id && !rig.secondaryOperators?.some((ro) => ro.operatorId === u.id))
                       .map((u) => <MenuItem key={u.id} value={u.id}>{u.name}</MenuItem>)}
                   </TextField>
                   <MutationButton size="small" variant="contained" disabled={!operatorToAdd}
@@ -1188,7 +1188,7 @@ function DeploymentDrawer({
             select label="Reassign to" value={reassignTargetId}
             onChange={(e) => setReassignTargetId(e.target.value)} fullWidth sx={{ mb: 2 }}
           >
-            {operators.filter((u) => u.role === 'OPERATOR' && u.id !== rig.operator.id).map((u) => (
+            {operators.filter((u) => (u.role === 'OPERATOR' || u.role === 'ADMIN') && u.id !== rig.operator.id).map((u) => (
               <MenuItem key={u.id} value={u.id}>{u.name}</MenuItem>
             ))}
           </TextField>
@@ -1379,7 +1379,7 @@ function AdminDeploymentsContent() {
         <TextField select size="small" label="All Operators" value={!filterOperator || operators.some((o) => o.id === filterOperator) ? filterOperator : ''}
           onChange={(e) => setFilters({ operatorId: e.target.value })} sx={{ minWidth: 160 }}>
           <MenuItem value="">All Operators</MenuItem>
-          {operators.filter((o) => o.role === 'OPERATOR').map((o) => (
+          {operators.filter((o) => o.role === 'OPERATOR' || o.role === 'ADMIN').map((o) => (
             <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>
           ))}
         </TextField>
@@ -1494,7 +1494,7 @@ function AdminDeploymentsContent() {
 
       {newOpen && (
         <NewDeploymentDialog
-          operators={operators.filter((o) => o.role === 'OPERATOR')}
+          operators={operators.filter((o) => o.role === 'OPERATOR' || o.role === 'ADMIN')}
           vehicles={vehicles}
           inventoryItems={inventoryItems}
           hubs={hubs}

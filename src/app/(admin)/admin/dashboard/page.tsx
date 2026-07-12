@@ -30,7 +30,7 @@ interface AlertRow {
 
 interface Feeds {
   counts: { missedChecks: number; maintenanceDueSoon: number; longRunning: number; maintenanceWatch?: number }
-  missedChecks: { rigId: string; operator: string; label: string | null; startedAt: string }[]
+  missedChecks: { rigId: string; operator: string; isAdminHeld?: boolean; label: string | null; startedAt: string }[]
   maintenanceDueSoon: { id: string; taskName: string; target: string; nextDue: string | null; status: string; overdue: boolean }[]
   longRunning: { rigId: string; operator: string; label: string | null; startedAt: string; daysOut: number }[]
   recentActivity: { id: string; action: string; item: string; unit: string | null; operator: string | null; at: string }[]
@@ -148,7 +148,7 @@ export default function AdminDashboardPage() {
         <Grid item xs={12} md={6}>
           <FeedPanel title="Missed checks today" count={feeds?.missedChecks.length} emptyText="All active operators have checked in today.">
             {feeds?.missedChecks.map((m) => (
-              <FeedItem key={m.rigId} primary={m.operator} secondary={`${m.label ? m.label + ' · ' : ''}deployed ${fmtDate(m.startedAt)}`} onClick={() => router.push('/admin/deployments')} />
+              <FeedItem key={m.rigId} primary={m.operator} secondary={`${m.label ? m.label + ' · ' : ''}deployed ${fmtDate(m.startedAt)}`} chip={m.isAdminHeld ? { label: 'Admin-held', color: 'default' } : undefined} onClick={() => router.push('/admin/deployments')} />
             ))}
           </FeedPanel>
         </Grid>
@@ -211,6 +211,7 @@ export default function AdminDashboardPage() {
               const context = [
                 meta.itemName ? String(meta.itemName) : null,
                 meta.taskName ? String(meta.taskName) : null,
+                meta.operatorName ? `Operator: ${meta.operatorName}` : null,
                 meta.name ? `User: ${meta.name}` : null,
               ].filter(Boolean).join(' · ')
               return (
@@ -239,6 +240,11 @@ export default function AdminDashboardPage() {
                       primary={
                         <Box component="span" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                           <Chip label={alertLabel(alert.type)} size="small" color="error" variant="outlined" />
+                          {meta.isAdminHeld === true && (
+                            // D3: distinguishes an admin-held rig's missed check from a
+                            // payroll-eligible operator's — never conflate the two.
+                            <Chip label="Admin-held" size="small" color="default" variant="outlined" />
+                          )}
                           <Typography variant="caption" color="text.secondary">{relativeTime(alert.triggeredAt)}</Typography>
                         </Box>
                       }

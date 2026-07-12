@@ -42,8 +42,10 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   }
 
   const target = await prisma.user.findUnique({ where: { id: toOperatorId }, select: { id: true, isActive: true, role: true } })
-  if (!target || !target.isActive || target.role !== 'OPERATOR') {
-    return NextResponse.json({ error: 'Target must be an active operator' }, { status: 400 })
+  // D3: an admin may hold a rig (admin-as-operator), so admins are a valid handoff
+  // target alongside operators; excluded from the money loop downstream, not here.
+  if (!target || !target.isActive || (target.role !== 'OPERATOR' && target.role !== 'ADMIN')) {
+    return NextResponse.json({ error: 'Target must be an active operator or admin' }, { status: 400 })
   }
 
   const force = isAdmin && forceRaw === true

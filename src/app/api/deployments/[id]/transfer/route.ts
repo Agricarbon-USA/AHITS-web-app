@@ -81,8 +81,11 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   if (!toOperator || !toOperator.isActive) {
     return NextResponse.json({ error: 'Destination operator not found or inactive' }, { status: 400 })
   }
-  if (toOperator.role !== 'OPERATOR') {
-    return NextResponse.json({ error: 'Transfers can only be sent to an operator' }, { status: 400 })
+  // D3: an admin may hold a rig (admin-as-operator), so admins are a valid transfer
+  // destination alongside operators; the admin-held rig is excluded from the money
+  // loop downstream (attribution + missed-check cron), not gated out here.
+  if (toOperator.role !== 'OPERATOR' && toOperator.role !== 'ADMIN') {
+    return NextResponse.json({ error: 'Transfers can only be sent to an operator or admin' }, { status: 400 })
   }
 
   // Verify all vehicleIds belong to this rig's active vehicles

@@ -183,6 +183,10 @@ async function run() {
     const operatorId = roster?.operatorId ?? null
     if (!operatorId) continue
     const operatorName = roster?.operator?.name ?? 'Operator'
+    // D3: an admin-held rig still gets a safety-oversight missed-check alert (the
+    // check itself isn't optional), but it must never be conflated with a
+    // payroll-eligible operator miss — flag it distinctly for the dashboard.
+    const isAdminHeld = roster?.operator?.role === 'ADMIN'
     const checkedToday = await prisma.dailyCheck.findFirst({
       where: { operatorId, date: new Date(today) },
       select: { id: true },
@@ -194,6 +198,7 @@ async function run() {
         operatorName,
         date: today,
         cutoff: dailyCheckCutoff,
+        isAdminHeld,
       })
       missedFlagged++
     }

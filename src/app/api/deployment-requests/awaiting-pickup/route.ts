@@ -7,7 +7,11 @@ import { getAwaitingPickupForOperator } from '@/lib/deployment-requests'
 export async function GET() {
   const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (session.role !== 'OPERATOR') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  // CC-11: an admin may hold a rig (admin-as-operator) and needs the same
+  // awaiting-pickup surface as any other operator holding the destination rig.
+  if (session.role !== 'OPERATOR' && session.role !== 'ADMIN') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
   const requests = await getAwaitingPickupForOperator(session.userId)
   return NextResponse.json({ data: requests })

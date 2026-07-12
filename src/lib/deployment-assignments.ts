@@ -28,11 +28,15 @@ export interface DeploymentAssignmentRow {
   note: string | null
 }
 
-/** Current operator + project roster for one or more deployments, sourced from the new tables. */
+/** Current operator + project roster for one or more deployments, sourced from the new tables.
+ *  `operator.role` (D3): the Time/Invoicing capstone (CC-17) and any other payroll/attribution
+ *  reader MUST check this and exclude PRIMARY assignments where role === 'ADMIN' — an admin
+ *  covering a rig (admin-as-operator) is explicitly NOT a payroll event. Not enforced here
+ *  because no attribution consumer exists yet; see DECISIONS.md D3. */
 export interface DeploymentRoster {
-  operator: { id: string; name: string; email: string } | null
+  operator: { id: string; name: string; email: string; role: string } | null
   operatorId: string | null
-  secondaryOperators: { operator: { id: string; name: string; email: string } }[]
+  secondaryOperators: { operator: { id: string; name: string; email: string; role: string } }[]
   projects: { id: string; name: string }[]
 }
 
@@ -47,9 +51,9 @@ export async function getDeploymentRosters(
   }
 
   const assignments = await db.$queryRaw<
-    { rigId: string; operatorId: string; name: string | null; email: string | null; role: string }[]
+    { rigId: string; operatorId: string; name: string | null; email: string | null; role: string; userRole: string | null }[]
   >`
-    SELECT a."rigId", a."operatorId", u."name", u."email", a."role"::text AS "role"
+    SELECT a."rigId", a."operatorId", u."name", u."email", a."role"::text AS "role", u."role"::text AS "userRole"
     FROM "deployment_assignments" a
     LEFT JOIN "users" u ON u."id" = a."operatorId"
     WHERE a."rigId" IN (${Prisma.join(rigIds)}) AND a."endedAt" IS NULL
@@ -58,10 +62,14 @@ export async function getDeploymentRosters(
     const r = map.get(a.rigId)
     if (!r) continue
     if (a.role === 'PRIMARY') {
-      r.operator = { id: a.operatorId, name: a.name ?? '', email: a.email ?? '' }
+      // userRole is only null if the LEFT JOIN misses (a hard-deleted user); users
+      // are never hard-deleted (only isActive:false), so an open assignment's
+      // operatorId always resolves — no silent OPERATOR default that would mask
+      // an admin-held rig's role and defeat the D3 payroll exclusion.
+      r.operator = { id: a.operatorId, name: a.name ?? '', email: a.email ?? '', role: a.userRole! }
       r.operatorId = a.operatorId
     } else {
-      r.secondaryOperators.push({ operator: { id: a.operatorId, name: a.name ?? '', email: a.email ?? '' } })
+      r.secondaryOperators.push({ operator: { id: a.operatorId, name: a.name ?? '', email: a.email ?? '', role: a.userRole! } })
     }
   }
 
@@ -109,7 +117,7 @@ export async function getDeploymentRostersForDisplay(
   }
 
   const assignments = await db.$queryRaw<
-    { rigId: string; operatorId: string; name: string | null; email: string | null; role: string }[]
+    { rigId: string; operatorId: string; name: string | null; email: string | null; role: string; userRole: string | null }[]
   >`
     WITH agg AS (
       SELECT "rigId",
@@ -119,7 +127,7 @@ export async function getDeploymentRostersForDisplay(
       WHERE "rigId" IN (${Prisma.join(rigIds)})
       GROUP BY "rigId"
     )
-    SELECT a."rigId", a."operatorId", u."name", u."email", a."role"::text AS "role"
+    SELECT a."rigId", a."operatorId", u."name", u."email", a."role"::text AS "role", u."role"::text AS "userRole"
     FROM "deployment_assignments" a
     JOIN agg ON agg."rigId" = a."rigId"
     LEFT JOIN "users" u ON u."id" = a."operatorId"
@@ -131,10 +139,14 @@ export async function getDeploymentRostersForDisplay(
     const r = map.get(a.rigId)
     if (!r) continue
     if (a.role === 'PRIMARY') {
-      r.operator = { id: a.operatorId, name: a.name ?? '', email: a.email ?? '' }
+      // userRole is only null if the LEFT JOIN misses (a hard-deleted user); users
+      // are never hard-deleted (only isActive:false), so an open assignment's
+      // operatorId always resolves — no silent OPERATOR default that would mask
+      // an admin-held rig's role and defeat the D3 payroll exclusion.
+      r.operator = { id: a.operatorId, name: a.name ?? '', email: a.email ?? '', role: a.userRole! }
       r.operatorId = a.operatorId
     } else {
-      r.secondaryOperators.push({ operator: { id: a.operatorId, name: a.name ?? '', email: a.email ?? '' } })
+      r.secondaryOperators.push({ operator: { id: a.operatorId, name: a.name ?? '', email: a.email ?? '', role: a.userRole! } })
     }
   }
 
@@ -309,20 +321,29 @@ export async function getRequiredPrimaryForRig(rigId: string, db: RawClient = pr
   return primary
 }
 
+// ── Money-loop attribution hook (D3) ───────────────────────────────────────
+// CC-11 lets an admin hold a rig as PRIMARY (admin-as-operator), and D3 requires
+// admin-held rigs be EXCLUDED from payroll attribution. Nothing computes payroll
+// yet — that's the Time/Invoicing capstone (CC-17). When it's built, every place
+// it turns a PRIMARY assignment into hours/pay MUST filter out operatorRole ===
+// 'ADMIN' first (roster reads carry it via DeploymentRoster.operator.role;
+// getVehicleOperators below carries it as `operatorRole`). Do not let an admin
+// covering a rig generate a payroll line.
+
 export async function getVehicleOperators(
   vehicleIds: string[], db: RawClient = prisma,
-): Promise<Map<string, { operatorId: string; operatorName: string | null }>> {
-  const m = new Map<string, { operatorId: string; operatorName: string | null }>()
+): Promise<Map<string, { operatorId: string; operatorName: string | null; operatorRole: string | null }>> {
+  const m = new Map<string, { operatorId: string; operatorName: string | null; operatorRole: string | null }>()
   if (vehicleIds.length === 0) return m
-  const rows = await db.$queryRaw<{ vehicleId: string; operatorId: string; operatorName: string | null }[]>`
-    SELECT rv."vehicleId", a."operatorId", u."name" AS "operatorName"
+  const rows = await db.$queryRaw<{ vehicleId: string; operatorId: string; operatorName: string | null; operatorRole: string | null }[]>`
+    SELECT rv."vehicleId", a."operatorId", u."name" AS "operatorName", u."role"::text AS "operatorRole"
     FROM "rig_vehicles" rv
     JOIN "rigs" r ON r."id" = rv."rigId" AND r."endedAt" IS NULL
     JOIN "deployment_assignments" a ON a."rigId" = r."id" AND a."role" = 'PRIMARY' AND a."endedAt" IS NULL
     LEFT JOIN "users" u ON u."id" = a."operatorId"
     WHERE rv."vehicleId" IN (${Prisma.join(vehicleIds)}) AND rv."removedAt" IS NULL
     ORDER BY a."startedAt" DESC`
-  for (const r of rows) if (!m.has(r.vehicleId)) m.set(r.vehicleId, { operatorId: r.operatorId, operatorName: r.operatorName })
+  for (const r of rows) if (!m.has(r.vehicleId)) m.set(r.vehicleId, { operatorId: r.operatorId, operatorName: r.operatorName, operatorRole: r.operatorRole })
   return m
 }
 

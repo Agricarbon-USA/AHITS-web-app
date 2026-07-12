@@ -6,6 +6,7 @@ import { requireAuth } from '@/lib/auth/session'
 import { withIdempotency } from '@/lib/idempotency'
 import { writeAudit } from '@/lib/audit'
 import { getHandoff, reassignPrimary } from '@/lib/deployment-handoffs'
+import { isUniqueViolationAnywhere } from '@/lib/api-errors'
 
 const schema = z.object({
   responseNote: z.string().optional(),
@@ -58,6 +59,18 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     const msg = err instanceof Error ? err.message : 'Accept failed'
     if (msg === 'TARGET_HAS_ACTIVE_RIG') {
       return NextResponse.json({ error: 'That operator already has an active deployment' }, { status: 409 })
+    }
+    // FND-23 index A (one open PRIMARY per operator): a concurrent accept for the
+    // same destination operator can slip the getActiveRigForOperator pre-check and
+    // hit the partial-unique index inside reassignPrimary's ensureOpenAssignment
+    // raw $executeRaw insert — which Prisma surfaces as P2010 with the real code
+    // nested at err.meta.code, not a plain P2002/23505 — translate to a friendly
+    // 409 instead of a raw constraint-violation message (CC-11).
+    if (isUniqueViolationAnywhere(err)) {
+      return NextResponse.json(
+        { error: 'That operator just started another active deployment — refresh and try again.' },
+        { status: 409 },
+      )
     }
     return NextResponse.json({ error: msg }, { status: 409 })
   }
