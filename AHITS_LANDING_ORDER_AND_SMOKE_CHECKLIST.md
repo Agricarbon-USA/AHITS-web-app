@@ -35,7 +35,9 @@
 11. **CC-10** Field-fix logging
 12. **CC-11** Admin-as-operator *(build directly on `deployment_assignments` — no longer waits on 4b′, since prod/4b′ is deferred)*
 
-**Then the big work in workplan order:** CC-12 (Batch 6b/perf) → CC-14 (Today view) → CC-15 (Map) → CC-16 (QR) → CC-17 (Time/Invoicing) → CC-18 (Week board). CC-13/CC-19/CC-20 (doc + consistency + dead-code) land whenever convenient. CC-21 is a design spike (no build).
+**Then the reflection increment + the big work, in this order:**
+CC-10 merge → CC-11 → **CC-22** (pilot ops rider) → **CC-23** (tokens + quick fixes + first 3 primitives) → **CC-24** (subtraction + glossary) → **CC-25** (live-camera QR) → CC-12 (Batch 6b/perf) → CC-14 (Today view) → **CC-26** (daily-check viewer — MUST land before the pilot fortnight) → **pilot fortnight** (with **CC-27** FulfillmentChecklist rebuild as scheduled filler) → CC-15 (Map) → CC-16 (QR no-app) → CC-17 (Time/Invoicing) → CC-18 (Week board). *(The pilot slot assumes D5 = Option A; if Max initials Option B, insert the Today-lite bridge packet — CC-28, number reserved — after CC-26.)*
+CC-13/CC-19/CC-20 (doc + consistency + dead-code remainder) land whenever convenient. CC-21 is a design spike (no build).
 
 **In parallel, starting now (no code):** the **A6 device pass** — your pilot line — and get a **Sentry DSN** to unblock error tracking.
 
@@ -62,6 +64,18 @@
 **CC-10 (field-fix):** log a fixed issue on a vehicle from the field — it records COMPLETED without flipping the unit into maintenance or firing a damage alert.
 
 **CC-11 (admin-as-op):** an admin can be a transfer recipient and hold a rig; confirm the admin-held rig does **not** appear in payroll/missed-check attribution.
+
+**CC-22 (pilot ops rider):** stop the staging dispatch cron for >30 min (or fake lastRunAt) → a CRON_SILENT alert appears on the admin dashboard, and the next successful run RESOLVES it; the heartbeat ping hits the healthchecks.io URL on a successful run (and no-ops with the env var absent); with no DSN set nothing hits Sentry; with a dummy DSN, a forced server error and a forced client error both capture with the x-request-id attached (the client event passes CSP).
+
+**CC-23 (tokens/design):** at 390px the 5 detail drawers use DetailDrawer and don't clip; the daily-check Yes/No toggles and the photo-remove button are ≥44px with ≥16px actionable text; dashboard StatCard icons show their color tint (not transparent); the amber secondary/warning text is readable; the s/[token] page pulls palette/type from tokens.ts; the ESLint no-hex rule fails a deliberately-added stray hex outside the allowlist.
+
+**CC-24 (subtraction):** the dashboard shows ONE scan card (not two); the /operator/checkout redirect still works UNLESS the PR proved zero inbound references; Dismiss/Revoke reads as one verb everywhere; deployment launch submits with NO typed note (or a one-tap preset) — server accepts it too; the two remove-gear flows are one, and a single-item remove is ≤2 taps; MATERIAL-request says "Mark handled" while reservation/hub "Fulfilled" is untouched.
+
+**CC-25 (live QR):** on a phone (include iOS Safari), a code decodes live from the viewfinder with no shutter tap in operator/scan and both my-deployment scanners; deny camera → falls back to photo capture (not a blank screen); offline shows "can't verify right now" and a bad code shows "not found" — never "Failed to process image"; the camera stream stops on close and resumes after switching apps and back.
+
+**CC-26 (daily-check viewer):** from a failed-check alert, one click opens THAT check with answers + odometer + site + photos; a missed-check alert lands on the vehicle's check history; the vehicle AND deployment drawers reach the viewer; nothing on the viewer is editable.
+
+**CC-27 (FulfillmentChecklist):** BEFORE merge: hub-flow staging smoke — fulfill a request end-to-end through the rebuilt checklist. After: controls in admin/requests are themed MUI (no raw system-font buttons next to MUI ones); every action produces the same result as before (behavior parity).
 
 **CC-14 (Today):** operator dashboard shows the day (deployment, check state, what's waiting on me), not the static menu.
 

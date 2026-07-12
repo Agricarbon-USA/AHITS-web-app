@@ -11,6 +11,7 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 > | W0-10 `4b′`/`4c` DROP patches | HELD | 4a soaked on prod + go/no-go green | D4 |
 > | Map: real-time / live GPS tracking | ANTI-GOAL (permanent) | never (crew visibility is last-known only) | D2 |
 > | Sentry error tracking | BLOCKED | Max provides a DSN | — |
+> | CC-20 remainder (record-reader legibility #2–#6) | PARKED | first pilot dispute needing history a surface can't show | CC-20 |
 
 ---
 
@@ -39,6 +40,24 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Decision:** Three-phase retirement so the irreversible `DROP` (4c) runs against a revision that neither reads nor writes the columns. `4b′`/`4c` are **HELD** and must NOT be merged casually — land them only after 4a is live and soaked with the migration plan's §11 go/no-go green. The held patches live in `held/`, out of the way, guarded by the CI drop-guard from CC-01.
 - **Rationale:** zero read/write blip on an irreversible drop; the acknowledged-DROP comment bypasses CI's migration-safety gate, so human sequencing plus the CC-01 guard are the guards.
 - **Detail:** `AHITS_W0-10_MIGRATION_PLAN.md` §10–§11.
+
+### D5 · Pilot must not launch onto the static menu — hold for Today, or ship a Today-lite bridge
+- **Date:** 2026-07-12 · **Owner:** Max · **Status:** PENDING (Max to decide — see `AHITS_PILOT_CHARTER.md` §5)
+- **Options:** (A) HOLD the pilot fortnight until Today (CC-14) ships [RECOMMENDED — cleanest]; (B) ship a Today-lite bridge (check-done chip + transfers-waiting row + Awaiting-Pickup cards on the existing dashboard) as packet CC-28 (number reserved), inserted after CC-26, and start on that.
+- **Recommendation:** A. Launching onto the verified static 4-card menu is competing with texting using a directory; the adoption metric is at risk from day 1.
+
+### D6 · Email sandbox flip — global flip on charter start date, after the two-part audit
+- **Date:** 2026-07-12 · **Owner:** Max · **Status:** PENDING (Max to run the audit and flip)
+- **Recommendation:** `EMAIL_SANDBOX` is one global env var — a per-hub flip is impossible. On the charter start date, flip global EMAIL_SANDBOX off, AFTER (a) verifying only pilot hubs have contact addresses, (b) auditing all non-hub recipient paths (shop emails, invites, invoice sends) for real addresses in staging data.
+
+### D7 · Name a second human as pilot-hours contact
+- **Date:** 2026-07-12 · **Owner:** Max · **Status:** PENDING (Max to name)
+- **Recommendation:** name one non-owner reachable during pilot hours to run the "operator can't sync" triage card (`AHITS_PILOT_CHARTER.md`). A one-human pilot is a single point of failure; the first 6am sync failure has no owner today.
+
+### D8 · CC-11 landed the cron-scan half of the D3 exclusion concurrently with the role-gate relax, not before it
+- **Date:** 2026-07-12 · **Owner:** Max · **Status:** PENDING (Max to decide if this needs a formal note or is fine as shipped)
+- **Context:** D3 says the admin-as-operator payroll exclusion "is written into the attribution resolver and the cron scan before the role gates are relaxed." CC-11 (PR #181, merged) relaxed the role gates (transfer/handoff/operators roster) and added the cron-scan `isAdminHeld` flagging in the same PR — no attribution resolver exists yet (Time/Invoicing / CC-17 isn't built), so there was nothing to sequence the resolver-half against. `DeploymentRoster.operator.role` and `getVehicleOperators`'s `operatorRole` now carry the signal CC-17 will need; a comment above `getVehicleOperators` names the requirement.
+- **Recommendation:** treat this as satisfied in spirit (cron scan is done, resolver literally cannot exist before its own capstone) rather than a violation requiring rework — but flagging per CLAUDE.md's rule against silently acting against an ACTIVE decision. Superseded-by candidate if Max agrees: fold this note into D3 itself rather than keep it standalone.
 
 ---
 

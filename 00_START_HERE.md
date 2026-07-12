@@ -44,7 +44,7 @@ Before writing code, also read `CLAUDE.md` + `AGENTS.md` (deploy flow + the DB/m
 | know **what's already been decided** (before re-arguing it) | `DECISIONS.md` |
 | understand **why** we build what we build | `AHITS_PHASE3PLUS_NORTH_STAR_v3.md` |
 | see the **plan / what's next** | `AHITS_PHASE3_WORKPLAN_2026-07-10.md` |
-| **write code** this session | `CLAUDE.md` + `AHITS_CLAUDE_CODE_INSTRUCTIONS_2026-07-10.md` |
+| **write code** this session | `CLAUDE.md` + `AHITS_CLAUDE_CODE_INSTRUCTIONS.md` (canonical packet doc) |
 | know the **landing order + how to smoke** each packet | `AHITS_LANDING_ORDER_AND_SMOKE_CHECKLIST.md` |
 | see the **full phased sequence + integration matrix** | `AHITS_MASTER_ROADMAP.md` (§8 = the CONV-# flows) |
 | look up a finding/bug/feature **ID** (`FND-12`, `NS-10`, `CONV-4`, `CC-08`) | `AHITS_PHASE3_WORKPLAN_v2.md` (the register) |
