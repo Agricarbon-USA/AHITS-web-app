@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { formatDate } from '@/lib/utils'
 import {
   Box, Typography, Button, Card, CardContent, Stack, Chip, Alert, CircularProgress,
   MenuItem, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Collapse,
@@ -12,6 +13,7 @@ import SendIcon from '@mui/icons-material/Send'
 import AddIcon from '@mui/icons-material/Add'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { useToast } from '@/components/shared/useToast'
+import { useUrlFilters } from '@/hooks/useUrlFilters'
 import { MutationButton } from '@/components/shared/ReadOnly'
 import { FulfillmentChecklist, type ChecklistLine, type LineActionData } from '@/components/shared/FulfillmentChecklist'
 import {
@@ -349,7 +351,7 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
                 {req.forOperatorName && ` · for ${req.forOperatorName}`}
                 {req.projectName && ` · ${req.projectName}`}
                 {req.lineCount > 0 && ` · ${req.lineCount} line${req.lineCount !== 1 ? 's' : ''}`}
-                {req.neededBy && ` · Needed ${new Date(req.neededBy).toLocaleDateString()}`}
+                {req.neededBy && ` · Needed ${formatDate(req.neededBy)}`}
               </Typography>
               {req.decisionNote && (
                 <Typography variant="caption" display="block" color="text.secondary">
@@ -507,7 +509,19 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
+// FND-48: admin request-list dropdown/tab filters live in the URL (deep-linkable, reload-safe).
+const REQUEST_STATUS_OPTIONS = ['DRAFT', 'REQUESTED', 'STAGED', 'FORWARDED', 'FULFILLED', 'DENIED', 'CANCELLED']
+const REQUEST_FILTER_DEFAULTS = { tab: 'ACTIVE', type: 'ALL', status: 'ALL', hub: 'ALL' }
+
 export default function AdminRequestsPage() {
+  return (
+    <React.Suspense>
+      <AdminRequestsContent />
+    </React.Suspense>
+  )
+}
+
+function AdminRequestsContent() {
   const [requests, setRequests] = React.useState<ReqRow[] | null>(null)
   const [hubs, setHubs] = React.useState<HubOption[]>([])
   const [operators, setOperators] = React.useState<OperatorOption[]>([])
@@ -517,11 +531,16 @@ export default function AdminRequestsPage() {
   const [categories, setCategories] = React.useState<CategoryOption[]>([])
   const [composerOpen, setComposerOpen] = React.useState(false)
   const [composerDataLoaded, setComposerDataLoaded] = React.useState(false)
-  const [filterType, setFilterType] = React.useState('ALL')
-  const [filterStatus, setFilterStatus] = React.useState('ALL')
-  const [filterHub, setFilterHub] = React.useState('ALL')
+  // FND-48: dropdown/tab filters live in the URL (deep-linkable, reload-safe); the free-text
+  // requester search stays local (per-keystroke URL churn isn't worth it — matches inventory).
+  const { filters, setFilters } = useUrlFilters(REQUEST_FILTER_DEFAULTS)
+  // Coerce URL-tamperable values to the known option set so a stale/hand-edited param
+  // (e.g. ?tab=foo) can't disable a filter or blank a control.
+  const activeTab: 'ACTIVE' | 'CLOSED' = filters.tab === 'CLOSED' ? 'CLOSED' : 'ACTIVE'
+  const filterType = filters.type === 'RESERVATION' || filters.type === 'MATERIAL' ? filters.type : 'ALL'
+  const filterStatus = REQUEST_STATUS_OPTIONS.includes(filters.status) ? filters.status : 'ALL'
+  const filterHub = filters.hub
   const [filterRequester, setFilterRequester] = React.useState('')
-  const [activeTab, setActiveTab] = React.useState<'ACTIVE' | 'CLOSED'>('ACTIVE')
   const showToast = useToast()
 
   const load = React.useCallback(async () => {
@@ -593,7 +612,7 @@ export default function AdminRequestsPage() {
       <ToggleButtonGroup
         value={activeTab}
         exclusive
-        onChange={(_e, v) => { if (v) setActiveTab(v as 'ACTIVE' | 'CLOSED') }}
+        onChange={(_e, v) => { if (v) setFilters({ tab: v as 'ACTIVE' | 'CLOSED' }) }}
         size="small"
         sx={{ mb: 2 }}
       >
@@ -603,18 +622,18 @@ export default function AdminRequestsPage() {
 
       {/* Filter bar */}
       <Stack direction="row" spacing={1.5} mb={2} flexWrap="wrap">
-        <TextField select size="small" label="Type" value={filterType} onChange={(e) => setFilterType(e.target.value)} sx={{ minWidth: 140 }}>
+        <TextField select size="small" label="Type" value={filterType} onChange={(e) => setFilters({ type: e.target.value })} sx={{ minWidth: 140 }}>
           <MenuItem value="ALL">All types</MenuItem>
           <MenuItem value="RESERVATION">Reservation</MenuItem>
           <MenuItem value="MATERIAL">Material</MenuItem>
         </TextField>
-        <TextField select size="small" label="Status" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} sx={{ minWidth: 140 }}>
+        <TextField select size="small" label="Status" value={filterStatus} onChange={(e) => setFilters({ status: e.target.value })} sx={{ minWidth: 140 }}>
           <MenuItem value="ALL">All statuses</MenuItem>
-          {['DRAFT', 'REQUESTED', 'STAGED', 'FORWARDED', 'FULFILLED', 'DENIED', 'CANCELLED'].map((s) => (
+          {REQUEST_STATUS_OPTIONS.map((s) => (
             <MenuItem key={s} value={s}>{s.charAt(0) + s.slice(1).toLowerCase()}</MenuItem>
           ))}
         </TextField>
-        <TextField select size="small" label="Hub" value={filterHub} onChange={(e) => setFilterHub(e.target.value)} sx={{ minWidth: 160 }}>
+        <TextField select size="small" label="Hub" value={filterHub === 'ALL' || hubs.some((h) => h.id === filterHub) ? filterHub : 'ALL'} onChange={(e) => setFilters({ hub: e.target.value })} sx={{ minWidth: 160 }}>
           <MenuItem value="ALL">All hubs</MenuItem>
           {hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.name}</MenuItem>)}
         </TextField>

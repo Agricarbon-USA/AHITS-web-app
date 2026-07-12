@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { formatDate } from '@/lib/utils'
 import {
   Box, Typography, Button, Stack, Alert, Chip,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
@@ -25,6 +26,7 @@ import type { HubOption, UserOption } from '@/components/shared/DispositionDialo
 import { useCanEdit, EditGuard, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 import { ConditionSelect } from '@/components/shared/ConditionSelect'
 import { useToast } from '@/components/shared/useToast'
+import { useUrlFilters } from '@/hooks/useUrlFilters'
 import {
   RentalVehicleForm, rentalFieldsToVehiclePayload, isRentalFormValid,
   type RentalVehicleFields,
@@ -709,7 +711,7 @@ function DeploymentDrawer({
                             <Typography variant="body2" fontWeight={600}>→ {tr.toOperator.name}</Typography>
                             <Typography variant="caption" color="text.secondary">{summary}</Typography>
                             <Typography variant="caption" color="text.secondary" display="block">{tr.note}</Typography>
-                            <Typography variant="caption" color="text.secondary">{new Date(tr.createdAt).toLocaleDateString()}</Typography>
+                            <Typography variant="caption" color="text.secondary">{formatDate(tr.createdAt)}</Typography>
                           </Box>
                           <MutationButton size="small" color="error" onClick={() => setCancelTransferId(tr.id)}>Cancel</MutationButton>
                         </Stack>
@@ -895,7 +897,7 @@ function DeploymentDrawer({
                       <Box>
                         <Typography variant="body2">{log.item.name}{log.inventoryUnit?.serialNumber ? ` #${log.inventoryUnit.serialNumber}` : ''}</Typography>
                         <Typography variant="caption" color="text.secondary">
-                          {log.operator?.name} · {new Date(log.submittedAt).toLocaleDateString()}
+                          {log.operator?.name} · {formatDate(log.submittedAt)}
                           {log.notes ? ` · ${log.notes}` : ''}
                         </Typography>
                       </Box>
@@ -1214,14 +1216,28 @@ function DeploymentDrawer({
 
 // ── Main Page ─────────────────────────────────────────────────────
 
+// FND-48: admin deployment-list filters live in the URL (deep-linkable, reload-safe,
+// back-button correct). Module scope so the useUrlFilters setter stays referentially stable.
+const DEPLOYMENT_FILTER_DEFAULTS = { ended: '', operatorId: '', projectId: '' }
+
 export default function AdminDeploymentsPage() {
+  return (
+    <React.Suspense>
+      <AdminDeploymentsContent />
+    </React.Suspense>
+  )
+}
+
+function AdminDeploymentsContent() {
   const canEdit = useCanEdit()
   const [rigs, setRigs] = React.useState<Rig[]>([])
   const [loading, setLoading] = React.useState(true)
   const toast = useToast()
-  const [showEnded, setShowEnded] = React.useState(false)
-  const [filterOperator, setFilterOperator] = React.useState('')
-  const [filterProject, setFilterProject] = React.useState('')
+  // FND-48: URL-persisted filters (deep-linkable, reload-safe).
+  const { filters, setFilters } = useUrlFilters(DEPLOYMENT_FILTER_DEFAULTS)
+  const showEnded = filters.ended === 'true'
+  const filterOperator = filters.operatorId
+  const filterProject = filters.projectId
   const [operators, setOperators] = React.useState<UserOption[]>([])
   const [projects, setProjects] = React.useState<{ id: string; name: string }[]>([])
   const [vehicles, setVehicles] = React.useState<VehicleOption[]>([])
@@ -1360,22 +1376,22 @@ export default function AdminDeploymentsPage() {
       )}
 
       <Stack direction="row" spacing={1.5} mb={2.5} alignItems="center" flexWrap="wrap">
-        <TextField select size="small" label="All Operators" value={filterOperator}
-          onChange={(e) => setFilterOperator(e.target.value)} sx={{ minWidth: 160 }}>
+        <TextField select size="small" label="All Operators" value={!filterOperator || operators.some((o) => o.id === filterOperator) ? filterOperator : ''}
+          onChange={(e) => setFilters({ operatorId: e.target.value })} sx={{ minWidth: 160 }}>
           <MenuItem value="">All Operators</MenuItem>
           {operators.filter((o) => o.role === 'OPERATOR').map((o) => (
             <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>
           ))}
         </TextField>
         {projects.length > 0 && (
-          <TextField select size="small" label="All Projects" value={filterProject}
-            onChange={(e) => setFilterProject(e.target.value)} sx={{ minWidth: 160 }}>
+          <TextField select size="small" label="All Projects" value={!filterProject || projects.some((p) => p.id === filterProject) ? filterProject : ''}
+            onChange={(e) => setFilters({ projectId: e.target.value })} sx={{ minWidth: 160 }}>
             <MenuItem value="">All Projects</MenuItem>
             {projects.map((p) => <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>)}
           </TextField>
         )}
         <FormControlLabel
-          control={<Switch checked={showEnded} onChange={(e) => setShowEnded(e.target.checked)} size="small" />}
+          control={<Switch checked={showEnded} onChange={(e) => setFilters({ ended: e.target.checked ? 'true' : '' })} size="small" />}
           label={<Typography variant="body2">Show ended</Typography>}
         />
       </Stack>
