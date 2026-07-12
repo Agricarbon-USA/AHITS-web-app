@@ -17,6 +17,7 @@ export const ALERT_LABELS: Record<string, string> = {
   MATERIAL_REQUEST: 'Material request',
   DAILY_CHECK_FAILED: 'Daily check failed',
   DAILY_CHECK_MISSED: 'Daily check missed',
+  EMAIL_FAILED: 'Email delivery failed',
 }
 
 export function alertLabel(type: string): string {
@@ -33,5 +34,6 @@ export function alertLink(sourceTable: string | null, sourceId: string | null, t
   if (type === 'DAILY_CHECK_MISSED') return '/admin/users'
   if (type === 'PIN_LOCKED') return '/admin/users'
   if (type === 'MATERIAL_REQUEST') return '/admin/requests'
+  if (type === 'EMAIL_FAILED') return '/admin/settings#email-delivery'
   return null
 }

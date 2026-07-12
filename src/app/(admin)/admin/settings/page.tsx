@@ -210,7 +210,9 @@ export default function SettingsPage() {
       </Card>
 
       {/* FND-8: email delivery visibility */}
-      <EmailDeliverySection />
+      <div id="email-delivery">
+        <EmailDeliverySection />
+      </div>
 
       {/* Daily-Check Checklists (M5-25) */}
       <ChecklistTemplatesSection onToast={showToast} onError={showError} />

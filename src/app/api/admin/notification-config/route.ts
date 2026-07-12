@@ -14,6 +14,7 @@ const CONFIGURABLE_ALERT_TYPES = [
   'LOW_INVENTORY',
   'INSURANCE_EXPIRING',
   'REGISTRATION_EXPIRING',
+  'EMAIL_FAILED',
 ] as const
 
 export async function GET() {
