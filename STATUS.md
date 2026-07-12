@@ -5,7 +5,7 @@ _Last updated: **2026-07-12 (session 5)**. If this date is more than a session o
 > **Before re-opening any settled "should we…" question, read `DECISIONS.md`.** The big ones (prod deferred, Map scope, admin exclusion, W0-10 sequencing) are settled — don't re-litigate them.
 
 ## 1. One-paragraph state
-AHITS is at the pilot doorstep, running on **staging**. The hard architecture is done and audit-verified. Merged to `development` (→ staging): CC-01 through CC-10, Wave-0 patches, and the doc-cleanup corpus. **CC-11 admin-as-operator shipped (PR #181, `a97079b`):** an admin can now hold a rig, be a transfer/handoff recipient, and accept transfers/handoffs — all writing `deployment_assignments` PRIMARY rows, never the legacy column. Admin-held rigs are flagged distinctly (not excluded outright) in the missed-check cron and both dashboard missed-check surfaces, and are excluded from payroll attribution per D3 via a `role`-carrying hook in `deployment-assignments.ts` (no attribution consumer exists yet — see D8). Production is deliberately deferred (see D1).
+AHITS is at the pilot doorstep, running on **staging**. The hard architecture is done and audit-verified. Merged to `development` (→ staging): CC-01 through CC-10, Wave-0 patches, and the doc-cleanup corpus. **CC-11 admin-as-operator shipped (PR #181, `a97079b`):** an admin can now hold a rig, be a transfer/handoff recipient, and accept transfers/handoffs — all writing `deployment_assignments` PRIMARY rows, never the legacy column. Admin-held rigs are flagged distinctly (not excluded outright) in the missed-check cron and both dashboard missed-check surfaces, and are excluded from payroll attribution per D3 via a `role`-carrying hook in `deployment-assignments.ts` — D3's note makes this a HARD acceptance criterion on CC-17. Production is deliberately deferred (see D1).
 
 ## 2. Environments
 - **development → staging:** the live working line. Has the full Wave-0 hardening + W0-10 through PR-4a + CC-01 through CC-11. **Smoke on staging after every merge.**
@@ -24,7 +24,6 @@ AHITS is at the pilot doorstep, running on **staging**. The hard architecture is
 - **D5** — hold the pilot fortnight for Today (CC-14), or ship the Today-lite bridge (CC-28)? See `AHITS_PILOT_CHARTER.md` §5.
 - **D6** — EMAIL_SANDBOX global flip timing, after the two-part audit.
 - **D7** — name a second pilot-hours contact.
-- **D8** — does CC-11 landing the cron-scan half of D3 concurrently with the role-gate relax (no resolver exists yet) need a formal D3 amendment, or is it fine as shipped?
 - Governance sweep items (push vs 45s polling; CARRY-* build-or-descope) — see workplan §13.
 - Mounted collection units: reuse-vs-new-model design decision (CC-21 spike) before building.
 

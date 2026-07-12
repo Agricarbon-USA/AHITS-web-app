@@ -56,9 +56,10 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Recommendation:** name one non-owner reachable during pilot hours to run the "operator can't sync" triage card (`AHITS_PILOT_CHARTER.md`). A one-human pilot is a single point of failure; the first 6am sync failure has no owner today.
 
 ### D8 · CC-11 landed the cron-scan half of the D3 exclusion concurrently with the role-gate relax, not before it
-- **Date:** 2026-07-12 · **Owner:** Max · **Status:** PENDING (Max to decide if this needs a formal note or is fine as shipped)
+- **Date:** 2026-07-12 · **Owner:** Max · **Status:** RESOLVED · **Superseded-by:** D3 (note, 2026-07-12)
 - **Context:** D3 says the admin-as-operator payroll exclusion "is written into the attribution resolver and the cron scan before the role gates are relaxed." CC-11 (PR #181, merged) relaxed the role gates (transfer/handoff/operators roster) and added the cron-scan `isAdminHeld` flagging in the same PR — no attribution resolver exists yet (Time/Invoicing / CC-17 isn't built), so there was nothing to sequence the resolver-half against. `DeploymentRoster.operator.role` and `getVehicleOperators`'s `operatorRole` now carry the signal CC-17 will need; a comment above `getVehicleOperators` names the requirement.
 - **Recommendation:** treat this as satisfied in spirit (cron scan is done, resolver literally cannot exist before its own capstone) rather than a violation requiring rework — but flagging per CLAUDE.md's rule against silently acting against an ACTIVE decision. Superseded-by candidate if Max agrees: fold this note into D3 itself rather than keep it standalone.
+- **Resolution (2026-07-12, Max):** folded into D3 as a dated note — the resolver-side exclusion transfers forward as a HARD acceptance criterion on CC-17, verified at review. This entry stays for provenance; D3's note is authoritative going forward.
 
 ---
 
