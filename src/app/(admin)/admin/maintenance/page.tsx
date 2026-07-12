@@ -152,6 +152,12 @@ export default function AdminMaintenancePage() {
   const [retireUnit, setRetireUnit] = React.useState<InoperableUnit | null>(null)
   const [retireNote, setRetireNote] = React.useState('')
   const [retiring, setRetiring] = React.useState(false)
+  // CC-10: Log field fix dialog
+  const [fieldFixOpen, setFieldFixOpen] = React.useState(false)
+  const [fieldFixVehicles, setFieldFixVehicles] = React.useState<{ id: string; name: string }[]>([])
+  const [fieldFixVehicleId, setFieldFixVehicleId] = React.useState('')
+  const [fieldFixNotes, setFieldFixNotes] = React.useState('')
+  const [fieldFixSaving, setFieldFixSaving] = React.useState(false)
 
   const loadInoperable = React.useCallback(async () => {
     try {
@@ -366,7 +372,9 @@ export default function AdminMaintenancePage() {
       setSelected((s) => (s && s.id === t.id ? { ...s, ...d.data } : s))
       setCompletionOdo('')
       showToast({
-        message: t.isDamageReport ? 'Repair completed — unit returned to service.' : 'Completed — next service scheduled.',
+        message: t.isDamageReport
+          ? (t.vehicle && !t.unit ? 'Repair completed — vehicle returned to service.' : 'Repair completed — unit returned to service.')
+          : 'Completed — next service scheduled.',
         severity: 'success',
       })
     } catch {
@@ -386,12 +394,52 @@ export default function AdminMaintenancePage() {
 
   const setD = (patchObj: Partial<Draft>) => setDraft((d) => (d ? { ...d, ...patchObj } : d))
 
+  async function openFieldFix() {
+    setFieldFixVehicleId('')
+    setFieldFixNotes('')
+    setFieldFixOpen(true)
+    try {
+      const res = await fetch('/api/vehicles')
+      const d = await res.json()
+      setFieldFixVehicles((d.data ?? []).map((v: { id: string; name: string }) => ({ id: v.id, name: v.name })))
+    } catch {
+      setFieldFixVehicles([])
+    }
+  }
+
+  async function submitFieldFix() {
+    if (!fieldFixVehicleId || !fieldFixNotes.trim()) return
+    setFieldFixSaving(true)
+    try {
+      const res = await fetch('/api/maintenance/field-fix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vehicleId: fieldFixVehicleId, notes: fieldFixNotes.trim() }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not log fix.', severity: 'error' })
+        return
+      }
+      showToast({ message: 'Field fix logged.', severity: 'success' })
+      setFieldFixOpen(false)
+      load()
+    } catch {
+      showToast({ message: 'Network error. Please try again.', severity: 'error' })
+    } finally {
+      setFieldFixSaving(false)
+    }
+  }
+
   return (
     <Box>
-      <Stack direction="row" alignItems="center" spacing={1.5} mb={0.5}>
-        <BuildIcon color="action" />
-        <Typography variant="h5">Maintenance</Typography>
-        {!canEdit && <Chip size="small" label="View only" variant="outlined" />}
+      <Stack direction="row" alignItems="center" justifyContent="space-between" mb={0.5} flexWrap="wrap" gap={1}>
+        <Stack direction="row" alignItems="center" spacing={1.5}>
+          <BuildIcon color="action" />
+          <Typography variant="h5">Maintenance</Typography>
+          {!canEdit && <Chip size="small" label="View only" variant="outlined" />}
+        </Stack>
+        <MutationButton size="small" variant="outlined" onClick={openFieldFix}>Log field fix</MutationButton>
       </Stack>
       <Typography color="text.secondary" mb={2} variant="body2">
         Damage reports from the field and scheduled vehicle/equipment service. Assign a shop or hub, track the repair, and close it out.
@@ -574,8 +622,13 @@ export default function AdminMaintenancePage() {
                     fullWidth
                     disabled={saving}
                     onClick={() => {
-                      if (selected.isDamageReport) { setCloseHubId(''); setCloseMethod(''); setCloseOpen(true) }
-                      else completeTask(selected)
+                      if (selected.isDamageReport) {
+                        // Vehicle damage: no return destination needed — close directly.
+                        if (selected.vehicle && !selected.unit) { completeTask(selected) }
+                        else { setCloseHubId(''); setCloseMethod(''); setCloseOpen(true) }
+                      } else {
+                        completeTask(selected)
+                      }
                     }}
                   >
                     {selected.isDamageReport ? 'Close repair…' : 'Complete & reschedule'}
@@ -642,6 +695,51 @@ export default function AdminMaintenancePage() {
           <Button onClick={() => setRetireUnit(null)} disabled={retiring}>Cancel</Button>
           <MutationButton color="error" variant="contained" onClick={submitRetire} disabled={retiring || !retireNote.trim()}>
             {retiring ? 'Retiring…' : 'Retire'}
+          </MutationButton>
+        </DialogActions>
+      </Dialog>
+
+      {/* CC-10: Log field fix */}
+      <Dialog open={fieldFixOpen} onClose={() => setFieldFixOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Log field fix</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} pt={0.5}>
+            <Typography variant="body2" color="text.secondary">
+              Record an issue that was noticed and fixed on the spot. No repair task is opened and no alert is fired.
+            </Typography>
+            <TextField
+              select
+              label="Vehicle"
+              value={fieldFixVehicleId}
+              onChange={(e) => setFieldFixVehicleId(e.target.value)}
+              fullWidth
+              required
+            >
+              {fieldFixVehicles.length === 0
+                ? <MenuItem value="" disabled>Loading vehicles…</MenuItem>
+                : fieldFixVehicles.map((v) => <MenuItem key={v.id} value={v.id}>{v.name}</MenuItem>)}
+            </TextField>
+            <TextField
+              label="What was fixed"
+              value={fieldFixNotes}
+              onChange={(e) => setFieldFixNotes(e.target.value)}
+              multiline
+              rows={3}
+              fullWidth
+              required
+              placeholder="Brief description of the issue and what was done"
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setFieldFixOpen(false)} disabled={fieldFixSaving}>Cancel</Button>
+          <MutationButton
+            color="primary"
+            variant="contained"
+            disabled={fieldFixSaving || !fieldFixVehicleId || !fieldFixNotes.trim()}
+            onClick={submitFieldFix}
+          >
+            {fieldFixSaving ? 'Saving…' : 'Log fix'}
           </MutationButton>
         </DialogActions>
       </Dialog>

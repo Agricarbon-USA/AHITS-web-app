@@ -41,14 +41,17 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
   const task = await prisma.maintenanceTask.findFirst({
     where: { id, deletedAt: null },
-    include: { vehicle: { select: { odometer: true } }, unit: { select: { id: true, status: true } } },
+    include: { vehicle: { select: { id: true, odometer: true, status: true } }, unit: { select: { id: true, status: true } } },
   })
   if (!task) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  // A.4: closing a damage-report repair requires an explicit return destination —
-  // no default. The "Complete repair" UI is disabled until one is chosen; this is
-  // the server-side backstop for direct/queued calls.
-  if (task.isDamageReport) {
+  // Vehicle-only damage reports (no inventoryUnitId) skip the unit-return flow.
+  const isVehicleTask = !!task.vehicleId && !task.inventoryUnitId
+
+  // A.4: closing a unit damage-report repair requires an explicit return destination.
+  // Vehicle damage reports are closed without a return destination — the admin
+  // manages vehicle status directly via PATCH /api/vehicles/[id].
+  if (task.isDamageReport && !isVehicleTask) {
     if (!returnDestinationType || !returnDestinationId) {
       return NextResponse.json({ error: 'Choose where the unit returns before closing the repair.' }, { status: 400 })
     }
@@ -71,21 +74,29 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     })
 
     if (task.isDamageReport) {
-      // One-off repair → terminal. Return the unit to service if it was pulled.
-      if (task.unit && task.unit.status === 'IN_MAINTENANCE') {
-        await tx.inventoryUnit.update({ where: { id: task.unit.id }, data: { status: 'AVAILABLE' } })
-      } else if (!task.inventoryUnitId && task.itemId) {
-        // UR-029 fallback for legacy tasks created before the unit was linked at
-        // creation: if exactly one unit of this item is in maintenance, it's
-        // unambiguously the one this repair covers — return it. Skip when
-        // ambiguous (0 or >1 in maintenance) to avoid freeing the wrong unit.
-        const inMaint = await tx.inventoryUnit.findMany({
-          where: { inventoryItemId: task.itemId, status: 'IN_MAINTENANCE' },
-          select: { id: true },
-          take: 2,
-        })
-        if (inMaint.length === 1) {
-          await tx.inventoryUnit.update({ where: { id: inMaint[0].id }, data: { status: 'AVAILABLE' } })
+      // One-off repair → terminal. Restore the asset to service.
+      if (isVehicleTask) {
+        // Vehicle damage: restore vehicle to ACTIVE if it was pulled.
+        if (task.vehicle && task.vehicle.status === 'IN_MAINTENANCE') {
+          await tx.vehicle.update({ where: { id: task.vehicleId! }, data: { status: 'ACTIVE' as never } })
+        }
+      } else {
+        // Unit damage: restore the specific unit (or the unambiguous UR-029 fallback).
+        if (task.unit && task.unit.status === 'IN_MAINTENANCE') {
+          await tx.inventoryUnit.update({ where: { id: task.unit.id }, data: { status: 'AVAILABLE' } })
+        } else if (!task.inventoryUnitId && task.itemId) {
+          // UR-029 fallback for legacy tasks created before the unit was linked at
+          // creation: if exactly one unit of this item is in maintenance, it's
+          // unambiguously the one this repair covers — return it. Skip when
+          // ambiguous (0 or >1 in maintenance) to avoid freeing the wrong unit.
+          const inMaint = await tx.inventoryUnit.findMany({
+            where: { inventoryItemId: task.itemId, status: 'IN_MAINTENANCE' },
+            select: { id: true },
+            take: 2,
+          })
+          if (inMaint.length === 1) {
+            await tx.inventoryUnit.update({ where: { id: inMaint[0].id }, data: { status: 'AVAILABLE' } })
+          }
         }
       }
       const data: Prisma.MaintenanceTaskUpdateInput = {
@@ -96,15 +107,18 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       if (actualCost != null) data.actualCost = actualCost
       if (notes) data.notes = notes
       const updated = await tx.maintenanceTask.update({ where: { id }, data })
-      // Persist the per-case return destination (A.4). Raw SQL because the
-      // columns are newer than the generated client; cast the enum literals.
-      await tx.$executeRaw`
-        UPDATE "maintenance_tasks"
-        SET "returnDestinationType" = ${returnDestinationType}::"ReturnDestinationType",
-            "returnDestinationId" = ${returnDestinationId},
-            "repairMethod" = ${repairMethod ?? null}::"RepairMethod"
-        WHERE "id" = ${id}
-      `
+      // Persist the per-case return destination (A.4) for unit repairs. Raw SQL
+      // because the columns are newer than the generated client; vehicle repairs
+      // skip this — they have no return destination.
+      if (!isVehicleTask) {
+        await tx.$executeRaw`
+          UPDATE "maintenance_tasks"
+          SET "returnDestinationType" = ${returnDestinationType}::"ReturnDestinationType",
+              "returnDestinationId" = ${returnDestinationId},
+              "repairMethod" = ${repairMethod ?? null}::"RepairMethod"
+          WHERE "id" = ${id}
+        `
+      }
       return updated
     }
 
