@@ -44,7 +44,7 @@ export default function SentryDiagnosticsSection() {
         <Typography variant="h6" fontWeight={600} mb={1}>Sentry diagnostics</Typography>
         <Typography variant="body2" color="text.secondary" mb={2}>
           Manual verification only — these buttons throw real errors to confirm capture reaches
-          Sentry. With no AHITS_SENTRY_DSN configured, the errors still throw but nothing is sent.
+          Sentry. With no SENTRY_DSN configured, the errors still throw but nothing is sent.
         </Typography>
         <Stack direction="row" spacing={2} mb={2}>
           <Button variant="outlined" onClick={triggerServerError}>Trigger server error</Button>

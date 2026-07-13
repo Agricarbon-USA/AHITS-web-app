@@ -45,7 +45,7 @@ export default async function RootLayout({
   // time. requestId is the same id src/proxy.ts already stamps on every
   // authenticated request, so a client-side Sentry event correlates to the
   // server-side logs/onRequestError capture for that same request.
-  const sentryDsn = process.env.AHITS_SENTRY_DSN ?? null
+  const sentryDsn = process.env.SENTRY_DSN ?? null
   const requestId = hdrs.get('x-request-id') ?? ''
 
   return (

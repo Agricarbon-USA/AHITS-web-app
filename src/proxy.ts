@@ -61,9 +61,9 @@ function buildCsp(nonce: string): string {
     "font-src 'self' data:",
     // CC-22: Sentry's browser SDK reports errors via a direct fetch/beacon to its
     // ingest host from the client bundle (SentryProvider.tsx) — wildcarded because
-    // the exact org/region subdomain in AHITS_SENTRY_DSN isn't known at CSP-build
+    // the exact org/region subdomain in SENTRY_DSN isn't known at CSP-build
     // time here (proxy.ts has no access to env-derived per-org values beyond what's
-    // hardcoded). Harmless when AHITS_SENTRY_DSN is unset: nothing ever calls out to
+    // hardcoded). Harmless when SENTRY_DSN is unset: nothing ever calls out to
     // it since Sentry.init() is never invoked (see SentryProvider.tsx).
     "connect-src 'self' https://*.supabase.co https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io",
     "worker-src 'self' blob:",

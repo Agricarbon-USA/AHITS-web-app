@@ -4,7 +4,7 @@ import * as React from 'react'
 import * as Sentry from '@sentry/nextjs'
 
 // CC-22: manual client-side Sentry init, fed the DSN + x-request-id as props
-// from the server (src/app/layout.tsx reads AHITS_SENTRY_DSN and the request's
+// from the server (src/app/layout.tsx reads SENTRY_DSN and the request's
 // x-request-id header, both server-only values). This is deliberately NOT the
 // instrumentation-client.ts convention — that file is static module code that
 // runs pre-hydration and cannot receive per-request server data, so it can't

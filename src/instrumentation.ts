@@ -4,13 +4,13 @@ import * as Sentry from '@sentry/nextjs'
 // build-time withSentryConfig()/NEXT_PUBLIC_SENTRY_DSN auto-wiring — the DSN
 // must never be baked into the client bundle at build time, only injected
 // per-request from the server (see src/components/SentryProvider.tsx +
-// src/app/layout.tsx). Server-side reads AHITS_SENTRY_DSN directly since this
+// src/app/layout.tsx). Server-side reads SENTRY_DSN directly since this
 // module only ever runs on the server. No-op entirely when the secret is
 // unset, so a sandbox/local/CI run with no DSN never calls Sentry.init and
 // never makes an outbound call.
 export async function register() {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return
-  const dsn = process.env.AHITS_SENTRY_DSN
+  const dsn = process.env.SENTRY_DSN
   if (!dsn) return
   Sentry.init({
     dsn,
@@ -27,7 +27,7 @@ export async function onRequestError(
   error: unknown,
   request: Readonly<{ path: string; method: string; headers: Record<string, string | string[] | undefined> }>,
 ) {
-  if (!process.env.AHITS_SENTRY_DSN) return
+  if (!process.env.SENTRY_DSN) return
   const requestIdHeader = request.headers['x-request-id']
   const requestId = Array.isArray(requestIdHeader) ? requestIdHeader[0] : requestIdHeader
   Sentry.captureException(error, {
