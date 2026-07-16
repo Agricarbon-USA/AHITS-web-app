@@ -15,8 +15,10 @@ import { density } from '@/theme/tokens'
 //    "Rental" or a category name. This replaces the 14 hand-rolled
 //    `<Chip sx={{ height: 18, fontSize: 10 }} />` sites that clipped descenders.
 //
-// Dense dimensions are single-sourced from tokens.density.chipDense (height 20 /
-// fontSize 11) and applied in both modes, so every status badge is the same size.
+// The dense dimensions (tokens.density.chipDense, height 20 / fontSize 11) apply
+// ONLY to badge mode — those are the hand-rolled 18/10 sites CC-23 is fixing.
+// Semantic status chips keep their prior MUI "small" size unchanged, so the 15
+// existing `<StatusChip status=… />` usages are not visually altered.
 type SemanticProps = {
   status: string
   kind?: 'equipment' | 'vehicle' | 'maintenance' | 'priority' | 'request'
@@ -59,9 +61,9 @@ export function StatusChip(props: StatusChipProps) {
     )
   }
 
-  // Semantic status mode (original behavior + dense sizing). The label branch
-  // above has returned, so `props` is SemanticProps here (TS can't narrow the
-  // union across the early return on a `?: never` discriminant).
+  // Semantic status mode — unchanged from v1 (MUI "small", no dense override).
+  // The label branch above has returned, so `props` is SemanticProps here (TS
+  // can't narrow the union across the early return on a `?: never` discriminant).
   const { status, kind = 'equipment' } = props as SemanticProps
   const meta =
     kind === 'vehicle' ? vehicleStatusMeta(status)
@@ -69,5 +71,5 @@ export function StatusChip(props: StatusChipProps) {
     : kind === 'priority' ? priorityMeta(status)
     : kind === 'request' ? requestStatusMeta(status)
     : equipmentStatusMeta(status)
-  return <Chip label={meta.label} color={meta.color} icon={icon} size="small" variant={variant} sx={{ ...denseSx, ...sx }} />
+  return <Chip label={meta.label} color={meta.color} icon={icon} size="small" variant={variant} sx={sx} />
 }

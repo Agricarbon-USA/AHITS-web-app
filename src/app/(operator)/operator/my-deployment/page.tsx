@@ -1035,7 +1035,7 @@ export default function MyRigPage() {
             <Typography variant="caption" color="text.secondary">&ldquo;{h.note}&rdquo;</Typography>
             {/* CC-23: actions in the body (was the Alert `action` slot pulled up
                 with mt:-0.5, which cramped two buttons beside two text lines at 390px). */}
-            <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+            <Stack direction="row" spacing={1} sx={{ mt: 1, '& .MuiButton-root': { minHeight: 44, fontSize: 16 } }}>
               <Button size="small" color="error" variant="outlined"
                 onClick={() => { setHandoffRespondDialog({ handoff: h, action: 'decline' }); setHandoffResponseNote('') }}>
                 Decline
@@ -1069,7 +1069,7 @@ export default function MyRigPage() {
                 &ldquo;{tr.note}&rdquo; · Accepting starts a new deployment for you.
               </Typography>
               {/* CC-23: actions in the body (was the Alert `action` slot + mt:-0.5). */}
-              <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+              <Stack direction="row" spacing={1} sx={{ mt: 1, '& .MuiButton-root': { minHeight: 44, fontSize: 16 } }}>
                 <Button size="small" color="error" variant="outlined"
                   onClick={() => { setRespondDialog({ transfer: tr, action: 'decline' }); setResponseNote('') }}>
                   Decline
@@ -1204,7 +1204,7 @@ export default function MyRigPage() {
           </Typography>
           <Typography variant="caption" color="text.secondary">&ldquo;{h.note}&rdquo;</Typography>
           {/* CC-23: actions in the body (was the Alert `action` slot + mt:-0.5). */}
-          <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+          <Stack direction="row" spacing={1} sx={{ mt: 1, '& .MuiButton-root': { minHeight: 44, fontSize: 16 } }}>
             <Button size="small" color="error" variant="outlined"
               onClick={() => { setHandoffRespondDialog({ handoff: h, action: 'decline' }); setHandoffResponseNote('') }}>
               Decline
@@ -1237,7 +1237,7 @@ export default function MyRigPage() {
             <Typography variant="body2">{summary}</Typography>
             <Typography variant="caption" color="text.secondary">&ldquo;{tr.note}&rdquo;</Typography>
             {/* CC-23: actions in the body (was the Alert `action` slot + mt:-0.5). */}
-            <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+            <Stack direction="row" spacing={1} sx={{ mt: 1, '& .MuiButton-root': { minHeight: 44, fontSize: 16 } }}>
               <Button size="small" color="error" variant="outlined"
                 onClick={() => { setRespondDialog({ transfer: tr, action: 'decline' }); setResponseNote('') }}>
                 Decline

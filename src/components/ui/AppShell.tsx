@@ -126,11 +126,12 @@ export function AppShell({ nav, children, title = 'AHITS', headerActions, bottom
             (no horizontal padding) so a collapsed OfflineBanner reads as a true
             page-width banner, not an inset card. */}
         {banner}
-        {/* Content keeps the previous p:3 padding (top + insets-aware sides). */}
+        {/* Content keeps the previous top + insets-aware side padding. Bottom
+            clearance stays on the outer main (it owns the bottom-nav / home-
+            indicator inset) — no pb here, or every page double-pads. */}
         <Box
           sx={{
             pt: 3,
-            pb: 3,
             pl: 'calc(24px + env(safe-area-inset-left, 0px))',
             pr: 'calc(24px + env(safe-area-inset-right, 0px))',
           }}
