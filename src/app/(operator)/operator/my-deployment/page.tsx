@@ -1026,24 +1026,24 @@ export default function MyRigPage() {
           <Alert
             key={h.id}
             severity="info"
-            sx={{ mb: 1.5, width: '100%', alignItems: 'flex-start' }}
-            action={
-              <Stack direction="row" spacing={1} sx={{ mt: -0.5 }}>
-                <Button size="small" color="error" variant="outlined"
-                  onClick={() => { setHandoffRespondDialog({ handoff: h, action: 'decline' }); setHandoffResponseNote('') }}>
-                  Decline
-                </Button>
-                <Button size="small" color="success" variant="contained"
-                  onClick={() => { setHandoffRespondDialog({ handoff: h, action: 'accept' }); setHandoffResponseNote('') }}>
-                  Accept
-                </Button>
-              </Stack>
-            }
+            sx={{ mb: 1.5, width: '100%' }}
           >
             <Typography variant="body2" fontWeight={600}>
               Deployment Handoff from {h.fromOperatorName}
             </Typography>
             <Typography variant="caption" color="text.secondary">&ldquo;{h.note}&rdquo;</Typography>
+            {/* CC-23: actions in the body (was the Alert `action` slot pulled up
+                with mt:-0.5, which cramped two buttons beside two text lines at 390px). */}
+            <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+              <Button size="small" color="error" variant="outlined"
+                onClick={() => { setHandoffRespondDialog({ handoff: h, action: 'decline' }); setHandoffResponseNote('') }}>
+                Decline
+              </Button>
+              <Button size="small" color="success" variant="contained"
+                onClick={() => { setHandoffRespondDialog({ handoff: h, action: 'accept' }); setHandoffResponseNote('') }}>
+                Accept
+              </Button>
+            </Stack>
           </Alert>
         ))}
         {/* Incoming transfer banners — also shown with no active deployment (B3): a
@@ -1058,19 +1058,7 @@ export default function MyRigPage() {
             <Alert
               key={tr.id}
               severity="info"
-              sx={{ mb: 1.5, width: '100%', alignItems: 'flex-start' }}
-              action={
-                <Stack direction="row" spacing={1} sx={{ mt: -0.5 }}>
-                  <Button size="small" color="error" variant="outlined"
-                    onClick={() => { setRespondDialog({ transfer: tr, action: 'decline' }); setResponseNote('') }}>
-                    Decline
-                  </Button>
-                  <Button size="small" color="success" variant="contained"
-                    onClick={() => { setRespondDialog({ transfer: tr, action: 'accept' }); setResponseNote('') }}>
-                    Accept
-                  </Button>
-                </Stack>
-              }
+              sx={{ mb: 1.5, width: '100%' }}
             >
               <Typography variant="body2" fontWeight={600}>
                 Incoming Transfer from {tr.fromRig.operator.name}
@@ -1079,6 +1067,17 @@ export default function MyRigPage() {
               <Typography variant="caption" color="text.secondary">
                 &ldquo;{tr.note}&rdquo; · Accepting starts a new deployment for you.
               </Typography>
+              {/* CC-23: actions in the body (was the Alert `action` slot + mt:-0.5). */}
+              <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                <Button size="small" color="error" variant="outlined"
+                  onClick={() => { setRespondDialog({ transfer: tr, action: 'decline' }); setResponseNote('') }}>
+                  Decline
+                </Button>
+                <Button size="small" color="success" variant="contained"
+                  onClick={() => { setRespondDialog({ transfer: tr, action: 'accept' }); setResponseNote('') }}>
+                  Accept
+                </Button>
+              </Stack>
             </Alert>
           )
         })}
@@ -1197,24 +1196,23 @@ export default function MyRigPage() {
         <Alert
           key={h.id}
           severity="info"
-          sx={{ mb: 1.5, alignItems: 'flex-start' }}
-          action={
-            <Stack direction="row" spacing={1} sx={{ mt: -0.5 }}>
-              <Button size="small" color="error" variant="outlined"
-                onClick={() => { setHandoffRespondDialog({ handoff: h, action: 'decline' }); setHandoffResponseNote('') }}>
-                Decline
-              </Button>
-              <Button size="small" color="success" variant="contained"
-                onClick={() => { setHandoffRespondDialog({ handoff: h, action: 'accept' }); setHandoffResponseNote('') }}>
-                Accept
-              </Button>
-            </Stack>
-          }
+          sx={{ mb: 1.5 }}
         >
           <Typography variant="body2" fontWeight={600}>
             Deployment Handoff from {h.fromOperatorName}
           </Typography>
           <Typography variant="caption" color="text.secondary">&ldquo;{h.note}&rdquo;</Typography>
+          {/* CC-23: actions in the body (was the Alert `action` slot + mt:-0.5). */}
+          <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+            <Button size="small" color="error" variant="outlined"
+              onClick={() => { setHandoffRespondDialog({ handoff: h, action: 'decline' }); setHandoffResponseNote('') }}>
+              Decline
+            </Button>
+            <Button size="small" color="success" variant="contained"
+              onClick={() => { setHandoffRespondDialog({ handoff: h, action: 'accept' }); setHandoffResponseNote('') }}>
+              Accept
+            </Button>
+          </Stack>
         </Alert>
       ))}
 
@@ -1230,25 +1228,24 @@ export default function MyRigPage() {
           <Alert
             key={tr.id}
             severity="info"
-            sx={{ mb: 1.5, alignItems: 'flex-start' }}
-            action={
-              <Stack direction="row" spacing={1} sx={{ mt: -0.5 }}>
-                <Button size="small" color="error" variant="outlined"
-                  onClick={() => { setRespondDialog({ transfer: tr, action: 'decline' }); setResponseNote('') }}>
-                  Decline
-                </Button>
-                <Button size="small" color="success" variant="contained"
-                  onClick={() => { setRespondDialog({ transfer: tr, action: 'accept' }); setResponseNote('') }}>
-                  Accept
-                </Button>
-              </Stack>
-            }
+            sx={{ mb: 1.5 }}
           >
             <Typography variant="body2" fontWeight={600}>
               Incoming Transfer from {tr.fromRig.operator.name}
             </Typography>
             <Typography variant="body2">{summary}</Typography>
             <Typography variant="caption" color="text.secondary">&ldquo;{tr.note}&rdquo;</Typography>
+            {/* CC-23: actions in the body (was the Alert `action` slot + mt:-0.5). */}
+            <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+              <Button size="small" color="error" variant="outlined"
+                onClick={() => { setRespondDialog({ transfer: tr, action: 'decline' }); setResponseNote('') }}>
+                Decline
+              </Button>
+              <Button size="small" color="success" variant="contained"
+                onClick={() => { setRespondDialog({ transfer: tr, action: 'accept' }); setResponseNote('') }}>
+                Accept
+              </Button>
+            </Stack>
           </Alert>
         )
       })}
@@ -1276,8 +1273,10 @@ export default function MyRigPage() {
               <Stack spacing={0.5} mb={1}>
                 {rig.vehicles.map((rv) => {
                   const Icon = VEHICLE_ICON[rv.vehicle.type] ?? LocalShippingIcon
+                  // CC-23: minWidth:0 + wrap so long vehicle names + rental chips
+                  // don't overflow the row on narrow screens.
                   return (
-                    <Stack key={rv.id} direction="row" alignItems="center" spacing={1}>
+                    <Stack key={rv.id} direction="row" alignItems="center" spacing={1} flexWrap="wrap" useFlexGap sx={{ minWidth: 0 }}>
                       {removingVehicles && (
                         <Checkbox size="small" checked={selVehicles.has(rv.vehicle.id)}
                           onChange={(e) => {
@@ -1287,7 +1286,7 @@ export default function MyRigPage() {
                           }} />
                       )}
                       <Icon fontSize="small" color="action" />
-                      <Typography variant="body2">{rv.vehicle.name}</Typography>
+                      <Typography variant="body2" sx={{ minWidth: 0, wordBreak: 'break-word' }}>{rv.vehicle.name}</Typography>
                       {rv.vehicle.isRental && (
                         <Chip label="Rental" size="small" color="warning" variant="outlined" sx={{ ml: 0.5, height: 18, fontSize: 10 }} />
                       )}
@@ -1336,8 +1335,10 @@ export default function MyRigPage() {
               <Stack spacing={0.5} mb={1}>
                 {kitItems.map((ki) => {
                   const isLow = ki.item.lowStockThreshold != null && ki.quantity <= ki.item.lowStockThreshold
+                  // CC-23: minWidth:0 so a long item name can shrink/wrap instead
+                  // of pushing the qty/controls off the row.
                   return (
-                    <Stack key={ki.id} direction="row" alignItems="center" spacing={1}>
+                    <Stack key={ki.id} direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
                       {removingItems && (
                         <Checkbox size="small" checked={selItems.has(ki.id)}
                           onChange={(e) => {
@@ -1346,8 +1347,8 @@ export default function MyRigPage() {
                             setSelItems(s)
                           }} />
                       )}
-                      <Box flexGrow={1}>
-                        <Typography variant="body2">{ki.item.name}</Typography>
+                      <Box flexGrow={1} sx={{ minWidth: 0 }}>
+                        <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>{ki.item.name}</Typography>
                         {ki.inventoryUnit && (
                           <Typography variant="caption" color="text.secondary">
                             Unit: {ki.inventoryUnit.serialNumber ?? ki.inventoryUnit.qrCodeId.slice(0, 8)}

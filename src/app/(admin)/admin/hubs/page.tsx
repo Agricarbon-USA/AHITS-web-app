@@ -16,6 +16,7 @@ import DeleteIcon from '@mui/icons-material/Delete'
 import CheckBoxOutlineBlankIcon from '@mui/icons-material/CheckBoxOutlineBlank'
 import CheckBoxIcon from '@mui/icons-material/CheckBox'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { useToast } from '@/components/shared/useToast'
 import { useCanEdit, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 import { useMultiSelect } from '@/components/shared/useMultiSelect'
 import { BulkActionBar } from '@/components/shared/BulkActionBar'
@@ -108,8 +109,6 @@ export default function AdminHubsPage() {
   })
   const [savingHub, setSavingHub] = React.useState(false)
   const [deleteHub, setDeleteHub] = React.useState<Hub | null>(null)
-  const [toast, setToast] = React.useState('')
-  const [hubError, setHubError] = React.useState('')
 
   // Inbound state
   const [inboundData, setInboundData] = React.useState<HubGroup[] | null>(null)
@@ -134,14 +133,11 @@ export default function AdminHubsPage() {
     [inboundData],
   )
 
-  const showToast = (msg: string) => {
-    setToast(msg)
-    setTimeout(() => setToast(''), 4000)
-  }
-  const showError = (msg: string) => {
-    setHubError(msg)
-    setTimeout(() => setHubError(''), 6000)
-  }
+  // CC-23: route through the single shared Snackbar host (was two inline
+  // top-of-page Alerts). Adapters preserve the existing call-site signatures.
+  const pushToast = useToast()
+  const showToast = (msg: string) => pushToast({ message: msg })
+  const showError = (msg: string) => pushToast({ message: msg, severity: 'error' })
 
   const loadHubs = React.useCallback(async () => {
     setHubsLoading(true)
@@ -317,8 +313,6 @@ export default function AdminHubsPage() {
         </Typography>
       </Box>
 
-      {toast && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setToast('')}>{toast}</Alert>}
-      {hubError && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setHubError('')}>{hubError}</Alert>}
 
       <Tabs value={tab} onChange={(_, v: number) => setTab(v)} sx={{ mb: 3 }}>
         <Tab label="Hubs" />

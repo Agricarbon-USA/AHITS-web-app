@@ -3,12 +3,13 @@
 import * as React from 'react'
 import {
   Box, Typography, Button, Dialog, DialogTitle, DialogContent,
-  DialogActions, TextField, Stack, Alert,
+  DialogActions, TextField, Stack,
   IconButton, Tooltip, CircularProgress,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Paper, Card, CardContent, Switch, FormControlLabel,
 } from '@mui/material'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { useToast } from '@/components/shared/useToast'
 import { ChecklistTemplatesSection } from '@/components/admin/ChecklistTemplatesSection'
 import EmailDeliverySection from '@/components/admin/EmailDeliverySection'
 import SentryDiagnosticsSection from '@/components/admin/SentryDiagnosticsSection'
@@ -31,8 +32,6 @@ interface Category {
 
 export default function SettingsPage() {
   const [categories, setCategories] = React.useState<Category[]>([])
-  const [toast, setToast] = React.useState('')
-  const [error, setError] = React.useState('')
 
   // Category state
   const [editingCatId, setEditingCatId] = React.useState<string | null>(null)
@@ -49,8 +48,12 @@ export default function SettingsPage() {
   const [notifTypes, setNotifTypes] = React.useState<string[]>([])
   const [notifSaving, setNotifSaving] = React.useState(false)
 
-  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 4000) }
-  const showError = (msg: string) => { setError(msg); setTimeout(() => setError(''), 6000) }
+  // CC-23: route through the single shared Snackbar host (was an inline top-of-page
+  // Alert). Thin adapters keep the existing call sites and the ChecklistTemplatesSection
+  // onToast/onError props unchanged.
+  const pushToast = useToast()
+  const showToast = (msg: string) => pushToast({ message: msg })
+  const showError = (msg: string) => pushToast({ message: msg, severity: 'error' })
 
   const loadCategories = React.useCallback(async () => {
     const res = await fetch('/api/categories')
@@ -158,9 +161,6 @@ export default function SettingsPage() {
         <Typography variant="h5">Settings</Typography>
         <Typography variant="body2" color="text.secondary">Manage dropdown lists used across the application</Typography>
       </Box>
-
-      {toast && <Alert severity="success" sx={{ mb: 2 }} onClose={() => setToast('')}>{toast}</Alert>}
-      {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>{error}</Alert>}
 
       {/* Notifications */}
       <Card sx={{ mb: 3 }}>

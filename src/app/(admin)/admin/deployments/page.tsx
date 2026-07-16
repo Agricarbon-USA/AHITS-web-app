@@ -1349,25 +1349,23 @@ function AdminDeploymentsContent() {
               const itemNames = tr.items.map((ti) => `${ti.kitItem.item.name} ×${ti.kitItem.quantity}`).join(', ')
               const summary = [vehicleNames, itemNames].filter(Boolean).join(', ')
               return (
-                <Alert key={tr.id} severity="warning" icon={false}
-                  action={
-                    <Stack direction="row" spacing={1} sx={{ mt: -0.5 }}>
-                      <MutationButton size="small" color="error" variant="outlined"
-                        onClick={() => { setRespondDialog({ transfer: tr, action: 'decline' }); setResponseNote('') }}>
-                        Decline
-                      </MutationButton>
-                      <MutationButton size="small" color="success" variant="contained"
-                        onClick={() => { setRespondDialog({ transfer: tr, action: 'accept' }); setResponseNote('') }}>
-                        Accept
-                      </MutationButton>
-                    </Stack>
-                  }
-                >
+                <Alert key={tr.id} severity="warning" icon={false}>
                   <Typography variant="body2" fontWeight={600}>
                     {tr.fromRig.operator.name} → {tr.toOperator.name}
                   </Typography>
                   <Typography variant="body2">{summary}</Typography>
                   {tr.note && <Typography variant="caption" color="text.secondary">&ldquo;{tr.note}&rdquo;</Typography>}
+                  {/* CC-23: actions in the body (was the Alert `action` slot + mt:-0.5). */}
+                  <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                    <MutationButton size="small" color="error" variant="outlined"
+                      onClick={() => { setRespondDialog({ transfer: tr, action: 'decline' }); setResponseNote('') }}>
+                      Decline
+                    </MutationButton>
+                    <MutationButton size="small" color="success" variant="contained"
+                      onClick={() => { setRespondDialog({ transfer: tr, action: 'accept' }); setResponseNote('') }}>
+                      Accept
+                    </MutationButton>
+                  </Stack>
                 </Alert>
               )
             })}
@@ -1397,7 +1395,9 @@ function AdminDeploymentsContent() {
       </Stack>
 
       <TableContainer component={Paper} sx={{ borderRadius: 2 }}>
-        <Table>
+        {/* CC-23: minWidth so the 6 columns keep readable widths and the container
+            scrolls horizontally on narrow screens instead of crushing cells. */}
+        <Table sx={{ minWidth: 720 }}>
           <TableHead>
             <TableRow sx={{ '& th': { fontWeight: 600, color: 'text.secondary', fontSize: 12 } }}>
               <TableCell>OPERATOR</TableCell>
@@ -1424,7 +1424,17 @@ function AdminDeploymentsContent() {
                         </Stack>
                       </TableCell>
                       <TableCell>
-                        <Typography variant="body2">{rig.vehicles.length === 0 ? '—' : rig.vehicles.map((rv) => rv.vehicle.name).join(', ')}</Typography>
+                        {/* CC-23: truncate the joined vehicle list with a Tooltip for
+                            the full names (was an untruncated join that widened the row). */}
+                        {rig.vehicles.length === 0 ? (
+                          <Typography variant="body2">—</Typography>
+                        ) : (
+                          <Tooltip title={rig.vehicles.map((rv) => rv.vehicle.name).join(', ')} arrow>
+                            <Typography variant="body2" noWrap sx={{ maxWidth: 200 }}>
+                              {rig.vehicles.map((rv) => rv.vehicle.name).join(', ')}
+                            </Typography>
+                          </Tooltip>
+                        )}
                       </TableCell>
                       <TableCell>
                         <Tooltip title={kitItems.map((ki) => ki.item.name).join(', ')} arrow>

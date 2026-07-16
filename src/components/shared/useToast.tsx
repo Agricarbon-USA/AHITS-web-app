@@ -13,7 +13,16 @@ type ShowToast = (options: ToastOptions) => void
 
 const ToastContext = React.createContext<ShowToast | null>(null)
 
-export function ToastProvider({ children }: { children: React.ReactNode }) {
+export function ToastProvider({
+  children,
+  // CC-23: when the layout has a mobile bottom nav (operator shell), lift the
+  // Snackbar above it so toasts aren't hidden behind the tab bar. Desktop (sm+,
+  // no bottom nav) keeps the default 24px offset.
+  bottomOffset = false,
+}: {
+  children: React.ReactNode
+  bottomOffset?: boolean
+}) {
   const [open, setOpen] = React.useState(false)
   const [current, setCurrent] = React.useState<ToastOptions | null>(null)
 
@@ -35,6 +44,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         autoHideDuration={current?.duration ?? 4000}
         onClose={handleClose}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        sx={bottomOffset ? { bottom: { xs: 'calc(80px + env(safe-area-inset-bottom, 0px))', sm: 24 } } : undefined}
       >
         <Alert
           onClose={handleClose}

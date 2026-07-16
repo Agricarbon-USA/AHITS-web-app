@@ -9,6 +9,7 @@ import {
   Paper, Avatar, Skeleton, List, ListItem, ListItemText,
 } from '@mui/material'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { useToast } from '@/components/shared/useToast'
 import PersonAddIcon from '@mui/icons-material/PersonAdd'
 import EditIcon from '@mui/icons-material/Edit'
 import LockOpenIcon from '@mui/icons-material/LockOpen'
@@ -272,7 +273,6 @@ export default function AdminUsersPage() {
   const [users, setUsers] = React.useState<UserRow[]>([])
   const [hubs, setHubs] = React.useState<HubRow[]>([])
   const [loading, setLoading] = React.useState(true)
-  const [toast, setToast] = React.useState('')
   const [filterProject, setFilterProject] = React.useState('')
   const [projects, setProjects] = React.useState<{ id: string; name: string }[]>([])
   const [inviteOpen, setInviteOpen] = React.useState(false)
@@ -299,8 +299,10 @@ export default function AdminUsersPage() {
     fetch('/api/projects').then((r) => r.json()).then((d) => setProjects(d.data ?? d ?? [])).catch(() => {})
   }, [load])
 
-  const [toastSev, setToastSev] = React.useState<'success' | 'error'>('success')
-  const showToast = (msg: string, sev: 'success' | 'error' = 'success') => { setToast(msg); setToastSev(sev); setTimeout(() => setToast(''), 4000) }
+  // CC-23: route through the single shared Snackbar host (was an inline
+  // top-of-page Alert). Adapter preserves the (msg, sev) call-site signature.
+  const pushToast = useToast()
+  const showToast = (msg: string, sev: 'success' | 'error' = 'success') => pushToast({ message: msg, severity: sev })
 
   const patchUser = async (id: string, body: object): Promise<boolean> => {
     const res = await fetch(`/api/users/${id}`, {
@@ -344,7 +346,6 @@ export default function AdminUsersPage() {
         </Stack>
       </Stack>
 
-      {toast && <Alert severity={toastSev} sx={{ mb: 2 }} onClose={() => setToast('')}>{toast}</Alert>}
 
       {projects.length > 0 && (
         <Stack direction="row" spacing={1.5} mb={2} alignItems="center">
@@ -361,7 +362,9 @@ export default function AdminUsersPage() {
 
       {/* Users table */}
       <TableContainer component={Paper} sx={{ borderRadius: 2 }}>
-        <Table>
+        {/* CC-23: minWidth so columns keep readable widths and the container
+            scrolls horizontally on narrow screens instead of crushing cells. */}
+        <Table sx={{ minWidth: 640 }}>
           <TableHead>
             <TableRow sx={{ '& th': { fontWeight: 600, color: 'text.secondary', fontSize: 12 } }}>
               <TableCell>NAME</TableCell>
