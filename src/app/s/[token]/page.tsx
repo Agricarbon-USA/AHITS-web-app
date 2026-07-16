@@ -3,6 +3,7 @@
 import { useEffect, useState, use } from 'react'
 import { formatDate } from '@/lib/utils'
 import { FulfillmentChecklist, type ChecklistLine } from '@/components/shared/FulfillmentChecklist'
+import { color, font } from '@/theme/tokens'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -51,12 +52,16 @@ interface Context {
 
 // ── Styles ────────────────────────────────────────────────────────────────────
 
-const wrap: React.CSSProperties = { maxWidth: 560, margin: '0 auto', padding: 24, fontFamily: 'system-ui, sans-serif', color: '#1a1a1a' }
-const card: React.CSSProperties = { border: '1px solid #e0e0e0', borderRadius: 12, padding: 20, marginTop: 16, background: '#fff' }
-const btn: React.CSSProperties = { background: '#2e7d32', color: '#fff', border: 'none', padding: '12px 20px', borderRadius: 8, fontWeight: 600, fontSize: 15, cursor: 'pointer', minHeight: 48, width: '100%', marginTop: 8 }
-const btnOutline: React.CSSProperties = { ...btn, background: '#fff', color: '#2e7d32', border: '1px solid #2e7d32' }
-const btnDanger: React.CSSProperties = { ...btnOutline, color: '#d32f2f', border: '1px solid #d32f2f' }
-const inputStyle: React.CSSProperties = { width: '100%', padding: 12, fontSize: 15, borderRadius: 8, border: '1px solid #ccc', margin: '6px 0 12px', minHeight: 44, boxSizing: 'border-box' }
+// CC-23: this login-less external portal is intentionally raw-HTML (no MUI), but
+// its palette and type are single-sourced from tokens.ts — the brand green, danger
+// shade, ink, borders, and font all resolve here rather than being re-hardcoded.
+// (CC-27 owns the full rebuild; until then the file stays on the ESLint hex allowlist.)
+const wrap: React.CSSProperties = { maxWidth: 560, margin: '0 auto', padding: 24, fontFamily: font.familyPortal, color: color.ink }
+const card: React.CSSProperties = { border: `1px solid ${color.border}`, borderRadius: 12, padding: 20, marginTop: 16, background: color.surface }
+const btn: React.CSSProperties = { background: color.brand, color: color.surface, border: 'none', padding: '12px 20px', borderRadius: 8, fontWeight: font.weight.medium, fontSize: font.size.base, cursor: 'pointer', minHeight: 48, width: '100%', marginTop: 8 }
+const btnOutline: React.CSSProperties = { ...btn, background: color.surface, color: color.brand, border: `1px solid ${color.brand}` }
+const btnDanger: React.CSSProperties = { ...btnOutline, color: color.errorAlt, border: `1px solid ${color.errorAlt}` }
+const inputStyle: React.CSSProperties = { width: '100%', padding: 12, fontSize: font.size.base, borderRadius: 8, border: `1px solid ${color.borderSoft}`, margin: '6px 0 12px', minHeight: 44, boxSizing: 'border-box' }
 
 const ACTION_LABELS: Record<string, string> = {
   RECEIVED: 'Mark received',
@@ -119,8 +124,8 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
     return (
       <div style={wrap}>
         <Header />
-        <div style={{ ...card, borderColor: '#2e7d32' }}>
-          <h3 style={{ color: '#2e7d32', marginTop: 0 }}>✓ Thank you</h3>
+        <div style={{ ...card, borderColor: color.brand }}>
+          <h3 style={{ color: color.brand, marginTop: 0 }}>✓ Thank you</h3>
           <p>Your update ({ACTION_LABELS[done] ?? done}) was recorded and the Agricarbon team has been notified.</p>
         </div>
       </div>
@@ -188,7 +193,7 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
       <div style={wrap}>
         <Header />
         <div style={card}>
-          <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.6, color: '#757575' }}>
+          <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.6, color: color.inkMuted }}>
             Rig Reservation Request
           </div>
           <h2 style={{ margin: '6px 0 12px' }}>{s.label ?? 'Rig Reservation'}</h2>
@@ -199,7 +204,7 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
 
         {!ctx.actionable ? (
           <div style={card}>
-            <p style={{ margin: 0, color: '#757575' }}>
+            <p style={{ margin: 0, color: color.inkMuted }}>
               {ctx.state === 'COMPLETED' ? 'This has been completed — thank you.'
                 : ctx.state === 'EXPIRED' ? 'This link has expired. Please contact Agricarbon.'
                 : ctx.state === 'REVOKED' ? 'This link is no longer valid. Please contact Agricarbon.'
@@ -209,7 +214,7 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
         ) : (
           <div style={card}>
             <h3 style={{ marginTop: 0 }}>Checklist</h3>
-            <label style={{ fontSize: 13, color: '#555' }}>Your name</label>
+            <label style={{ fontSize: 13, color: color.inkSoft }}>Your name</label>
             <input
               value={actorLabel}
               onChange={(e) => setActorLabel(e.target.value)}
@@ -226,10 +231,10 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
                 stageLabel="Mark prepared / staged"
               />
             ) : (
-              <p style={{ color: '#757575', fontSize: 14 }}>No items on this reservation.</p>
+              <p style={{ color: color.inkMuted, fontSize: 14 }}>No items on this reservation.</p>
             )}
-            {error && <p style={{ color: '#d32f2f', fontSize: 14, marginTop: 8 }}>{error}</p>}
-            <div style={{ marginTop: 16, borderTop: '1px solid #e0e0e0', paddingTop: 12 }}>
+            {error && <p style={{ color: color.errorAlt, fontSize: 14, marginTop: 8 }}>{error}</p>}
+            <div style={{ marginTop: 16, borderTop: `1px solid `, paddingTop: 12 }}>
               <button
                 disabled={submitting}
                 style={btnDanger}
@@ -250,7 +255,7 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
     <div style={wrap}>
       <Header />
       <div style={card}>
-        <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.6, color: '#757575' }}>
+        <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.6, color: color.inkMuted }}>
           {isWO ? 'Repair Work Order' : ctx.type === 'HUB_RETURN' ? 'Hub Return — Confirm Receipt' : 'Invoice'}
         </div>
         <h2 style={{ margin: '6px 0 12px' }}>{s.asset ?? 'Equipment'}{s.serialNumber ? ` · #${s.serialNumber}` : ''}</h2>
@@ -262,7 +267,7 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
 
       {!ctx.actionable ? (
         <div style={card}>
-          <p style={{ margin: 0, color: '#757575' }}>
+          <p style={{ margin: 0, color: color.inkMuted }}>
             {ctx.state === 'COMPLETED' ? 'This has been completed — thank you.'
               : ctx.state === 'EXPIRED' ? 'This link has expired. Please contact Agricarbon.'
               : ctx.state === 'REVOKED' ? 'This link is no longer valid. Please contact Agricarbon.'
@@ -272,16 +277,16 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
       ) : (
         <div style={card}>
           <h3 style={{ marginTop: 0 }}>Update status</h3>
-          <label style={{ fontSize: 13, color: '#555' }}>Your name</label>
+          <label style={{ fontSize: 13, color: color.inkSoft }}>Your name</label>
           <input value={actorLabel} onChange={(e) => setActorLabel(e.target.value)} placeholder="e.g. Joe at Eastside Repair"
             style={inputStyle} />
-          <label style={{ fontSize: 13, color: '#555' }}>{chosen === 'INVOICED' ? 'Invoice number' : 'Note (optional)'}</label>
+          <label style={{ fontSize: 13, color: color.inkSoft }}>{chosen === 'INVOICED' ? 'Invoice number' : 'Note (optional)'}</label>
           <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2}
-            style={{ width: '100%', padding: 12, fontSize: 15, borderRadius: 8, border: '1px solid #ccc', margin: '6px 0 8px' }} />
-          {error && <p style={{ color: '#d32f2f', fontSize: 14 }}>{error}</p>}
+            style={{ width: '100%', padding: 12, fontSize: 15, borderRadius: 8, border: `1px solid `, margin: '6px 0 8px' }} />
+          {error && <p style={{ color: color.errorAlt, fontSize: 14 }}>{error}</p>}
           {ctx.allowedActions.map((a) => (
             <button key={a} disabled={submitting}
-              style={a === 'DISCREPANCY' || a === 'DECLINED' ? { ...btnOutline, borderColor: '#d32f2f', color: '#d32f2f' } : btn}
+              style={a === 'DISCREPANCY' || a === 'DECLINED' ? { ...btnOutline, borderColor: color.errorAlt, color: color.errorAlt } : btn}
               onClick={() => { setChosen(a); void submit(a) }}>
               {submitting && chosen === a ? 'Submitting…' : (ACTION_LABELS[a] ?? a)}
             </button>
@@ -295,7 +300,7 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
 
 function Header() {
   return (
-    <div style={{ background: '#2e7d32', color: '#fff', padding: '16px 20px', borderRadius: '12px 12px 0 0' }}>
+    <div style={{ background: color.brand, color: color.surface, padding: '16px 20px', borderRadius: '12px 12px 0 0' }}>
       <h2 style={{ margin: 0 }}>🌱 Agricarbon</h2>
     </div>
   )
@@ -304,7 +309,7 @@ function Header() {
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div style={{ display: 'flex', gap: 12, padding: '6px 0', borderBottom: '1px solid #f0f0f0' }}>
-      <div style={{ flex: '0 0 90px', color: '#757575', fontSize: 14 }}>{label}</div>
+      <div style={{ flex: '0 0 90px', color: color.inkMuted, fontSize: 14 }}>{label}</div>
       <div style={{ fontSize: 14 }}>{value}</div>
     </div>
   )

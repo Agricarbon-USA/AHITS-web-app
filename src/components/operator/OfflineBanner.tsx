@@ -1,7 +1,10 @@
 'use client'
 import * as React from 'react'
-import { Alert, Button, CircularProgress, Stack } from '@mui/material'
+import { Alert, Button, CircularProgress } from '@mui/material'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
+import { BannerStack, BANNER_PRIORITY, type BannerDescriptor } from '@/components/ui/BannerStack'
+
+const bannerSx = { mb: 0, borderRadius: 0 } as const
 
 export function OfflineBanner() {
   const {
@@ -27,99 +30,91 @@ export function OfflineBanner() {
   const showQueueAlert = isOffline || pending > 0 || syncing
   const showFailedAlert = failed > 0
 
-  if (
-    !showIdbError && !showDataLoss && !showStale && !showQuota &&
-    !showPersistence && !showQueueAlert && !showFailedAlert
-  ) return null
-
   const dismissFailed = async () => {
     const items = await listFailed()
     await Promise.all(items.map((i) => i.id != null ? discardFailed(i.id) : Promise.resolve()))
   }
 
-  return (
-    <Stack>
-      {showIdbError && (
-        <Alert severity="error" sx={{ mb: 0, borderRadius: 0 }}>
+  // CC-23: build the candidate banners with priorities, then collapse to the
+  // single most-important one via BannerStack (was a Stack that rendered up to 7
+  // at once). Ordered most-important-first within each tier so ties resolve
+  // correctly. The data-risk errors (can't-save / possible-loss / failed sync)
+  // are CRITICAL; offline/sync status is OFFLINE; the persistence notice is INFO.
+  const banners: BannerDescriptor[] = []
+
+  if (showIdbError) {
+    banners.push({
+      id: 'idb-error',
+      priority: BANNER_PRIORITY.CRITICAL,
+      node: (
+        <Alert severity="error" sx={bannerSx}>
           This device can&apos;t save offline actions — writes to local storage are
           blocked (Safari Private Mode or storage full). Actions you take offline will
           NOT be recorded.
         </Alert>
-      )}
-      {showDataLoss && (
-        <Alert
-          severity="error"
-          sx={{ mb: 0, borderRadius: 0 }}
-          action={
-            <Button size="small" color="inherit" onClick={() => setDismissedDataLoss(true)}>
-              Dismiss
-            </Button>
-          }
-        >
+      ),
+    })
+  }
+  if (showDataLoss) {
+    banners.push({
+      id: 'data-loss',
+      priority: BANNER_PRIORITY.CRITICAL,
+      node: (
+        <Alert severity="error" sx={bannerSx}
+          action={<Button size="small" color="inherit" onClick={() => setDismissedDataLoss(true)}>Dismiss</Button>}>
           Your device may have deleted queued offline actions since your last session.
           Check with your supervisor if any syncs are missing.
         </Alert>
-      )}
-      {showFailedAlert && (
-        <Alert
-          severity="error"
-          sx={{ mb: 0, borderRadius: 0 }}
-          action={
-            <Button size="small" color="inherit" onClick={dismissFailed}>
-              Dismiss
-            </Button>
-          }
-        >
+      ),
+    })
+  }
+  if (showFailedAlert) {
+    banners.push({
+      id: 'failed',
+      priority: BANNER_PRIORITY.CRITICAL,
+      node: (
+        <Alert severity="error" sx={bannerSx}
+          action={<Button size="small" color="inherit" onClick={dismissFailed}>Dismiss</Button>}>
           {failed} action(s) couldn&apos;t be applied — they changed on the server or were
           rejected. Re-scan to try again.
         </Alert>
-      )}
-      {showStale && (
-        <Alert
-          severity="warning"
-          sx={{ mb: 0, borderRadius: 0 }}
-          action={
-            <Button size="small" color="inherit" onClick={() => setDismissedStale(true)}>
-              Dismiss
-            </Button>
-          }
-        >
+      ),
+    })
+  }
+  if (showStale) {
+    banners.push({
+      id: 'stale',
+      priority: BANNER_PRIORITY.OFFLINE,
+      node: (
+        <Alert severity="warning" sx={bannerSx}
+          action={<Button size="small" color="inherit" onClick={() => setDismissedStale(true)}>Dismiss</Button>}>
           You have offline actions queued for 6+ days. iOS may delete them soon —
           reconnect to sync.
         </Alert>
-      )}
-      {showQuota && (
-        <Alert
-          severity="warning"
-          sx={{ mb: 0, borderRadius: 0 }}
-          action={
-            <Button size="small" color="inherit" onClick={() => setDismissedQuota(true)}>
-              Dismiss
-            </Button>
-          }
-        >
+      ),
+    })
+  }
+  if (showQuota) {
+    banners.push({
+      id: 'quota',
+      priority: BANNER_PRIORITY.OFFLINE,
+      node: (
+        <Alert severity="warning" sx={bannerSx}
+          action={<Button size="small" color="inherit" onClick={() => setDismissedQuota(true)}>Dismiss</Button>}>
           Device storage is nearly full. Free up space to avoid losing offline actions.
         </Alert>
-      )}
-      {showPersistence && (
-        <Alert
-          severity="info"
-          sx={{ mb: 0, borderRadius: 0 }}
-          action={
-            <Button size="small" color="inherit" onClick={() => setDismissedPersistence(true)}>
-              Dismiss
-            </Button>
-          }
-        >
-          Offline storage is not guaranteed on this device — the OS may clear queued
-          actions under storage pressure.
-        </Alert>
-      )}
-      {showQueueAlert && (
+      ),
+    })
+  }
+  if (showQueueAlert) {
+    banners.push({
+      id: 'queue',
+      priority: BANNER_PRIORITY.OFFLINE,
+      node: (
         <Alert
           severity={isOffline ? 'warning' : 'info'}
           icon={syncing ? <CircularProgress size={16} /> : undefined}
-          sx={{ mb: 0, borderRadius: 0 }}
+          sx={bannerSx}
         >
           {isOffline
             ? `You're offline — showing cached data.${pending > 0 ? ` ${pending} action(s) queued.` : ''}`
@@ -127,7 +122,22 @@ export function OfflineBanner() {
               ? `Syncing ${pending} action(s)…`
               : `${pending} action(s) waiting to sync.`}
         </Alert>
-      )}
-    </Stack>
-  )
+      ),
+    })
+  }
+  if (showPersistence) {
+    banners.push({
+      id: 'persistence',
+      priority: BANNER_PRIORITY.INFO,
+      node: (
+        <Alert severity="info" sx={bannerSx}
+          action={<Button size="small" color="inherit" onClick={() => setDismissedPersistence(true)}>Dismiss</Button>}>
+          Offline storage is not guaranteed on this device — the OS may clear queued
+          actions under storage pressure.
+        </Alert>
+      ),
+    })
+  }
+
+  return <BannerStack banners={banners} />
 }

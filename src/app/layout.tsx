@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import { headers } from 'next/headers'
 import { Providers } from './providers'
 import { SentryProvider } from '@/components/shared/SentryProvider'
+import { color } from '@/theme/tokens'
 import './globals.css'
 
 export const metadata: Metadata = {
@@ -20,7 +21,7 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  themeColor: '#2e7d32',
+  themeColor: color.brand,
   width: 'device-width',
   initialScale: 1,
   // Allow pinch-zoom (WCAG 2.1 AA, PRD §9) — do not lock maximumScale.

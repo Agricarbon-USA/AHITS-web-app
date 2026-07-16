@@ -5,8 +5,9 @@ import { formatDate } from '@/lib/utils'
 import {
   Box, Typography, Paper, Stack, Button, IconButton, CircularProgress, Chip, Divider,
   Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
-  Drawer, Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem, Tooltip,
+  Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem, Tooltip,
 } from '@mui/material'
+import { DetailDrawer } from '@/components/ui/DetailDrawer'
 import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
@@ -172,7 +173,7 @@ export default function AdminProjectsPage() {
         )}
       </Paper>
 
-      <Drawer anchor="right" open={!!detail || detailLoading} onClose={() => setDetail(null)} PaperProps={{ sx: { width: { xs: '100%', sm: 440 }, p: 2 } }}>
+      <DetailDrawer open={!!detail || detailLoading} onClose={() => setDetail(null)} width={440} paperSx={{ p: 2 }}>
         {detailLoading ? (
           <Box sx={{ p: 4, textAlign: 'center' }}><CircularProgress size={28} /></Box>
         ) : detail ? (
@@ -226,7 +227,7 @@ export default function AdminProjectsPage() {
             </Stack>
           </Stack>
         ) : null}
-      </Drawer>
+      </DetailDrawer>
 
       {formOpen && (
         <ProjectFormDialog

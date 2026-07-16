@@ -1,13 +1,17 @@
 import Link from 'next/link'
+import { color, font } from '@/theme/tokens'
 
+// CC-23: this offline fallback is served by the service worker and rendered
+// outside the MUI theme, so it pulls brand palette/type from tokens.ts directly
+// rather than re-hardcoding the green.
 const linkStyle: React.CSSProperties = {
   display: 'block',
   padding: '12px 16px',
   borderRadius: 8,
-  border: '1px solid #2e7d32',
-  color: '#2e7d32',
+  border: `1px solid ${color.brand}`,
+  color: color.brand,
   textDecoration: 'none',
-  fontWeight: 600,
+  fontWeight: font.weight.medium,
 }
 
 export default function OfflinePage() {
@@ -22,7 +26,7 @@ export default function OfflinePage() {
     >
       <section style={{ maxWidth: 520, width: '100%', textAlign: 'center' }}>
         <h1 style={{ marginBottom: 8 }}>You&apos;re offline</h1>
-        <p style={{ marginBottom: 20, color: '#555' }}>
+        <p style={{ marginBottom: 20, color: color.inkSoft }}>
           AHITS can&apos;t reach the network right now. Your cached screens still work, and
           anything you do is queued and syncs automatically when your connection returns.
         </p>

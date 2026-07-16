@@ -8,9 +8,11 @@ import {
   Chip, IconButton, Tooltip, CircularProgress,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Paper, Skeleton, Switch, FormControlLabel, Accordion, AccordionSummary,
-  AccordionDetails, Drawer, Divider, TablePagination,
+  AccordionDetails, Divider, TablePagination,
   FormControl, FormLabel, RadioGroup, Radio, Link, Tabs, Tab,
 } from '@mui/material'
+import { StatusChip } from '@/components/shared/StatusChip'
+import { DetailDrawer } from '@/components/ui/DetailDrawer'
 import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
 import ArchiveIcon from '@mui/icons-material/Archive'
@@ -576,7 +578,7 @@ async function downloadUnitQR(unit: { qrCodeId: string; serialNumber: string | n
   link.click()
 }
 
-function DetailDrawer({
+function ItemDetailDrawer({
   row, hubs, onClose, onEdit, onRetire, onUpdated,
 }: {
   row: InventoryItemRow | null
@@ -694,7 +696,7 @@ function DetailDrawer({
   const damagePhotos = detail?.photos.filter((p) => p.context === 'DAMAGE') ?? []
 
   return (
-    <Drawer anchor="right" open={!!row} onClose={onClose} PaperProps={{ sx: { width: { xs: '100%', sm: 540 } } }}>
+    <DetailDrawer open={!!row} onClose={onClose} width={540}>
       {loading && (
         <Box p={3}><Stack spacing={1.5}>{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} height={32} />)}</Stack></Box>
       )}
@@ -1039,7 +1041,7 @@ function DetailDrawer({
           onSuccess={() => { setRepairUnitId(null); loadDetail(detail.id); onUpdated() }}
         />
       )}
-    </Drawer>
+    </DetailDrawer>
   )
 }
 
@@ -1263,7 +1265,7 @@ function AdminInventoryContent() {
                         <Stack direction="row" spacing={1} alignItems="center">
                           <Typography variant="body2" fontWeight={500}>{item.name}</Typography>
                           {item.itemType === 'SERIALIZED' && (
-                            <Chip size="small" label="S" variant="outlined" color="primary" sx={{ fontSize: 10, height: 18 }} />
+                            <StatusChip label="S" variant="outlined" color="primary" />
                           )}
                           {item.unitCounts?.inoperable > 0 && (
                             <Tooltip title={`${item.unitCounts.inoperable} inoperable`}>
@@ -1336,7 +1338,7 @@ function AdminInventoryContent() {
       )}
 
       {/* Detail drawer */}
-      <DetailDrawer
+      <ItemDetailDrawer
         row={detailRow}
         hubs={hubs}
         onClose={() => setDetailRow(null)}

@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import {
-  Box, Typography, Paper, Stack, TextField, Button, CircularProgress, Chip,
+  Box, Typography, Paper, Stack, TextField, Button, CircularProgress,
   Table, TableHead, TableBody, TableRow, TableCell, TableSortLabel,
   ToggleButton, ToggleButtonGroup, TableContainer,
 } from '@mui/material'
@@ -207,7 +207,7 @@ export default function AdminReportsPage() {
                     <TableCell>
                       <Stack direction="row" spacing={0.5} alignItems="center">
                         <Typography variant="body2" fontWeight={500}>{r.name}</Typography>
-                        {r.isRental && <Chip label="Rental" size="small" color="warning" variant="outlined" sx={{ height: 18, fontSize: 10 }} />}
+                        {r.isRental && <StatusChip label="Rental" color="warning" variant="outlined" />}
                       </Stack>
                       <Typography variant="caption" color="text.secondary">
                         {r.assetType === 'VEHICLE' ? 'Vehicle' : 'Unit'}

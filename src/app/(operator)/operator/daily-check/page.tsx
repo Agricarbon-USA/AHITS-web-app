@@ -293,30 +293,34 @@ export default function OperatorDailyCheckPage() {
               <Box key={row.key}>
                 {idx > 0 && <Divider />}
                 <ListItem disablePadding sx={{ py: 1, flexDirection: 'column', alignItems: 'flex-start' }}>
-                  <Stack direction="row" justifyContent="space-between" alignItems="center" width="100%">
-                    <Typography
-                      variant="body2"
-                      fontWeight={row.value === 'no' ? 700 : 400}
-                      color={row.value === 'no' ? 'error' : 'text.primary'}
-                    >
-                      {row.label}
-                    </Typography>
-                    <ToggleButtonGroup
-                      value={row.value}
-                      exclusive
-                      size="small"
-                      onChange={(_, v) => {
-                        if (!v) return
-                        setChecklist((prev) =>
-                          prev.map((r) => r.key === row.key ? { ...r, value: v as ChecklistRow['value'], note: v !== 'no' ? '' : r.note } : r)
-                        )
-                      }}
-                    >
-                      <ToggleButton value="yes" sx={{ px: 1.5 }}>Yes</ToggleButton>
-                      <ToggleButton value="no" color="error" sx={{ px: 1.5 }}>No</ToggleButton>
-                      <ToggleButton value="na" sx={{ px: 1.5 }}>N/A</ToggleButton>
-                    </ToggleButtonGroup>
-                  </Stack>
+                  {/* CC-23: label above a full-width 3-segment toggle so each
+                      option is a 44px touch target with ≥16px text (was a
+                      size="small" inline group with ~28px targets). */}
+                  <Typography
+                    variant="body2"
+                    fontWeight={row.value === 'no' ? 700 : 400}
+                    color={row.value === 'no' ? 'error' : 'text.primary'}
+                    sx={{ mb: 0.75, width: '100%' }}
+                  >
+                    {row.label}
+                  </Typography>
+                  <ToggleButtonGroup
+                    value={row.value}
+                    exclusive
+                    fullWidth
+                    size="medium"
+                    onChange={(_, v) => {
+                      if (!v) return
+                      setChecklist((prev) =>
+                        prev.map((r) => r.key === row.key ? { ...r, value: v as ChecklistRow['value'], note: v !== 'no' ? '' : r.note } : r)
+                      )
+                    }}
+                    sx={{ '& .MuiToggleButton-root': { minHeight: 44, fontSize: 16, textTransform: 'none' } }}
+                  >
+                    <ToggleButton value="yes">Yes</ToggleButton>
+                    <ToggleButton value="no" color="error">No</ToggleButton>
+                    <ToggleButton value="na">N/A</ToggleButton>
+                  </ToggleButtonGroup>
                   {row.value === 'no' && (
                     <TextField
                       size="small"

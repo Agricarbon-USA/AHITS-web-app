@@ -138,18 +138,24 @@ export function PhotoCapture({
             {previews[ref] && (
               <Box component="img" src={previews[ref]} alt="" sx={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             )}
+            {/* CC-23: 44px touch target, kept INSIDE the thumbnail bounds (was
+                top/right:-2, poking outside with a ~20px tap area). The dark
+                scrim is confined to the visible close glyph so it doesn't cover
+                the whole thumbnail. */}
             <IconButton
-              size="small"
               aria-label="Remove photo"
               onClick={() => remove(ref)}
               disabled={disabled}
               sx={{
-                position: 'absolute', top: -2, right: -2, p: '2px',
-                bgcolor: 'rgba(0,0,0,0.55)', color: '#fff',
-                '&:hover': { bgcolor: 'rgba(0,0,0,0.75)' },
+                position: 'absolute', top: 0, right: 0, width: 44, height: 44,
+                color: 'common.white',
+                '& .MuiSvgIcon-root': {
+                  bgcolor: 'rgba(0,0,0,0.55)', borderRadius: '50%', p: '2px', fontSize: 20,
+                },
+                '&:hover .MuiSvgIcon-root': { bgcolor: 'rgba(0,0,0,0.75)' },
               }}
             >
-              <CloseIcon sx={{ fontSize: 14 }} />
+              <CloseIcon />
             </IconButton>
           </Box>
         ))}

@@ -36,6 +36,11 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # CC-23: component tests (jsdom + RTL) run here, in the DB-less job — they
+      # render React/MUI and never touch a database (see vitest.config.ui.ts).
+      - name: Component tests
+        run: npm run test:ui
+
       # Exercise the real production build (Serwist + webpack) so build-only
       # failures are caught on the PR, not at deploy time inside Docker.
       - name: Build
