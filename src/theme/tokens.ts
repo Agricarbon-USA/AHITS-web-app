@@ -60,8 +60,9 @@ export const spacing = {
 export const density = {
   touchMin: 44, // minimum touch-target size (px) on operator routes
   actionableTextMin: 16, // minimum actionable-text size (px) on operator routes
-  // Dense chip: replaces the hand-rolled height:18/fontSize:10 sites that clip
-  // descenders. Exposed as the MUI Chip `dense` variant in the theme.
+  // Dense chip: the single source for the compact status-badge size. Applied by
+  // the StatusChip component, replacing the hand-rolled height:18/fontSize:10
+  // sites that clipped descenders.
   chipDense: { height: 20, fontSize: 11 },
 } as const
 

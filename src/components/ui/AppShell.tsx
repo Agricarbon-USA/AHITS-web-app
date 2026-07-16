@@ -22,9 +22,11 @@ interface AppShellProps {
   headerActions?: React.ReactNode
   /** Optional mobile bottom tab bar (operator shell). Rendered only on mobile. */
   bottomNav?: React.ReactNode
+  /** CC-23: full-bleed banner slot below the AppBar (e.g. the collapse-to-one OfflineBanner). */
+  banner?: React.ReactNode
 }
 
-export function AppShell({ nav, children, title = 'AHITS', headerActions, bottomNav }: AppShellProps) {
+export function AppShell({ nav, children, title = 'AHITS', headerActions, bottomNav, banner }: AppShellProps) {
   const theme = useTheme()
   const isMobile = useMediaQuery(theme.breakpoints.down('md'))
   const [drawerOpen, setDrawerOpen] = React.useState(false)
@@ -109,7 +111,6 @@ export function AppShell({ nav, children, title = 'AHITS', headerActions, bottom
         component="main"
         sx={{
           flexGrow: 1,
-          p: 3,
           minWidth: 0,
           // UR-008: clear the (now inset-padded) fixed AppBar at the top and the
           // iOS home indicator at the bottom; respect landscape side insets.
@@ -119,11 +120,23 @@ export function AppShell({ nav, children, title = 'AHITS', headerActions, bottom
           pb: effectiveIsMobile && bottomNav
             ? 'calc(80px + env(safe-area-inset-bottom, 0px))'
             : 'calc(24px + env(safe-area-inset-bottom, 0px))',
-          pl: 'calc(24px + env(safe-area-inset-left, 0px))',
-          pr: 'calc(24px + env(safe-area-inset-right, 0px))',
         }}
       >
-        {children}
+        {/* CC-23: full-bleed banner slot — spans the content column edge-to-edge
+            (no horizontal padding) so a collapsed OfflineBanner reads as a true
+            page-width banner, not an inset card. */}
+        {banner}
+        {/* Content keeps the previous p:3 padding (top + insets-aware sides). */}
+        <Box
+          sx={{
+            pt: 3,
+            pb: 3,
+            pl: 'calc(24px + env(safe-area-inset-left, 0px))',
+            pr: 'calc(24px + env(safe-area-inset-right, 0px))',
+          }}
+        >
+          {children}
+        </Box>
       </Box>
       {effectiveIsMobile && bottomNav}
       <ServiceWorkerUpdater />

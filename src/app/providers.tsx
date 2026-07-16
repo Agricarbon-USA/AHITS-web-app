@@ -5,16 +5,7 @@ import { ThemeProvider, createTheme } from '@mui/material/styles'
 import CssBaseline from '@mui/material/CssBaseline'
 import { LocalizationProvider } from '@mui/x-date-pickers'
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
-import { color, font, density } from '@/theme/tokens'
-
-// CC-23: the `dense` Chip variant (height 20 / fontSize 11) replaces the 15+
-// hand-rolled height:18/fontSize:10 chip sites that clipped descenders. Consumed
-// by StatusChip v2 and any dense-chip site.
-declare module '@mui/material/Chip' {
-  interface ChipPropsVariantOverrides {
-    dense: true
-  }
-}
+import { color, font } from '@/theme/tokens'
 
 const theme = createTheme({
   palette: {
@@ -42,17 +33,6 @@ const theme = createTheme({
     },
     MuiChip: {
       styleOverrides: { root: { borderRadius: 6 } },
-      variants: [
-        {
-          props: { variant: 'dense' },
-          style: {
-            height: density.chipDense.height,
-            fontSize: density.chipDense.fontSize,
-            '& .MuiChip-label': { paddingLeft: 6, paddingRight: 6 },
-            '& .MuiChip-icon': { fontSize: 13 },
-          },
-        },
-      ],
     },
   },
 })

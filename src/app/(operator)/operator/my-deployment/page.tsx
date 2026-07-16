@@ -8,6 +8,7 @@ import {
   ListItem, ListItemText, ListItemIcon, ListSubheader, Stepper, Step, StepLabel,
   Alert, Switch, FormControlLabel, Divider, IconButton, Tooltip,
 } from '@mui/material'
+import { StatusChip } from '@/components/shared/StatusChip'
 import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import TerrainIcon from '@mui/icons-material/Terrain'
 import AgricultureIcon from '@mui/icons-material/Agriculture'
@@ -1288,7 +1289,7 @@ export default function MyRigPage() {
                       <Icon fontSize="small" color="action" />
                       <Typography variant="body2" sx={{ minWidth: 0, wordBreak: 'break-word' }}>{rv.vehicle.name}</Typography>
                       {rv.vehicle.isRental && (
-                        <Chip label="Rental" size="small" color="warning" variant="outlined" sx={{ ml: 0.5, height: 18, fontSize: 10 }} />
+                        <StatusChip label="Rental" color="warning" variant="outlined" sx={{ ml: 0.5 }} />
                       )}
                       {rv.vehicle.isRental && !rv.vehicle.rentalAgreementUrl && (
                         <Chip label="Agreement needed" size="small" color="error" variant="outlined"
@@ -1355,7 +1356,7 @@ export default function MyRigPage() {
                           </Typography>
                         )}
                       </Box>
-                      <Chip size="small" label={ki.item.categoryRef?.name ?? ki.item.itemType} sx={{ height: 18, fontSize: 10 }} />
+                      <StatusChip label={ki.item.categoryRef?.name ?? ki.item.itemType} />
                       <Stack direction="row" alignItems="center" spacing={0.5}>
                         {isLow && <WarningAmberIcon fontSize="small" color="warning" />}
                         <Chip size="small" label={`×${ki.quantity}`}

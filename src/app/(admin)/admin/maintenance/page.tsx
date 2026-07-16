@@ -3,11 +3,12 @@
 import * as React from 'react'
 import { formatDate } from '@/lib/utils'
 import {
-  Box, Typography, Stack, Chip, Drawer, Divider, Button, TextField, MenuItem,
+  Box, Typography, Stack, Chip, Divider, Button, TextField, MenuItem,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper,
   Skeleton, Tabs, Tab, IconButton, CircularProgress,
   Dialog, DialogTitle, DialogContent, DialogActions,
 } from '@mui/material'
+import { DetailDrawer } from '@/components/ui/DetailDrawer'
 import BuildIcon from '@mui/icons-material/Build'
 import CloseIcon from '@mui/icons-material/Close'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
@@ -528,8 +529,7 @@ export default function AdminMaintenancePage() {
         </Table>
       </TableContainer>
 
-      <Drawer anchor="right" open={!!selected} onClose={closeDrawer}
-        PaperProps={{ sx: { width: { xs: '100%', sm: 460 }, p: 0 } }}>
+      <DetailDrawer open={!!selected} onClose={closeDrawer} width={460} paperSx={{ p: 0 }}>
         {selected && draft && (
           <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
             <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ p: 2, pb: 1 }}>
@@ -666,7 +666,7 @@ export default function AdminMaintenancePage() {
             </Stack>
           </Box>
         )}
-      </Drawer>
+      </DetailDrawer>
 
       {/* Inoperable review — send for repair (shared dialog) */}
       {repairUnit && (

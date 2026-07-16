@@ -4,9 +4,10 @@ import * as React from 'react'
 import {
   Box, Typography, Paper, Stack, Button, IconButton, CircularProgress, Chip, Divider,
   Table, TableHead, TableBody, TableRow, TableCell, TableContainer, TableSortLabel,
-  Drawer, Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem, Tooltip,
+  Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem, Tooltip,
   Switch, FormControlLabel,
 } from '@mui/material'
+import { DetailDrawer } from '@/components/ui/DetailDrawer'
 import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
@@ -380,8 +381,8 @@ export default function AdminVehiclesPage() {
                             <TableCell>
                               <Stack direction="row" spacing={0.5} alignItems="center">
                                 <Typography variant="body2" fontWeight={500}>{v.name}</Typography>
-                                {v.isRental && <Chip label="Rental" size="small" color="warning" variant="outlined" sx={{ height: 18, fontSize: 10 }} />}
-                                {v.isRental && !v.rentalAgreementUrl && <Chip label="Agreement needed" size="small" color="error" variant="outlined" sx={{ height: 18, fontSize: 10 }} />}
+                                {v.isRental && <StatusChip label="Rental" color="warning" variant="outlined" />}
+                                {v.isRental && !v.rentalAgreementUrl && <StatusChip label="Agreement needed" color="error" variant="outlined" />}
                               </Stack>
                               {v.makeModel && <Typography variant="caption" color="text.secondary">{v.makeModel}{v.year ? ` · ${v.year}` : ''}</Typography>}
                             </TableCell>
@@ -449,7 +450,7 @@ export default function AdminVehiclesPage() {
       </Paper>
 
       {/* Detail drawer */}
-      <Drawer anchor="right" open={!!detail || detailLoading} onClose={() => setDetail(null)} PaperProps={{ sx: { width: { xs: '100%', sm: 460 }, p: 2 } }}>
+      <DetailDrawer open={!!detail || detailLoading} onClose={() => setDetail(null)} width={460} paperSx={{ p: 2 }}>
         {detailLoading ? (
           <Box sx={{ p: 4, textAlign: 'center' }}><CircularProgress size={28} /></Box>
         ) : detail ? (
@@ -485,7 +486,7 @@ export default function AdminVehiclesPage() {
                 <Box>
                   <Stack direction="row" spacing={1} alignItems="center" mb={0.5}>
                     <Typography variant="subtitle2">Rental</Typography>
-                    {!detail.rentalAgreementUrl && <Chip label="Agreement needed" size="small" color="error" variant="outlined" sx={{ height: 18, fontSize: 10 }} />}
+                    {!detail.rentalAgreementUrl && <StatusChip label="Agreement needed" color="error" variant="outlined" />}
                   </Stack>
                   <Stack spacing={0.5}>
                     <Detail label="Company" value={detail.rentalCompany ?? '—'} />
@@ -585,7 +586,7 @@ export default function AdminVehiclesPage() {
             </Stack>
           </Stack>
         ) : null}
-      </Drawer>
+      </DetailDrawer>
 
       {/* CC-10: Log field fix */}
       <Dialog open={fieldFixOpen} onClose={() => setFieldFixOpen(false)} maxWidth="xs" fullWidth>

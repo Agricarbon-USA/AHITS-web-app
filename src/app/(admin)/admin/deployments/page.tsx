@@ -6,10 +6,12 @@ import {
   Box, Typography, Button, Stack, Alert, Chip,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Paper, Skeleton, MenuItem, TextField, Switch, FormControlLabel,
-  Drawer, Divider, Avatar, IconButton, Tooltip, Dialog, DialogTitle,
+  Divider, Avatar, IconButton, Tooltip, Dialog, DialogTitle,
   DialogContent, DialogActions, CircularProgress, Checkbox, List, ListItem,
   ListItemText, ListItemIcon, Stepper, Step, StepLabel,
 } from '@mui/material'
+import { StatusChip } from '@/components/shared/StatusChip'
+import { DetailDrawer } from '@/components/ui/DetailDrawer'
 import AddIcon from '@mui/icons-material/Add'
 import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import TerrainIcon from '@mui/icons-material/Terrain'
@@ -677,7 +679,7 @@ function DeploymentDrawer({
 
   return (
     <>
-      <Drawer anchor="right" open={true} onClose={onClose} PaperProps={{ sx: { width: { xs: '100%', sm: 560 } } }}>
+      <DetailDrawer open={true} onClose={onClose} width={560}>
         <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
           <Box px={3} pt={3} pb={2}>
             <Stack direction="row" alignItems="center" spacing={1.5} mb={1}>
@@ -765,12 +767,12 @@ function DeploymentDrawer({
                       <Icon fontSize="small" color="action" />
                       <Typography variant="body2">{rv.vehicle.name}</Typography>
                       {rv.vehicle.isRental && (
-                        <Chip label="Rental" size="small" color="warning" variant="outlined" sx={{ height: 18, fontSize: 10 }} />
+                        <StatusChip label="Rental" color="warning" variant="outlined" />
                       )}
                       {rv.vehicle.isRental && !rv.vehicle.rentalAgreementUrl && (
-                        <Chip label="Agreement needed" size="small" color="error" variant="outlined" sx={{ height: 18, fontSize: 10 }} />
+                        <StatusChip label="Agreement needed" color="error" variant="outlined" />
                       )}
-                      <Chip size="small" label={rv.vehicle.type} variant="outlined" sx={{ ml: 'auto !important', height: 18, fontSize: 10 }} />
+                      <StatusChip label={rv.vehicle.type} variant="outlined" sx={{ ml: 'auto !important' }} />
                     </Stack>
                   )
                 })}
@@ -817,7 +819,7 @@ function DeploymentDrawer({
                         </Typography>
                       )}
                     </Box>
-                    <Chip size="small" label={ki.item.categoryRef?.name ?? ki.item.itemType} sx={{ height: 18, fontSize: 10 }} />
+                    <StatusChip label={ki.item.categoryRef?.name ?? ki.item.itemType} />
                     <Typography variant="body2" color="text.secondary">×{ki.quantity}</Typography>
                     {isActive && !removingItems && (
                       <MutationIconButton size="small" tooltip="Return item" color="error"
@@ -921,7 +923,7 @@ function DeploymentDrawer({
             </>
           )}
         </Box>
-      </Drawer>
+      </DetailDrawer>
 
       {/* Add Vehicles picker */}
       <Dialog open={addVehicleOpen} onClose={() => {

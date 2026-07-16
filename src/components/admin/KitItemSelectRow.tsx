@@ -1,7 +1,8 @@
 'use client'
 
 import * as React from 'react'
-import { Stack, Box, Typography, Checkbox, Chip, TextField } from '@mui/material'
+import { Stack, Box, Typography, Checkbox, TextField } from '@mui/material'
+import { StatusChip } from '@/components/shared/StatusChip'
 
 // Canonical entry type for the admin deployment/add-items kit builders.
 export type AdminKitEntry =
@@ -42,9 +43,9 @@ export function KitItemSelectRow({
             <Typography variant="body2" fontWeight={500}>{item.name}</Typography>
             <Stack direction="row" spacing={0.5}>
               {showCategoryChip && (
-                <Chip size="small" label={item.category?.name ?? ''} sx={{ height: 16, fontSize: 10 }} />
+                <StatusChip label={item.category?.name ?? ''} />
               )}
-              <Chip size="small" label="Serialized" variant="outlined" color="primary" sx={{ height: 16, fontSize: 10 }} />
+              <StatusChip label="Serialized" variant="outlined" color="primary" />
             </Stack>
           </Box>
         </Stack>
@@ -86,7 +87,7 @@ export function KitItemSelectRow({
       <Box flexGrow={1}>
         <Typography variant="body2">{item.name}</Typography>
         {showCategoryChip && (
-          <Chip size="small" label={item.category?.name ?? ''} sx={{ height: 16, fontSize: 10 }} />
+          <StatusChip label={item.category?.name ?? ''} />
         )}
       </Box>
       {checked && (
