@@ -10,7 +10,7 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 > | Production cutover (environment standup) | DEFERRED | actual go-live (real users) | D1 |
 > | W0-10 `4b′`/`4c` DROP patches | HELD | 4a soaked on prod + go/no-go green | D4 |
 > | Map: real-time / live GPS tracking | ANTI-GOAL (permanent) | never (crew visibility is last-known only) | D2 |
-> | Sentry error tracking | BLOCKED | Max provides a DSN | — |
+> | Sentry error tracking | SHIPPED (CC-22, PR #182) | — (DSN provisioned; wiring live on staging) | — |
 > | CC-20 remainder (record-reader legibility #2–#6) | PARKED | first pilot dispute needing history a surface can't show | CC-20 |
 
 ---

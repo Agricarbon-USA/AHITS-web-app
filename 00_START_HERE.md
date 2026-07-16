@@ -29,7 +29,7 @@
 | 3 | `AHITS_STATE_OF_THE_APP_2026-07-10.md` | 4 | The honest, code-grounded snapshot: what's solid, what's broken, the corrections to the roadmap. |
 | 4 | `DECISIONS.md` | 1 | The settled questions (prod deferred, Map scope, admin exclusion, W0-10). Don't re-open these. |
 | 5 | `AHITS_PHASE3_WORKPLAN_2026-07-10.md` (§0–§2) | 3 | The current executable sequence + the three locked decisions. |
-| 6 | `AHITS_SESSION_HANDOFF_2026-07-12.md` | 2 | What last shipped + exact resume points. |
+| 6 | `AHITS_SESSION_HANDOFF_2026-07-15.md` | 2 | What last shipped + exact resume points. |
 | 7 | `AHITS_PHASE3PLUS_NORTH_STAR_v3.md` (§1–§2) | 4 | *Why* the plan is shaped this way: the two loops, the friction budget. |
 
 Before writing code, also read `CLAUDE.md` + `AGENTS.md` (deploy flow + the DB/migration non-negotiables + this Next.js is not the one you know).
