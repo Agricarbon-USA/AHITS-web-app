@@ -3,6 +3,14 @@ import type { Prisma } from '@prisma/client'
 
 type AlertMeta = Record<string, string | number | boolean | null>
 
+// CC-22: the cron dead-man heartbeat alert isn't tied to any real row, so its
+// source identity is a fixed pair rather than a record id. Both the raising
+// side (admin alerts read path) and the re-arming side (cron dispatch, on
+// every successful run) must use these exact constants for the activeKey
+// dedup/resolve to match.
+export const CRON_SILENT_SOURCE_TABLE = 'system'
+export const CRON_SILENT_SOURCE_ID = 'cron-dispatch'
+
 /**
  * Create (or reuse) an unresolved alert for a given source. (CR-5)
  *

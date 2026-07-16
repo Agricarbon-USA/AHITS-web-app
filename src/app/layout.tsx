@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import { headers } from 'next/headers'
 import { Providers } from './providers'
+import { SentryProvider } from '@/components/shared/SentryProvider'
 import './globals.css'
 
 export const metadata: Metadata = {
@@ -37,12 +38,22 @@ export default async function RootLayout({
   // Content-Security-Policy onto its generated <script> tags (app-render.js
   // reads content-security-policy from req.headers, which is only populated
   // correctly on a live request, not at static build time).
-  await headers()
+  const hdrs = await headers()
+
+  // CC-22: DSN read server-side (never NEXT_PUBLIC_, never hardcoded) and
+  // passed to the client provider as a prop — not via env inlined at build
+  // time. requestId is the same id src/proxy.ts already stamps on every
+  // authenticated request, so a client-side Sentry event correlates to the
+  // server-side logs/onRequestError capture for that same request.
+  const sentryDsn = process.env.SENTRY_DSN ?? null
+  const requestId = hdrs.get('x-request-id') ?? ''
 
   return (
     <html lang="en">
       <body>
-        <Providers>{children}</Providers>
+        <SentryProvider dsn={sentryDsn} requestId={requestId}>
+          <Providers>{children}</Providers>
+        </SentryProvider>
       </body>
     </html>
   )
