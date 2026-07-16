@@ -37,6 +37,11 @@ export default defineConfig(({ mode }) => {
     test: {
       globals: true,
       environment: 'node',
+      // CC-23: the DB integration suite is .test.ts and runs in node. Component
+      // tests are .test.tsx and run in jsdom via `npm run test:ui`
+      // (vitest.config.ui.ts) — exclude them here so `npm test` doesn't try to
+      // render React in the node environment ("document is not defined").
+      include: ['tests/**/*.test.ts'],
       setupFiles: ['./tests/setup.ts'],
       fileParallelism: false,
       testTimeout: 30000,
