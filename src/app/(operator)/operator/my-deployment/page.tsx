@@ -1356,15 +1356,20 @@ export default function MyRigPage() {
                           </Typography>
                         )}
                       </Box>
-                      <StatusChip label={ki.item.categoryRef?.name ?? ki.item.itemType} />
+                      {/* CC-24: always the item TYPE in one casing (was category
+                          name when present, else the uppercase type — so the same
+                          list mixed "Consumables" and "CONSUMABLE"). */}
+                      <StatusChip label={ki.item.itemType.charAt(0) + ki.item.itemType.slice(1).toLowerCase()} />
                       <Stack direction="row" alignItems="center" spacing={0.5}>
                         {isLow && <WarningAmberIcon fontSize="small" color="warning" />}
                         <Chip size="small" label={`×${ki.quantity}`}
                           color={isLow ? 'warning' : 'default'} />
                       </Stack>
+                      {/* CC-24: 44px hit area (icon stays visually small) — these
+                          per-row remove/log-usage taps were below the 44px floor. */}
                       {!removingItems && ki.item.itemType === 'CONSUMABLE' && (
                         <Tooltip title="Log daily usage">
-                          <IconButton size="small" color="warning"
+                          <IconButton size="small" color="warning" sx={{ width: 44, height: 44 }}
                             onClick={() => {
                               setLogUsageDialog({ open: true, kitItem: ki })
                               setLogUsageQty(1)
@@ -1375,7 +1380,7 @@ export default function MyRigPage() {
                       )}
                       {!removingItems && ki.item.itemType !== 'CONSUMABLE' && (
                         <Tooltip title="Return item">
-                          <IconButton size="small" color="error"
+                          <IconButton size="small" color="error" sx={{ width: 44, height: 44 }}
                             onClick={() => {
                               setRemoveDialog({ open: true, kitItem: ki })
                               setRemoveQty(ki.quantity)
@@ -1453,8 +1458,11 @@ export default function MyRigPage() {
         </Alert>
       ))}
 
-      {/* Action row */}
-      <Stack direction="row" spacing={2} alignItems="center">
+      {/* Action row — CC-24: stacks vertically below sm so all three render as
+          full, tappable outlined buttons at 390px (was a fixed row that clipped
+          End Deployment off the right edge on a phone). End Deployment is now an
+          outlined error button too, matching the others. */}
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="stretch">
         <Button variant="outlined" fullWidth startIcon={<SwapHorizIcon />}
           onClick={() => setTransferOpen(true)}>
           Transfer Equipment
@@ -1463,7 +1471,7 @@ export default function MyRigPage() {
           onClick={() => { setHandoffOpen(true); setHandoffTargetId(''); setHandoffNote('') }}>
           Hand Off Deployment
         </Button>
-        <Button variant="text" color="error" startIcon={<StopCircleIcon />}
+        <Button variant="outlined" color="error" fullWidth startIcon={<StopCircleIcon />}
           onClick={() => setNoteDialog('end')}>
           End Deployment
         </Button>
