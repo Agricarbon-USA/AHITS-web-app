@@ -3,7 +3,7 @@
 import * as React from 'react'
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
-  Button, TextField, Typography,
+  Button, TextField, Typography, Stack, Chip,
 } from '@mui/material'
 import { PhotoCapture } from './PhotoCapture'
 
@@ -16,6 +16,8 @@ interface NotePhotoDialogProps {
   onConfirm: (note: string, photoUrls: string[]) => void
   confirmLabel?: string
   confirmColor?: 'primary' | 'error' | 'warning' | 'success' | 'inherit'
+  /** CC-24: one-tap note presets shown above the (optional) note field. */
+  presets?: readonly string[]
 }
 
 export function NotePhotoDialog({
@@ -27,6 +29,7 @@ export function NotePhotoDialog({
   onConfirm,
   confirmLabel = 'Confirm',
   confirmColor = 'primary',
+  presets,
 }: NotePhotoDialogProps) {
   const [note, setNote] = React.useState('')
   const [photos, setPhotos] = React.useState<string[]>([])
@@ -52,8 +55,15 @@ export function NotePhotoDialog({
             {description}
           </Typography>
         )}
+        {presets && presets.length > 0 && (
+          <Stack direction="row" spacing={1} sx={{ mt: 1, mb: 1 }} flexWrap="wrap" useFlexGap>
+            {presets.map((p) => (
+              <Chip key={p} label={p} size="small" variant="outlined" onClick={() => setNote(p)} />
+            ))}
+          </Stack>
+        )}
         <TextField
-          label="Note"
+          label="Note (optional)"
           value={note}
           onChange={(e) => setNote(e.target.value)}
           multiline

@@ -110,10 +110,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       data: {
         userId: result.requestedById,
         type: 'RESERVATION_UPDATE',
-        title: 'Your material request was fulfilled',
+        // CC-24: MATERIAL `complete` moves no stock — "handled", not "fulfilled".
+        title: 'Your material request was handled',
         body: result.request.label
-          ? `"${result.request.label}" has been marked fulfilled.`
-          : 'Your material request has been marked fulfilled.',
+          ? `"${result.request.label}" has been marked handled.`
+          : 'Your material request has been marked handled.',
         link: '/operator/requests',
       },
     }).catch(() => {})

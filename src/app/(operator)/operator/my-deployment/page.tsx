@@ -28,6 +28,7 @@ import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 import { newPlaceholderId } from '@/lib/offline-remap'
 import { useAuth } from '@/hooks/useAuth'
 import { groupBy, formatDate } from '@/lib/utils'
+import { NOTE_PRESETS } from '@/lib/note-presets'
 import { stockAvailabilityLabel } from '@/lib/stock-format'
 import { VEHICLE_TYPE_ORDER, vehicleTypeLabel } from '@/lib/vehicle-types'
 
@@ -298,7 +299,7 @@ function NewDeploymentDialog({
   const hasConsumableInKit = Array.from(kitItems.values()).some((e) => e.itemType === 'CONSUMABLE')
 
   const launch = async () => {
-    if (!note.trim()) { setError('Note is required'); return }
+    // CC-24: the note is optional now (server relaxed too) — no empty-note guard.
     if (hasConsumableInKit && !sourceHubId) { setError('Select a source hub for consumable items.'); return }
     setLoading(true)
     setError('')
@@ -557,16 +558,24 @@ function NewDeploymentDialog({
         )}
 
         {step === 3 && (
-          <TextField
-            label="Deployment note (required)"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            multiline rows={3}
-            fullWidth
-            placeholder="e.g. Heading out for TX soil sampling run"
-            required
-            autoFocus
-          />
+          <Box>
+            {/* CC-24: the note is optional now — one-tap presets fill it, free text
+                stays available, and launch no longer requires it. */}
+            <Stack direction="row" spacing={1} sx={{ mb: 1 }} flexWrap="wrap" useFlexGap>
+              {NOTE_PRESETS.map((p) => (
+                <Chip key={p} label={p} size="small" variant="outlined" onClick={() => setNote(p)} />
+              ))}
+            </Stack>
+            <TextField
+              label="Deployment note (optional)"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              multiline rows={3}
+              fullWidth
+              placeholder="e.g. Heading out for TX soil sampling run"
+              autoFocus
+            />
+          </Box>
         )}
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
@@ -581,9 +590,9 @@ function NewDeploymentDialog({
             Next
           </Button>
         ) : (
-          <Button variant="contained" onClick={launch} disabled={!note.trim() || loading || hasUnselectedSerialized || (hasConsumableInKit && !sourceHubId)}
+          <Button variant="contained" onClick={launch} disabled={loading || hasUnselectedSerialized || (hasConsumableInKit && !sourceHubId)}
             startIcon={loading ? <CircularProgress size={16} color="inherit" /> : null}>
-            {loading ? 'Launching…' : !note.trim() ? 'Enter a note to launch' : pickupPreset ? 'Pick Up' : 'Launch Deployment'}
+            {loading ? 'Launching…' : pickupPreset ? 'Pick Up' : 'Launch Deployment'}
           </Button>
         )}
       </DialogActions>
@@ -638,10 +647,13 @@ export default function MyRigPage() {
   const [removingItems, setRemovingItems] = React.useState(false)
   const [selItems, setSelItems] = React.useState<Set<string>>(new Set())
 
-  // Kit remove (per-item — simple dialog)
-  const [removeDialog, setRemoveDialog] = React.useState<{ open: boolean; kitItem: KitItemRow | null }>({ open: false, kitItem: null })
-  const [removeQty, setRemoveQty] = React.useState(1)
-  const [removeCondition, setRemoveCondition] = React.useState('GOOD')
+  // CC-24: single-item kit remove now routes through the SAME DispositionDialog
+  // as the bulk path (was a separate "Return Item" dialog that diverged from it).
+  // Setting this opens the disposition dialog pre-filtered to one item — 2 taps
+  // (tap ⊖ → confirm), with the return condition expressed via the dialog's
+  // HUB / INOPERABLE dispositions. Consumable "Log Usage" (below) stays separate:
+  // it's field depletion (consumed, no stock restored), not gear removal.
+  const [singleRemoveItem, setSingleRemoveItem] = React.useState<KitItemRow | null>(null)
 
   // Log Usage (consumable daily depletion)
   const [logUsageDialog, setLogUsageDialog] = React.useState<{ open: boolean; kitItem: KitItemRow | null }>({ open: false, kitItem: null })
@@ -876,26 +888,6 @@ export default function MyRigPage() {
       showToast({ message: 'Network error. Please try again.', severity: 'error' })
     } finally {
       setHandoffLoading(false)
-    }
-  }
-
-  const handleRemoveItem = async () => {
-    if (!removeDialog.kitItem || !rig) return
-    const result = await mutate({
-      endpoint: `/api/deployments/${rig.id}/items/${removeDialog.kitItem.id}`,
-      method: 'DELETE',
-      body: { quantity: removeQty, returnCondition: removeCondition },
-      label: 'Return item',
-    })
-    if (result.ok && result.queued) {
-      showToast({ message: 'Return queued — will sync when online.', severity: 'info' })
-      setRemoveDialog({ open: false, kitItem: null })
-    } else if (result.ok) {
-      showToast({ message: 'Item returned.', severity: 'success' })
-      setRemoveDialog({ open: false, kitItem: null })
-      await load()
-    } else {
-      showToast({ message: result.error || 'Could not return the item.', severity: 'error' })
     }
   }
 
@@ -1381,11 +1373,7 @@ export default function MyRigPage() {
                       {!removingItems && ki.item.itemType !== 'CONSUMABLE' && (
                         <Tooltip title="Return item">
                           <IconButton size="small" color="error" sx={{ width: 44, height: 44 }}
-                            onClick={() => {
-                              setRemoveDialog({ open: true, kitItem: ki })
-                              setRemoveQty(ki.quantity)
-                              setRemoveCondition('GOOD')
-                            }}>
+                            onClick={() => setSingleRemoveItem(ki)}>
                             <RemoveCircleOutlineIcon fontSize="small" />
                           </IconButton>
                         </Tooltip>
@@ -1811,6 +1799,7 @@ export default function MyRigPage() {
       <NotePhotoDialog
         open={noteDialog === 'addVehicles'}
         title="Add vehicles to rig"
+        presets={NOTE_PRESETS}
         loading={actionLoading}
         onClose={() => setNoteDialog(null)}
         onConfirm={(note, photoUrls) => doAction('addVehicles', note, photoUrls)}
@@ -1819,6 +1808,7 @@ export default function MyRigPage() {
       <NotePhotoDialog
         open={noteDialog === 'removeVehicles'}
         title={`Remove ${selVehicles.size} vehicle(s)`}
+        presets={NOTE_PRESETS}
         loading={actionLoading}
         onClose={() => setNoteDialog(null)}
         onConfirm={(note, photoUrls) => doAction('removeVehicles', note, photoUrls)}
@@ -1828,41 +1818,16 @@ export default function MyRigPage() {
       <NotePhotoDialog
         open={noteDialog === 'addItems'}
         title="Add items to kit"
+        presets={NOTE_PRESETS}
         loading={actionLoading}
         onClose={() => setNoteDialog(null)}
         onConfirm={(note, photoUrls) => doAction('addItems', note, photoUrls)}
         confirmLabel="Add Items"
       />
-      {/* Per-item return dialog */}
-      <Dialog open={removeDialog.open} onClose={() => setRemoveDialog({ open: false, kitItem: null })} maxWidth="xs" fullWidth>
-        <DialogTitle>Return Item</DialogTitle>
-        <DialogContent>
-          <Typography mb={2}>
-            Returning <strong>{removeDialog.kitItem?.item.name}</strong>
-            {removeDialog.kitItem?.inventoryUnit && ` (Unit: ${removeDialog.kitItem.inventoryUnit.serialNumber ?? removeDialog.kitItem.inventoryUnit.qrCodeId.slice(0, 8)})`}
-          </Typography>
-          {removeDialog.kitItem?.item.itemType === 'CONSUMABLE' && (
-            <TextField
-              type="number"
-              label="Quantity to return"
-              value={removeQty}
-              onChange={(e) => setRemoveQty(Math.max(1, Math.min(parseInt(e.target.value) || 1, removeDialog.kitItem?.quantity ?? 1)))}
-              inputProps={{ min: 1, max: removeDialog.kitItem?.quantity ?? 1 }}
-              fullWidth
-              sx={{ mb: 2 }}
-            />
-          )}
-          <TextField select label="Condition" value={removeCondition} onChange={(e) => setRemoveCondition(e.target.value)} fullWidth>
-            <MenuItem value="GOOD">Good</MenuItem>
-            <MenuItem value="IN_MAINTENANCE">Needs Maintenance</MenuItem>
-            <MenuItem value="INOPERABLE">Inoperable</MenuItem>
-          </TextField>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setRemoveDialog({ open: false, kitItem: null })}>Cancel</Button>
-          <Button variant="contained" color="error" onClick={handleRemoveItem}>Return</Button>
-        </DialogActions>
-      </Dialog>
+      {/* CC-24: the per-item "Return Item" dialog is gone — the per-row ⊖ now
+          opens the shared DispositionDialog pre-filtered to that one item (see
+          the singleRemoveItem render below), so single and bulk removal share one
+          path and one set of return dispositions. */}
 
       {/* Log Usage dialog — consumables only */}
       <Dialog open={logUsageDialog.open} onClose={() => setLogUsageDialog({ open: false, kitItem: null })} maxWidth="xs" fullWidth>
@@ -1904,6 +1869,7 @@ export default function MyRigPage() {
           currentOperatorId={rig.operator.id}
           operators={operators}
           hubs={hubs}
+          presets={NOTE_PRESETS}
           items={kitItems
             .filter((ki) => selItems.has(ki.id))
             .map<KitItemSummary>((ki) => ({
@@ -1923,6 +1889,32 @@ export default function MyRigPage() {
           onClose={() => setNoteDialog(null)}
         />
       )}
+      {/* CC-24: single-item remove — the per-row ⊖ routes through the SAME
+          DispositionDialog, pre-filtered to one item (2 taps: ⊖ → confirm). */}
+      {singleRemoveItem && (
+        <DispositionDialog
+          open={true}
+          mode="remove-items"
+          deploymentId={rig.id}
+          currentOperatorId={rig.operator.id}
+          operators={operators}
+          hubs={hubs}
+          presets={NOTE_PRESETS}
+          items={[{
+            kitItemId: singleRemoveItem.id,
+            itemId: singleRemoveItem.item.id,
+            name: singleRemoveItem.item.name,
+            quantity: singleRemoveItem.quantity,
+            itemType: singleRemoveItem.item.itemType,
+            inventoryUnit: singleRemoveItem.inventoryUnit ?? null,
+          }]}
+          onComplete={() => {
+            setSingleRemoveItem(null)
+            void load()
+          }}
+          onClose={() => setSingleRemoveItem(null)}
+        />
+      )}
       {noteDialog === 'end' && (
         <DispositionDialog
           open={true}
@@ -1931,6 +1923,7 @@ export default function MyRigPage() {
           currentOperatorId={rig.operator.id}
           operators={operators}
           hubs={hubs}
+          presets={NOTE_PRESETS}
           items={kitItems.map<KitItemSummary>((ki) => ({
             kitItemId: ki.id,
             itemId: ki.item.id,

@@ -41,7 +41,7 @@ const dispositionSchema = z.object({
 })
 
 const schema = z.object({
-  note: z.string().min(1, 'Note is required'),
+  note: z.string().optional(), // CC-24: optional (was min(1))
   itemDispositions: z.array(dispositionSchema).default([]),
 })
 
@@ -295,7 +295,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           fromRigId: id,
           toOperatorId,
           initiatedById: session.userId,
-          note,
+          note: note ?? '',
           status: 'PENDING',
           items: { create: disps.map((d) => ({ kitItemId: d.kitItemId })) },
         },

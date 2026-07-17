@@ -56,6 +56,8 @@ interface DispositionDialogProps {
   items: KitItemSummary[]
   onComplete: () => void
   onClose: () => void
+  /** CC-24: one-tap note presets shown above the (optional) overall note. */
+  presets?: readonly string[]
 }
 
 export function DispositionDialog({
@@ -67,6 +69,7 @@ export function DispositionDialog({
   items,
   onComplete,
   onClose,
+  presets,
 }: DispositionDialogProps) {
   const [dispositions, setDispositions] = React.useState<Map<string, ItemDisposition>>(() => {
     const m = new Map<string, ItemDisposition>()
@@ -138,8 +141,10 @@ export function DispositionDialog({
     // — the core offline scenario — threw a network error instead of queueing.
     const result = await mutate({
       endpoint: url,
+      // CC-24: send the note as-is (may be empty — the server no longer requires
+      // it). Was `note || 'Returned'`, which masked "no note" with a fake one.
+      body: { note, itemDispositions },
       method,
-      body: { note: note || 'Returned', itemDispositions },
       label: mode === 'end-deployment' ? 'End deployment' : 'Return items',
     })
     setLoading(false)
@@ -157,8 +162,15 @@ export function DispositionDialog({
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>{mode === 'end-deployment' ? 'End Deployment' : 'Return / Remove Items'}</DialogTitle>
       <DialogContent>
+        {presets && presets.length > 0 && (
+          <Stack direction="row" spacing={1} sx={{ mb: 1, mt: 1 }} flexWrap="wrap" useFlexGap>
+            {presets.map((p) => (
+              <Chip key={p} label={p} size="small" variant="outlined" onClick={() => setNote(p)} />
+            ))}
+          </Stack>
+        )}
         <TextField
-          label="Overall note"
+          label="Overall note (optional)"
           value={note}
           onChange={(e) => setNote(e.target.value)}
           fullWidth

@@ -67,7 +67,7 @@ const createSchema = z.object({
   operatorId: z.string().optional(),
   projectId: z.string().optional(),
   label: z.string().optional(),
-  note: z.string().min(1, 'Note is required'),
+  note: z.string().optional(), // CC-24: optional (was min(1)) — free text or a one-tap preset, no longer mandatory
   vehicleIds: z.array(z.string()).default([]),
   kitItems: z.array(z.union([
     z.object({
@@ -214,7 +214,7 @@ async function _POST(req: NextRequest) {
         data: vehicleIds.map((vehicleId) => ({
           rigId: newRig.id,
           vehicleId,
-          addNote: note,
+          addNote: note ?? '',
         })),
       })
       await tx.vehicle.updateMany({
