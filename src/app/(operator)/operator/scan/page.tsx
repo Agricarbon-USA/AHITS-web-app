@@ -12,6 +12,7 @@ import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { ConditionSelect } from '@/components/shared/ConditionSelect'
+import { QrScannerDialog, type QrResolveResult } from '@/components/shared/QrScannerDialog'
 import type { ReturnCondition } from '@/lib/status'
 
 interface UnitInfo {
@@ -48,7 +49,7 @@ export default function OperatorScanPage() {
   const showToast = useToast()
   const router = useRouter()
   const { mutate } = useOfflineQueue()
-  const [scanning, setScanning] = React.useState(false)
+  const [scannerOpen, setScannerOpen] = React.useState(false)
   const [unit, setUnit] = React.useState<UnitInfo | null>(null)
   const [vehicle, setVehicle] = React.useState<VehicleInfo | null>(null)
   const [error, setError] = React.useState('')
@@ -79,51 +80,34 @@ export default function OperatorScanPage() {
       .catch(() => {})
   }, [])
 
-  const handleCapture = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setScanning(true)
+  // CC-25: the live QrScannerDialog decodes; this only does the lookup. A label is
+  // either an inventory unit or a vehicle (PRD §7.7) — try the unit first, then the
+  // vehicle. Distinguish the two honest failures: a thrown fetch = offline; both
+  // by-qr endpoints returning non-OK = the code isn't registered ("not found").
+  const resolveScan = React.useCallback(async (code: string): Promise<QrResolveResult> => {
     setError('')
     setUnit(null)
     setVehicle(null)
+    const enc = encodeURIComponent(code)
     try {
-      const bitmap = await createImageBitmap(file)
-      const canvas = document.createElement('canvas')
-      canvas.width = bitmap.width
-      canvas.height = bitmap.height
-      const ctx = canvas.getContext('2d')!
-      ctx.drawImage(bitmap, 0, 0)
-      const imgData = ctx.getImageData(0, 0, bitmap.width, bitmap.height)
-      const jsQR = (await import('jsqr')).default
-      const result = jsQR(imgData.data, bitmap.width, bitmap.height)
-      if (!result?.data) {
-        setError('No QR code detected in the image. Try again.')
-        return
-      }
-      const code = encodeURIComponent(result.data)
-      // Context-aware resolution (PRD §7.7): a label is either an inventory unit
-      // or a vehicle. Try the unit first, then fall back to a vehicle.
-      const unitRes = await fetch(`/api/inventory/units/by-qr/${code}`)
+      const unitRes = await fetch(`/api/inventory/units/by-qr/${enc}`)
       if (unitRes.ok) {
         const json = await unitRes.json()
         setUnit({ ...json.unit, inventoryItem: json.item })
         setReturnCondition('GOOD')
-        return
+        return { status: 'ok' }
       }
-      const vehRes = await fetch(`/api/vehicles/by-qr/${code}`)
+      const vehRes = await fetch(`/api/vehicles/by-qr/${enc}`)
       if (vehRes.ok) {
         const json = await vehRes.json()
         setVehicle(json.vehicle)
-        return
+        return { status: 'ok' }
       }
-      setError('QR code not recognised — it is not registered to any unit or vehicle.')
+      return { status: 'not-found' }
     } catch {
-      setError('Failed to process image. Please try again.')
-    } finally {
-      setScanning(false)
-      e.target.value = ''
+      return { status: 'offline' }
     }
-  }
+  }, [])
 
   async function submitVehicleFieldFix() {
     if (!vehicle || !fieldFixNotes.trim()) return
@@ -254,22 +238,22 @@ export default function OperatorScanPage() {
       <Typography variant="h5">Scan</Typography>
       <Stack alignItems="center" spacing={2}>
         <Button
-          component="label"
           variant="contained"
           size="large"
-          startIcon={scanning ? <CircularProgress size={20} color="inherit" /> : <QrCodeScannerIcon />}
-          disabled={scanning}
+          startIcon={<QrCodeScannerIcon />}
+          onClick={() => setScannerOpen(true)}
           sx={{ minWidth: 220 }}
         >
-          {scanning ? 'Scanning…' : 'Scan QR Label'}
-          <input
-            type="file"
-            accept="image/*"
-            capture="environment"
-            style={{ display: 'none' }}
-            onChange={handleCapture}
-          />
+          Scan QR Label
         </Button>
+
+        <QrScannerDialog
+          open={scannerOpen}
+          onClose={() => setScannerOpen(false)}
+          title="Scan QR Label"
+          prompt="Point the camera at a unit or vehicle QR label."
+          onResolve={resolveScan}
+        />
 
         {error && (
           <Alert severity="error" sx={{ width: '100%', maxWidth: 480 }} onClose={() => setError('')}>

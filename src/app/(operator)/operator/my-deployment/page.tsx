@@ -22,6 +22,7 @@ import GroupIcon from '@mui/icons-material/Group'
 import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
 import { TransferDialog } from '@/components/shared/TransferDialog'
 import { DispositionDialog, KitItemSummary } from '@/components/shared/DispositionDialog'
+import { QrScannerDialog, type QrResolveResult } from '@/components/shared/QrScannerDialog'
 import { RentalVehicleForm, RentalVehicleFields, rentalFieldsToVehiclePayload, isRentalFormValid } from '@/components/shared/RentalVehicleForm'
 import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
@@ -204,8 +205,8 @@ function NewDeploymentDialog({
     }
     return m
   })
-  const [unitManualQR, setUnitManualQR] = React.useState<Record<string, string>>({})
-  const [unitQrLoading, setUnitQrLoading] = React.useState<Record<string, boolean>>({})
+  // CC-25: which item slot the shared QrScannerDialog is scanning (null = closed).
+  const [scanTargetId, setScanTargetId] = React.useState<string | null>(null)
   const [note, setNote] = React.useState('')
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState('')
@@ -246,55 +247,29 @@ function NewDeploymentDialog({
     (e) => e.itemType === 'SERIALIZED' && !e.inventoryUnitId,
   )
 
-  const handleDialogQRScan = (itemId: string) => async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setUnitQrLoading((p) => ({ ...p, [itemId]: true }))
+  // CC-25: the shared QrScannerDialog decodes; this resolves the scanned code
+  // against the item slot being scanned (scanTargetId). Distinguishes offline
+  // (fetch threw) from not-found (server said no) from found-but-wrong-unit.
+  const resolveKitUnit = React.useCallback(async (code: string): Promise<QrResolveResult> => {
+    const itemId = scanTargetId
+    if (!itemId) return { status: 'error', message: 'No item selected.' }
     try {
-      const bitmap = await createImageBitmap(file)
-      const canvas = document.createElement('canvas')
-      canvas.width = bitmap.width; canvas.height = bitmap.height
-      const ctx = canvas.getContext('2d')!
-      ctx.drawImage(bitmap, 0, 0)
-      const imgData = ctx.getImageData(0, 0, bitmap.width, bitmap.height)
-      const jsQR = (await import('jsqr')).default
-      const result = jsQR(imgData.data, bitmap.width, bitmap.height)
-      if (!result?.data) return
-      const res = await fetch(`/api/inventory/units/by-qr/${encodeURIComponent(result.data)}`)
-      if (res.ok) {
-        const json = await res.json()
-        const item = availableItems.find((i) => i.id === itemId)
-        if (json.unit?.inventoryItemId === itemId && json.unit?.status === 'AVAILABLE') {
-          const m = new Map(kitItems)
-          m.set(itemId, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: json.unit.id, unitLabel: json.unit.serialNumber ?? `Unit ${json.unit.position}` })
-          setKitItems(m)
-        }
-        void item
-      }
-    } finally {
-      setUnitQrLoading((p) => ({ ...p, [itemId]: false }))
-      e.target.value = ''
+      const res = await fetch(`/api/inventory/units/by-qr/${encodeURIComponent(code)}`)
+      if (!res.ok) return { status: 'not-found' }
+      const json = await res.json()
+      const unit = json.unit
+      if (unit?.inventoryItemId !== itemId) return { status: 'error', message: 'That unit belongs to a different item.' }
+      if (unit?.status !== 'AVAILABLE') return { status: 'error', message: 'That unit isn’t available — it’s already checked out.' }
+      setKitItems((prev) => {
+        const m = new Map(prev)
+        m.set(itemId, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: unit.id, unitLabel: unit.serialNumber ?? `Unit ${unit.position}` })
+        return m
+      })
+      return { status: 'ok' }
+    } catch {
+      return { status: 'offline' }
     }
-  }
-
-  const lookupDialogManualQR = async (itemId: string) => {
-    const qr = unitManualQR[itemId]?.trim()
-    if (!qr) return
-    setUnitQrLoading((p) => ({ ...p, [itemId]: true }))
-    try {
-      const res = await fetch(`/api/inventory/units/by-qr/${encodeURIComponent(qr)}`)
-      if (res.ok) {
-        const json = await res.json()
-        if (json.unit?.inventoryItemId === itemId && json.unit?.status === 'AVAILABLE') {
-          const m = new Map(kitItems)
-          m.set(itemId, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: json.unit.id, unitLabel: json.unit.serialNumber ?? `Unit ${json.unit.position}` })
-          setKitItems(m)
-        }
-      }
-    } finally {
-      setUnitQrLoading((p) => ({ ...p, [itemId]: false }))
-    }
-  }
+  }, [scanTargetId, setKitItems])
 
   const hasConsumableInKit = Array.from(kitItems.values()).some((e) => e.itemType === 'CONSUMABLE')
 
@@ -350,6 +325,7 @@ function NewDeploymentDialog({
   }
 
   return (
+    <>
     <Dialog open={true} onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>{pickupPreset ? 'Pick Up Reservation' : 'Start Deployment'}</DialogTitle>
       <DialogContent>
@@ -476,21 +452,11 @@ function NewDeploymentDialog({
                                   </Alert>
                                 ) : (
                                   <Stack spacing={1}>
-                                    <Stack direction="row" spacing={1} alignItems="center">
-                                      <Button component="label" size="small" variant="outlined" startIcon={<QrCodeScannerIcon />}
-                                        disabled={!!unitQrLoading[item.id]}>
-                                        Scan QR
-                                        <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
-                                          onChange={handleDialogQRScan(item.id)} />
-                                      </Button>
-                                      <TextField size="small" placeholder="Enter QR code" value={unitManualQR[item.id] ?? ''}
-                                        onChange={(e) => setUnitManualQR((p) => ({ ...p, [item.id]: e.target.value }))}
-                                        sx={{ width: 160 }} />
-                                      <Button size="small" onClick={() => lookupDialogManualQR(item.id)}
-                                        disabled={!unitManualQR[item.id]?.trim() || !!unitQrLoading[item.id]}>
-                                        Look Up
-                                      </Button>
-                                    </Stack>
+                                    {/* CC-25: live scanner (with manual entry inside the dialog). */}
+                                    <Button size="small" variant="outlined" startIcon={<QrCodeScannerIcon />}
+                                      onClick={() => setScanTargetId(item.id)} sx={{ alignSelf: 'flex-start' }}>
+                                      Scan QR
+                                    </Button>
                                     <TextField select size="small" label="Pick from list"
                                       value=""
                                       onChange={(e) => {
@@ -597,6 +563,14 @@ function NewDeploymentDialog({
         )}
       </DialogActions>
     </Dialog>
+    <QrScannerDialog
+      open={scanTargetId !== null}
+      onClose={() => setScanTargetId(null)}
+      title="Scan unit QR"
+      prompt="Scan the serial unit's QR label for this item."
+      onResolve={resolveKitUnit}
+    />
+    </>
   )
 }
 
@@ -671,8 +645,30 @@ export default function MyRigPage() {
   const [addItemOpen, setAddItemOpen] = React.useState(false)
   const [pendingItems, setPendingItems] = React.useState<Map<string, PendingItemEntry>>(new Map())
   const [addItemSourceHubId, setAddItemSourceHubId] = React.useState('')
-  const [unitManualQR, setUnitManualQR] = React.useState<Record<string, string>>({})
-  const [unitQrLoading, setUnitQrLoading] = React.useState<Record<string, boolean>>({})
+  // CC-25: which add-items slot the shared QrScannerDialog is scanning (null = closed).
+  const [pendingScanId, setPendingScanId] = React.useState<string | null>(null)
+
+  // CC-25: resolve a scanned code against the add-items slot being scanned.
+  const resolvePendingUnit = React.useCallback(async (code: string): Promise<QrResolveResult> => {
+    const itemId = pendingScanId
+    if (!itemId) return { status: 'error', message: 'No item selected.' }
+    try {
+      const res = await fetch(`/api/inventory/units/by-qr/${encodeURIComponent(code)}`)
+      if (!res.ok) return { status: 'not-found' }
+      const json = await res.json()
+      const unit = json.unit
+      if (unit?.inventoryItemId !== itemId) return { status: 'error', message: 'That unit belongs to a different item.' }
+      if (unit?.status !== 'AVAILABLE') return { status: 'error', message: 'That unit isn’t available — it’s already checked out.' }
+      setPendingItems((prev) => {
+        const m = new Map(prev)
+        m.set(itemId, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: unit.id, unitLabel: unit.serialNumber ?? `Unit ${unit.position}` })
+        return m
+      })
+      return { status: 'ok' }
+    } catch {
+      return { status: 'offline' }
+    }
+  }, [pendingScanId])
 
   type NoteAction = 'addVehicles' | 'removeVehicles' | 'addItems' | 'removeItems' | 'end'
   const [noteDialog, setNoteDialog] = React.useState<NoteAction | null>(null)
@@ -985,7 +981,6 @@ export default function MyRigPage() {
           return
         }
         setPendingItems(new Map())
-        setUnitManualQR({})
         setAddItemOpen(false)
         break
       }
@@ -1595,7 +1590,7 @@ export default function MyRigPage() {
       </Dialog>
 
       {/* Add Items picker */}
-      <Dialog open={addItemOpen} onClose={() => { setAddItemOpen(false); setPendingItems(new Map()); setUnitManualQR({}); setAddItemSourceHubId('') }} maxWidth="sm" fullWidth>
+      <Dialog open={addItemOpen} onClose={() => { setAddItemOpen(false); setPendingItems(new Map()); setAddItemSourceHubId('') }} maxWidth="sm" fullWidth>
         <DialogTitle>Add Items</DialogTitle>
         <DialogContent>
           {inventoryItems.filter((i) => availFor(i) > 0).length === 0 ? (
@@ -1616,55 +1611,6 @@ export default function MyRigPage() {
                 const entry = pendingItems.get(item.id)
                 const checked = !!entry
                 const isSerialized = item.itemType === 'SERIALIZED'
-
-                const handleQRScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
-                  const file = e.target.files?.[0]
-                  if (!file) return
-                  setUnitQrLoading((p) => ({ ...p, [item.id]: true }))
-                  try {
-                    const bitmap = await createImageBitmap(file)
-                    const canvas = document.createElement('canvas')
-                    canvas.width = bitmap.width; canvas.height = bitmap.height
-                    const ctx = canvas.getContext('2d')!
-                    ctx.drawImage(bitmap, 0, 0)
-                    const imgData = ctx.getImageData(0, 0, bitmap.width, bitmap.height)
-                    const jsQR = (await import('jsqr')).default
-                    const result = jsQR(imgData.data, bitmap.width, bitmap.height)
-                    if (result?.data) {
-                      const res = await fetch(`/api/inventory/units/by-qr/${encodeURIComponent(result.data)}`)
-                      if (res.ok) {
-                        const json = await res.json()
-                        if (json.unit?.inventoryItemId === item.id && json.unit?.status === 'AVAILABLE') {
-                          const m = new Map(pendingItems)
-                          m.set(item.id, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: json.unit.id, unitLabel: json.unit.serialNumber ?? `Unit ${json.unit.position}` })
-                          setPendingItems(m)
-                        }
-                      }
-                    }
-                  } finally {
-                    setUnitQrLoading((p) => ({ ...p, [item.id]: false }))
-                    e.target.value = ''
-                  }
-                }
-
-                const lookupManualQR = async () => {
-                  const qr = unitManualQR[item.id]?.trim()
-                  if (!qr) return
-                  setUnitQrLoading((p) => ({ ...p, [item.id]: true }))
-                  try {
-                    const res = await fetch(`/api/inventory/units/by-qr/${encodeURIComponent(qr)}`)
-                    if (res.ok) {
-                      const json = await res.json()
-                      if (json.unit?.inventoryItemId === item.id && json.unit?.status === 'AVAILABLE') {
-                        const m = new Map(pendingItems)
-                        m.set(item.id, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: json.unit.id, unitLabel: json.unit.serialNumber ?? `Unit ${json.unit.position}` })
-                        setPendingItems(m)
-                      }
-                    }
-                  } finally {
-                    setUnitQrLoading((p) => ({ ...p, [item.id]: false }))
-                  }
-                }
 
                 const addHubRow = !isSerialized && addItemSourceHubId ? item.hubStock?.find((s) => s.hubId === addItemSourceHubId) : undefined
                 const addHubAvail = !isSerialized ? (addHubRow?.available ?? (item.availableQuantity ?? 0)) : 0
@@ -1715,20 +1661,11 @@ export default function MyRigPage() {
                           </Alert>
                         ) : (
                           <Stack spacing={1}>
-                            <Stack direction="row" spacing={1} alignItems="center">
-                              <Button component="label" size="small" variant="outlined" startIcon={<QrCodeScannerIcon />}
-                                disabled={!!unitQrLoading[item.id]}>
-                                Scan QR
-                                <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }}
-                                  onChange={handleQRScan} />
-                              </Button>
-                              <TextField size="small" placeholder="Enter QR code" value={unitManualQR[item.id] ?? ''}
-                                onChange={(e) => setUnitManualQR((p) => ({ ...p, [item.id]: e.target.value }))}
-                                sx={{ width: 160 }} />
-                              <Button size="small" onClick={lookupManualQR} disabled={!unitManualQR[item.id]?.trim() || !!unitQrLoading[item.id]}>
-                                Look Up
-                              </Button>
-                            </Stack>
+                            {/* CC-25: live scanner (manual entry lives inside the dialog). */}
+                            <Button size="small" variant="outlined" startIcon={<QrCodeScannerIcon />}
+                              onClick={() => setPendingScanId(item.id)} sx={{ alignSelf: 'flex-start' }}>
+                              Scan QR
+                            </Button>
                             <TextField select size="small" label="Pick from list"
                               value=""
                               onChange={(e) => {
@@ -1782,7 +1719,7 @@ export default function MyRigPage() {
           </Box>
         )}
         <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => { setAddItemOpen(false); setPendingItems(new Map()); setUnitManualQR({}); setAddItemSourceHubId('') }}>Cancel</Button>
+          <Button onClick={() => { setAddItemOpen(false); setPendingItems(new Map()); setAddItemSourceHubId('') }}>Cancel</Button>
           <Button variant="contained"
             disabled={
               pendingItems.size === 0 ||
@@ -1939,6 +1876,15 @@ export default function MyRigPage() {
           onClose={() => setNoteDialog(null)}
         />
       )}
+
+      {/* CC-25: shared live scanner for the add-items serial-unit slots. */}
+      <QrScannerDialog
+        open={pendingScanId !== null}
+        onClose={() => setPendingScanId(null)}
+        title="Scan unit QR"
+        prompt="Scan the serial unit's QR label for this item."
+        onResolve={resolvePendingUnit}
+      />
 
       {transferOpen && (
         <TransferDialog
