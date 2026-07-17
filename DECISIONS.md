@@ -61,6 +61,16 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Recommendation:** treat this as satisfied in spirit (cron scan is done, resolver literally cannot exist before its own capstone) rather than a violation requiring rework — but flagging per CLAUDE.md's rule against silently acting against an ACTIVE decision. Superseded-by candidate if Max agrees: fold this note into D3 itself rather than keep it standalone.
 - **Resolution (2026-07-12, Max):** folded into D3 as a dated note — the resolver-side exclusion transfers forward as a HARD acceptance criterion on CC-17, verified at review. This entry stays for provenance; D3's note is authoritative going forward.
 
+### D9 · Glossary conventions locked in CC-24 (one word per state; "Fulfill" reserved for stock-moving)
+- **Date:** 2026-07-17 · **Owner:** Max · **Status:** ACTIVE
+- **Decision:** From CC-24 (PR #185), these naming rules hold on every surface (button/badge/header/toast) and must not be re-introduced by later packets:
+  - **"Fulfill" is reserved for stock-moving actions only** — the reservation `fulfill` action / `FulfillmentChecklist` / the `FULFILLED` state. A MATERIAL request's completion moves no stock and is labelled **"Mark Handled"**, never "fulfilled". (The shared `FULFILLED` *state chip* is deliberately left unchanged, so a material request can read "Mark Handled" as its action but still show a "Fulfilled" status — an accepted mild inconsistency.)
+  - **Dismiss/Revoke → "Dismiss"** as the survivor verb for closing/invalidating (hub discrepancy + the maintenance work-order chip). The DB `REVOKED` enum is unchanged; label-only.
+  - **Staged/Prepared → "Staged"** (matches the `STAGED` status enum).
+- **Deferred to CC-14:** the **Fulfill / Pick-up / Check-out / Claim** glossary cluster is NOT renamed yet — it waits for CC-14's `Rig.requestId` model fix, because renaming before the model joins those states would force a second rename pass. CC-14 owns that cluster's one-word-per-state sweep.
+- **Scope-guard correction (provenance):** CC-24's packet scope guard wrongly named the operator "Mark Fulfilled" as a stock-moving action to protect; the code proved it is the MATERIAL `complete` action (server enforces `requestType==='MATERIAL'`) and moves no stock. Max confirmed the rename. The real stock-mover is the separate `fulfill` action, left untouched.
+- **Detail:** CC-24 / PR #185.
+
 ---
 
 _To add a decision: copy the D-format above, give it the next Dn id, fill in date/owner/status/decision/rationale, and set any superseded prior decision's `Superseded-by: Dn`. Reference decisions by id (`D1`) in handoffs and workplans instead of re-explaining them._
