@@ -48,11 +48,17 @@ Legend: ✅ pass · ❌ fail (note it) · — n/a
 | 20 | **IDB write-failure banner** — open a **Safari Private Browsing** tab, log in, go offline, attempt any offline action (e.g. daily check) → the banner shows **"This device can't save offline actions"** and the action returns an error ("Couldn't save…"), NOT a "saved offline" confirmation | — | ☐ | — | ☐ | — |
 | 21 | **Quota-pressure warning** — on a device with near-full storage (or simulated via DevTools → Application → Storage → "Simulate" quota), go offline and try an action → the **"Device storage is nearly full"** warning banner appears **before** writes start failing | ☐ | ☐ | ☐ | ☐ | ☐ |
 | 22 | **Eviction-detection banner** — on iOS Safari, queue ≥1 offline action, note the app shows a pending count, then force-quit the app and wait 7+ days (or manually clear IDB via DevTools while preserving localStorage) → on next open the banner shows **"Your device may have deleted queued offline actions"** | — | ☐ | — | ☐ | — |
+| 23 | **Live QR decode — operator/scan (CC-25)** — open **Scan** → the viewfinder decodes a unit/vehicle label **live, with no shutter tap** → the record's action panel appears. **Verify on iOS Safari** (no BarcodeDetector there — this exercises the jsQR path that is iOS's real path) | — | ☐ | ☐ | ☐ | ☐ |
+| 24 | **Live QR decode — my-deployment (CC-25)** — in the New-Deployment kit builder **and** Add-Items, tap **Scan QR** on a serialized slot → the viewfinder decodes the unit **live**; scanning a wrong or unavailable unit shows a clear message (e.g. "belongs to a different item" / "already checked out"), not a silent no-op | — | ☐ | ☐ | ☐ | ☐ |
+| 25 | **Torch toggle (CC-25)** — where the track supports it (typically Android): a **torch button** appears in the viewfinder and toggles the light. On **iOS Safari** torch is unsupported → the button is correctly **absent** (no dead control) | — | ☐ | ☐ | ☐ | ☐ |
+| 26 | **Permission-denied / no-camera fallback (CC-25)** — deny camera permission (or use a device with no camera) when opening a scanner → it **falls back to "take a photo" + manual entry**, NOT a blank/black screen or a dead end | — | ☐ | ☐ | ☐ | ☐ |
+| 27 | **App-switch resume + no background stream (CC-25)** — start a scan, switch to another app, then return → the **viewfinder is live again** (not frozen/black). While away, the camera is **stopped** (no OS camera-in-use indicator); closing the scanner also stops it | — | ☐ | ☐ | ☐ | ☐ |
+| 28 | **Honest scan failures (CC-25)** — scan or type an **unregistered** code → **"not found"**; go **offline** and scan a real code → **"can't verify right now"**. Never the old **"failed to process image"** lie | ☐ | ☐ | ☐ | ☐ | ☐ |
 
 ## iOS-specific watch-items (note if seen)
 - ☐ Installed PWA keeps you **logged in across an app close/reopen** (cookie-jar check).
 - ☐ Queued writes + local photos **survive an overnight gap** (storage-eviction check).
-- ☐ `Scan QR` opens the **rear camera** (not the photo library).
+- ☐ `Scan QR` opens a **live rear-camera viewfinder** (not the photo library) and decodes **without a shutter tap** (CC-25).
 
 ## Sign-off
 - Devices/OS/browser versions tested: ________________________________
