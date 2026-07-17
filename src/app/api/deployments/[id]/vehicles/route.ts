@@ -36,7 +36,7 @@ const RIG_INCLUDE = {
 
 const addSchema = z.object({
   vehicleIds: z.array(z.string()).min(1),
-  note: z.string().min(1, 'Note is required'),
+  note: z.string().optional(), // CC-24: optional (was min(1)) — also fixes a latent 400 when the client sent an empty note
 })
 
 const vehicleDispositionSchema = z.object({
@@ -48,7 +48,7 @@ const vehicleDispositionSchema = z.object({
 
 const removeSchema = z.object({
   vehicles: z.array(vehicleDispositionSchema).min(1),
-  note: z.string().min(1, 'Note is required'),
+  note: z.string().optional(), // CC-24: optional (was min(1)) — also fixes a latent 400 when the client sent an empty note
 })
 
 
@@ -98,7 +98,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         data: vehicleIds.map((vehicleId) => ({
           rigId: id,
           vehicleId,
-          addNote: note,
+          addNote: note ?? '',
         })),
         skipDuplicates: true,
       })
@@ -166,7 +166,7 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
               fromRigId: id,
               toOperatorId: disp.toOperatorId,
               initiatedById: session.userId,
-              note,
+              note: note ?? '',
               status: 'PENDING',
               vehicles: { create: [{ vehicleId: disp.vehicleId }] },
             },

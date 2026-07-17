@@ -125,19 +125,23 @@ export default function RequestsPage() {
     }
   }
 
+  // CC-24: a MATERIAL request's `complete` action moves NO stock — it only
+  // notifies the requester — so it's labelled "handled", not "fulfilled".
+  // "Fulfill" is reserved for the stock-moving reservation flow (the `fulfill`
+  // action / FulfillmentChecklist), which is untouched.
   const handleFulfill = async (id: string) => {
     setFulfillingId(id)
     const result = await mutate({
       endpoint: `/api/deployment-requests/${id}`,
       method: 'PATCH',
       body: { action: 'complete' },
-      label: 'Mark fulfilled',
+      label: 'Mark handled',
     })
     setFulfillingId(null)
     if (result.ok && result.queued) {
-      showToast({ message: 'Fulfillment queued — will sync when online.', severity: 'info' })
+      showToast({ message: 'Marked handled — will sync when online.', severity: 'info' })
     } else if (result.ok) {
-      showToast({ message: 'Request marked fulfilled.', severity: 'success' })
+      showToast({ message: 'Request marked handled.', severity: 'success' })
       await load()
     } else {
       showToast({ message: result.error, severity: 'error' })
@@ -254,7 +258,7 @@ export default function RequestsPage() {
                             onClick={() => void handleFulfill(req.id)}
                             sx={{ flexShrink: 0 }}
                           >
-                            Mark Fulfilled
+                            Mark Handled
                           </Button>
                         ) : (
                           <Button

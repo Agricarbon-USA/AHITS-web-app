@@ -117,7 +117,7 @@ const WO_CHIP: Record<string, { label: string; color: 'default' | 'info' | 'warn
   VIEWED: { label: 'Viewed', color: 'info' },
   ACTED: { label: 'In progress', color: 'warning' },
   COMPLETED: { label: 'Completed', color: 'success' },
-  REVOKED: { label: 'Revoked', color: 'default' },
+  REVOKED: { label: 'Dismissed', color: 'default' }, // CC-24: one verb — matches the hub flow's "Dismissed" (DB enum stays REVOKED)
   EXPIRED: { label: 'Expired', color: 'default' },
 }
 function woChip(state?: string) {

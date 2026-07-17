@@ -433,9 +433,10 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
 
                 {isMaterial && req.status === 'FORWARDED' && (
                   <>
+                    {/* CC-24: MATERIAL complete moves no stock — "Mark Handled", not "Fulfilled". */}
                     <Button size="small" variant="contained" color="success"
                       disabled={!!busy} onClick={() => void action('complete')}>
-                      {busy === 'complete' ? <CircularProgress size={14} color="inherit" /> : 'Mark Fulfilled'}
+                      {busy === 'complete' ? <CircularProgress size={14} color="inherit" /> : 'Mark Handled'}
                     </Button>
                     <Button size="small" variant="outlined" color="error" disabled={!!busy}
                       onClick={() => void action('cancel')}>

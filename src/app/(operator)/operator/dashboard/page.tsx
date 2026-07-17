@@ -3,7 +3,6 @@
 import * as React from 'react'
 import { Box, Typography, Card, CardContent, Button, Stack, Alert } from '@mui/material'
 import ChecklistIcon from '@mui/icons-material/Checklist'
-import SwapHorizIcon from '@mui/icons-material/SwapHoriz'
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner'
 import AssignmentIcon from '@mui/icons-material/Assignment'
 import { useRouter } from 'next/navigation'
@@ -84,22 +83,17 @@ export default function OperatorDashboardPage() {
           </CardContent>
         </Card>
 
-        <Card sx={{ cursor: 'pointer' }} onClick={() => router.push('/operator/checkout')}>
-          <CardContent sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <SwapHorizIcon sx={{ fontSize: 40, color: 'primary.main' }} />
-            <Box>
-              <Typography variant="h6">Check Out / Check In</Typography>
-              <Typography variant="body2" color="text.secondary">Borrow or return equipment</Typography>
-            </Box>
-          </CardContent>
-        </Card>
-
+        {/* CC-24: merged the two cards that both landed on /operator/scan
+            ("Check Out / Check In" routed through /operator/checkout, which just
+            redirects here). One card, one destination. The /operator/checkout
+            redirect is kept (see checkout/page.tsx) for any external bookmarks or
+            notification deep links. */}
         <Card sx={{ cursor: 'pointer' }} onClick={() => router.push('/operator/scan')}>
           <CardContent sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <QrCodeScannerIcon sx={{ fontSize: 40, color: 'primary.main' }} />
             <Box>
-              <Typography variant="h6">Scan QR Code</Typography>
-              <Typography variant="body2" color="text.secondary">Scan an asset tag to look up or act on equipment</Typography>
+              <Typography variant="h6">Scan / Check Out · In</Typography>
+              <Typography variant="body2" color="text.secondary">Scan an asset tag to check out, check in, or look up equipment</Typography>
             </Box>
           </CardContent>
         </Card>

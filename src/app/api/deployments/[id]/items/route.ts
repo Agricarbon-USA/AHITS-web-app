@@ -91,7 +91,7 @@ const dispositionSchema = z.object({
 })
 
 const removeSchema = z.object({
-  note: z.string().min(1, 'Note is required'),
+  note: z.string().optional(), // CC-24: optional (was min(1))
   itemDispositions: z.array(dispositionSchema).min(1),
 })
 
@@ -519,7 +519,7 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
           fromRigId: id,
           toOperatorId,
           initiatedById: session.userId,
-          note,
+          note: note ?? '',
           status: 'PENDING',
           items: { create: disps.map((d) => ({ kitItemId: d.kitItemId, quantity: d.quantity })) },
         },

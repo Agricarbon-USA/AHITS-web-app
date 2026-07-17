@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import { formatDate } from '@/lib/utils'
+import { NOTE_PRESETS } from '@/lib/note-presets'
 import {
   Box, Typography, Button, Stack, Alert, Chip,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
@@ -169,7 +170,7 @@ function NewDeploymentDialog({
   const hasUnresolved = hasConsumableInKit && !sourceHubId
 
   const launch = async () => {
-    if (!note.trim()) { setError('A deployment note is required.'); return }
+    // CC-24: the deployment note is optional now (server relaxed too).
     setLoading(true); setError('')
     const res = await fetch('/api/deployments', {
       method: 'POST',
@@ -316,8 +317,14 @@ function NewDeploymentDialog({
         )}
         {step === 3 && (
           <Stack spacing={2}>
-            <TextField label="Deployment note (required)" value={note} onChange={(e) => setNote(e.target.value)}
-              multiline rows={3} fullWidth placeholder="e.g. Starting TX deployment with Truck 01 and Christie Drill kit" required />
+            {/* CC-24: note optional now, with one-tap presets. */}
+            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              {NOTE_PRESETS.map((p) => (
+                <Chip key={p} label={p} size="small" variant="outlined" onClick={() => setNote(p)} />
+              ))}
+            </Stack>
+            <TextField label="Deployment note (optional)" value={note} onChange={(e) => setNote(e.target.value)}
+              multiline rows={3} fullWidth placeholder="e.g. Starting TX deployment with Truck 01 and Christie Drill kit" />
             {hasUnresolved && (
               <Alert severity="warning">
                 This kit includes a consumable — go back to “Build Kit” and choose a source hub before launching.
@@ -590,7 +597,7 @@ function DeploymentDrawer({
     const res = await fetch(`/api/deployments/${rig.id}/vehicles`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vehicles: vehiclesList, note: vehicleRemoveNote || 'Removed from rig' }),
+      body: JSON.stringify({ vehicles: vehiclesList, note: vehicleRemoveNote }), // CC-24: note optional; was defaulted to 'Removed from rig'
     })
     setActionLoading(false)
     if (!res.ok) {
@@ -1012,6 +1019,7 @@ function DeploymentDrawer({
       <NotePhotoDialog
         open={noteDialog === 'addVehicles'}
         title="Add vehicles to rig"
+        presets={NOTE_PRESETS}
         loading={actionLoading}
         onClose={() => setNoteDialog(null)}
         onConfirm={handleAddVehicles}
@@ -1026,8 +1034,14 @@ function DeploymentDrawer({
       >
         <DialogTitle>Remove {selVehicles.size} Vehicle{selVehicles.size !== 1 ? 's' : ''} from Rig</DialogTitle>
         <DialogContent>
+          {/* CC-24: note optional now, with one-tap presets. */}
+          <Stack direction="row" spacing={1} sx={{ mb: 1, mt: 1 }} flexWrap="wrap" useFlexGap>
+            {NOTE_PRESETS.map((p) => (
+              <Chip key={p} label={p} size="small" variant="outlined" onClick={() => setVehicleRemoveNote(p)} />
+            ))}
+          </Stack>
           <TextField
-            label="Overall note"
+            label="Overall note (optional)"
             value={vehicleRemoveNote}
             onChange={(e) => setVehicleRemoveNote(e.target.value)}
             fullWidth multiline rows={2} sx={{ mb: 3, mt: 1 }}
@@ -1089,6 +1103,7 @@ function DeploymentDrawer({
       <NotePhotoDialog
         open={noteDialog === 'addItems'}
         title="Add items to kit"
+        presets={NOTE_PRESETS}
         loading={actionLoading}
         onClose={() => setNoteDialog(null)}
         onConfirm={handleAddItems}
@@ -1131,6 +1146,7 @@ function DeploymentDrawer({
           currentOperatorId={rig.operator.id}
           operators={operators}
           hubs={hubs}
+          presets={NOTE_PRESETS}
           items={selectedItems}
           onComplete={() => {
             setNoteDialog(null)
@@ -1151,6 +1167,7 @@ function DeploymentDrawer({
           currentOperatorId={rig.operator.id}
           operators={operators}
           hubs={hubs}
+          presets={NOTE_PRESETS}
           items={allKitItemSummaries}
           onComplete={() => {
             setNoteDialog(null)

@@ -71,7 +71,7 @@ const ACTION_LABELS: Record<string, string> = {
   DISCREPANCY: 'Report a discrepancy',
   PAID: 'Mark paid',
   CONFIRMED: 'Confirm we can fulfill',
-  PREPARED: 'Mark prepared / staged',
+  PREPARED: 'Mark staged',
   DECLINED: 'Decline',
 }
 
@@ -228,7 +228,7 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
                 onLineAction={onLineAction}
                 onStage={onStage}
                 isActionable={ctx.actionable}
-                stageLabel="Mark prepared / staged"
+                stageLabel="Mark staged"
               />
             ) : (
               <p style={{ color: color.inkMuted, fontSize: 14 }}>No items on this reservation.</p>
