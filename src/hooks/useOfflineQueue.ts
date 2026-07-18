@@ -102,6 +102,10 @@ export function useOfflineQueue() {
   const [nearQuota, setNearQuota] = React.useState(false)
   const [possibleDataLoss, setPossibleDataLoss] = React.useState(false)
   const [staleQueue, setStaleQueue] = React.useState(false)
+  // CC-12 PR1: a flush hit 401 while items are still pending — the session lapsed
+  // (the queued writes are still valid and parked). Drives the "sign in to send N
+  // saved actions" prompt instead of the queue reading "waiting to sync" forever.
+  const [sessionExpired, setSessionExpired] = React.useState(false)
   const syncingRef = React.useRef(false)
   // Set to true when flush() actually deletes at least one item this session —
   // suppresses false-positive possibleDataLoss if the queue legitimately drained.
@@ -120,6 +124,8 @@ export function useOfflineQueue() {
       const failedItems = items.filter((i) => i.status === 'failed')
       setPending(nonFailed.length)
       setFailed(failedItems.length)
+      // No pending items → nothing is parked, so drop any stale session prompt.
+      if (nonFailed.length === 0) setSessionExpired(false)
       setPendingDeployCreate(
         nonFailed.some((i) => i.endpoint === '/api/deployments' && i.method === 'POST')
       )
@@ -228,7 +234,13 @@ export function useOfflineQueue() {
           }
           await deleteItem(db, item.id)
           flushedThisSessionRef.current = true
+          // CC-12 PR1: a successful send means the session is valid again — clear
+          // any parked-session prompt.
+          setSessionExpired(false)
         } else if (res.status === 401) {
+          // CC-12 PR1: surface the parked session so the UI can prompt a re-login,
+          // rather than the queue silently reading "waiting to sync" forever.
+          setSessionExpired(true)
           // FND-14b: an expired/absent session (e.g. the 24h JWT lapsed while the
           // operator was offline) is NOT a terminal failure — the queued write is
           // still valid. Leave it pending (don't burn a retry, don't mark failed)
@@ -294,6 +306,37 @@ export function useOfflineQueue() {
       return []
     }
   }, [])
+
+  // CC-12 PR1: every queued item (pending + failed) for the OUTBOX view, oldest first.
+  const listAll = React.useCallback(async (): Promise<OfflineQueueItem[]> => {
+    try {
+      const db = await openDB()
+      const items = await getAllItems(db)
+      return items.sort((a, b) => a.createdAt - b.createdAt)
+    } catch {
+      return []
+    }
+  }, [])
+
+  // CC-12 PR1: re-arm a terminally-failed item — reset it to pending and re-run the
+  // flush so the operator can retry a single action from the OUTBOX (was only a
+  // blind bulk discard of ALL failed items).
+  const retryItem = React.useCallback(
+    async (id: number) => {
+      try {
+        const db = await openDB()
+        const item = await getItemById(db, id)
+        if (item && item.id != null) {
+          await putItem(db, { ...item, status: 'pending', retries: 0, lastError: undefined })
+          await refresh()
+        }
+      } catch {
+        /* IDB blip — leave the item as-is */
+      }
+      await flush()
+    },
+    [refresh, flush],
+  )
 
   /**
    * Try the network first; on a network failure (offline or unreachable) durably
@@ -421,10 +464,13 @@ export function useOfflineQueue() {
     mutate,
     discardFailed,
     listFailed,
+    listAll,
+    retryItem,
     refresh,
     // Honest indicators:
     pending,
     failed,
+    sessionExpired,
     pendingDeployCreate,
     syncing,
     isOffline,
