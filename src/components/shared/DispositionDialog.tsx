@@ -8,6 +8,7 @@ import {
 } from '@mui/material'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 import { PhotoCapture } from './PhotoCapture'
+import { SearchableSelect } from './SearchableSelect'
 import { FIXABLE_OPTIONS, type ReturnCondition } from '@/lib/status'
 
 export interface HubOption {
@@ -260,18 +261,14 @@ export function DispositionDialog({
                   </TextField>
                 )}
                 {disp.type === 'TRANSFER' && (
-                  <TextField
-                    select
+                  <SearchableSelect
                     label="Destination operator"
                     size="small"
+                    placeholder="Select operator…"
                     value={disp.toOperatorId ?? ''}
-                    onChange={(e) => setDisp(item.kitItemId, { toOperatorId: e.target.value })}
-                  >
-                    <MenuItem value="" disabled>Select operator…</MenuItem>
-                    {operators.map((o) => (
-                      <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>
-                    ))}
-                  </TextField>
+                    onChange={(v) => setDisp(item.kitItemId, { toOperatorId: v })}
+                    options={operators.map((o) => ({ value: o.id, label: o.name }))}
+                  />
                 )}
                 {disp.type === 'INOPERABLE' && (
                   <Stack spacing={1}>

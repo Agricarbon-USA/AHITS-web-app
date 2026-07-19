@@ -22,6 +22,7 @@ import { FreshnessIndicator } from '@/components/shared/FreshnessIndicator'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/components/shared/useToast'
 import { StatusChip } from '@/components/shared/StatusChip'
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import {
   RequestComposer,
   type HubOption,
@@ -61,6 +62,8 @@ export default function RequestsPage() {
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const [dialogDataLoaded, setDialogDataLoaded] = React.useState(false)
   const [cancellingId, setCancellingId] = React.useState<string | null>(null)
+  // CC-14: confirm before cancelling a request (was a one-tap irreversible action).
+  const [confirmCancelId, setConfirmCancelId] = React.useState<string | null>(null)
   const [fulfillingId, setFulfillingId] = React.useState<string | null>(null)
   const [activeTab, setActiveTab] = React.useState<'ACTIVE' | 'CLOSED'>('ACTIVE')
   const showToast = useToast()
@@ -271,7 +274,7 @@ export default function RequestsPage() {
                                 <CircularProgress size={12} color="inherit" />
                               ) : null
                             }
-                            onClick={() => void handleCancel(req.id)}
+                            onClick={() => setConfirmCancelId(req.id)}
                             sx={{ flexShrink: 0 }}
                           >
                             Cancel
@@ -314,6 +317,20 @@ export default function RequestsPage() {
           }}
         />
       )}
+
+      <ConfirmDialog
+        open={confirmCancelId !== null}
+        title="Cancel this request?"
+        message="This can't be undone. The request will be marked cancelled."
+        confirmLabel="Cancel request"
+        confirmColor="error"
+        onClose={() => setConfirmCancelId(null)}
+        onConfirm={async () => {
+          const id = confirmCancelId
+          setConfirmCancelId(null)
+          if (id) await handleCancel(id)
+        }}
+      />
     </Box>
   )
 }

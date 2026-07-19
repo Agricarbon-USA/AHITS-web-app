@@ -16,6 +16,7 @@ import LockResetIcon from '@mui/icons-material/LockReset'
 import LogoutIcon from '@mui/icons-material/Logout'
 import { usePathname, useRouter } from 'next/navigation'
 import { useAuth } from '@/hooks/useAuth'
+import { useIncomingPendingCount } from '@/hooks/useIncomingPendingCount'
 
 const NAV_ITEMS = [
   { label: 'My Dashboard', href: '/operator/dashboard', icon: DashboardIcon },
@@ -43,30 +44,8 @@ export function OperatorNav() {
   const pathname = usePathname()
   const router = useRouter()
   const { logout, user } = useAuth()
-  const [pendingCount, setPendingCount] = React.useState(0)
-
-  // Poll incoming pending transfers + handoffs so the My Rig item carries a live badge.
-  React.useEffect(() => {
-    let active = true
-    const load = async () => {
-      try {
-        const [tRes, hRes] = await Promise.all([
-          fetch('/api/transfers?status=PENDING&direction=incoming'),
-          fetch('/api/handoffs?status=PENDING&direction=incoming'),
-        ])
-        const transfers = tRes.ok ? await tRes.json() : []
-        const handoffs = hRes.ok ? await hRes.json() : []
-        if (active) setPendingCount((Array.isArray(transfers) ? transfers.length : 0) + (Array.isArray(handoffs) ? handoffs.length : 0))
-      } catch {
-        /* offline / transient — keep last known count */
-      }
-    }
-    load()
-    const t = window.setInterval(load, 45_000)
-    const onVis = () => { if (document.visibilityState === 'visible') load() }
-    document.addEventListener('visibilitychange', onVis)
-    return () => { active = false; window.clearInterval(t); document.removeEventListener('visibilitychange', onVis) }
-  }, [])
+  // CC-14: shared with the bottom-bar tab so both badges stay in sync.
+  const pendingCount = useIncomingPendingCount()
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
