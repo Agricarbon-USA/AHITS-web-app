@@ -572,6 +572,9 @@ model DailyCheck {
   passFail      Boolean   @default(true)
   submittedAt   DateTime  @default(now())
   syncedAt      DateTime?
+  // CC-14: client-measured time-to-complete (form open → submit), passive timing, no
+  // new operator capture. Nullable so offline replays and pre-CC-14 rows are valid.
+  durationMs    Int?
 
   vehicle  Vehicle @relation(fields: [vehicleId], references: [id])
   operator User    @relation(fields: [operatorId], references: [id])
