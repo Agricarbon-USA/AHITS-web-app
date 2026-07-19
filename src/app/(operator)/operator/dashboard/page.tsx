@@ -121,7 +121,7 @@ export default function OperatorTodayPage() {
 
           <MyRequestsSummary requests={openRequests} onOpenRequests={() => router.push('/operator/requests')} />
 
-          {nothingToShow && (
+          {nothingToShow && !error && (
             <EmptyState
               icon={<EventAvailableIcon fontSize="inherit" />}
               title="No active deployment"
