@@ -16,22 +16,24 @@ async function fileCheck(vehicleId: string, operatorId: string, durationMs?: num
 
 describe('CC-14 daily-check adoption', () => {
   it('counts eligible vehicles on active deployments and the checked subset', async () => {
+    // Snapshot BEFORE creating anything (fileParallelism:false → deltas are
+    // deterministic against whatever prior tests left in the shared DB).
+    const before = await getDailyCheckAdoption()
+
     const op = await createOperator()
     const { rig } = await createRig(op.id)
     const v1 = await createVehicle()
     const v2 = await createVehicle()
     await addVehicleToRig(rig.id, v1.id)
     await addVehicleToRig(rig.id, v2.id)
-
-    const before = await getDailyCheckAdoption()
-    // Two more eligible vehicles exist now; one gets checked.
+    // Two eligible vehicles now exist; one gets a (timed) check.
     await fileCheck(v1.id, op.id, 90_000)
 
     const after = await getDailyCheckAdoption()
     expect(after.eligibleVehicles - before.eligibleVehicles).toBe(2)
     expect(after.checkedVehicles - before.checkedVehicles).toBe(1)
     expect(after.adoptionRate).not.toBeNull()
-    // avg duration reflects the one timed check (>= its own value present in the sample)
+    // avg duration reflects the one timed check present in the sample.
     expect(after.durationSampleSize).toBeGreaterThanOrEqual(1)
     expect(after.avgDurationMs).not.toBeNull()
   })
