@@ -17,6 +17,8 @@ import {
 import AddIcon from '@mui/icons-material/Add'
 import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
+import { useFreshList } from '@/hooks/useFreshList'
+import { FreshnessIndicator } from '@/components/shared/FreshnessIndicator'
 import { useAuth } from '@/hooks/useAuth'
 import { useToast } from '@/components/shared/useToast'
 import { StatusChip } from '@/components/shared/StatusChip'
@@ -51,7 +53,6 @@ const TERMINAL = new Set(['FULFILLED', 'CANCELLED', 'DENIED'])
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function RequestsPage() {
-  const [requests, setRequests] = React.useState<RequestRow[] | null>(null)
   const [hubs, setHubs] = React.useState<HubOption[]>([])
   const [projects, setProjects] = React.useState<ProjectOption[]>([])
   const [inventory, setInventory] = React.useState<InventoryOption[]>([])
@@ -66,17 +67,13 @@ export default function RequestsPage() {
   const { mutate, isOffline } = useOfflineQueue()
   const { user } = useAuth()
 
-  const load = React.useCallback(async () => {
-    const res = await fetch('/api/deployment-requests')
-    if (res.ok) {
-      const json = await res.json()
-      setRequests((json.data as RequestRow[]) ?? [])
-    }
-  }, [])
-
-  React.useEffect(() => {
-    void load()
-  }, [load])
+  // CC-12 PR2: the requests list read now goes through SWR (revalidateOnReconnect)
+  // with a "data as of HH:MM" freshness indicator. `refreshRequests` replaces the
+  // old manual load() at every post-action refresh site.
+  const { data: reqData, isValidating, mutate: refreshRequests, updatedAt } =
+    useFreshList<{ data: RequestRow[] }>('/api/deployment-requests')
+  const requests = reqData?.data ?? null
+  const load = React.useCallback(async () => { await refreshRequests() }, [refreshRequests])
 
   const openDialog = async () => {
     setDialogOpen(true)
@@ -154,8 +151,11 @@ export default function RequestsPage() {
 
   return (
     <Box>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h5">Requests</Typography>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" mb={3} flexWrap="wrap" gap={1}>
+        <Stack direction="row" alignItems="center" spacing={1.5}>
+          <Typography variant="h5">Requests</Typography>
+          <FreshnessIndicator updatedAt={updatedAt} isValidating={isValidating} onRefresh={() => void refreshRequests()} />
+        </Stack>
         <Button variant="contained" startIcon={<AddIcon />} onClick={() => void openDialog()}>
           New Request
         </Button>
