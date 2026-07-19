@@ -71,6 +71,13 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Scope-guard correction (provenance):** CC-24's packet scope guard wrongly named the operator "Mark Fulfilled" as a stock-moving action to protect; the code proved it is the MATERIAL `complete` action (server enforces `requestType==='MATERIAL'`) and moves no stock. Max confirmed the rename. The real stock-mover is the separate `fulfill` action, left untouched.
 - **Detail:** CC-24 / PR #185.
 
+### D10 · CC-12 admin-monolith splits (admin/deployments, admin/inventory) are DEFERRED — demand-pull
+- **Date:** 2026-07-19 · **Owner:** Max · **Status:** ACTIVE
+- **Decision:** CC-12's structural performance work split **only my-deployment** (PR3, the worst offender at ~2026 lines / 55 useState). The **admin/deployments (~1566) and admin/inventory (~1362) splits are deliberately deferred**, not dropped: they are **demand-pull**, done by the **first packet that materially touches those surfaces (owner: CC-18 or earlier if one lands there first)** — never as a standalone sweep. This is a recorded decision so no future session rediscovers it as "unfinished CC-12."
+- **Rationale:** three behaviour-preserving refactors of the biggest files in one packet is not one sitting; my-deployment (the field's daily surface) is the highest-value target and was done well with a real Android device-pass acceptance. Splitting an admin file no one is otherwise editing is churn without a demand signal.
+- **Also note (PR3 scope):** PR3 extracted the two heavy presentational cards (Vehicles, Kit) as `React.memo` children with render-count-verified memo boundaries — the primary re-render win. Deeper container-thinning (SWR on the rig read via `useFreshList`, more leaf extractions) is likewise demand-pull as later my-deployment work touches those areas.
+- **Detail:** CC-12 / PR #187 (queue-UX) · #188 (SWR+freshness) · PR3 (my-deployment split).
+
 ---
 
 _To add a decision: copy the D-format above, give it the next Dn id, fill in date/owner/status/decision/rationale, and set any superseded prior decision's `Superseded-by: Dn`. Reference decisions by id (`D1`) in handoffs and workplans instead of re-explaining them._

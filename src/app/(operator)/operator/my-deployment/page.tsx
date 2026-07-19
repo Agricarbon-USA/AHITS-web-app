@@ -10,8 +10,6 @@ import {
 } from '@mui/material'
 import { StatusChip } from '@/components/shared/StatusChip'
 import LocalShippingIcon from '@mui/icons-material/LocalShipping'
-import TerrainIcon from '@mui/icons-material/Terrain'
-import AgricultureIcon from '@mui/icons-material/Agriculture'
 import AddIcon from '@mui/icons-material/Add'
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz'
 import StopCircleIcon from '@mui/icons-material/StopCircle'
@@ -23,6 +21,7 @@ import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
 import { TransferDialog } from '@/components/shared/TransferDialog'
 import { DispositionDialog, KitItemSummary } from '@/components/shared/DispositionDialog'
 import { QrScannerDialog, type QrResolveResult } from '@/components/shared/QrScannerDialog'
+import { DeploymentVehiclesCard, DeploymentKitCard, VEHICLE_ICON } from '@/components/operator/DeploymentCards'
 import { RentalVehicleForm, RentalVehicleFields, rentalFieldsToVehiclePayload, isRentalFormValid } from '@/components/shared/RentalVehicleForm'
 import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
@@ -35,15 +34,8 @@ import { VEHICLE_TYPE_ORDER, vehicleTypeLabel } from '@/lib/vehicle-types'
 
 // ── Types ─────────────────────────────────────────────────────────
 
-const VEHICLE_ICON: Record<string, React.ElementType> = {
-  TRUCK: LocalShippingIcon,
-  TRAILER: LocalShippingIcon,
-  POLARIS_UTV: TerrainIcon,
-  CAN_AM_UTV: TerrainIcon,
-  ATV: TerrainIcon,
-  CHRISTIE_DRILL: AgricultureIcon,
-  OTHER: LocalShippingIcon,
-}
+// VEHICLE_ICON moved to components/operator/DeploymentCards.tsx (CC-12 PR3) and
+// re-imported here for the two dialog vehicle pickers that also use it.
 
 interface RigVehicleRow {
   id: string
@@ -887,6 +879,19 @@ export default function MyRigPage() {
     }
   }
 
+  // CC-12 PR3: stable callbacks so the memoized Vehicles/Kit cards don't re-render
+  // when unrelated container state changes (e.g. a dialog opens). The card hands
+  // back a structural row; look up the full kit item by id for the dialogs.
+  const onAddVehicles = React.useCallback(() => setAddVehicleOpen(true), [])
+  const onRemoveVehiclesSelected = React.useCallback(() => setNoteDialog('removeVehicles'), [])
+  const onAddItems = React.useCallback(() => {
+    setAddItemOpen(true)
+    if (!addItemSourceHubId) {
+      setAddItemSourceHubId((user?.homeHubId && hubs.some((h) => h.id === user.homeHubId) ? user.homeHubId : hubs[0]?.id) ?? '')
+    }
+  }, [addItemSourceHubId, user, hubs])
+  const onRemoveItemsSelected = React.useCallback(() => setNoteDialog('removeItems'), [])
+
   const handleLogUsage = async () => {
     if (!logUsageDialog.kitItem || !rig) return
     setLogUsageLoading(true)
@@ -914,7 +919,20 @@ export default function MyRigPage() {
     setLogUsageLoading(false)
   }
 
-  const kitItems = rig?.kits.flatMap((k) => k.items) ?? []
+  // CC-12 PR3: memoize the derived kit rows. A fresh array each render would give
+  // the callbacks below unstable deps AND hand the memoized kit card a new `kitItems`
+  // prop every render — defeating the memo boundary in production. Keyed on `rig`.
+  const kitItems = React.useMemo(() => rig?.kits.flatMap((k) => k.items) ?? [], [rig])
+  // CC-12 PR3: kit-row callbacks (defined after kitItems). The memoized kit card
+  // hands back a structural row; look up the full kit item by id for the dialogs.
+  const onLogUsage = React.useCallback((ki: { id: string }) => {
+    const full = kitItems.find((k) => k.id === ki.id)
+    if (full) { setLogUsageDialog({ open: true, kitItem: full }); setLogUsageQty(1) }
+  }, [kitItems])
+  const onReturnItem = React.useCallback((ki: { id: string }) => {
+    const full = kitItems.find((k) => k.id === ki.id)
+    if (full) setSingleRemoveItem(full)
+  }, [kitItems])
   const unassignedVehicles = vehicles.filter((v) => !v.assignedOperatorId && v.status === 'ACTIVE')
 
   const doAction = async (action: NoteAction, note: string, photoUrls: string[]) => {
@@ -1251,158 +1269,27 @@ export default function MyRigPage() {
       </Stack>
 
       <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} mb={2}>
-        {/* Vehicles card */}
-        <Card sx={{ flex: 1 }}>
-          <CardContent>
-            <Typography variant="subtitle1" fontWeight={600} mb={1.5}>Vehicles</Typography>
-            {rig.vehicles.length === 0 ? (
-              <Typography variant="body2" color="text.secondary" mb={1}>No vehicles.</Typography>
-            ) : (
-              <Stack spacing={0.5} mb={1}>
-                {rig.vehicles.map((rv) => {
-                  const Icon = VEHICLE_ICON[rv.vehicle.type] ?? LocalShippingIcon
-                  // CC-23: minWidth:0 + wrap so long vehicle names + rental chips
-                  // don't overflow the row on narrow screens.
-                  return (
-                    <Stack key={rv.id} direction="row" alignItems="center" spacing={1} flexWrap="wrap" useFlexGap sx={{ minWidth: 0 }}>
-                      {removingVehicles && (
-                        <Checkbox size="small" checked={selVehicles.has(rv.vehicle.id)}
-                          onChange={(e) => {
-                            const s = new Set(selVehicles)
-                            e.target.checked ? s.add(rv.vehicle.id) : s.delete(rv.vehicle.id)
-                            setSelVehicles(s)
-                          }} />
-                      )}
-                      <Icon fontSize="small" color="action" />
-                      <Typography variant="body2" sx={{ minWidth: 0, wordBreak: 'break-word' }}>{rv.vehicle.name}</Typography>
-                      {rv.vehicle.isRental && (
-                        <StatusChip label="Rental" color="warning" variant="outlined" sx={{ ml: 0.5 }} />
-                      )}
-                      {rv.vehicle.isRental && !rv.vehicle.rentalAgreementUrl && (
-                        <Chip label="Agreement needed" size="small" color="error" variant="outlined"
-                          sx={{ height: 18, fontSize: 10 }} />
-                      )}
-                    </Stack>
-                  )
-                })}
-              </Stack>
-            )}
-            <Stack direction="row" spacing={1}>
-              <Button size="small" variant="outlined" startIcon={<AddIcon />}
-                onClick={() => setAddVehicleOpen(true)}>
-                Add Vehicles
-              </Button>
-              {rig.vehicles.length > 0 && !removingVehicles && (
-                <Button size="small" variant="outlined" color="error"
-                  onClick={() => setRemovingVehicles(true)}>
-                  Remove Vehicles
-                </Button>
-              )}
-              {removingVehicles && selVehicles.size > 0 && (
-                <Button size="small" variant="contained" color="error"
-                  onClick={() => setNoteDialog('removeVehicles')}>
-                  Remove Selected ({selVehicles.size})
-                </Button>
-              )}
-              {removingVehicles && (
-                <Button size="small" onClick={() => { setRemovingVehicles(false); setSelVehicles(new Set()) }}>
-                  Cancel
-                </Button>
-              )}
-            </Stack>
-          </CardContent>
-        </Card>
-
-        {/* My Kit Card */}
-        <Card sx={{ flex: 1 }}>
-          <CardContent>
-            <Typography variant="subtitle1" fontWeight={600} mb={1.5}>My Kit</Typography>
-            {kitItems.length === 0 ? (
-              <Typography variant="body2" color="text.secondary" mb={1}>Empty kit.</Typography>
-            ) : (
-              <Stack spacing={0.5} mb={1}>
-                {kitItems.map((ki) => {
-                  const isLow = ki.item.lowStockThreshold != null && ki.quantity <= ki.item.lowStockThreshold
-                  // CC-23: minWidth:0 so a long item name can shrink/wrap instead
-                  // of pushing the qty/controls off the row.
-                  return (
-                    <Stack key={ki.id} direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
-                      {removingItems && (
-                        <Checkbox size="small" checked={selItems.has(ki.id)}
-                          onChange={(e) => {
-                            const s = new Set(selItems)
-                            e.target.checked ? s.add(ki.id) : s.delete(ki.id)
-                            setSelItems(s)
-                          }} />
-                      )}
-                      <Box flexGrow={1} sx={{ minWidth: 0 }}>
-                        <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>{ki.item.name}</Typography>
-                        {ki.inventoryUnit && (
-                          <Typography variant="caption" color="text.secondary">
-                            Unit: {ki.inventoryUnit.serialNumber ?? ki.inventoryUnit.qrCodeId.slice(0, 8)}
-                          </Typography>
-                        )}
-                      </Box>
-                      {/* CC-24: always the item TYPE in one casing (was category
-                          name when present, else the uppercase type — so the same
-                          list mixed "Consumables" and "CONSUMABLE"). */}
-                      <StatusChip label={ki.item.itemType.charAt(0) + ki.item.itemType.slice(1).toLowerCase()} />
-                      <Stack direction="row" alignItems="center" spacing={0.5}>
-                        {isLow && <WarningAmberIcon fontSize="small" color="warning" />}
-                        <Chip size="small" label={`×${ki.quantity}`}
-                          color={isLow ? 'warning' : 'default'} />
-                      </Stack>
-                      {/* CC-24: 44px hit area (icon stays visually small) — these
-                          per-row remove/log-usage taps were below the 44px floor. */}
-                      {!removingItems && ki.item.itemType === 'CONSUMABLE' && (
-                        <Tooltip title="Log daily usage">
-                          <IconButton size="small" color="warning" sx={{ width: 44, height: 44 }}
-                            onClick={() => {
-                              setLogUsageDialog({ open: true, kitItem: ki })
-                              setLogUsageQty(1)
-                            }}>
-                            <RemoveCircleOutlineIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      )}
-                      {!removingItems && ki.item.itemType !== 'CONSUMABLE' && (
-                        <Tooltip title="Return item">
-                          <IconButton size="small" color="error" sx={{ width: 44, height: 44 }}
-                            onClick={() => setSingleRemoveItem(ki)}>
-                            <RemoveCircleOutlineIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      )}
-                    </Stack>
-                  )
-                })}
-              </Stack>
-            )}
-            <Stack direction="row" spacing={1}>
-              <Button size="small" variant="outlined" startIcon={<AddIcon />}
-                onClick={() => { setAddItemOpen(true); if (!addItemSourceHubId) setAddItemSourceHubId((user?.homeHubId && hubs.some((h) => h.id === user.homeHubId) ? user.homeHubId : hubs[0]?.id) ?? '') }}>
-                Add Items
-              </Button>
-              {kitItems.length > 0 && !removingItems && (
-                <Button size="small" variant="outlined" color="error"
-                  onClick={() => setRemovingItems(true)}>
-                  Remove Items
-                </Button>
-              )}
-              {removingItems && selItems.size > 0 && (
-                <Button size="small" variant="contained" color="error"
-                  onClick={() => setNoteDialog('removeItems')}>
-                  Remove Selected ({selItems.size})
-                </Button>
-              )}
-              {removingItems && (
-                <Button size="small" onClick={() => { setRemovingItems(false); setSelItems(new Set()) }}>
-                  Cancel
-                </Button>
-              )}
-            </Stack>
-          </CardContent>
-        </Card>
+        {/* CC-12 PR3: extracted, memoized presentational cards (the perf split). */}
+        <DeploymentVehiclesCard
+          vehicles={rig.vehicles}
+          removingVehicles={removingVehicles}
+          selVehicles={selVehicles}
+          setSelVehicles={setSelVehicles}
+          setRemovingVehicles={setRemovingVehicles}
+          onAddVehicles={onAddVehicles}
+          onRemoveSelected={onRemoveVehiclesSelected}
+        />
+        <DeploymentKitCard
+          kitItems={kitItems}
+          removingItems={removingItems}
+          selItems={selItems}
+          setSelItems={setSelItems}
+          setRemovingItems={setRemovingItems}
+          onAddItems={onAddItems}
+          onRemoveSelected={onRemoveItemsSelected}
+          onLogUsage={onLogUsage}
+          onReturnItem={onReturnItem}
+        />
       </Stack>
 
       {/* Outgoing pending transfer notice */}
