@@ -22,6 +22,7 @@ import { TransferDialog } from '@/components/shared/TransferDialog'
 import { DispositionDialog, KitItemSummary } from '@/components/shared/DispositionDialog'
 import { QrScannerDialog, type QrResolveResult } from '@/components/shared/QrScannerDialog'
 import { DeploymentVehiclesCard, DeploymentKitCard, VEHICLE_ICON } from '@/components/operator/DeploymentCards'
+import { SearchableSelect } from '@/components/shared/SearchableSelect'
 import { RentalVehicleForm, RentalVehicleFields, rentalFieldsToVehiclePayload, isRentalFormValid } from '@/components/shared/RentalVehicleForm'
 import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
@@ -1836,14 +1837,14 @@ export default function MyRigPage() {
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             Transfer primary responsibility to another operator. They will need to accept before the handoff takes effect.
           </Typography>
-          <TextField
-            select label="Hand off to" value={handoffTargetId}
-            onChange={(e) => setHandoffTargetId(e.target.value)} fullWidth sx={{ mb: 2 }}
-          >
-            {operators.filter((o) => o.id !== rig.operator.id).map((o) => (
-              <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>
-            ))}
-          </TextField>
+          <Box sx={{ mb: 2 }}>
+            <SearchableSelect
+              label="Hand off to"
+              value={handoffTargetId}
+              onChange={setHandoffTargetId}
+              options={operators.filter((o) => o.id !== rig.operator.id).map((o) => ({ value: o.id, label: o.name }))}
+            />
+          </Box>
           <TextField
             label="Note (required)"
             value={handoffNote}

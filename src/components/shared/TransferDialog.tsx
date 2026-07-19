@@ -3,8 +3,9 @@
 import * as React from 'react'
 import {
   Dialog, DialogTitle, DialogContent, DialogActions, Button, Stepper, Step, StepLabel,
-  TextField, MenuItem, Stack, Box, Typography, Checkbox,
+  TextField, Stack, Box, Typography, Checkbox,
 } from '@mui/material'
+import { SearchableSelect } from '@/components/shared/SearchableSelect'
 import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import TerrainIcon from '@mui/icons-material/Terrain'
 import AgricultureIcon from '@mui/icons-material/Agriculture'
@@ -167,12 +168,12 @@ export function TransferDialog({
         </Stepper>
 
         {step === 0 && (
-          <TextField select label="Destination Operator" value={toOperatorId}
-            onChange={(e) => setToOperatorId(e.target.value)} fullWidth>
-            {destOperators.map((o) => (
-              <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>
-            ))}
-          </TextField>
+          <SearchableSelect
+            label="Destination Operator"
+            value={toOperatorId}
+            onChange={setToOperatorId}
+            options={destOperators.map((o) => ({ value: o.id, label: o.name }))}
+          />
         )}
 
         {step === 1 && (

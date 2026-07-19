@@ -22,6 +22,7 @@ import {
 import AddIcon from '@mui/icons-material/Add'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import { VEHICLE_TYPE_LABELS } from '@/lib/vehicle-types'
+import { SearchableSelect } from '@/components/shared/SearchableSelect'
 
 // Shared deployment-request composer. Used by BOTH the operator requests page
 // (offline-first: onSubmit routes through the offline queue) and the admin
@@ -204,13 +205,11 @@ function LineEditor({
         <Box sx={{ flexGrow: 1, minWidth: 0 }}>
           {(line.lineType === 'KIT_ITEM' || line.lineType === 'CONSUMABLE') && (
             <Stack spacing={1}>
-              <TextField
-                select
+              <SearchableSelect
                 size="small"
                 label="Item"
                 value={line.specificInventoryItemId}
-                onChange={(e) => {
-                  const id = e.target.value
+                onChange={(id) => {
                   const item = inventory.find((i) => i.id === id) ?? null
                   onChange({
                     specificInventoryItemId: id,
@@ -218,20 +217,18 @@ function LineEditor({
                     requestedQty: item?.itemType === 'SERIALIZED' ? 1 : line.requestedQty,
                   })
                 }}
-                fullWidth
-              >
-                <MenuItem value="">— Category fallback —</MenuItem>
-                {(line.lineType === 'CONSUMABLE'
-                  ? inventory.filter((i) => i.itemType === 'CONSUMABLE')
-                  : inventory
-                ).map((i) => (
-                  <MenuItem key={i.id} value={i.id}>
-                    {i.name}
-                    {i.itemType === 'SERIALIZED' ? ' (serialized)' : ''}
-                    {i.category ? ` · ${i.category.name}` : ''}
-                  </MenuItem>
-                ))}
-              </TextField>
+                options={[
+                  // '' stays a real, selectable choice: the category-fallback line.
+                  { value: '', label: '— Category fallback —' },
+                  ...(line.lineType === 'CONSUMABLE'
+                    ? inventory.filter((i) => i.itemType === 'CONSUMABLE')
+                    : inventory
+                  ).map((i) => ({
+                    value: i.id,
+                    label: `${i.name}${i.itemType === 'SERIALIZED' ? ' (serialized)' : ''}${i.category ? ` · ${i.category.name}` : ''}`,
+                  })),
+                ]}
+              />
 
               {!line.specificInventoryItemId && (
                 <TextField
@@ -559,19 +556,16 @@ export function RequestComposer({
         )}
 
         {operators && operators.length > 0 && (
-          <TextField
-            select
+          <SearchableSelect
             label="For operator (optional)"
             value={forOperatorId}
-            onChange={(e) => setForOperatorId(e.target.value)}
-            fullWidth
+            onChange={setForOperatorId}
             helperText="Assign this request to an operator. Leave blank to keep it unassigned."
-          >
-            <MenuItem value="">— Unassigned —</MenuItem>
-            {operators.map((o) => (
-              <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>
-            ))}
-          </TextField>
+            options={[
+              { value: '', label: '— Unassigned —' },
+              ...operators.map((o) => ({ value: o.id, label: o.name })),
+            ]}
+          />
         )}
 
         {mode === 'RESERVATION' && (
