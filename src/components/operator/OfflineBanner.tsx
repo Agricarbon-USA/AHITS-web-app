@@ -3,15 +3,19 @@ import * as React from 'react'
 import { Alert, Button, CircularProgress } from '@mui/material'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 import { BannerStack, BANNER_PRIORITY, type BannerDescriptor } from '@/components/ui/BannerStack'
+import { OutboxDialog } from '@/components/operator/OutboxDialog'
+import Link from 'next/link'
 
 const bannerSx = { mb: 0, borderRadius: 0 } as const
 
 export function OfflineBanner() {
   const {
-    isOffline, pending, failed, syncing, listFailed, discardFailed,
+    isOffline, pending, failed, syncing, sessionExpired,
+    listAll, retryItem, discardFailed,
     idbWritable, possibleDataLoss, staleQueue, nearQuota, persistenceGranted,
   } = useOfflineQueue()
   const [mounted, setMounted] = React.useState(false)
+  const [outboxOpen, setOutboxOpen] = React.useState(false)
   const [dismissedDataLoss, setDismissedDataLoss] = React.useState(false)
   const [dismissedStale, setDismissedStale] = React.useState(false)
   const [dismissedQuota, setDismissedQuota] = React.useState(false)
@@ -30,10 +34,6 @@ export function OfflineBanner() {
   const showQueueAlert = isOffline || pending > 0 || syncing
   const showFailedAlert = failed > 0
 
-  const dismissFailed = async () => {
-    const items = await listFailed()
-    await Promise.all(items.map((i) => i.id != null ? discardFailed(i.id) : Promise.resolve()))
-  }
 
   // CC-23: build the candidate banners with priorities, then collapse to the
   // single most-important one via BannerStack (was a Stack that rendered up to 7
@@ -41,6 +41,22 @@ export function OfflineBanner() {
   // correctly. The data-risk errors (can't-save / possible-loss / failed sync)
   // are CRITICAL; offline/sync status is OFFLINE; the persistence notice is INFO.
   const banners: BannerDescriptor[] = []
+
+  // CC-12 PR1: a flush parked on 401 with items still queued — prompt a re-login
+  // instead of the queue reading "waiting to sync" forever. Pushed first so it
+  // wins the CRITICAL (auth/parked-work) tier.
+  if (sessionExpired && pending > 0) {
+    banners.push({
+      id: 'session-expired',
+      priority: BANNER_PRIORITY.CRITICAL,
+      node: (
+        <Alert severity="warning" sx={bannerSx}
+          action={<Button size="small" color="inherit" component={Link} href="/login">Sign in</Button>}>
+          Session expired — sign in to send {pending} saved action{pending === 1 ? '' : 's'}.
+        </Alert>
+      ),
+    })
+  }
 
   if (showIdbError) {
     banners.push({
@@ -74,9 +90,8 @@ export function OfflineBanner() {
       priority: BANNER_PRIORITY.CRITICAL,
       node: (
         <Alert severity="error" sx={bannerSx}
-          action={<Button size="small" color="inherit" onClick={dismissFailed}>Dismiss</Button>}>
-          {failed} action(s) couldn&apos;t be applied — they changed on the server or were
-          rejected. Re-scan to try again.
+          action={<Button size="small" color="inherit" onClick={() => setOutboxOpen(true)}>Review</Button>}>
+          {failed} action(s) couldn&apos;t be applied. Open the Outbox to retry or discard each.
         </Alert>
       ),
     })
@@ -139,5 +154,17 @@ export function OfflineBanner() {
     })
   }
 
-  return <BannerStack banners={banners} />
+  return (
+    <>
+      <BannerStack banners={banners} />
+      <OutboxDialog
+        open={outboxOpen}
+        onClose={() => setOutboxOpen(false)}
+        listAll={listAll}
+        retryItem={retryItem}
+        discardFailed={discardFailed}
+        syncing={syncing}
+      />
+    </>
+  )
 }
