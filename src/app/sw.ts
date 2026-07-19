@@ -50,8 +50,9 @@ const serwist = new Serwist({
           pathname.startsWith('/api/deployment-requests') ||
           pathname.startsWith('/api/hubs') ||
           // CC-14 (NS-10): the Today aggregate is the operator's morning read — must
-          // survive offline like the other field reads it assembles.
-          pathname.startsWith('/api/operator') ||
+          // survive offline like the other field reads it assembles. Trailing slash so
+          // this doesn't also swallow /api/operators (the roster dropdown endpoint).
+          pathname.startsWith('/api/operator/') ||
           pathname.startsWith('/api/notifications')),
       method: 'GET',
       handler: new NetworkFirst({

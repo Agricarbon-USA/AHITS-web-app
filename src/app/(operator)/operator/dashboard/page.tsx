@@ -1,137 +1,151 @@
 'use client'
 
 import * as React from 'react'
-import { Box, Typography, Card, CardContent, Button, Stack, Alert } from '@mui/material'
-import ChecklistIcon from '@mui/icons-material/Checklist'
+import { Box, Typography, Card, CardContent, Stack, Skeleton, Alert } from '@mui/material'
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner'
-import AssignmentIcon from '@mui/icons-material/Assignment'
+import EventAvailableIcon from '@mui/icons-material/EventAvailable'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/hooks/useAuth'
-import { useOfflineQueue } from '@/hooks/useOfflineQueue'
-import { StatusChip } from '@/components/shared/StatusChip'
-import { AwaitingPickupCard, AwaitingPickupRequest } from '@/components/shared/AwaitingPickupCard'
+import { useFreshList } from '@/hooks/useFreshList'
+import { FreshnessIndicator } from '@/components/shared/FreshnessIndicator'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { AwaitingPickupCard } from '@/components/shared/AwaitingPickupCard'
+import { DeploymentSummary } from '@/components/operator/today/DeploymentSummary'
+import { VehicleChecks } from '@/components/operator/today/VehicleChecks'
+import { WaitingOnMe } from '@/components/operator/today/WaitingOnMe'
+import { MyRequestsSummary } from '@/components/operator/today/MyRequestsSummary'
+import { TodayPrimaryAction } from '@/components/operator/today/TodayPrimaryAction'
+import type { TodayData } from '@/components/operator/today/types'
 
 const TERMINAL = new Set(['FULFILLED', 'CANCELLED', 'DENIED'])
 
-interface RequestRow {
-  id: string
-  status: string
-  label: string | null
-  requestType: string
-}
-
-export default function OperatorDashboardPage() {
+// CC-14 (NS-10): the operator "Today" view — the wake/plan front door that replaces the
+// static card menu. One aggregate read (/api/operator/today via useFreshList, so a
+// reconnecting field device refreshes and shows "Data as of HH:MM"), composed into the
+// operator's day: the day's one motion (Start daily check → You're set), time-sensitive
+// pickups + waiting transfers/handoffs, the current deployment + per-vehicle checks, my
+// open requests, and the always-there Scan utility. Renders a clean empty state when the
+// operator isn't deployed. Behaviour is preserved: pickup → my-deployment?fromRequestId,
+// scan card (CC-24, kept), requests → /operator/requests.
+export default function OperatorTodayPage() {
   const { user } = useAuth()
-  const { pending, isOffline } = useOfflineQueue()
   const router = useRouter()
-  // Hydration guard: getGreeting(), toLocaleDateString(), and user.name all produce
-  // different output on the server (UTC clock, no SWR data) vs the client (local
-  // clock, resolved user). Gate behind mounted so the server shell is a stable
-  // placeholder — no React #418 mismatch, Sign Out onClick fires reliably (S7/S8).
+  // Hydration guard: greeting + date differ server (UTC, no user) vs client (local,
+  // resolved). Gate behind mounted so the shell is a stable placeholder (no React #418).
   const [mounted, setMounted] = React.useState(false)
-  const [openRequests, setOpenRequests] = React.useState<RequestRow[]>([])
-  const [pickupRequests, setPickupRequests] = React.useState<AwaitingPickupRequest[]>([])
+  React.useEffect(() => { setMounted(true) }, [])
 
-  React.useEffect(() => {
-    setMounted(true)
-    fetch('/api/deployment-requests')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (!d) return
-        const all: RequestRow[] = d.data ?? []
-        setOpenRequests(all.filter((r) => !TERMINAL.has(r.status)))
-      })
-      .catch(() => {})
-    // CC-09: load awaiting-pickup reservations
-    fetch('/api/deployment-requests/awaiting-pickup')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (d?.data) setPickupRequests(d.data) })
-      .catch(() => {})
-  }, [])
+  const { data, error, isValidating, isLoading, mutate, updatedAt } =
+    useFreshList<{ data: TodayData }>('/api/operator/today')
+  const today = data?.data ?? null
+
+  const deployment = today?.deployment ?? null
+  const checkedVehicleIds = today?.checkedVehicleIds ?? []
+  const vehicles = deployment?.vehicles ?? []
+  const checked = new Set(checkedVehicleIds)
+  const dueCount = vehicles.filter((v) => !checked.has(v.vehicleId)).length
+
+  const openRequests = (today?.requests ?? []).filter((r) => !TERMINAL.has(r.status))
+  const pickups = today?.awaitingPickup ?? []
+  const transfers = today?.transfers ?? []
+  const handoffs = today?.handoffs ?? []
+
+  const nothingToShow =
+    !deployment && pickups.length === 0 && transfers.length === 0 &&
+    handoffs.length === 0 && openRequests.length === 0
 
   return (
     <Box>
-      <Typography variant="h5" mb={0.5}>
-        {mounted ? `Good ${getGreeting()}, ${user?.name?.split(' ')[0] ?? ''}` : ' '}
-      </Typography>
-      <Typography color="text.secondary" mb={3}>
-        {mounted ? new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) : ' '}
-      </Typography>
+      <Stack direction="row" alignItems="flex-start" justifyContent="space-between" mb={2}>
+        <Box>
+          <Typography variant="h5" mb={0.25}>
+            {mounted ? `Good ${getGreeting()}, ${user?.name?.split(' ')[0] ?? ''}` : ' '}
+          </Typography>
+          <Typography color="text.secondary">
+            {mounted ? new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) : ' '}
+          </Typography>
+        </Box>
+        <FreshnessIndicator updatedAt={updatedAt} isValidating={isValidating} onRefresh={() => void mutate()} />
+      </Stack>
 
-      {mounted && isOffline && (
-        <Alert severity="warning" sx={{ mb: 2 }}>
-          You&apos;re offline. {pending > 0 ? `${pending} submission(s) will sync when reconnected.` : 'Submissions will queue until reconnected.'}
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          Couldn&apos;t load your day. Pull to refresh, or check your connection.
         </Alert>
       )}
 
-      <Stack spacing={2}>
-        {mounted && pickupRequests.map((req) => (
-          <AwaitingPickupCard
-            key={req.id}
-            request={req}
-            onPickUp={(r) => router.push(`/operator/my-deployment?fromRequestId=${r.id}`)}
+      {isLoading && !today ? (
+        <Stack spacing={2}>
+          <Skeleton variant="rounded" height={56} />
+          <Skeleton variant="rounded" height={120} />
+          <Skeleton variant="rounded" height={120} />
+        </Stack>
+      ) : (
+        <Stack spacing={2}>
+          {/* The day's one motion. */}
+          {deployment && (
+            <TodayPrimaryAction
+              dueCount={dueCount}
+              hasVehicles={vehicles.length > 0}
+              onStartCheck={() => router.push('/operator/daily-check')}
+            />
+          )}
+
+          {/* Time-sensitive: reservation holds ready to pick up. */}
+          {pickups.map((req) => (
+            <AwaitingPickupCard
+              key={req.id}
+              request={req}
+              onPickUp={(r) => router.push(`/operator/my-deployment?fromRequestId=${r.id}`)}
+            />
+          ))}
+
+          {/* Anything waiting on my Accept/Decline. */}
+          <WaitingOnMe
+            transfers={transfers}
+            handoffs={handoffs}
+            onReview={() => router.push('/operator/my-deployment')}
           />
-        ))}
 
-        <Card sx={{ cursor: 'pointer' }} onClick={() => router.push('/operator/daily-check')}>
-          <CardContent sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <ChecklistIcon sx={{ fontSize: 40, color: 'primary.main' }} />
-            <Box>
-              <Typography variant="h6">Daily Vehicle Check</Typography>
-              <Typography variant="body2" color="text.secondary">Submit your daily inspection form</Typography>
-            </Box>
-          </CardContent>
-        </Card>
+          {/* The current deployment + per-vehicle checks. */}
+          {deployment && (
+            <>
+              <DeploymentSummary deployment={deployment} onOpenDeployment={() => router.push('/operator/my-deployment')} />
+              <VehicleChecks
+                vehicles={vehicles}
+                checkedVehicleIds={checkedVehicleIds}
+                onCheck={(vehicleId) => router.push(`/operator/daily-check?vehicleId=${vehicleId}`)}
+              />
+            </>
+          )}
 
-        {/* CC-24: merged the two cards that both landed on /operator/scan
-            ("Check Out / Check In" routed through /operator/checkout, which just
-            redirects here). One card, one destination. The /operator/checkout
-            redirect is kept (see checkout/page.tsx) for any external bookmarks or
-            notification deep links. */}
-        <Card sx={{ cursor: 'pointer' }} onClick={() => router.push('/operator/scan')}>
-          <CardContent sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <QrCodeScannerIcon sx={{ fontSize: 40, color: 'primary.main' }} />
-            <Box>
-              <Typography variant="h6">Scan / Check Out · In</Typography>
-              <Typography variant="body2" color="text.secondary">Scan an asset tag to check out, check in, or look up equipment</Typography>
-            </Box>
-          </CardContent>
-        </Card>
+          <MyRequestsSummary requests={openRequests} onOpenRequests={() => router.push('/operator/requests')} />
 
-        {mounted && openRequests.length > 0 && (
-          <Card sx={{ cursor: 'pointer' }} onClick={() => router.push('/operator/requests')}>
-            <CardContent>
-              <Stack direction="row" alignItems="center" justifyContent="space-between" mb={1}>
-                <Stack direction="row" alignItems="center" gap={2}>
-                  <AssignmentIcon sx={{ fontSize: 40, color: 'primary.main' }} />
-                  <Box>
-                    <Typography variant="h6">My Requests</Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      {openRequests.length} open request{openRequests.length !== 1 ? 's' : ''}
-                    </Typography>
-                  </Box>
-                </Stack>
-                <Button
-                  size="small"
-                  onClick={(e) => { e.stopPropagation(); router.push('/operator/requests') }}
-                >
-                  View all
-                </Button>
-              </Stack>
-              <Stack spacing={0.5}>
-                {openRequests.slice(0, 3).map((req) => (
-                  <Stack key={req.id} direction="row" alignItems="center" justifyContent="space-between">
-                    <Typography variant="body2" noWrap sx={{ flex: 1, mr: 1 }}>
-                      {req.label ?? req.requestType.replace(/_/g, ' ')}
-                    </Typography>
-                    <StatusChip status={req.status} kind="request" />
-                  </Stack>
-                ))}
-              </Stack>
+          {nothingToShow && !error && (
+            <EmptyState
+              icon={<EventAvailableIcon fontSize="inherit" />}
+              title="No active deployment"
+              description="You're not on a deployment right now. When you pick up a rig, your day shows up here. You can still scan equipment below."
+            />
+          )}
+
+          {/* CC-24: the merged Scan / Check Out · In card — one card, one destination.
+              Kept exactly (do NOT delete). The always-available field utility. */}
+          <Card sx={{ cursor: 'pointer' }} onClick={() => router.push('/operator/scan')}>
+            <CardContent sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              <QrCodeScannerIcon sx={{ fontSize: 40, color: 'primary.main' }} />
+              <Box>
+                <Typography variant="h6">Scan / Check Out · In</Typography>
+                <Typography variant="body2" color="text.secondary">Scan an asset tag to check out, check in, or look up equipment</Typography>
+              </Box>
             </CardContent>
           </Card>
-        )}
-      </Stack>
+
+          {/* CC-14 slot: today's clock state (post-Time/Invoicing, P3-TIME / NS-11).
+              Intentionally a code-level seam — no half-built clock UI ships here; the
+              Time/Invoicing packet drops the clock-in/out + hours card in at this point. */}
+        </Stack>
+      )}
     </Box>
   )
 }
