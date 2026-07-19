@@ -10,6 +10,7 @@ import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 import { businessDate } from '@/lib/business-date'
 import { DEFAULT_DAILY_CHECKLIST } from '@/types'
+import { OdometerField } from '@/components/operator/OdometerField'
 
 // The full ~16-item inspection (PRD §11.4) is the single source of truth, shared
 // with the rest of the app via @/types. Items 15–16 (trailer hitch / load) are
@@ -54,6 +55,12 @@ export default function OperatorDailyCheckPage() {
   const [submitted, setSubmitted] = React.useState(false)
   const [error, setError] = React.useState('')
   const [step, setStep] = React.useState(0)
+  // CC-14 (NS-5): the selected vehicle's last-known odometer, for the inline sanity
+  // warning. Fetched per vehicle; null while unknown / offline (warning stays silent).
+  const [lastOdometer, setLastOdometer] = React.useState<number | null>(null)
+  // CC-14: passive time-to-complete — form open → submit. Stamped in the mount effect
+  // (Date.now() in render trips the impure-in-render rule); reset on "Start New Check".
+  const startedAtRef = React.useRef<number>(0)
 
   // The selectable vehicles: the active-rig vehicles, plus a scanned vehicle that
   // isn't on the rig (so QR-scanning any vehicle opens a usable daily check).
@@ -66,6 +73,7 @@ export default function OperatorDailyCheckPage() {
   }, [rig, scannedVehicle])
 
   React.useEffect(() => {
+    startedAtRef.current = Date.now() // start the time-to-complete clock at mount
     // A scan of a vehicle label routes here as ?vehicleId=<id> (PRD §7.7) —
     // preselect it when present.
     const preselect =
@@ -122,6 +130,19 @@ export default function OperatorDailyCheckPage() {
     return () => { active = false }
   }, [vehicleId, selectedVehicleType])
 
+  // CC-14 (NS-5): fetch the selected vehicle's last-known odometer for the sanity
+  // warning. Keyed on vehicleId so it re-reads when the operator switches vehicles;
+  // offline / not-found leaves it null (the warning simply stays quiet).
+  React.useEffect(() => {
+    if (!vehicleId) { setLastOdometer(null); return }
+    let active = true
+    fetch(`/api/vehicles/${vehicleId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (active) setLastOdometer(typeof d?.data?.odometer === 'number' ? d.data.odometer : null) })
+      .catch(() => { if (active) setLastOdometer(null) })
+    return () => { active = false }
+  }, [vehicleId])
+
   const passFail = checklist.every((item) => item.value !== 'no')
   const failingItems = checklist.filter((item) => item.value === 'no')
   // PRD §11.4 / §7.4: a reason is required on every failed item, not just an
@@ -138,6 +159,9 @@ export default function OperatorDailyCheckPage() {
     checklistJson: checklist.map(({ key, label, value, note }) => ({ key, label, value, note: note || undefined })),
     issues: issues || undefined,
     passFail,
+    // CC-14: passive time-to-complete, measured at submit-click (correct even if the
+    // check later syncs from the offline queue). undefined until the mount clock starts.
+    durationMs: startedAtRef.current ? Date.now() - startedAtRef.current : undefined,
   })
 
   const handleSubmit = async () => {
@@ -177,6 +201,7 @@ export default function OperatorDailyCheckPage() {
     setSubmitted(false)
     setError('')
     setStep(0)
+    startedAtRef.current = Date.now() // time the next check from a fresh start
     if (rig?.vehicles?.[0]) setVehicleId(rig.vehicles[0].vehicle.id)
   }
 
@@ -261,14 +286,7 @@ export default function OperatorDailyCheckPage() {
             fullWidth
             InputLabelProps={{ shrink: true }}
           />
-          <TextField
-            label="Odometer (mi)"
-            type="number"
-            value={odometer}
-            onChange={(e) => setOdometer(e.target.value)}
-            fullWidth
-            inputProps={{ min: 0 }}
-          />
+          <OdometerField value={odometer} onChange={setOdometer} lastKnown={lastOdometer} />
           <TextField
             label="Site / location"
             value={site}

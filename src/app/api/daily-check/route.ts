@@ -21,6 +21,9 @@ const schema = z.object({
   })),
   issues: z.string().optional(),
   passFail: z.boolean(),
+  // CC-14: client-measured time-to-complete (form open → submit). Passive; capped to a
+  // sane range server-side so a clock skew / stale queued payload can't store garbage.
+  durationMs: z.number().int().min(0).max(86_400_000).optional(),
 }).superRefine((data, ctx) => {
   // PRD §11.4 / §7.4: every failed item needs a reason, and a failing check
   // needs an overall summary. Enforced server-side so the rule holds for queued
@@ -71,7 +74,7 @@ export async function POST(req: NextRequest) {
   const parsed = schema.safeParse(await req.json())
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const { vehicleId, checklistJson, passFail, issues, odometer, site } = parsed.data
+  const { vehicleId, checklistJson, passFail, issues, odometer, site, durationMs } = parsed.data
   // Clamp to server-side business date so a check can't be pre-dated or
   // future-dated to dodge the missed-check alert (note: a check synced a day
   // late is recorded as today, not the day it was performed).
@@ -108,6 +111,9 @@ export async function POST(req: NextRequest) {
       issues,
       odometer,
       site,
+      // CC-14: recorded on first completion only — a later edit (the update branch)
+      // preserves the original time-to-complete rather than overwriting it.
+      durationMs,
       syncedAt: new Date(),
     },
     update: {
