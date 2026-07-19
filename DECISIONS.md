@@ -76,7 +76,7 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Decision:** CC-12's structural performance work split **only my-deployment** (PR3, the worst offender at ~2026 lines / 55 useState). The **admin/deployments (~1566) and admin/inventory (~1362) splits are deliberately deferred**, not dropped: they are **demand-pull**, done by the **first packet that materially touches those surfaces (owner: CC-18 or earlier if one lands there first)** — never as a standalone sweep. This is a recorded decision so no future session rediscovers it as "unfinished CC-12."
 - **Rationale:** three behaviour-preserving refactors of the biggest files in one packet is not one sitting; my-deployment (the field's daily surface) is the highest-value target and was done well with a real Android device-pass acceptance. Splitting an admin file no one is otherwise editing is churn without a demand signal.
 - **Also note (PR3 scope):** PR3 extracted the two heavy presentational cards (Vehicles, Kit) as `React.memo` children with render-count-verified memo boundaries — the primary re-render win. Deeper container-thinning (SWR on the rig read via `useFreshList`, more leaf extractions) is likewise demand-pull as later my-deployment work touches those areas.
-- **Detail:** CC-12 / PR #187 (queue-UX) · #188 (SWR+freshness) · PR3 (my-deployment split).
+- **Detail:** CC-12 / PR #187 (queue-UX) · #188 (SWR+freshness) · #189 (my-deployment split).
 
 ---
 
