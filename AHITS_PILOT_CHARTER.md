@@ -44,6 +44,8 @@ Email is sandboxed on staging and both hubs currently have **no contact address*
 
 *(This D5 outcome also feeds the CC-14 packet placeholder — see AMENDMENTS.md.)*
 
+> **Update 2026-07-19 (CC-14 shipped):** Building the full **Today view (CC-14)** landed and deployed to staging (PRs #190–#193), which makes this **Option A in practice — this packet IS the pilot gate, and no CC-28 bridge was built.** D5 is left **uninitialed above** (Max's signature still needed to close it formally). Max's stated operative gate for pilot start: **CC-14 on staging (done) AND this charter signed AND the A6 device pass green.** So the remaining pilot-start blockers are the charter signature and the A6 pass — not the Today view. See `DECISIONS.md` D5 (status) and D11 (the deferred CC-14 glossary sweep).
+
 ## 6. The variance check — on a calendar, with an owner
 
 Pencil-whipping detection (time-to-complete outliers + a periodic contents spot-check via the CC-26 viewer) is only real if someone actually looks.

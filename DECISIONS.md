@@ -78,6 +78,12 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Also note (PR3 scope):** PR3 extracted the two heavy presentational cards (Vehicles, Kit) as `React.memo` children with render-count-verified memo boundaries — the primary re-render win. Deeper container-thinning (SWR on the rig read via `useFreshList`, more leaf extractions) is likewise demand-pull as later my-deployment work touches those areas.
 - **Detail:** CC-12 / PR #187 (queue-UX) · #188 (SWR+freshness) · #189 (my-deployment split).
 
+### D11 · CC-14's D9 glossary sweep (Fulfill/Pick-up/Check-out/Claim) is RE-DEFERRED — owner: next session after CC-14
+- **Date:** 2026-07-19 · **Owner:** Max · **Status:** ACTIVE
+- **Decision:** D9 assigned the **Fulfill / Pick-up / Check-out / Claim one-word-per-state glossary sweep** to CC-14, gated on "CC-14's `Rig.requestId` model fix." The pre-flight found that link **already shipped in CC-09 as `Rig.fromRequestId`**, so D9's precondition is met — but CC-14 shipped as five planned PRs and PR5 (the sweep) was **planned droppable from the start** (strictly strings, zero logic). CC-14's core (Today view + endpoint + daily-check/NS-5 + IA fixes, PRs #190–#193) landed and deployed; the session ran long, so PR5 was **cut rather than rushed** (Max's explicit instruction: "if the session runs long, cut PR5 and record D11… rather than rushing it"). The sweep is **re-deferred, owner: the first session after CC-14**, a strings-only pass across buttons/badges/headers/toasts. This is NOT unfinished CC-14 — it is a recorded, precondition-met follow-up.
+- **Rationale:** a cross-surface rename touching a critical glossary is exactly the work that should not be rushed at the tail of a long session; the model precondition being met means it can be done cleanly whenever picked up, with no dependency risk.
+- **Detail:** CC-14 / PRs #190 (spine) · #191 (Today view) · #192 (daily-check/NS-5) · #193 (IA fixes) · #194 (test fix). Supersedes D9's "CC-14 owns the cluster" only as to *timing/owner* — the conventions in D9 still hold.
+
 ---
 
 _To add a decision: copy the D-format above, give it the next Dn id, fill in date/owner/status/decision/rationale, and set any superseded prior decision's `Superseded-by: Dn`. Reference decisions by id (`D1`) in handoffs and workplans instead of re-explaining them._
