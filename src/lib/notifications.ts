@@ -48,7 +48,8 @@ export function presentAlert(alert: {
     }
     default: message = title
   }
-  return { title, message, link: alertLink(alert.sourceTable, alert.sourceId, alert.type) }
+  // CC-26: pass metadata so a DAILY_CHECK_FAILED link carries its checkId (bell + email).
+  return { title, message, link: alertLink(alert.sourceTable, alert.sourceId, alert.type, meta as Record<string, string | number | boolean | null>) }
 }
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? ''

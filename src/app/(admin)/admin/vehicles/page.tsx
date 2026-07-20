@@ -19,6 +19,7 @@ import { useCanEdit, MutationButton, MutationIconButton } from '@/components/sha
 import { groupBy, formatDate } from '@/lib/utils'
 import { uploadDocument } from '@/lib/photoStore'
 import { VEHICLE_TYPES, vehicleTypeLabel } from '@/lib/vehicle-types'
+import { DailyCheckViewer } from '@/components/admin/DailyCheckViewer'
 
 const RENTAL_PERIODS: { value: 'DAY' | 'WEEK' | 'MONTH' | 'FLAT'; label: string }[] = [
   { value: 'DAY', label: '/ day' }, { value: 'WEEK', label: '/ week' },
@@ -62,7 +63,7 @@ interface HubOption { id: string; name: string; city?: string; state?: string }
 type SortKey = 'name' | 'type' | 'status' | 'hub' | 'operator' | 'odometer'
 
 interface VehicleDetail extends VehicleRow {
-  dailyChecks: { id: string; date: string; operator: { name: string } | null; passed?: boolean }[]
+  dailyChecks: { id: string; date: string; operator: { name: string } | null; passFail?: boolean }[]
   maintenanceTasks: { id: string; taskName: string; status: string; nextDue: string | null; actualCost: string | null }[]
   photos: { id: string; url: string }[]
 }
@@ -87,6 +88,9 @@ export default function AdminVehiclesPage() {
   const [loading, setLoading] = React.useState(true)
   const [detail, setDetail] = React.useState<VehicleDetail | null>(null)
   const [detailLoading, setDetailLoading] = React.useState(false)
+  // CC-26: the read-only daily-check viewer. Opened by a check-history row click or by a
+  // failed-check alert deep-link (/admin/vehicles?check=<id>, read on mount below).
+  const [viewerCheckId, setViewerCheckId] = React.useState<string | null>(null)
   const [formOpen, setFormOpen] = React.useState(false)
   const [editing, setEditing] = React.useState<VehicleRow | null>(null)
   const [confirmDelete, setConfirmDelete] = React.useState<VehicleRow | null>(null)
@@ -191,6 +195,20 @@ export default function AdminVehiclesPage() {
       setDetailLoading(false)
     }
   }
+
+  // CC-26: URL entry points (declared after openDetail so it's in scope). `?check=<id>`
+  // (from a failed-check alert) opens the viewer directly; `?vehicle=<id>` (from the
+  // deployment drawer's "View checks") opens that vehicle's drawer — where the
+  // check-history trail lives. Absent/stale ids degrade gracefully (the viewer shows
+  // "could not be found"; a bad vehicle id just no-ops the drawer fetch).
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const check = params.get('check')
+    if (check) setViewerCheckId(check)
+    const vehicle = params.get('vehicle')
+    if (vehicle) void openDetail(vehicle)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const doDelete = async () => {
     if (!confirmDelete) return
@@ -550,12 +568,30 @@ export default function AdminVehiclesPage() {
               {detail.dailyChecks.length === 0 ? (
                 <Typography variant="body2" color="text.secondary">No daily checks recorded.</Typography>
               ) : (
-                <Stack spacing={0.5}>
+                // CC-26: this is the per-vehicle check-history trail — each row now opens
+                // the read-only viewer so an admin can inspect the actual answers.
+                <Stack spacing={0}>
                   {detail.dailyChecks.map((c) => (
-                    <Stack key={c.id} direction="row" justifyContent="space-between">
-                      <Typography variant="body2">{formatDate(c.date)}</Typography>
-                      <Typography variant="caption" color="text.secondary">{c.operator?.name ?? 'Unknown'}</Typography>
-                    </Stack>
+                    <Box
+                      key={c.id}
+                      onClick={() => setViewerCheckId(c.id)}
+                      sx={{
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 1,
+                        py: 0.75, px: 1, mx: -1, borderRadius: 1, cursor: 'pointer',
+                        '&:hover': { bgcolor: 'action.hover' },
+                      }}
+                    >
+                      <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
+                        <Chip
+                          label={c.passFail === false ? 'Fail' : 'Pass'}
+                          size="small"
+                          color={c.passFail === false ? 'error' : 'success'}
+                          variant="outlined"
+                        />
+                        <Typography variant="body2">{formatDate(c.date)}</Typography>
+                      </Stack>
+                      <Typography variant="caption" color="text.secondary" noWrap>{c.operator?.name ?? 'Unknown'}</Typography>
+                    </Box>
                   ))}
                 </Stack>
               )}
@@ -587,6 +623,9 @@ export default function AdminVehiclesPage() {
           </Stack>
         ) : null}
       </DetailDrawer>
+
+      {/* CC-26: read-only daily-check viewer (from a check-history row or an alert deep-link). */}
+      <DailyCheckViewer checkId={viewerCheckId} open={!!viewerCheckId} onClose={() => setViewerCheckId(null)} />
 
       {/* CC-10: Log field fix */}
       <Dialog open={fieldFixOpen} onClose={() => setFieldFixOpen(false)} maxWidth="xs" fullWidth>
