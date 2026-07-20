@@ -1,6 +1,18 @@
 'use client'
 
 import { useState } from 'react'
+import {
+  Box, Stack, Typography, Button, TextField, MenuItem, CircularProgress, Tooltip,
+} from '@mui/material'
+import { alpha } from '@mui/material/styles'
+import { StatusChip } from '@/components/shared/StatusChip'
+
+// CC-27: rebuilt on MUI + the tokens-sourced theme (was an entire parallel UNTHEMED
+// design system of raw-HTML inline styles + hardcoded hex, the most visible "two apps
+// in one page" spot inside admin/requests). This is a RE-SKIN, not a redesign — the
+// logic, state, handlers, props, and exported interface are byte-identical to the
+// pre-CC-27 component; only the render/style layer changed. Consumed by admin/requests,
+// operator/requests, and the login-less s/[token] portal (all themed via root Providers).
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -39,78 +51,13 @@ export interface FulfillmentChecklistProps {
   stageLabel?: string
 }
 
-// ── Styles ─────────────────────────────────────────────────────────────────────
+// ── Status vocabulary (label + themed chip color — no raw hex) ───────────────────
 
-const COLORS = {
-  green: '#2e7d32',
-  greenLight: '#e8f5e9',
-  red: '#d32f2f',
-  redLight: '#ffebee',
-  blue: '#1565c0',
-  blueLight: '#e3f2fd',
-  orange: '#e65100',
-  orangeLight: '#fff3e0',
-  grey: '#757575',
-  greyLight: '#f5f5f5',
-  border: '#e0e0e0',
-}
-
-const STATUS_STYLES: Record<string, { bg: string; color: string; label: string }> = {
-  PENDING:   { bg: COLORS.greyLight,   color: COLORS.grey,   label: 'Pending' },
-  CONFIRMED: { bg: COLORS.greenLight,  color: COLORS.green,  label: 'Confirmed' },
-  EDITED:    { bg: COLORS.blueLight,   color: COLORS.blue,   label: 'Adjusted' },
-  DENIED:    { bg: COLORS.redLight,    color: COLORS.red,    label: 'Denied' },
-}
-
-const s = {
-  badge: (status: string): React.CSSProperties => {
-    const st = STATUS_STYLES[status] ?? STATUS_STYLES.PENDING
-    return {
-      display: 'inline-block',
-      background: st.bg,
-      color: st.color,
-      borderRadius: 4,
-      padding: '2px 8px',
-      fontSize: 11,
-      fontWeight: 700,
-      letterSpacing: 0.3,
-      textTransform: 'uppercase' as const,
-    }
-  },
-  btn: (variant: 'confirm' | 'edit' | 'deny' | 'stage' | 'cancel'): React.CSSProperties => {
-    const base: React.CSSProperties = {
-      border: 'none',
-      borderRadius: 6,
-      padding: '6px 12px',
-      fontSize: 13,
-      fontWeight: 600,
-      cursor: 'pointer',
-      minHeight: 32,
-    }
-    if (variant === 'confirm') return { ...base, background: COLORS.green, color: '#fff' }
-    if (variant === 'edit')    return { ...base, background: COLORS.blue, color: '#fff' }
-    if (variant === 'deny')    return { ...base, background: '#fff', color: COLORS.red, border: `1px solid ${COLORS.red}` }
-    if (variant === 'stage')   return { ...base, background: COLORS.green, color: '#fff', padding: '10px 20px', fontSize: 14, minHeight: 44, width: '100%' }
-    return { ...base, background: '#fff', color: COLORS.grey, border: `1px solid ${COLORS.border}` }
-  },
-  input: (): React.CSSProperties => ({
-    width: '100%',
-    padding: '8px 10px',
-    fontSize: 13,
-    borderRadius: 6,
-    border: `1px solid ${COLORS.border}`,
-    minHeight: 36,
-    boxSizing: 'border-box' as const,
-  }),
-  select: (): React.CSSProperties => ({
-    width: '100%',
-    padding: '7px 10px',
-    fontSize: 13,
-    borderRadius: 6,
-    border: `1px solid ${COLORS.border}`,
-    minHeight: 36,
-    background: '#fff',
-  }),
+const STATUS_META: Record<string, { label: string; color: 'default' | 'success' | 'info' | 'error' }> = {
+  PENDING:   { label: 'Pending',   color: 'default' },
+  CONFIRMED: { label: 'Confirmed', color: 'success' },
+  EDITED:    { label: 'Adjusted',  color: 'info' },
+  DENIED:    { label: 'Denied',    color: 'error' },
 }
 
 // ── Line row ───────────────────────────────────────────────────────────────────
@@ -206,144 +153,156 @@ function LineRow({ line, lineState, onAction, isActionable }: LineRowProps) {
   const needsUnit = line.itemType === 'SERIALIZED' && line.availableUnits.length > 0 && st === 'PENDING'
   const canConfirmSerial = !needsUnit || !!editUnit
 
+  const delta = deltaLine()
+
   return (
-    <div style={{ borderBottom: `1px solid ${COLORS.border}`, padding: '10px 0' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 14, fontWeight: 500 }}>{line.name}</span>
-            <span style={s.badge(st)}>{STATUS_STYLES[st]?.label ?? st}</span>
-          </div>
-          <div style={{ fontSize: 12, color: COLORS.grey, marginTop: 2 }}>
+    <Box sx={{ borderBottom: 1, borderColor: 'divider', py: 1.25 }}>
+      <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+        <Box sx={{ minWidth: 0, flex: 1 }}>
+          <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" useFlexGap>
+            <Typography variant="body2" fontWeight={500}>{line.name}</Typography>
+            <StatusChip label={STATUS_META[st]?.label ?? st} color={STATUS_META[st]?.color ?? 'default'} />
+          </Stack>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
             Requested: ×{line.requestedQty}
             {line.itemType === 'SERIALIZED' && ' (serialized)'}
-          </div>
-          {deltaLine() && (
-            <div style={{ fontSize: 12, color: st === 'DENIED' ? COLORS.red : COLORS.blue, marginTop: 2 }}>
-              {deltaLine()}
-            </div>
+          </Typography>
+          {delta && (
+            <Typography variant="caption" sx={{ display: 'block', mt: 0.25, color: st === 'DENIED' ? 'error.main' : 'info.main' }}>
+              {delta}
+            </Typography>
           )}
           {st === 'CONFIRMED' && (
-            <div style={{ fontSize: 12, color: COLORS.green, marginTop: 2 }}>
+            <Typography variant="caption" sx={{ display: 'block', mt: 0.25, color: 'success.main' }}>
               Confirmed as requested ×{lineState.fulfilledQty ?? line.requestedQty}
-            </div>
+            </Typography>
           )}
-        </div>
+        </Box>
         {isActionable && (
-          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          <Stack direction="row" spacing={0.75} sx={{ flexShrink: 0 }}>
             {mode === 'view' && st === 'PENDING' && (
               <>
                 {needsUnit ? (
                   // Serialized: show unit picker inline before confirm
-                  <select
+                  <TextField
+                    select
+                    size="small"
                     value={editUnit}
                     onChange={(e) => setEditUnit(e.target.value)}
-                    style={{ ...s.select(), width: 140, fontSize: 12 }}
+                    sx={{ width: 140 }}
                   >
-                    <option value="">— Pick unit —</option>
+                    <MenuItem value="">— Pick unit —</MenuItem>
                     {line.availableUnits.map((u) => (
-                      <option key={u.id} value={u.id}>#{u.serialNumber ?? u.id.slice(-6)}</option>
+                      <MenuItem key={u.id} value={u.id}>#{u.serialNumber ?? u.id.slice(-6)}</MenuItem>
                     ))}
-                  </select>
+                  </TextField>
                 ) : null}
-                <button
-                  style={s.btn('confirm')}
+                <Button
+                  size="small"
+                  variant="contained"
+                  color="success"
                   disabled={loading || (line.itemType === 'SERIALIZED' && !canConfirmSerial)}
+                  startIcon={loading ? <CircularProgress size={14} color="inherit" /> : undefined}
                   onClick={() => void handleConfirm()}
                 >
-                  {loading ? '…' : 'Confirm'}
-                </button>
-                <button style={s.btn('edit')} disabled={loading} onClick={openEdit}>Edit</button>
-                <button style={s.btn('deny')} disabled={loading} onClick={openDeny}>Deny</button>
+                  Confirm
+                </Button>
+                <Button size="small" variant="contained" color="info" disabled={loading} onClick={openEdit}>Edit</Button>
+                <Button size="small" variant="outlined" color="error" disabled={loading} onClick={openDeny}>Deny</Button>
               </>
             )}
             {mode === 'view' && st !== 'PENDING' && (
-              <button style={s.btn('cancel')} disabled={loading} onClick={openEdit}>
+              <Button size="small" variant="outlined" color="inherit" disabled={loading} onClick={openEdit}>
                 Change
-              </button>
+              </Button>
             )}
-          </div>
+          </Stack>
         )}
-      </div>
+      </Stack>
 
       {/* Edit form */}
       {mode === 'edit' && (
-        <div style={{ marginTop: 10, padding: 10, background: COLORS.greyLight, borderRadius: 8 }}>
-          <div style={{ display: 'grid', gap: 8 }}>
-            <div>
-              <label style={{ fontSize: 12, color: COLORS.grey }}>Quantity</label>
-              <input
-                type="number"
-                min={1}
-                value={editQty}
-                onChange={(e) => setEditQty(Math.max(1, parseInt(e.target.value) || 1))}
-                style={s.input()}
-              />
-            </div>
+        <Box sx={{ mt: 1.25, p: 1.25, borderRadius: 2, bgcolor: 'action.hover' }}>
+          <Stack spacing={1}>
+            <TextField
+              label="Quantity"
+              type="number"
+              size="small"
+              inputProps={{ min: 1 }}
+              value={editQty}
+              onChange={(e) => setEditQty(Math.max(1, parseInt(e.target.value) || 1))}
+              fullWidth
+            />
             {line.itemType === 'SERIALIZED' && line.availableUnits.length > 0 && (
-              <div>
-                <label style={{ fontSize: 12, color: COLORS.grey }}>Unit</label>
-                <select value={editUnit} onChange={(e) => setEditUnit(e.target.value)} style={s.select()}>
-                  <option value="">— None / keep current —</option>
-                  {line.availableUnits.map((u) => (
-                    <option key={u.id} value={u.id}>#{u.serialNumber ?? u.id.slice(-6)}</option>
-                  ))}
-                </select>
-              </div>
+              <TextField select label="Unit" size="small" fullWidth value={editUnit} onChange={(e) => setEditUnit(e.target.value)}>
+                <MenuItem value="">— None / keep current —</MenuItem>
+                {line.availableUnits.map((u) => (
+                  <MenuItem key={u.id} value={u.id}>#{u.serialNumber ?? u.id.slice(-6)}</MenuItem>
+                ))}
+              </TextField>
             )}
             {line.substitutableItems.length > 0 && (
-              <div>
-                <label style={{ fontSize: 12, color: COLORS.grey }}>Substitute item</label>
-                <select value={editSub} onChange={(e) => setEditSub(e.target.value)} style={s.select()}>
-                  <option value="">— Same item —</option>
-                  {line.substitutableItems.map((sub) => (
-                    <option key={sub.id} value={sub.id}>
-                      {sub.name}{sub.availableAtHub ? ' ✓' : ' (low)'}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <TextField select label="Substitute item" size="small" fullWidth value={editSub} onChange={(e) => setEditSub(e.target.value)}>
+                <MenuItem value="">— Same item —</MenuItem>
+                {line.substitutableItems.map((sub) => (
+                  <MenuItem key={sub.id} value={sub.id}>
+                    {sub.name}{sub.availableAtHub ? ' ✓' : ' (low)'}
+                  </MenuItem>
+                ))}
+              </TextField>
             )}
-            {error && <div style={{ color: COLORS.red, fontSize: 12 }}>{error}</div>}
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button style={s.btn('edit')} disabled={loading} onClick={() => void handleEdit()}>
-                {loading ? 'Saving…' : 'Save'}
-              </button>
-              <button style={s.btn('cancel')} disabled={loading} onClick={() => setMode('view')}>
+            {error && <Typography variant="caption" color="error">{error}</Typography>}
+            <Stack direction="row" spacing={1}>
+              <Button
+                size="small"
+                variant="contained"
+                color="info"
+                disabled={loading}
+                startIcon={loading ? <CircularProgress size={14} color="inherit" /> : undefined}
+                onClick={() => void handleEdit()}
+              >
+                Save
+              </Button>
+              <Button size="small" variant="outlined" color="inherit" disabled={loading} onClick={() => setMode('view')}>
                 Cancel
-              </button>
-            </div>
-          </div>
-        </div>
+              </Button>
+            </Stack>
+          </Stack>
+        </Box>
       )}
 
       {/* Deny form */}
       {mode === 'deny' && (
-        <div style={{ marginTop: 10, padding: 10, background: COLORS.redLight, borderRadius: 8 }}>
-          <div style={{ display: 'grid', gap: 8 }}>
-            <div>
-              <label style={{ fontSize: 12, color: COLORS.grey }}>Reason for denial</label>
-              <input
-                type="text"
-                value={denyReason}
-                onChange={(e) => setDenyReason(e.target.value)}
-                placeholder="e.g. out of stock"
-                style={s.input()}
-              />
-            </div>
-            {error && <div style={{ color: COLORS.red, fontSize: 12 }}>{error}</div>}
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button style={s.btn('deny')} disabled={loading} onClick={() => void handleDeny()}>
-                {loading ? 'Saving…' : 'Deny'}
-              </button>
-              <button style={s.btn('cancel')} disabled={loading} onClick={() => setMode('view')}>
+        <Box sx={{ mt: 1.25, p: 1.25, borderRadius: 2, bgcolor: (t) => alpha(t.palette.error.main, 0.08) }}>
+          <Stack spacing={1}>
+            <TextField
+              label="Reason for denial"
+              size="small"
+              fullWidth
+              value={denyReason}
+              onChange={(e) => setDenyReason(e.target.value)}
+              placeholder="e.g. out of stock"
+            />
+            {error && <Typography variant="caption" color="error">{error}</Typography>}
+            <Stack direction="row" spacing={1}>
+              <Button
+                size="small"
+                variant="outlined"
+                color="error"
+                disabled={loading}
+                startIcon={loading ? <CircularProgress size={14} color="inherit" /> : undefined}
+                onClick={() => void handleDeny()}
+              >
+                Deny
+              </Button>
+              <Button size="small" variant="outlined" color="inherit" disabled={loading} onClick={() => setMode('view')}>
                 Cancel
-              </button>
-            </div>
-          </div>
-        </div>
+              </Button>
+            </Stack>
+          </Stack>
+        </Box>
       )}
-    </div>
+    </Box>
   )
 }
 
@@ -419,25 +378,21 @@ export function FulfillmentChecklist({
   }
 
   return (
-    <div>
+    <Box>
       {/* Progress header */}
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: '8px 0',
-          marginBottom: 4,
-          borderBottom: `2px solid ${allChecked ? COLORS.green : COLORS.border}`,
-        }}
+      <Stack
+        direction="row"
+        justifyContent="space-between"
+        alignItems="center"
+        sx={{ py: 1, mb: 0.5, borderBottom: 2, borderColor: allChecked ? 'success.main' : 'divider' }}
       >
-        <span style={{ fontSize: 13, fontWeight: 600, color: allChecked ? COLORS.green : COLORS.grey }}>
+        <Typography variant="body2" fontWeight={600} color={allChecked ? 'success.main' : 'text.secondary'}>
           {checked} of {total} checked
-        </span>
+        </Typography>
         {allChecked && (
-          <span style={{ fontSize: 12, color: COLORS.green }}>✓ Ready to stage</span>
+          <Typography variant="caption" color="success.main">✓ Ready to stage</Typography>
         )}
-      </div>
+      </Stack>
 
       {/* Line rows */}
       {initialLines.map((line) => (
@@ -459,29 +414,32 @@ export function FulfillmentChecklist({
 
       {/* Stage button */}
       {isActionable && (
-        <div style={{ marginTop: 16 }}>
+        <Box sx={{ mt: 2 }}>
           {stageError && (
-            <div style={{ color: COLORS.red, fontSize: 13, marginBottom: 8 }}>{stageError}</div>
+            <Typography variant="body2" color="error" sx={{ mb: 1 }}>{stageError}</Typography>
           )}
-          <button
-            style={{
-              ...s.btn('stage'),
-              opacity: allChecked && !stageLoading ? 1 : 0.5,
-              cursor: allChecked && !stageLoading ? 'pointer' : 'not-allowed',
-            }}
-            disabled={!allChecked || stageLoading}
-            onClick={() => void handleStage()}
-            title={allChecked ? undefined : 'Check off every item to stage'}
-          >
-            {stageLoading ? 'Staging…' : stageLabel}
-          </button>
+          <Tooltip title={allChecked ? '' : 'Check off every item to stage'}>
+            <Box component="span" sx={{ display: 'block' }}>
+              <Button
+                fullWidth
+                size="large"
+                variant="contained"
+                color="primary"
+                disabled={!allChecked || stageLoading}
+                startIcon={stageLoading ? <CircularProgress size={16} color="inherit" /> : undefined}
+                onClick={() => void handleStage()}
+              >
+                {stageLabel}
+              </Button>
+            </Box>
+          </Tooltip>
           {!allChecked && (
-            <div style={{ fontSize: 12, color: COLORS.grey, textAlign: 'center', marginTop: 4 }}>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center', mt: 0.5 }}>
               Check off every item to stage
-            </div>
+            </Typography>
           )}
-        </div>
+        </Box>
       )}
-    </div>
+    </Box>
   )
 }
