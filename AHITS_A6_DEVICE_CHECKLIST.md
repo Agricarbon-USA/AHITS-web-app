@@ -2,7 +2,9 @@
 
 > **⚠️ PILOT GATE IS A6-LITE, NOT THIS FULL MATRIX — see `DECISIONS.md` D13 (2026-07-20).** The pilot gate is **rows 2, 5, 6, 19, 23 on Android only** (data-safety keystones + live scan). The **full matrix below (28 rows × 5 targets, incl. all iOS columns) is PARKED** and its trigger is **BEFORE the Time/Invoicing capstone (CC-17) ships** — offline money-writes must not go live on an unverified offline base. Run A6-Lite for the pilot; run the whole thing before CC-17.
 >
-> **✅ A6-LITE SIGN-OFF — Maxwell Slater · 2026-07-20 · device: Android.** Rows **2, 5, 6, 19, 23 all PASS.** The pilot gate is GREEN; pilot start = Monday 2026-07-27 (`AHITS_PILOT_CHARTER.md`). The full matrix (all rows × all targets, incl. every iOS column) remains unrun and PARKED — trigger = pre-CC-17.
+> **✅ A6-LITE SIGN-OFF (Android) — Maxwell Slater · 2026-07-20.** Rows **2, 5, 6, 19, 23 all PASS on Android.**
+> **☐ A6-LITE (iOS installed PWA) — REQUIRED before the 2026-07-27 start (D13 amended 2026-07-20 — cohort now includes iOS operators).** Same rows (2/5/6/19/23) on one iOS device; **this is the one outstanding pre-start gate.** << Max to run + sign >>.
+> The rest of the full matrix (edge rows 20–22 + the all-column ceremony) remains unrun and PARKED — trigger = pre-CC-17.
 
 _~~The pilot gate.~~ (A6-Lite is the pilot gate — see D13 banner above.) Run on the five targets below; tick each cell. Every fix this pass depends on is merged to `development` (offline-auth, G1 data-loss, UR-006 launch, UR-008 ergonomics, durable-queue flows). Staging URL: `https://ahits-web-app-staging-vdz5yvke2a-uc.a.run.app`._
 
