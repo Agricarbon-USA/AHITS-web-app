@@ -44,17 +44,20 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Detail:** `AHITS_W0-10_MIGRATION_PLAN.md` §10–§11.
 
 ### D5 · Pilot must not launch onto the static menu — hold for Today, or ship a Today-lite bridge
-- **Date:** 2026-07-12 · **Owner:** Max · **Status:** PENDING (Max to decide — see `AHITS_PILOT_CHARTER.md` §5)
+- **Date:** 2026-07-12 · **Owner:** Max · **Status:** ~~PENDING~~ → **ACTIVE / RESOLVED (2026-07-20): Option A.**
 - **Options:** (A) HOLD the pilot fortnight until Today (CC-14) ships [RECOMMENDED — cleanest]; (B) ship a Today-lite bridge (check-done chip + transfers-waiting row + Awaiting-Pickup cards on the existing dashboard) as packet CC-28 (number reserved), inserted after CC-26, and start on that.
 - **Recommendation:** A. Launching onto the verified static 4-card menu is competing with texting using a directory; the adoption metric is at risk from day 1.
+- **Resolution (2026-07-20, Max — initialed in `AHITS_PILOT_CHARTER.md` §5):** **Option A.** The condition is already met — the full Today view (CC-14, PRs #190–#194) is live on staging — so there is nothing left to wait for. **CC-28 (the Today-lite bridge) is permanently moot** and will never be built. **Pilot start = this charter signed (done 2026-07-20) + the A6 device pass green** (CC-14 and CC-26 are live); the start date resolves to the first Monday after A6 passes. A6 is the sole remaining pre-start code/QA gate.
 
 ### D6 · Email sandbox flip — global flip on charter start date, after the two-part audit
-- **Date:** 2026-07-12 · **Owner:** Max · **Status:** PENDING (Max to run the audit and flip)
+- **Date:** 2026-07-12 · **Owner:** Max · **Status:** **ACTIVE — rule CONFIRMED as written (2026-07-20).** Execution still pending (runs on the start date, not before).
 - **Recommendation:** `EMAIL_SANDBOX` is one global env var — a per-hub flip is impossible. On the charter start date, flip global EMAIL_SANDBOX off, AFTER (a) verifying only pilot hubs have contact addresses, (b) auditing all non-hub recipient paths (shop emails, invites, invoice sends) for real addresses in staging data.
+- **Confirmation (2026-07-20, Max):** the rule stands exactly as written. **Nothing is flipped now** — the flip is a start-date action gated on audits (a) and (b), owner Max. This entry records the rule as the settled policy; the flip itself is a Day-1 checklist item, not done here.
 
 ### D7 · Name a second human as pilot-hours contact
-- **Date:** 2026-07-12 · **Owner:** Max · **Status:** PENDING (Max to name)
+- **Date:** 2026-07-12 · **Owner:** Max · **Status:** ~~PENDING~~ → **ACTIVE / RESOLVED (2026-07-20).**
 - **Recommendation:** name one non-owner reachable during pilot hours to run the "operator can't sync" triage card (`AHITS_PILOT_CHARTER.md`). A one-human pilot is a single point of failure; the first 6am sync failure has no owner today.
+- **Resolution (2026-07-20, Max):** the second pilot-hours contact is **Stewart Arbuckle · +44 7747 738364** (recorded in the charter §1 and the triage card step 5). _(The number as supplied had a trailing stray "r"; recorded without it — Max to confirm the digits.)_ Max's own escalation number (triage card step 7) is still to be filled before the card is printed.
 
 ### D8 · CC-11 landed the cron-scan half of the D3 exclusion concurrently with the role-gate relax, not before it
 - **Date:** 2026-07-12 · **Owner:** Max · **Status:** RESOLVED · **Superseded-by:** D3 (note, 2026-07-12)
