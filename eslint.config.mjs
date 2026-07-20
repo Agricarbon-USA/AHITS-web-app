@@ -31,10 +31,10 @@ const eslintConfig = [
       'src/theme/tokens.ts',
       // HTML emails need literal/interpolated hex (no runtime theme). 30 hexes.
       'src/lib/email/templates.ts',
-      // CC-27 owns the rebuild of these two; palette/type already single-sourced
-      // from tokens.ts where it matters, remaining hexes are chrome CC-27 replaces.
+      // The login-less external portal keeps a system stack + its own chrome hexes;
+      // CC-23 item 1 owns its re-palette. (CC-27 rebuilt FulfillmentChecklist on MUI +
+      // tokens, so it is NO LONGER allowlisted — the hex rule now enforces it.)
       'src/app/s/**',
-      'src/components/shared/FulfillmentChecklist.tsx',
     ],
     rules: {
       'no-restricted-syntax': [
