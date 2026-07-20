@@ -47,7 +47,7 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Date:** 2026-07-12 · **Owner:** Max · **Status:** ~~PENDING~~ → **ACTIVE / RESOLVED (2026-07-20): Option A.**
 - **Options:** (A) HOLD the pilot fortnight until Today (CC-14) ships [RECOMMENDED — cleanest]; (B) ship a Today-lite bridge (check-done chip + transfers-waiting row + Awaiting-Pickup cards on the existing dashboard) as packet CC-28 (number reserved), inserted after CC-26, and start on that.
 - **Recommendation:** A. Launching onto the verified static 4-card menu is competing with texting using a directory; the adoption metric is at risk from day 1.
-- **Resolution (2026-07-20, Max — initialed in `AHITS_PILOT_CHARTER.md` §5):** **Option A.** The condition is already met — the full Today view (CC-14, PRs #190–#194) is live on staging — so there is nothing left to wait for. **CC-28 (the Today-lite bridge) is permanently moot** and will never be built. **Pilot start = this charter signed (done 2026-07-20) + the A6 device pass green** (CC-14 and CC-26 are live); the start date resolves to the first Monday after A6 passes. A6 is the sole remaining pre-start code/QA gate.
+- **Resolution (2026-07-20, Max — initialed in `AHITS_PILOT_CHARTER.md` §5):** **Option A.** The condition is already met — the full Today view (CC-14, PRs #190–#194) is live on staging — so there is nothing left to wait for. **CC-28 (the Today-lite bridge) is permanently moot** and will never be built. **Pilot start = this charter signed (done 2026-07-20) + the A6 device pass green** (CC-14 and CC-26 are live); the start date resolves to the first Monday after A6 passes. A6 is the sole remaining pre-start code/QA gate. **Amended by D13 (2026-07-20): "A6 green" → "A6-Lite green"** (5 Android rows); the full A6 matrix is parked to pre-CC-17.
 
 ### D6 · Email sandbox flip — global flip on charter start date, after the two-part audit
 - **Date:** 2026-07-12 · **Owner:** Max · **Status:** **ACTIVE — rule CONFIRMED as written (2026-07-20).** Execution still pending (runs on the start date, not before).
@@ -94,6 +94,13 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Rationale:** a MISSED alert genuinely has no single vehicle to target; routing through the operator's deployment is the faithful landing. The transitive deployment-drawer reach avoids duplicating the check-history list, which the pre-flight explicitly forbade.
 - **Scope guard held:** only the two check alerts carry a record id; the rest of CC-20 #6 (deep-links everywhere else) stays PARKED. `createAlert`'s dedup now refreshes metadata on re-raise (so the link points at the latest check) but leaves `notifiedAt`/`triggeredAt` untouched (no re-notify) — safe across all alert types (verified: no caller freezes first-occurrence metadata).
 - **Detail:** CC-26 / PR #195. CC-15 later adds check-level GPS columns; the viewer's GPS slot is already absent-safe and will render them when present.
+
+### D13 · Pilot gate is A6-LITE, not the full A6 matrix; the full matrix is parked to pre-CC-17
+- **Date:** 2026-07-20 · **Owner:** Max · **Status:** ACTIVE
+- **Decision:** The **full A6 matrix (28 rows × 5 targets) is SHELVED as a pilot gate.** The pilot gate is now **A6-LITE: rows 2, 5, 6, 19, 23 on Android** (the data-safety keystones + live scan). This **refines D5's pilot-start condition** — "pilot start = charter signed + A6 green" now reads **"charter signed + A6-Lite green."**
+- **Rationale:** the pilot runs in-field with connectivity, a small cohort, watched daily; most A6 rows are offline-usability / edge-hardening that aren't needed to get the app running in-field. **The offline queue remains active in production use — this defers its full-matrix *verification*, not the feature.**
+- **TRIGGER for the full matrix (all 28 rows × 5 targets, incl. every iOS column):** it must run **BEFORE the Time/Invoicing capstone (CC-17) ships** — offline money-writes must not go live on an unverified offline base. Owner: Max.
+- **Supersedes:** the "full A6 = the pilot line" framing in `AHITS_PILOT_CHARTER.md` §3 and the A6 checklist header (both now point here). D5's condition is amended per above (A6 → A6-Lite); D5 otherwise stands.
 
 ---
 

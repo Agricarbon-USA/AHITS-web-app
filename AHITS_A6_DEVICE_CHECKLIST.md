@@ -1,6 +1,8 @@
 # AHITS — A6 Real-Device Offline Pass (sign-off checklist)
 
-_The pilot gate. Run on the five targets below; tick each cell. Every fix this pass depends on is merged to `development` (offline-auth, G1 data-loss, UR-006 launch, UR-008 ergonomics, durable-queue flows). Staging URL: `https://ahits-web-app-staging-vdz5yvke2a-uc.a.run.app`._
+> **⚠️ PILOT GATE IS A6-LITE, NOT THIS FULL MATRIX — see `DECISIONS.md` D13 (2026-07-20).** The pilot gate is **rows 2, 5, 6, 19, 23 on Android only** (data-safety keystones + live scan). The **full matrix below (28 rows × 5 targets, incl. all iOS columns) is PARKED** and its trigger is **BEFORE the Time/Invoicing capstone (CC-17) ships** — offline money-writes must not go live on an unverified offline base. Run A6-Lite for the pilot; run the whole thing before CC-17.
+
+_~~The pilot gate.~~ (A6-Lite is the pilot gate — see D13 banner above.) Run on the five targets below; tick each cell. Every fix this pass depends on is merged to `development` (offline-auth, G1 data-loss, UR-006 launch, UR-008 ergonomics, durable-queue flows). Staging URL: `https://ahits-web-app-staging-vdz5yvke2a-uc.a.run.app`._
 
 > **⚠️ Known issue on step 3 (offline navigation) — fix in flight (UR-038).** The first run showed offline tab-switching reverting to `/login` (Android) / freezing on the offline page (iOS) on all platforms. Root-caused and fixed on branch `feature/20260629/max-slater-offline-rsc-nav` (SW now caches RSC navigations + prefetches routes online; authed pages no longer precached). **Before re-running step 3:** deploy that fix, then on each device **fully drop the old service worker** (uninstall+reinstall the PWA, or DevTools → Unregister + Clear storage), open the app **online and wait ~10 s** (so routes prefetch), **then** go offline. If it still fails, note which screen + which platforms + whether you did the online-warm step.
 
