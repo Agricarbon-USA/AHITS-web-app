@@ -21,16 +21,15 @@ No code shipped this session — it closed out the pilot-launch decisions. Chart
 - **D13 (ACTIVE)** — pilot gate = A6-Lite; full A6 matrix parked to pre-CC-17; amends D5's condition ("A6 green" → "A6-Lite green"); EXECUTED note records the pass.
 - **Consequence flagged:** CC-25's full live-camera acceptance rode the full A6's iOS columns, so it **defers to the pre-CC-17 run** with the rest of the matrix; the pilot leaned on the Android live-scan row (23), which passed.
 
-## Outstanding before the 07-27 start (two items)
+## Outstanding before the 07-27 start (ONE item)
 
-1. **A6-Lite iOS pass** — rows 2/5/6/19/23 on one iOS installed-PWA (D13 amendment). The one remaining pre-start *gate*; the start date is contingent on it.
-2. **Max's own escalation phone** in the OPERATOR CAN'T SYNC triage card (step 7) — needed before the card is printed. (The D7 number as supplied had a trailing stray "r", recorded as `+44 7747 738364` — Max to confirm the digits.)
+- **A6-Lite iOS pass** — rows 2/5/6/19/23 on one iOS installed-PWA (D13 amendment). The sole remaining pre-start *gate*; the start date is contingent on it.
 
-Everything else is filled (D5/D6/D7, 9 operators, CUL005, start date 2026-07-27, §3 Android A6-Lite date).
+Everything else is filled: D5/D6/D7, 9 operators, CUL005, start date 2026-07-27, §3 Android A6-Lite date, and **Max's escalation phone (+1 419-944-1939, triage card step 7)**. (The D7 number as supplied had a trailing stray "r", recorded as `+44 7747 738364` — Max to confirm the digits.)
 
 ## Resume points (next session = the pilot fortnight begins)
 
-1. **Launch prep for Monday 2026-07-27:** **run the A6-Lite iOS pass** (installed PWA, rows 2/5/6/19/23 — the outstanding gate), fill Max's escalation phone (triage card step 7), run the **D6 sandbox-flip audits on Day 1** (verify only pilot hubs have contact addresses; audit non-hub recipient paths — shop emails, invites, invoice sends — for real addresses in staging data; then flip `EMAIL_SANDBOX` off), and print the triage card.
+1. **Launch prep for Monday 2026-07-27:** **run the A6-Lite iOS pass** (installed PWA, rows 2/5/6/19/23 — the sole outstanding gate), run the **D6 sandbox-flip audits on Day 1** (verify only pilot hubs have contact addresses; audit non-hub recipient paths — shop emails, invites, invoice sends — for real addresses in staging data; then flip `EMAIL_SANDBOX` off), and print the triage card (escalation phone now filled: +1 419-944-1939).
 2. **During the fortnight — the three success metrics (charter §2):** adoption ≥ 90% by week 2 (the `/api/admin/pilot-metrics` denominator exists), daily-check time-to-complete trend (`DailyCheck.durationMs`), zero lost writes (offline outbox empty after every reconnect — any failed sync outside a normal 401-park is a P0). Variance check weekly (Max, via the CC-26 viewer).
 3. **Packet sequence:** CC-27 as scheduled filler during the fortnight → CC-15/16/17/18. **Before CC-17 ships: run the full A6 matrix** (all rows × all targets incl. iOS) — the parked D13 trigger.
 4. **Carried non-code items (STATUS §3):** CC-22 live acceptance pass (Sentry capture, healthchecks ping, CRON_SILENT). **D11** glossary sweep still owned by a future session.
