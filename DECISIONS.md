@@ -101,6 +101,7 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Rationale:** the pilot runs in-field with connectivity, a small cohort, watched daily; most A6 rows are offline-usability / edge-hardening that aren't needed to get the app running in-field. **The offline queue remains active in production use — this defers its full-matrix *verification*, not the feature.**
 - **TRIGGER for the full matrix (all 28 rows × 5 targets, incl. every iOS column):** it must run **BEFORE the Time/Invoicing capstone (CC-17) ships** — offline money-writes must not go live on an unverified offline base. Owner: Max.
 - **Supersedes:** the "full A6 = the pilot line" framing in `AHITS_PILOT_CHARTER.md` §3 and the A6 checklist header (both now point here). D5's condition is amended per above (A6 → A6-Lite); D5 otherwise stands.
+- **EXECUTED (2026-07-20, Max sign-off):** **A6-Lite is COMPLETE and VERIFIED on Android — rows 2, 5, 6, 19, 23 all pass.** The pilot gate is now **GREEN**. Both pilot-start conditions are met (charter signed 2026-07-20 + A6-Lite green 2026-07-20), so the **pilot start date resolves to 2026-07-27** (the first Monday after A6-Lite passed, which was itself a Monday). **The full A6 matrix stays PARKED — trigger unchanged: before CC-17 (Time/Invoicing) ships** (all iOS columns + CC-25's full live-camera acceptance ride that run).
 
 ---
 

@@ -1,7 +1,7 @@
 # AHITS — Pilot Charter
 ### One page. Fill the placeholders, then this is the plan. · 2026-07-12
 
-> **✅ SIGNED — Maxwell Slater · 2026-07-20.** Placeholders filled: 9 pilot operators (§1), project **CUL005**, D5 = **Option A** (§5), D7 second contact (Stewart Arbuckle), variance-check owner (Max), sandbox-flip rule confirmed (§4/D6). **Pilot start = this charter signed (done) + A6-Lite green (per `DECISIONS.md` D13 — the one remaining gate).** A6-Lite = rows 2, 5, 6, 19, 23 on Android (data-safety keystones + live scan); the **full A6 matrix is parked to pre-CC-17** (D13). Start date resolves to the first Monday after A6-Lite passes. Two items still need Max's hand before print: the A6-Lite date (§3) and Max's own escalation phone number (triage card step 7). This supersedes the "direction, not a plan" framing below.
+> **✅ SIGNED — Maxwell Slater · 2026-07-20. 🟢 PILOT IS GO — start Monday 2026-07-27.** Both pre-start gates are green: **charter signed (2026-07-20)** + **A6-Lite passed (2026-07-20, Android, rows 2/5/6/19/23 — per `DECISIONS.md` D13)**. Placeholders filled: 9 pilot operators (§1), project **CUL005**, D5 = **Option A** (§5), start date **2026-07-27**, D7 second contact (Stewart Arbuckle), variance-check owner (Max), sandbox-flip rule confirmed (§4/D6). The **full A6 matrix stays parked to pre-CC-17** (D13). **The only remaining blank is Max's own escalation phone number (triage card step 7), needed before the card is printed.** This supersedes the "direction, not a plan" framing below.
 >
 > _(Original framing, kept for provenance:)_ The pilot was a *direction, not a plan*: no document named who pilots, on which project, starting when, with what success criteria — while a de-facto pilot had already begun (field feedback exists) ahead of the A6 gate, on staging where email is sandboxed and both hubs have no contact address. This charter closes that.
 
@@ -20,7 +20,7 @@
   - Lucas Pistek / pisteklucas@gmail.com
   - Stewart Arbuckle / sarbuckle@agricarbon.co.uk
 - **Project:** **CUL005** (the single real project the pilot rides on).
-- **Start date:** D5 = **Option A** (see §5), so the start date is **the first Monday after A6-Lite passes** (D13 — rows 2/5/6/19/23 on Android) — CC-14 and CC-26 are already live on staging, so A6-Lite is the last event gating the date. Resolves to a concrete date the moment A6-Lite is green; not fixed here because it is not yet run.
+- **Start date:** **Monday 2026-07-27.** D5 = **Option A** (§5); both gates are green (charter signed + A6-Lite passed, both 2026-07-20), so the "first Monday after A6-Lite passes" resolves to **2026-07-27** (A6-Lite passed Monday the 20th → the first Monday *after* is the 27th). _(Max: if you meant to start the same week, say so — this reads "first Monday after.")_
 - **Duration:** one pilot fortnight (2 weeks), with CC-27 as scheduled filler and CC-26 landed before it starts.
 - **Pilot owner (drives sessions, decides):** Max.
 - **Second human — pilot-hours contact (D7):** **Stewart Arbuckle · +44 7747 738364** — the person an operator reaches at 6am when Max is unreachable. **A pilot with one human is a single point of failure.** _(Number as given had a trailing stray character "r", dropped as a typo — Max, confirm the digits.)_
@@ -33,7 +33,7 @@
 
 ## 3. The gates that must be green before start
 
-- [ ] **A6-Lite device pass — clean, signed. Hard date: << Max to schedule — THE ONE REMAINING PRE-START GATE >>.** A6-Lite (per D13) = rows **2, 5, 6, 19, 23 on Android** (data-safety keystones + live scan). The **full A6 matrix is PARKED — trigger = before CC-17 (Time/Invoicing) ships** (D13). (`AHITS_A6_DEVICE_CHECKLIST.md`.) **← the only unchecked gate; the start date hangs on this.**
+- [x] **A6-Lite device pass — ✅ GREEN. Completed + signed 2026-07-20 (Max), Android — rows 2, 5, 6, 19, 23 all pass** (data-safety keystones + live scan; per D13). The **full A6 matrix is PARKED — trigger = before CC-17 (Time/Invoicing) ships** (D13). (`AHITS_A6_DEVICE_CHECKLIST.md`.) **← both pre-start gates now green.**
 - [x] **CC-26 daily-check admin viewer landed** — PR #195, live on staging (2026-07-19).
 - [x] **Today view (CC-14) landed** — PRs #190–#194, live on staging (2026-07-19); D5 = Option A (§5).
 - [x] **CC-22 cron heartbeat live** — PR #182; `AHITS_CRON_HEARTBEAT_URL` provisioned on staging.
