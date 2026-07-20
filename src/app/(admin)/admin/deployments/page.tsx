@@ -1,6 +1,8 @@
 'use client'
 
 import * as React from 'react'
+import { useRouter } from 'next/navigation'
+import FactCheckIcon from '@mui/icons-material/FactCheck'
 import { formatDate } from '@/lib/utils'
 import { NOTE_PRESETS } from '@/lib/note-presets'
 import {
@@ -364,6 +366,7 @@ function DeploymentDrawer({
   showToast: (msg: string, severity?: 'success' | 'error') => void
   initialAction?: 'transfer' | 'end' | null
 }) {
+  const router = useRouter()
   const [rig, setRig] = React.useState(initialRig)
   const [removingVehicles, setRemovingVehicles] = React.useState(false)
   const [selVehicles, setSelVehicles] = React.useState<Set<string>>(new Set())
@@ -780,6 +783,16 @@ function DeploymentDrawer({
                         <StatusChip label="Agreement needed" color="error" variant="outlined" />
                       )}
                       <StatusChip label={rv.vehicle.type} variant="outlined" sx={{ ml: 'auto !important' }} />
+                      {/* CC-26: reach this vehicle's check-history trail (which opens the
+                          read-only viewer) — the vehicle drawer owns that list, so link
+                          there rather than duplicate it here. */}
+                      {!removingVehicles && (
+                        <Tooltip title="View daily checks">
+                          <IconButton size="small" onClick={() => router.push(`/admin/vehicles?vehicle=${rv.vehicle.id}`)} aria-label="View daily checks">
+                            <FactCheckIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
                     </Stack>
                   )
                 })}
@@ -1289,6 +1302,22 @@ function AdminDeploymentsContent() {
 
   React.useEffect(() => { load() }, [load])
   React.useEffect(() => { loadTransfers() }, [loadTransfers])
+
+  // CC-26: a missed-check alert deep-links to /admin/deployments?operator=<operatorId>
+  // (a MISSED alert has no vehicle/check record). Once the rig list has loaded, open that
+  // operator's active deployment drawer — from which each vehicle's check history is one
+  // click. No active rig for the operator → fall back to the list (no crash). Ref-guarded
+  // so closing the drawer doesn't re-open it.
+  const operatorParamHandled = React.useRef(false)
+  React.useEffect(() => {
+    if (operatorParamHandled.current) return
+    const operatorId = new URLSearchParams(window.location.search).get('operator')
+    if (!operatorId) { operatorParamHandled.current = true; return }
+    if (rigs.length === 0) return // wait for the first load
+    operatorParamHandled.current = true
+    const match = rigs.find((r) => !r.endedAt && r.operator?.id === operatorId)
+    if (match) { setDrawerAction(null); setDrawerRig(match) }
+  }, [rigs])
 
   React.useEffect(() => {
     fetch('/api/users').then((r) => r.json()).then((d) => setOperators(d.data ?? [])).catch(() => {})

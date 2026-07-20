@@ -220,8 +220,8 @@ export default function AdminDashboardPage() {
                   <ListItem
                     secondaryAction={
                       <Box sx={{ display: 'flex', gap: 0.5 }}>
-                        {alertLink(alert.sourceTable, alert.sourceId, alert.type) && (
-                          <Button size="small" onClick={() => router.push(alertLink(alert.sourceTable, alert.sourceId, alert.type)!)}>
+                        {alertLink(alert.sourceTable, alert.sourceId, alert.type, alert.metadata) && (
+                          <Button size="small" onClick={() => router.push(alertLink(alert.sourceTable, alert.sourceId, alert.type, alert.metadata)!)}>
                             View
                           </Button>
                         )}

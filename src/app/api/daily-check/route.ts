@@ -181,6 +181,9 @@ export async function POST(req: NextRequest) {
         name: vehicle?.name ?? vehicleId,
         operatorName: session.name,
         issues: issues ?? 'No details provided',
+        // CC-26: carry the failed check's id so its alert deep-links to the exact check.
+        // The dedup update refreshes this, so a re-raise points at the latest failure.
+        checkId: check.id,
       })
     } else {
       await resolveActiveAlert('DAILY_CHECK_FAILED', 'vehicles', vehicleId)

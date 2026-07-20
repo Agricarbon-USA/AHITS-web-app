@@ -43,9 +43,13 @@ export async function createAlert(
       metadata: metadata ?? {},
       activeKey,
     },
-    // An unresolved alert for this source already exists — leave it untouched
-    // (don't reset notifiedAt / triggeredAt) so it isn't re-notified.
-    update: {},
+    // An unresolved alert for this source already exists. CC-26: refresh its metadata
+    // to the latest values so a re-raise (e.g. a second failed daily check for the same
+    // vehicle) points its deep-link at the LATEST relevant record, not the first. Only
+    // `metadata` is updated — `notifiedAt`/`triggeredAt` are deliberately left untouched
+    // so the alert is NOT re-notified. Safe across all alert types: every caller passes
+    // metadata describing the source's current state (no type freezes first-seen data).
+    update: { metadata: metadata ?? {} },
   })
 }
 
