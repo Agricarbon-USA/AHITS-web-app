@@ -11,6 +11,7 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 > | W0-10 `4b′`/`4c` DROP patches | HELD | 4a soaked on prod + go/no-go green | D4 |
 > | Map: real-time / live GPS tracking | ANTI-GOAL (permanent) | never (crew visibility is last-known only) | D2 |
 > | Sentry error tracking | SHIPPED (CC-22, PR #182) | — (DSN provisioned; wiring live on staging) | — |
+> | CC-20 #1 (daily-check full-contents viewer) | SHIPPED (CC-26, PR #195) | — (pulled forward as a pilot-fortnight gate) | D12 |
 > | CC-20 remainder (record-reader legibility #2–#6) | PARKED | first pilot dispute needing history a surface can't show | CC-20 |
 
 ---
@@ -83,6 +84,13 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Decision:** D9 assigned the **Fulfill / Pick-up / Check-out / Claim one-word-per-state glossary sweep** to CC-14, gated on "CC-14's `Rig.requestId` model fix." The pre-flight found that link **already shipped in CC-09 as `Rig.fromRequestId`**, so D9's precondition is met — but CC-14 shipped as five planned PRs and PR5 (the sweep) was **planned droppable from the start** (strictly strings, zero logic). CC-14's core (Today view + endpoint + daily-check/NS-5 + IA fixes, PRs #190–#193) landed and deployed; the session ran long, so PR5 was **cut rather than rushed** (Max's explicit instruction: "if the session runs long, cut PR5 and record D11… rather than rushing it"). The sweep is **re-deferred, owner: the first session after CC-14**, a strings-only pass across buttons/badges/headers/toasts. This is NOT unfinished CC-14 — it is a recorded, precondition-met follow-up.
 - **Rationale:** a cross-surface rename touching a critical glossary is exactly the work that should not be rushed at the tail of a long session; the model precondition being met means it can be done cleanly whenever picked up, with no dependency risk.
 - **Detail:** CC-14 / PRs #190 (spine) · #191 (Today view) · #192 (daily-check/NS-5) · #193 (IA fixes) · #194 (test fix). Supersedes D9's "CC-14 owns the cluster" only as to *timing/owner* — the conventions in D9 still hold.
+
+### D12 · CC-26 alert deep-link targets + the "deployment-drawer reach" is transitive by design
+- **Date:** 2026-07-19 · **Owner:** Max · **Status:** ACTIVE
+- **Decision:** For the CC-26 daily-check viewer's reachability (PR #195): (a) a **DAILY_CHECK_FAILED** alert deep-links to the exact check via `/admin/vehicles?check=<checkId>` (checkId carried in alert metadata; graceful fallback to `/admin/vehicles` for stale/pre-CC-26 ids); (b) a **DAILY_CHECK_MISSED** alert — which has **no vehicle/check record**, only the operator — lands on `/admin/deployments?operator=<operatorId>`, opening that operator's active rig drawer (Max chose this over a per-operator history list or the old `/admin/users`); (c) the **deployment drawer "reaches the viewer" transitively** — its per-vehicle "View checks" links to the vehicle drawer, whose extended recent-checks list opens the viewer — **deliberately, to honor the CC-26 pre-flight's "extend the existing list, don't build a duplicate"** (the per-vehicle history lives only in the vehicle drawer). A future session reading the packet's "the deployment drawer reaches the viewer" should not "fix" this into a direct open.
+- **Rationale:** a MISSED alert genuinely has no single vehicle to target; routing through the operator's deployment is the faithful landing. The transitive deployment-drawer reach avoids duplicating the check-history list, which the pre-flight explicitly forbade.
+- **Scope guard held:** only the two check alerts carry a record id; the rest of CC-20 #6 (deep-links everywhere else) stays PARKED. `createAlert`'s dedup now refreshes metadata on re-raise (so the link points at the latest check) but leaves `notifiedAt`/`triggeredAt` untouched (no re-notify) — safe across all alert types (verified: no caller freezes first-occurrence metadata).
+- **Detail:** CC-26 / PR #195. CC-15 later adds check-level GPS columns; the viewer's GPS slot is already absent-safe and will render them when present.
 
 ---
 
