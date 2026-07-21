@@ -7,11 +7,13 @@
 -- pins, or a second operator's crew position. This script back-dates a few GPS
 -- `daily_checks` directly so PR-2's smoke gates are actually reachable.
 --
--- SAFE: additive INSERTs only, no schema change, idempotent (ON CONFLICT), all
--- rows id-prefixed `seed-cc15-` for a one-line cleanup at the bottom. This is
--- DATA seeding, not a migration — it does NOT violate the "no db push/migrate
--- against a shared DB" rule. Run it in the Supabase SQL editor (or psql) against
--- STAGING only. Do NOT run against prod.
+-- SAFE: additive INSERTs only, no schema change. Every row is id-prefixed
+-- `seed-cc15-` so cleanup is an EXACT id-keyed delete (never date-ranged). And it
+-- uses **ON CONFLICT DO NOTHING** — if a real check already exists for a
+-- (vehicle, date, operator), it is LEFT UNTOUCHED (the seed never overwrites your
+-- real test data; cleanup then can't take it either). This is DATA seeding, not a
+-- migration — it does NOT violate the "no db push/migrate against a shared DB"
+-- rule. Run in the Supabase SQL editor (or psql) against STAGING only. Not prod.
 --
 -- WHAT IT ENABLES after you run it and open /admin/map:
 --   • one rig with a 3-point route trail (2 days ago → yesterday → today)
@@ -37,8 +39,7 @@ FROM rig1 r, (VALUES
   ((CURRENT_DATE - 1), 41.6900::double precision, -83.5200::double precision),
   ((CURRENT_DATE - 0), 41.7000::double precision, -83.5000::double precision)
 ) AS d(dt, lat, lng)
-ON CONFLICT ("vehicleId","date","operatorId")
-  DO UPDATE SET "gpsLat" = EXCLUDED."gpsLat", "gpsLng" = EXCLUDED."gpsLng", "syncedAt" = now();
+ON CONFLICT ("vehicleId","date","operatorId") DO NOTHING; -- never overwrite a real check
 
 -- Part 2 — one GPS check today for a DIFFERENT active-rig primary operator (crew map).
 -- No-op if staging has only one active rig/operator (then the crew map stays empty —
@@ -64,8 +65,7 @@ rig2 AS (
 INSERT INTO "daily_checks" ("id","vehicleId","operatorId","date","checklistJson","passFail","submittedAt","syncedAt","gpsLat","gpsLng")
 SELECT 'seed-cc15-' || gen_random_uuid(), r.vehicle_id, r.operator_id, CURRENT_DATE, '[]'::jsonb, true, now(), now(), 41.6400::double precision, -83.6200::double precision
 FROM rig2 r
-ON CONFLICT ("vehicleId","date","operatorId")
-  DO UPDATE SET "gpsLat" = EXCLUDED."gpsLat", "gpsLng" = EXCLUDED."gpsLng", "syncedAt" = now();
+ON CONFLICT ("vehicleId","date","operatorId") DO NOTHING; -- never overwrite a real check
 
 -- ── CLEANUP (run after the smoke to remove the seeded rows) ──
 -- DELETE FROM "daily_checks" WHERE "id" LIKE 'seed-cc15-%';
