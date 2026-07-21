@@ -12,6 +12,7 @@ import BarChartIcon from '@mui/icons-material/BarChart'
 import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import WarehouseIcon from '@mui/icons-material/Warehouse'
 import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck'
+import MapIcon from '@mui/icons-material/Map'
 import SettingsIcon from '@mui/icons-material/Settings'
 import LogoutIcon from '@mui/icons-material/Logout'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
@@ -22,6 +23,7 @@ const NAV_ITEMS = [
   { label: 'Dashboard', href: '/admin/dashboard', icon: DashboardIcon },
   { label: 'Inventory', href: '/admin/inventory', icon: InventoryIcon },
   { label: 'Deployments', href: '/admin/deployments', icon: LocalShippingIcon },
+  { label: 'Map', href: '/admin/map', icon: MapIcon },
   { label: 'Requests', href: '/admin/requests', icon: PlaylistAddCheckIcon },
   { label: 'Vehicles', href: '/admin/vehicles', icon: DirectionsCarIcon },
   { label: 'Maintenance', href: '/admin/maintenance', icon: BuildIcon },

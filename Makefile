@@ -130,6 +130,14 @@ docker-run: ## Run container locally
 # Manager versions before this target is next run, or the deploy itself fails):
 #   CRON_HEARTBEAT_URL=$(SECRET_NS)_CRON_HEARTBEAT_URL   (e.g. AHITS_CRON_HEARTBEAT_URL)
 #   SENTRY_DSN=$(SECRET_NS)_SENTRY_DSN                   (e.g. AHITS_SENTRY_DSN)
+# CC-15 adds one more OPTIONAL secret — the Deployment Map's Mapbox token. Server-side
+# ONLY (never NEXT_PUBLIC_ — a build-time public var would be undefined at runtime, the
+# FND-49 trap); the app renders a "map unavailable" state when it's absent, so a missing
+# secret does not break the app at runtime. But Cloud Run still validates the reference at
+# DEPLOY time, so the ENABLED version must exist before this target next runs, or the
+# deploy fails. The runtime env var is MAPBOX_TOKEN; the Secret Manager secret is
+# $(SECRET_NS)_MAPBOX_TOKEN (staging: AHITS_MAPBOX_TOKEN, prod: AHITS_PROD_MAPBOX_TOKEN):
+#   MAPBOX_TOKEN=$(SECRET_NS)_MAPBOX_TOKEN               (e.g. AHITS_MAPBOX_TOKEN)
 cloud-run-deploy: ## Deploy image to Cloud Run. Set SERVICE, TAG, MIN_INSTANCES.
 	gcloud run deploy $(SERVICE) \
 	  --image $(IMAGE):$(TAG) \
@@ -139,7 +147,7 @@ cloud-run-deploy: ## Deploy image to Cloud Run. Set SERVICE, TAG, MIN_INSTANCES.
 	  --allow-unauthenticated \
 	  --min-instances=$(MIN_INSTANCES) \
 	  --set-env-vars="NODE_ENV=production,APP_TIMEZONE=America/Chicago,EMAIL_SANDBOX=$(EMAIL_SANDBOX)" \
-	  --set-secrets="DATABASE_URL=$(SECRET_NS)_DATABASE_URL:latest,DIRECT_URL=$(SECRET_NS)_DIRECT_URL:latest,NEXT_PUBLIC_SUPABASE_URL=$(SECRET_NS)_NEXT_PUBLIC_SUPABASE_URL:latest,NEXT_PUBLIC_SUPABASE_ANON_KEY=$(SECRET_NS)_NEXT_PUBLIC_SUPABASE_ANON_KEY:latest,SUPABASE_SERVICE_ROLE_KEY=$(SECRET_NS)_SUPABASE_SERVICE_ROLE_KEY:latest,PIN_SESSION_SECRET=$(SECRET_NS)_PIN_SESSION_SECRET:latest,RESEND_API_KEY=$(SECRET_NS)_RESEND_API_KEY:latest,EMAIL_FROM=$(SECRET_NS)_EMAIL_FROM:latest,NEXT_PUBLIC_APP_URL=$(SECRET_NS)_NEXT_PUBLIC_APP_URL:latest,CRON_SECRET=$(SECRET_NS)_CRON_SECRET:latest,CRON_HEARTBEAT_URL=$(SECRET_NS)_CRON_HEARTBEAT_URL:latest,SENTRY_DSN=$(SECRET_NS)_SENTRY_DSN:latest"
+	  --set-secrets="DATABASE_URL=$(SECRET_NS)_DATABASE_URL:latest,DIRECT_URL=$(SECRET_NS)_DIRECT_URL:latest,NEXT_PUBLIC_SUPABASE_URL=$(SECRET_NS)_NEXT_PUBLIC_SUPABASE_URL:latest,NEXT_PUBLIC_SUPABASE_ANON_KEY=$(SECRET_NS)_NEXT_PUBLIC_SUPABASE_ANON_KEY:latest,SUPABASE_SERVICE_ROLE_KEY=$(SECRET_NS)_SUPABASE_SERVICE_ROLE_KEY:latest,PIN_SESSION_SECRET=$(SECRET_NS)_PIN_SESSION_SECRET:latest,RESEND_API_KEY=$(SECRET_NS)_RESEND_API_KEY:latest,EMAIL_FROM=$(SECRET_NS)_EMAIL_FROM:latest,NEXT_PUBLIC_APP_URL=$(SECRET_NS)_NEXT_PUBLIC_APP_URL:latest,CRON_SECRET=$(SECRET_NS)_CRON_SECRET:latest,CRON_HEARTBEAT_URL=$(SECRET_NS)_CRON_HEARTBEAT_URL:latest,SENTRY_DSN=$(SECRET_NS)_SENTRY_DSN:latest,MAPBOX_TOKEN=$(SECRET_NS)_MAPBOX_TOKEN:latest"
 
 cloud-run-url: ## Print URL of a Cloud Run service. Set SERVICE.
 	@gcloud run services describe $(SERVICE) \

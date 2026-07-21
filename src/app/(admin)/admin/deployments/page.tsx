@@ -17,6 +17,7 @@ import { StatusChip } from '@/components/shared/StatusChip'
 import { DetailDrawer } from '@/components/ui/DetailDrawer'
 import AddIcon from '@mui/icons-material/Add'
 import LocalShippingIcon from '@mui/icons-material/LocalShipping'
+import MapIcon from '@mui/icons-material/Map'
 import TerrainIcon from '@mui/icons-material/Terrain'
 import AgricultureIcon from '@mui/icons-material/Agriculture'
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz'
@@ -703,6 +704,18 @@ function DeploymentDrawer({
             </Stack>
             {rig.project && <Typography variant="body2" color="text.secondary">Project: {rig.project.name}</Typography>}
             <Typography variant="caption" color="text.secondary">Started {relativeDate(rig.startedAt)}</Typography>
+            {/* CC-15 (D2): reach this rig's route history (where it has been) on the map. */}
+            <Box>
+              <Button
+                size="small"
+                variant="text"
+                startIcon={<MapIcon fontSize="small" />}
+                onClick={() => router.push(`/admin/map?rig=${rig.id}`)}
+                sx={{ textTransform: 'none', px: 0, mt: 0.5 }}
+              >
+                View route history
+              </Button>
+            </Box>
           </Box>
           <Divider />
 
