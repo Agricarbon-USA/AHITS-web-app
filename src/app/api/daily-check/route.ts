@@ -24,6 +24,13 @@ const schema = z.object({
   // CC-14: client-measured time-to-complete (form open → submit). Passive; capped to a
   // sane range server-side so a clock skew / stale queued payload can't store garbage.
   durationMs: z.number().int().min(0).max(86_400_000).optional(),
+  // CC-15 (D2): GPS captured once per check at buildPayload time. All three are
+  // optional — location is resolve-or-skip and NEVER blocks a check, so a
+  // denied/dismissed/timed-out submit simply omits them. Bounded to valid ranges so a
+  // bad on-device reading can't store garbage. Attestation points only, never live.
+  gpsLat: z.number().min(-90).max(90).optional(),
+  gpsLng: z.number().min(-180).max(180).optional(),
+  gpsAccuracy: z.number().min(0).optional(),
 }).superRefine((data, ctx) => {
   // PRD §11.4 / §7.4: every failed item needs a reason, and a failing check
   // needs an overall summary. Enforced server-side so the rule holds for queued
@@ -74,7 +81,7 @@ export async function POST(req: NextRequest) {
   const parsed = schema.safeParse(await req.json())
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
-  const { vehicleId, checklistJson, passFail, issues, odometer, site, durationMs } = parsed.data
+  const { vehicleId, checklistJson, passFail, issues, odometer, site, durationMs, gpsLat, gpsLng, gpsAccuracy } = parsed.data
   // Clamp to server-side business date so a check can't be pre-dated or
   // future-dated to dodge the missed-check alert (note: a check synced a day
   // late is recorded as today, not the day it was performed).
@@ -114,6 +121,11 @@ export async function POST(req: NextRequest) {
       // CC-14: recorded on first completion only — a later edit (the update branch)
       // preserves the original time-to-complete rather than overwriting it.
       durationMs,
+      // CC-15 (D2): the check's attestation GPS. Undefined when the operator denied /
+      // dismissed / timed out — the row stores NULL and the check succeeds regardless.
+      gpsLat,
+      gpsLng,
+      gpsAccuracy,
       syncedAt: new Date(),
     },
     update: {
@@ -122,6 +134,12 @@ export async function POST(req: NextRequest) {
       issues,
       odometer,
       site,
+      // CC-15 (D2): best-available-fix-wins. Prisma skips `undefined`, so a re-submit
+      // that denied/timed-out location PRESERVES a prior good fix instead of wiping it;
+      // a re-submit that DID capture updates the point. Denial never destroys location.
+      gpsLat,
+      gpsLng,
+      gpsAccuracy,
       syncedAt: new Date(),
     },
   })

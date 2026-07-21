@@ -575,6 +575,13 @@ model DailyCheck {
   // CC-14: client-measured time-to-complete (form open → submit), passive timing, no
   // new operator capture. Nullable so offline replays and pre-CC-14 rows are valid.
   durationMs    Int?
+  // CC-15 (D2): GPS captured once per check at buildPayload time on-device (mirrors
+  // Photo.gpsLat/gpsLng). Nullable — location is resolve-or-skip and NEVER blocks a
+  // check, so denied/dismissed/timed-out submits (and every pre-CC-15 row) store null.
+  // These are attestation points ("where has this rig been"), never live position.
+  gpsLat        Float?
+  gpsLng        Float?
+  gpsAccuracy   Float?
 
   vehicle  Vehicle @relation(fields: [vehicleId], references: [id])
   operator User    @relation(fields: [operatorId], references: [id])

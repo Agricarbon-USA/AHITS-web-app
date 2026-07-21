@@ -24,6 +24,34 @@ interface ChecklistRow {
   note: string
 }
 
+// CC-15 (D2): the check's attestation GPS. Optional — every field is omitted when
+// location is unavailable, so the payload simply carries no coords.
+type CheckCoords = { gpsLat?: number; gpsLng?: number; gpsAccuracy?: number }
+
+// CC-15 (D2): capture ONE position for this daily check. Resolve-or-skip — this NEVER
+// rejects and NEVER blocks the submit: denied permission, a dismissed prompt, an error,
+// or the timeout all resolve to {} (no coords) so the check submits either way. Called
+// on-device at submit time, so the coords ride the queued payload when offline (GPS
+// needs no network). This is a single fix per attestation — no watchPosition, no
+// polling, no background location (the D2 anti-goal guard).
+function captureLocation(): Promise<CheckCoords> {
+  return new Promise((resolve) => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      resolve({})
+      return
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({
+        gpsLat: pos.coords.latitude,
+        gpsLng: pos.coords.longitude,
+        gpsAccuracy: pos.coords.accuracy,
+      }),
+      () => resolve({}), // denied / dismissed / position-unavailable / timeout → no coords
+      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 },
+    )
+  })
+}
+
 interface RigVehicle {
   id: string
   vehicle: { id: string; name: string; type?: string }
@@ -151,7 +179,7 @@ export default function OperatorDailyCheckPage() {
   const selectedVehicleName =
     vehicles.find((rv) => rv.vehicle.id === vehicleId)?.vehicle.name ?? ''
 
-  const buildPayload = () => ({
+  const buildPayload = (coords: CheckCoords = {}) => ({
     vehicleId,
     date,
     odometer: odometer ? parseInt(odometer) : undefined,
@@ -162,6 +190,10 @@ export default function OperatorDailyCheckPage() {
     // CC-14: passive time-to-complete, measured at submit-click (correct even if the
     // check later syncs from the offline queue). undefined until the mount clock starts.
     durationMs: startedAtRef.current ? Date.now() - startedAtRef.current : undefined,
+    // CC-15 (D2): attestation GPS captured just before enqueue; the keys are absent when
+    // location was unavailable, so the payload — online or queued offline — carries no
+    // coords rather than nulls.
+    ...coords,
   })
 
   const handleSubmit = async () => {
@@ -170,6 +202,11 @@ export default function OperatorDailyCheckPage() {
     if (!passFail && !issues.trim()) { setError('Describe the issue(s) that caused a fail'); return }
     setSubmitting(true)
     setError('')
+    // CC-15 (D2): capture the attestation GPS ON-DEVICE, before enqueue, so the coords
+    // ride the queued payload when offline. Resolve-or-skip — this never throws and
+    // never blocks: a denied/dismissed/timed-out fix returns {} and the check submits
+    // with no coords. (The explainer on the review step primes the browser prompt.)
+    const coords = await captureLocation()
     // UR-007: route through the durable offline queue (idempotency-keyed) instead
     // of a raw fetch + manual enqueue. Offline → queued exactly-once; online →
     // confirmed; a server-reached error is surfaced (the DB upsert on
@@ -177,7 +214,7 @@ export default function OperatorDailyCheckPage() {
     const result = await mutate({
       endpoint: '/api/daily-check',
       method: 'POST',
-      body: buildPayload(),
+      body: buildPayload(coords),
       label: 'Daily check',
     })
     setSubmitting(false)
@@ -401,6 +438,11 @@ export default function OperatorDailyCheckPage() {
           {isOffline && (
             <Alert severity="warning">You are offline — check will be queued and synced when back online.</Alert>
           )}
+          {/* CC-15 (D2): prime the browser location prompt (fired on Submit) with the
+              trust framing. Location is optional — declining still submits the check. */}
+          <Typography variant="caption" color="text.secondary">
+            Location is saved once per daily check so the team can see where rigs have been — never live tracking.
+          </Typography>
         </Stack>
       )}
 
