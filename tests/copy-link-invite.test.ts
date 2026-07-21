@@ -3,6 +3,7 @@ import { NextRequest } from 'next/server'
 import { POST as createInvite } from '../src/app/api/users/invite/route'
 import { POST as resendInvite, DELETE as revokeInvite } from '../src/app/api/users/invite/[id]/route'
 import { GET as validateInvite } from '../src/app/api/users/invite/validate/route'
+import { POST as completeInvite } from '../src/app/api/users/invite/complete/route'
 import { prisma } from '../src/lib/prisma'
 import { createAdminUser } from './helpers/fixtures'
 
@@ -29,6 +30,11 @@ function resendReq(id: string, body: unknown) {
 }
 function validateReq(token: string) {
   return new NextRequest(`http://localhost/api/users/invite/validate?token=${encodeURIComponent(token)}`)
+}
+function completeReq(token: string) {
+  return new NextRequest('http://localhost/api/users/invite/complete', {
+    method: 'POST', body: JSON.stringify({ token, credential: '284910' }), headers: { 'Content-Type': 'application/json' },
+  })
 }
 const tokenFromUrl = (setupUrl: string) => new URL(setupUrl).searchParams.get('token') ?? ''
 
@@ -72,18 +78,22 @@ describe('Copy-link invites', () => {
     const newToken = tokenFromUrl(data.setupUrl)
     expect(newToken).not.toBe(first.token)
 
-    // Old link is dead (unknown token → 404); new link validates (200).
-    const oldV = await validateInvite(validateReq(first.token))
-    expect(oldV.status).toBe(404)
-    const newV = await validateInvite(validateReq(newToken))
-    expect(newV.status).toBe(200)
+    // Old link is dead (unknown token → 404 at validate; and cannot mint at complete);
+    // new link validates (200).
+    expect((await validateInvite(validateReq(first.token))).status).toBe(404)
+    expect((await completeInvite(completeReq(first.token))).status).toBe(410)
+    expect((await validateInvite(validateReq(newToken))).status).toBe(200)
   })
 
-  it("a revoked invite's link is dead", async () => {
+  it("a revoked invite's link is dead — at validate AND at the account-minting complete route", async () => {
     const inv = await linkInvite()
     const del = await revokeInvite(new NextRequest(`http://localhost/api/users/invite/${inv.inviteId}`, { method: 'DELETE' }), { params: Promise.resolve({ id: inv.inviteId }) })
     expect(del.status).toBe(200)
-    const v = await validateInvite(validateReq(inv.token))
-    expect(v.status).toBe(410) // revoked → gone
+    // Revoke keeps the same token hash, so the row still resolves — the deadness must hold
+    // at complete (the endpoint that mints the account), not only at the friendly validate page.
+    expect((await validateInvite(validateReq(inv.token))).status).toBe(410)
+    expect((await completeInvite(completeReq(inv.token))).status).toBe(410)
+    // And no account was minted from the revoked link.
+    expect(await prisma.user.count({ where: { email: inv.email } })).toBe(0)
   })
 })
