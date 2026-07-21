@@ -31,5 +31,18 @@ Everything else is filled: D5/D6/D7, 9 operators, CUL005, start date 2026-07-27,
 
 1. **Launch prep for Monday 2026-07-27:** **run the A6-Lite iOS pass** (installed PWA, rows 2/5/6/19/23 — the sole outstanding gate), run the **D6 sandbox-flip audits on Day 1** (verify only pilot hubs have contact addresses; audit non-hub recipient paths — shop emails, invites, invoice sends — for real addresses in staging data; then flip `EMAIL_SANDBOX` off), and print the triage card (escalation phone now filled: +1 419-944-1939).
 2. **During the fortnight — the three success metrics (charter §2):** adoption ≥ 90% by week 2 (the `/api/admin/pilot-metrics` denominator exists), daily-check time-to-complete trend (`DailyCheck.durationMs`), zero lost writes (offline outbox empty after every reconnect — any failed sync outside a normal 401-park is a P0). Variance check weekly (Max, via the CC-26 viewer).
-3. **Packet sequence:** CC-27 as scheduled filler during the fortnight → CC-15/16/17/18. **Before CC-17 ships: run the full A6 matrix** (all rows × all targets incl. iOS) — the parked D13 trigger.
+3. **Packet sequence:** **CC-27 is DONE** (below) → CC-15/16/17/18. **Before CC-17 ships: run the full A6 matrix** (all rows × all targets incl. iOS) — the parked D13 trigger.
 4. **Carried non-code items (STATUS §3):** CC-22 live acceptance pass (Sentry capture, healthchecks ping, CRON_SILENT). **D11** glossary sweep still owned by a future session.
+
+---
+
+## Also shipped this session — CC-27 (the pilot-fortnight filler)
+
+**FulfillmentChecklist rebuilt on MUI + tokens (PR #196, merged, live on staging).** It was an entire parallel UNTHEMED design system — raw-HTML inline styles, hardcoded hex, system-font buttons next to MUI buttons on the same screen (the most visible "two apps in one page" spot, in admin/requests). Now on MUI + the tokens-sourced theme (Button/TextField/MenuItem + StatusChip; themed primary/info/error/default — no raw hex, no system-font).
+
+- **Behavior-identical re-skin:** logic/state/handlers/props/exported interface byte-identical; `deltaLine()` + optimistic-update copied verbatim; Select empty-value semantics, the serialized needs-unit gate, the qty clamp, stage-gating, per-form errors, and disabled-during-load all preserved.
+- Removed the file's CC-23 no-hex lint-allowlist entry (the hex rule now enforces it); kept `src/app/s/**` (CC-23 item 1 owns the portal re-palette).
+- **6 parity component tests** (exact `onLineAction` args per action, serialized gate, deny-requires-reason, stage-gating, read-only mode). `test:ui` 65 → 71.
+- **Merge gate met (not CI-green alone):** ran the authenticated **hub-flow staging smoke** (Max signed in; Claude never touched credentials) — created a 2-line RESERVATION on admin/requests and fulfilled it end-to-end through the rebuilt checklist: Edit→"Adjusted"+delta, Deny validation ("Please enter a reason.") + real deny→"Denied", progress→green "✓ Ready to stage", Stage→"Reservation staged". Test data cleaned up (cancelled). All parity behaviours held against the real backend.
+- **Correction:** render consumers are **admin/requests + the `s/[token]` portal** (operator/requests only references the component in a code comment — the PR body's "3 consumers" was wrong). The portal (not smoked — needs a live token) shifts system-ui→Inter, a known delta CC-23 item 1 subsumes.
+- **Not real-data-smoked (CI-covered):** the serialized unit-gate with live hub stock; the portal render.
