@@ -8,6 +8,7 @@ import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner'
 import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck'
 import DirectionsCarIcon from '@mui/icons-material/DirectionsCar'
+import MapIcon from '@mui/icons-material/Map'
 import InventoryIcon from '@mui/icons-material/Inventory'
 import BuildIcon from '@mui/icons-material/Build'
 import WarehouseIcon from '@mui/icons-material/Warehouse'
@@ -23,6 +24,7 @@ const NAV_ITEMS = [
   { label: 'Daily Check', href: '/operator/daily-check', icon: ChecklistIcon },
   { label: 'My Deployment', href: '/operator/my-deployment', icon: LocalShippingIcon },
   { label: 'Scan QR', href: '/operator/scan', icon: QrCodeScannerIcon },
+  { label: 'Crew Map', href: '/operator/map', icon: MapIcon },
   { label: 'Requests', href: '/operator/requests', icon: PlaylistAddCheckIcon },
 ]
 

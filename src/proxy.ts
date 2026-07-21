@@ -55,7 +55,8 @@ function buildCsp(nonce: string): string {
     "form-action 'self'",
     "frame-ancestors 'none'",
     "object-src 'none'",
-    "img-src 'self' data: blob: https://*.supabase.co",
+    // CC-15: Mapbox GL raster tiles / sprites / marker images load from api.mapbox.com.
+    "img-src 'self' data: blob: https://*.supabase.co https://api.mapbox.com",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self' data:",
@@ -65,7 +66,9 @@ function buildCsp(nonce: string): string {
     // time here (proxy.ts has no access to env-derived per-org values beyond what's
     // hardcoded). Harmless when SENTRY_DSN is unset: nothing ever calls out to
     // it since Sentry.init() is never invoked (see SentryProvider.tsx).
-    "connect-src 'self' https://*.supabase.co https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io",
+    // CC-15: Mapbox GL fetches vector tiles, styles, glyphs and telemetry over XHR/fetch
+    // from api.mapbox.com (tiles/styles/glyphs) and events.mapbox.com (usage telemetry).
+    "connect-src 'self' https://*.supabase.co https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.mapbox.com https://events.mapbox.com",
     "worker-src 'self' blob:",
     "manifest-src 'self'",
   ].join('; ')
