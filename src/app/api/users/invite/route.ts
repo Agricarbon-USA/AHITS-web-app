@@ -23,6 +23,10 @@ const schema = z.object({
   name: z.string().min(1, 'Name is required'),
   email: z.string().email('Invalid email'),
   role: z.enum(['ADMIN', 'OPERATOR']),
+  // Copy-link invites: how the setup link is delivered. EMAIL (default) is the
+  // existing behavior, byte-identical. LINK skips email entirely and returns the
+  // one-time setup URL for the admin to hand off out-of-band.
+  delivery: z.enum(['EMAIL', 'LINK']).default('EMAIL'),
 })
 
 export async function POST(req: NextRequest) {
@@ -36,7 +40,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: parsed.error.flatten().fieldErrors }, { status: 400 })
   }
 
-  const { name, email, role } = parsed.data
+  const { name, email, role, delivery } = parsed.data
 
   // Check if user already exists
   const existing = await prisma.user.findUnique({ where: { email } })
@@ -65,6 +69,19 @@ export async function POST(req: NextRequest) {
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000'
   const setupUrl = `${appUrl}/setup-account?token=${encodeURIComponent(rawToken)}`
+
+  // LINK delivery: no email is sent — return the one-time setup URL for the admin
+  // to copy and hand off. Same token/hash/expiry/revoke posture as email invites;
+  // the raw token lives only in this response (never persisted, never logged, and
+  // deliberately not put in the audit metadata). no-store so the secret URL isn't
+  // cached by any intermediary.
+  if (delivery === 'LINK') {
+    await writeAudit(session.userId, 'INVITE_LINK_CREATED', null, { email, role, inviteId: invite.id })
+    return NextResponse.json(
+      { ok: true, setupUrl, expiresAt: invite.expiresAt },
+      { status: 201, headers: { 'Cache-Control': 'no-store' } },
+    )
+  }
 
   // If the email fails to send, don't leave a dangling invite the admin thinks
   // went out — clean it up and surface the failure.

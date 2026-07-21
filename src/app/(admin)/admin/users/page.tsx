@@ -18,7 +18,19 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import SendIcon from '@mui/icons-material/Send'
 import LogoutIcon from '@mui/icons-material/Logout'
 import HistoryIcon from '@mui/icons-material/History'
+import LinkIcon from '@mui/icons-material/Link'
+import ContentCopyIcon from '@mui/icons-material/ContentCopy'
 import { formatDateTime } from '@/lib/utils'
+
+interface InviteRow {
+  id: string
+  email: string
+  name: string
+  role: 'ADMIN' | 'OPERATOR'
+  expiresAt: string
+  createdAt: string
+}
+type LinkPayload = { url: string; expiresAt: string }
 
 interface HubRow { id: string; name: string }
 
@@ -39,14 +51,19 @@ interface UserRow {
 }
 
 // ── Invite Dialog ─────────────────────────────────────────────────
-function InviteDialog({ open, onClose, onSuccess }: { open: boolean; onClose: () => void; onSuccess: (msg: string) => void }) {
+function InviteDialog({ open, onClose, onSuccess, onLink }: {
+  open: boolean; onClose: () => void; onSuccess: (msg: string) => void; onLink: (p: LinkPayload) => void
+}) {
   const [name, setName] = React.useState('')
   const [email, setEmail] = React.useState('')
   const [role, setRole] = React.useState<'ADMIN' | 'OPERATOR'>('OPERATOR')
+  // Delivery: EMAIL sends the setup link (existing behavior); LINK returns a copy-able
+  // URL for email-independent onboarding (no email is sent).
+  const [delivery, setDelivery] = React.useState<'EMAIL' | 'LINK'>('EMAIL')
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState('')
 
-  const reset = () => { setName(''); setEmail(''); setRole('OPERATOR'); setError('') }
+  const reset = () => { setName(''); setEmail(''); setRole('OPERATOR'); setDelivery('EMAIL'); setError('') }
   const handleClose = () => { reset(); onClose() }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -57,17 +74,21 @@ function InviteDialog({ open, onClose, onSuccess }: { open: boolean; onClose: ()
       const res = await fetch('/api/users/invite', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, role }),
+        body: JSON.stringify({ name, email, role, delivery }),
       })
       const data = await res.json()
       if (!res.ok) {
         const msg = typeof data.error === 'object'
           ? Object.values(data.error).flat().join(', ')
-          : (data.error ?? 'Failed to send invite')
+          : (data.error ?? 'Failed to create invite')
         setError(msg)
         return
       }
-      onSuccess(`Invite sent to ${email}`)
+      if (delivery === 'LINK') {
+        onLink({ url: data.setupUrl, expiresAt: data.expiresAt })
+      } else {
+        onSuccess(`Invite sent to ${email}`)
+      }
       handleClose()
     } catch {
       setError('Network error. Please try again.')
@@ -76,6 +97,7 @@ function InviteDialog({ open, onClose, onSuccess }: { open: boolean; onClose: ()
     }
   }
 
+  const isLink = delivery === 'LINK'
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="xs" fullWidth>
       <DialogTitle>Invite Team Member</DialogTitle>
@@ -89,16 +111,67 @@ function InviteDialog({ open, onClose, onSuccess }: { open: boolean; onClose: ()
               <MenuItem value="OPERATOR">Field Operator — logs in with a 6-digit PIN on their phone</MenuItem>
               <MenuItem value="ADMIN">Admin — full access to the web dashboard</MenuItem>
             </TextField>
+            <TextField select label="How to send" value={delivery} onChange={(e) => setDelivery(e.target.value as 'EMAIL' | 'LINK')} fullWidth>
+              <MenuItem value="EMAIL">Email the invite</MenuItem>
+              <MenuItem value="LINK">Create a link to copy (no email)</MenuItem>
+            </TextField>
+            {isLink && (
+              <Typography variant="caption" color="text.secondary">
+                We&apos;ll show a one-time setup link to copy and share. They set their own PIN when they open it — no email required.
+              </Typography>
+            )}
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={handleClose} disabled={loading}>Cancel</Button>
           <Button type="submit" variant="contained" disabled={loading}
-            startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <SendIcon />}>
-            {loading ? 'Sending…' : 'Send Invite'}
+            startIcon={loading ? <CircularProgress size={16} color="inherit" /> : (isLink ? <LinkIcon /> : <SendIcon />)}>
+            {loading ? (isLink ? 'Creating…' : 'Sending…') : (isLink ? 'Create link' : 'Send Invite')}
           </Button>
         </DialogActions>
       </Box>
+    </Dialog>
+  )
+}
+
+// ── Invite Link Dialog (shows a one-time setup URL to copy) ────────
+function InviteLinkDialog({ payload, onClose }: { payload: LinkPayload | null; onClose: () => void }) {
+  const [copied, setCopied] = React.useState(false)
+  React.useEffect(() => { setCopied(false) }, [payload])
+
+  const copy = async () => {
+    if (!payload) return
+    try { await navigator.clipboard.writeText(payload.url); setCopied(true) } catch { /* clipboard blocked — the field is selectable */ }
+  }
+
+  return (
+    <Dialog open={!!payload} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>Invite link</DialogTitle>
+      <DialogContent>
+        <Stack spacing={2} pt={0.5}>
+          <Alert severity="warning">
+            Shown once — copy it now. If you lose it, use <strong>Regenerate link</strong> on the pending invite to make a new one (which disables this one).
+          </Alert>
+          <TextField
+            value={payload?.url ?? ''}
+            fullWidth
+            multiline
+            InputProps={{ readOnly: true }}
+            onFocus={(e) => e.target.select()}
+          />
+          <Button variant="contained" startIcon={<ContentCopyIcon />} onClick={copy}>
+            {copied ? 'Copied ✓' : 'Copy link'}
+          </Button>
+          {payload?.expiresAt && (
+            <Typography variant="caption" color="text.secondary">
+              Expires {formatDateTime(payload.expiresAt)}. The operator sets their own PIN when they open it.
+            </Typography>
+          )}
+        </Stack>
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2 }}>
+        <Button onClick={onClose}>Done</Button>
+      </DialogActions>
     </Dialog>
   )
 }
@@ -278,6 +351,8 @@ export default function AdminUsersPage() {
   const [inviteOpen, setInviteOpen] = React.useState(false)
   const [activityOpen, setActivityOpen] = React.useState(false)
   const [editUser, setEditUser] = React.useState<UserRow | null>(null)
+  const [invites, setInvites] = React.useState<InviteRow[]>([])
+  const [linkPayload, setLinkPayload] = React.useState<LinkPayload | null>(null)
   const [confirmAction, setConfirmAction] = React.useState<{
     title: string; message: string; label: string; color?: 'error' | 'warning' | 'primary'; action: () => Promise<void>
   } | null>(null)
@@ -293,11 +368,20 @@ export default function AdminUsersPage() {
     }
   }, [])
 
+  const loadInvites = React.useCallback(async () => {
+    try {
+      const res = await fetch('/api/users/invite')
+      const data = await res.json()
+      setInvites(data.data ?? [])
+    } catch { /* leave the pending list as-is on a transient error */ }
+  }, [])
+
   React.useEffect(() => {
     load()
+    loadInvites()
     fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(Array.isArray(d) ? d : (d?.data ?? []))).catch(() => {})
     fetch('/api/projects').then((r) => r.json()).then((d) => setProjects(d.data ?? d ?? [])).catch(() => {})
-  }, [load])
+  }, [load, loadInvites])
 
   // CC-23: route through the single shared Snackbar host (was an inline
   // top-of-page Alert). Adapter preserves the (msg, sev) call-site signature.
@@ -317,6 +401,29 @@ export default function AdminUsersPage() {
     await load()
     return true
   }
+
+  // Regenerate a pending invite's link (resend route in LINK mode). The old link dies
+  // (its token is rehashed server-side); the fresh URL is shown once to copy.
+  const regenerateLink = async (inv: InviteRow) => {
+    const res = await fetch(`/api/users/invite/${inv.id}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ delivery: 'LINK' }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) { showToast(typeof data.error === 'string' ? data.error : 'Could not regenerate the link', 'error'); return }
+    setLinkPayload({ url: data.setupUrl, expiresAt: data.expiresAt })
+    await loadInvites()
+  }
+
+  const revokeInvite = (inv: InviteRow) => setConfirmAction({
+    title: 'Revoke invite',
+    message: `Revoke the invite for ${inv.email}? Their setup link will stop working immediately.`,
+    label: 'Revoke', color: 'error',
+    action: async () => {
+      const res = await fetch(`/api/users/invite/${inv.id}`, { method: 'DELETE' })
+      if (res.ok) { showToast('Invite revoked'); await loadInvites() }
+      else showToast('Could not revoke the invite', 'error')
+    },
+  })
 
   const roleChip = (role: string) => (
     <Chip size="small" label={role === 'ADMIN' ? 'Admin' : 'Field Operator'} color={role === 'ADMIN' ? 'primary' : 'default'} />
@@ -358,6 +465,39 @@ export default function AdminUsersPage() {
             <Button size="small" onClick={() => setFilterProject('')}>Clear</Button>
           )}
         </Stack>
+      )}
+
+      {/* Pending invites — outstanding, unclaimed invite links */}
+      {invites.length > 0 && (
+        <Paper variant="outlined" sx={{ borderRadius: 2, mb: 2, p: 2 }}>
+          <Typography variant="subtitle2" color="text.secondary" mb={1}>
+            Pending invites ({invites.length})
+          </Typography>
+          <Stack divider={<Divider flexItem />} spacing={0}>
+            {invites.map((inv) => (
+              <Stack key={inv.id} direction={{ xs: 'column', sm: 'row' }} spacing={1}
+                alignItems={{ sm: 'center' }} justifyContent="space-between" sx={{ py: 1 }}>
+                <Box>
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <Typography variant="body2" fontWeight={500}>{inv.name}</Typography>
+                    {roleChip(inv.role)}
+                  </Stack>
+                  <Typography variant="caption" color="text.secondary">
+                    {inv.email} · expires {formatDateTime(inv.expiresAt)}
+                  </Typography>
+                </Box>
+                <Stack direction="row" spacing={1}>
+                  <Button size="small" variant="outlined" startIcon={<LinkIcon />} onClick={() => regenerateLink(inv)}>
+                    Regenerate link
+                  </Button>
+                  <Button size="small" color="error" onClick={() => revokeInvite(inv)}>
+                    Revoke
+                  </Button>
+                </Stack>
+              </Stack>
+            ))}
+          </Stack>
+        </Paper>
       )}
 
       {/* Users table */}
@@ -475,7 +615,13 @@ export default function AdminUsersPage() {
       </TableContainer>
 
       {/* Dialogs */}
-      <InviteDialog open={inviteOpen} onClose={() => setInviteOpen(false)} onSuccess={(msg) => { showToast(msg); load() }} />
+      <InviteDialog
+        open={inviteOpen}
+        onClose={() => setInviteOpen(false)}
+        onSuccess={(msg) => { showToast(msg); loadInvites() }}
+        onLink={(p) => { setLinkPayload(p); loadInvites() }}
+      />
+      <InviteLinkDialog payload={linkPayload} onClose={() => setLinkPayload(null)} />
       <AccountDialog user={editUser} hubs={hubs} onClose={() => setEditUser(null)} onSuccess={(msg) => { showToast(msg); load() }} />
       <ActivityDialog open={activityOpen} onClose={() => setActivityOpen(false)} />
       <ConfirmDialog
