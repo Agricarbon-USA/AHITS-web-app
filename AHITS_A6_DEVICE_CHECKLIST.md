@@ -1,6 +1,8 @@
 # AHITS — A6 Real-Device Offline Pass (sign-off checklist)
 
-> **⚠️ PILOT GATE IS A6-LITE, NOT THIS FULL MATRIX — see `DECISIONS.md` D13 (2026-07-20).** The pilot gate is **rows 2, 5, 6, 19, 23 on Android only** (data-safety keystones + live scan). The **full matrix below (28 rows × 5 targets, incl. all iOS columns) is PARKED** and its trigger is **BEFORE the Time/Invoicing capstone (CC-17) ships** — offline money-writes must not go live on an unverified offline base. Run A6-Lite for the pilot; run the whole thing before CC-17.
+> **⚠️ PILOT GATE IS A6-LITE, NOT THIS FULL MATRIX — see `DECISIONS.md` D13 (2026-07-20).** The pilot gate is **rows 2, 5, 6, 19, 23 on Android only** (data-safety keystones + live scan). The **full matrix below (now 29 rows × 5 targets, incl. all iOS columns) is PARKED** and its trigger is **BEFORE the Time/Invoicing capstone (CC-17) ships** — offline money-writes must not go live on an unverified offline base. Run A6-Lite for the pilot; run the whole thing before CC-17.
+>
+> **AMENDMENT — `DECISIONS.md` D14 (2026-07-21):** CC-15 adds **row 29 to A6-Lite** (location grant AND deny at the daily check). If CC-15 merges pre-pilot, the **iOS A6-Lite is now rows 2 / 5 / 6 / 19 / 23 / 29** and must re-run on the post-CC-15-merge build (target Fri 2026-07-24); Android (green 07-20) needs a quick re-verify of rows **2 / 19 / 29** only.
 >
 > **✅ A6-LITE SIGN-OFF (Android) — Maxwell Slater · 2026-07-20.** Rows **2, 5, 6, 19, 23 all PASS on Android.**
 > **☐ A6-LITE (iOS installed PWA) — REQUIRED before the 2026-07-27 start (D13 amended 2026-07-20 — cohort now includes iOS operators).** Same rows (2/5/6/19/23) on one iOS device; **this is the one outstanding pre-start gate.** << Max to run + sign >>.
@@ -60,6 +62,7 @@ Legend: ✅ pass · ❌ fail (note it) · — n/a
 | 26 | **Permission-denied / no-camera fallback (CC-25)** — deny camera permission (or use a device with no camera) when opening a scanner → it **falls back to "take a photo" + manual entry**, NOT a blank/black screen or a dead end | — | ☐ | ☐ | ☐ | ☐ |
 | 27 | **App-switch resume + no background stream (CC-25)** — start a scan, switch to another app, then return → the **viewfinder is live again** (not frozen/black). While away, the camera is **stopped** (no OS camera-in-use indicator); closing the scanner also stops it | — | ☐ | ☐ | ☐ | ☐ |
 | 28 | **Honest scan failures (CC-25)** — scan or type an **unregistered** code → **"not found"**; go **offline** and scan a real code → **"can't verify right now"**. Never the old **"failed to process image"** lie | ☐ | ☐ | ☐ | ☐ | ☐ |
+| 29 | **Location grant AND deny at the daily check (CC-15 — A6-Lite keystone, D14)** — submit a daily check with location **granted** (the review step shows the "saved once per check… never live tracking" line; the check submits) **and**, on a second check, with location **denied/dismissed** → **the check still submits either way** — location NEVER blocks or fails a check. (Offline variant: an airplane-mode check still submits and later syncs.) | ☐ | ☐ | ☐ | ☐ | ☐ |
 
 ## iOS-specific watch-items (note if seen)
 - ☐ Installed PWA keeps you **logged in across an app close/reopen** (cookie-jar check).
