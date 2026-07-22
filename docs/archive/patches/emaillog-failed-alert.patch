@@ -1,0 +1,189 @@
+From 12534b878024b0b608dd3ffe889b9a146b2e6d39 Mon Sep 17 00:00:00 2001
+From: Fable <fable@local>
+Date: Fri, 10 Jul 2026 13:26:58 -0700
+Subject: [PATCH] EmailLog-FAILED alert (FND-8/FND-17): surface swallowed
+ outbound emails
+
+Daily cron turns FAILED email_logs into admin-visible, self-resolving EMAIL_FAILED
+alerts so a swallowed invoice/shop/hub/invite send is seen and re-actionable.
+- schema: EMAIL_FAILED added to AlertType (+ additive ALTER TYPE ADD VALUE migration)
+- cron dispatch step 8b: CREATE pass (newest FAILED, kind!=ALERT, one alert/row) +
+  RESOLVE pass driven off ACTIVE alerts (orphan-proof beyond the 200-window);
+  recovery matched on (to, kind, subject) so a different same-recipient email can't
+  mask a genuine swallowed one; excludes kind='ALERT' to prevent a self-amplifying loop
+- presentAlert: EMAIL_FAILED case renders recipient/subject/kind/attempts (no more bare label)
+- EMAIL_FAILED added to CONFIGURABLE_ALERT_TYPES (admin can mute)
+- deep-link /admin/settings#email-delivery + anchor on the EmailDeliverySection card
+
+Four-agent-reviewed; fixes for orphan-resolve, resolve granularity, alert content,
+and mutability incorporated and re-verified.
+---
+ .../migration.sql                             |  9 ++++
+ prisma/schema.prisma                          |  1 +
+ src/app/(admin)/admin/settings/page.tsx       |  4 +-
+ .../api/admin/notification-config/route.ts    |  1 +
+ src/app/api/cron/dispatch/route.ts            | 51 ++++++++++++++++++-
+ src/lib/alert-display.ts                      |  2 +
+ src/lib/notifications.ts                      |  8 +++
+ 7 files changed, 74 insertions(+), 2 deletions(-)
+ create mode 100644 prisma/migrations/20260709000000_add_email_failed_alert/migration.sql
+
+diff --git a/prisma/migrations/20260709000000_add_email_failed_alert/migration.sql b/prisma/migrations/20260709000000_add_email_failed_alert/migration.sql
+new file mode 100644
+index 0000000..6a81618
+--- /dev/null
++++ b/prisma/migrations/20260709000000_add_email_failed_alert/migration.sql
+@@ -0,0 +1,9 @@
++-- FND-8/FND-17: add EMAIL_FAILED alert type so the cron scan can surface swallowed
++-- outbound email failures (invoice / shop / hub / invite / material-request sends) as
++-- admin-visible, re-actionable alerts.
++--
++-- Additive enum value only. Postgres forbids referencing a newly added enum value in the
++-- SAME transaction that added it; Prisma `migrate deploy` runs each migration file in its
++-- own transaction, so app code that creates an 'EMAIL_FAILED'::"AlertType" alert runs
++-- safely once this migration commits (the cron revision serves after migrate).
++ALTER TYPE "AlertType" ADD VALUE IF NOT EXISTS 'EMAIL_FAILED';
+diff --git a/prisma/schema.prisma b/prisma/schema.prisma
+index 0b8bc74..0823550 100644
+--- a/prisma/schema.prisma
++++ b/prisma/schema.prisma
+@@ -151,6 +151,7 @@ enum AlertType {
+   MATERIAL_REQUEST
+   DAILY_CHECK_FAILED
+   DAILY_CHECK_MISSED
++  EMAIL_FAILED
+ }
+ 
+ enum PhotoContext {
+diff --git a/src/app/(admin)/admin/settings/page.tsx b/src/app/(admin)/admin/settings/page.tsx
+index 99e5afb..04d85e8 100644
+--- a/src/app/(admin)/admin/settings/page.tsx
++++ b/src/app/(admin)/admin/settings/page.tsx
+@@ -210,7 +210,9 @@ export default function SettingsPage() {
+       </Card>
+ 
+       {/* FND-8: email delivery visibility */}
+-      <EmailDeliverySection />
++      <div id="email-delivery">
++        <EmailDeliverySection />
++      </div>
+ 
+       {/* Daily-Check Checklists (M5-25) */}
+       <ChecklistTemplatesSection onToast={showToast} onError={showError} />
+diff --git a/src/app/api/admin/notification-config/route.ts b/src/app/api/admin/notification-config/route.ts
+index 26433dd..f12c012 100644
+--- a/src/app/api/admin/notification-config/route.ts
++++ b/src/app/api/admin/notification-config/route.ts
+@@ -14,6 +14,7 @@ const CONFIGURABLE_ALERT_TYPES = [
+   'LOW_INVENTORY',
+   'INSURANCE_EXPIRING',
+   'REGISTRATION_EXPIRING',
++  'EMAIL_FAILED',
+ ] as const
+ 
+ export async function GET() {
+diff --git a/src/app/api/cron/dispatch/route.ts b/src/app/api/cron/dispatch/route.ts
+index 08c5ad9..4eb29b4 100644
+--- a/src/app/api/cron/dispatch/route.ts
++++ b/src/app/api/cron/dispatch/route.ts
+@@ -236,9 +236,58 @@ async function run() {
+     /* inventory_stock missing / transient — non-fatal */
+   }
+ 
++  // 8b) FND-8/FND-17: surface FAILED outbound emails (a swallowed invoice / shop / hub /
++  // invite / work-order / reservation send) as EMAIL_FAILED alerts so admins can see and
++  // re-action them. Excludes kind='ALERT' (the alert-dispatch emails themselves) so a down
++  // mail channel can't create a self-amplifying loop; those failures stay visible in the
++  // email-log surface and admins still get every alert in-app regardless of email health.
++  let emailFailedFlagged = 0
++  try {
++    // Recovery = a LATER successful send of the SAME (to, kind, subject): the specific
++    // message got through on a retry/resend, not merely "the channel is up again".
++    const recovered = async (r: { to: string; kind: string; subject: string; createdAt: Date }) =>
++      (await prisma.emailLog.findFirst({
++        where: { status: 'SENT', to: r.to, kind: r.kind, subject: r.subject, createdAt: { gt: r.createdAt } },
++        select: { id: true },
++      })) !== null
++    // CREATE pass: newest FAILED rows not yet recovered -> one alert per failed send (dedups on row id).
++    const failed = await prisma.emailLog.findMany({
++      where: { status: 'FAILED', kind: { not: 'ALERT' } },
++      select: { id: true, to: true, subject: true, kind: true, attempts: true, lastError: true, createdAt: true },
++      orderBy: { createdAt: 'desc' },
++      take: 200,
++    })
++    for (const e of failed) {
++      if (await recovered(e)) continue
++      await createAlert('EMAIL_FAILED', 'email_logs', e.id, {
++        to: e.to, subject: e.subject, kind: e.kind, attempts: e.attempts, lastError: e.lastError ?? null,
++      })
++      emailFailedFlagged++
++    }
++    // RESOLVE pass: driven off the ACTIVE alerts (not the capped scan) so nothing orphans -
++    // an old failure whose recovery lands after it ages past the newest-200 still clears.
++    // (sourceTable 'email_logs' is unique to EMAIL_FAILED, so no enum filter is needed.)
++    const activeEmailAlerts = await prisma.alert.findMany({
++      where: { sourceTable: 'email_logs', resolved: false },
++      select: { sourceId: true },
++    })
++    for (const a of activeEmailAlerts) {
++      if (!a.sourceId) continue
++      const row = await prisma.emailLog.findUnique({
++        where: { id: a.sourceId },
++        select: { to: true, kind: true, subject: true, createdAt: true },
++      })
++      if (row === null || (await recovered(row))) {
++        await resolveActiveAlert('EMAIL_FAILED', 'email_logs', a.sourceId)
++      }
++    }
++  } catch {
++    /* email_logs missing / transient — non-fatal */
++  }
++
+   // 9) Dispatch: email admins + create in-app notifications for un-notified alerts.
+   const dispatch = await dispatchPendingAlerts()
+-  return { overdueFlagged: due.length, idempotencyReaped, lowInventoryFlagged: lowFlagged, expiryFlagged, missedFlagged, holdsReleased, inventoryDriftFlagged, ...dispatch }
++  return { overdueFlagged: due.length, idempotencyReaped, lowInventoryFlagged: lowFlagged, expiryFlagged, missedFlagged, holdsReleased, inventoryDriftFlagged, emailFailedFlagged, ...dispatch }
+ }
+ 
+ export async function POST(req: NextRequest) {
+diff --git a/src/lib/alert-display.ts b/src/lib/alert-display.ts
+index 19b3973..ded1068 100644
+--- a/src/lib/alert-display.ts
++++ b/src/lib/alert-display.ts
+@@ -17,6 +17,7 @@ export const ALERT_LABELS: Record<string, string> = {
+   MATERIAL_REQUEST: 'Material request',
+   DAILY_CHECK_FAILED: 'Daily check failed',
+   DAILY_CHECK_MISSED: 'Daily check missed',
++  EMAIL_FAILED: 'Email delivery failed',
+ }
+ 
+ export function alertLabel(type: string): string {
+@@ -33,5 +34,6 @@ export function alertLink(sourceTable: string | null, sourceId: string | null, t
+   if (type === 'DAILY_CHECK_MISSED') return '/admin/users'
+   if (type === 'PIN_LOCKED') return '/admin/users'
+   if (type === 'MATERIAL_REQUEST') return '/admin/requests'
++  if (type === 'EMAIL_FAILED') return '/admin/settings#email-delivery'
+   return null
+ }
+diff --git a/src/lib/notifications.ts b/src/lib/notifications.ts
+index 7fa48a0..e6fe72c 100644
+--- a/src/lib/notifications.ts
++++ b/src/lib/notifications.ts
+@@ -38,6 +38,14 @@ export function presentAlert(alert: {
+     case 'PIN_LOCKED': message = `${str(meta.name) ?? 'An operator'}'s PIN was locked after too many failed attempts.`; break
+     case 'MATERIAL_REQUEST': message = `${str(meta.name) ?? 'A material request'} needs your attention.`; break
+     case 'DAILY_CHECK_FAILED': message = `${subject ?? 'A vehicle'} failed its daily check${str(meta.operatorName) ? ` (reported by ${str(meta.operatorName)})` : ''}${str(meta.issues) ? `: ${str(meta.issues)}` : '.'}`; break
++    case 'EMAIL_FAILED': {
++      const to = str(meta.to) ?? 'a recipient'
++      const emailSubject = str(meta.subject)
++      const kind = str(meta.kind)
++      const attempts = typeof meta.attempts === 'number' ? meta.attempts : null
++      message = `Failed to email ${to}${emailSubject ? ` — "${emailSubject}"` : ''}${kind ? ` (${kind}${attempts && attempts > 1 ? `, ${attempts} attempts` : ''})` : ''}.`
++      break
++    }
+     default: message = title
+   }
+   return { title, message, link: alertLink(alert.sourceTable, alert.sourceId, alert.type) }
+-- 
+2.34.1
+

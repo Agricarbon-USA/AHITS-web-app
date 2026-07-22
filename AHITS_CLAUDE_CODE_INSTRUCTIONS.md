@@ -26,26 +26,27 @@
 | CC-07 | Mobile quick-win triage | Leaf-level drawer/search/filter/table fixes | ✅ MERGED |
 | CC-08 | Hubs discrepancy + bulk verify | Discrepancy review view, deliberate Dismiss, bulk select | ✅ MERGED |
 | CC-09 | Awaiting-Pickup thread | Fulfilled-reservation visibility → seeded checkout | ✅ MERGED |
-| — | Wave-0 patches | EmailLog-FAILED alert, URL-filters rollout, batch6a date-unify | ✅ MERGED |
-| CC-10 | Field-fix logging | Fixed-in-field log + vehicle damage path | 🔄 IN REVIEW (PR #180) |
-| CC-11 | Admin-as-operator | Admin holds rigs; excluded from money loop (D3) | 📋 QUEUED |
-| CC-12 | Batch 6b + perf | Monolith split, SWR, outbox view, 401 prompt | 📋 QUEUED |
+| — | Wave-0 patches | EmailLog-FAILED alert ✅, URL-filters rollout ✅ — **batch6a date-unify still PENDING** (loose patch; CC-19 owns landing it) | ⚠️ PARTIAL |
+| CC-10 | Field-fix logging | Fixed-in-field log + vehicle damage path | ✅ MERGED (PR #180) |
+| CC-11 | Admin-as-operator | Admin holds rigs; excluded from money loop (D3) | ✅ MERGED (PR #181) |
+| CC-12 | Batch 6b + perf | Monolith split, SWR, outbox view, 401 prompt | ✅ MERGED (PRs #187–#189) |
 | CC-13 | Documentation hygiene | — | ⛔ SUPERSEDED → `AHITS_DOC_CLEANUP_INSTRUCTIONS.md` |
-| CC-14 | NS-10 Today view | Operator front door + NS-5 + operator IA | 📋 QUEUED |
-| CC-15 | Deployment Map | Attestation-GPS pins + route history + crew visibility (D2) | 📋 QUEUED |
-| CC-16 | No-app QR daily-check | Public per-vehicle QR check form | 📋 QUEUED |
-| CC-17 | Time/Invoicing/Availability | The money loop | 📋 QUEUED |
+| CC-14 | NS-10 Today view | Operator front door + NS-5 + operator IA | ✅ MERGED (PRs #190–#194) |
+| CC-15 | Deployment Map | Attestation-GPS pins + route history + crew visibility (D2) | ✅ MERGED (PRs #197/#198, D14) |
+| CC-16 | No-app QR daily-check | Public per-vehicle QR check form | 📋 QUEUED — **NEXT (live queue)** |
+| CC-17 | Time/Invoicing/Availability | The money loop | 📋 QUEUED (full A6 matrix required first — D13) |
 | CC-18 | N-5 Week board | Read-only manager's week | 📋 QUEUED |
-| CC-19 | Consistency & dead-code | Envelope/fetchJson/withAuth, verified deletions | 📋 QUEUED (rolling, unscheduled) |
+| CC-19 | Consistency & dead-code | Envelope/fetchJson/withAuth, verified deletions; land `batch6a-date-unify.patch` | 📋 QUEUED (rolling, unscheduled — batch6a still pending) |
 | CC-20 | Dead-end record readers | Remainder only — #1 moved to CC-26 | 🅿 PARKED (trigger: first pilot dispute needing history) |
 | CC-21 | Mounted collection units | Design spike, decision first, no build | 🧪 SPIKE |
-| CC-22 | Pilot ops rider | Cron dead-man heartbeat + Sentry wiring | 📋 QUEUED |
-| CC-23 | Tokens + quick fixes + 3 primitives | Design substrate: tokens.ts, contrast, 44px, DetailDrawer/StatusChip/BannerStack | 📋 QUEUED |
-| CC-24 | Subtraction + glossary | Delete duplicates, one verb per state, optional notes | 📋 QUEUED |
-| CC-25 | Live-camera QR scanning | Viewfinder decode loop, one shared QrScannerDialog | 📋 QUEUED |
-| CC-26 | Daily-check admin viewer | The pencil-whipping falsifier — pre-pilot gate | 📋 QUEUED |
-| CC-27 | FulfillmentChecklist rebuild | MUI + tokens re-skin, behavior parity | 📋 QUEUED (pilot-fortnight filler) |
-| CC-28 | Today-lite bridge | RESERVED — exists only if D5 = Option B | RESERVED |
+| CC-22 | Pilot ops rider | Cron dead-man heartbeat + Sentry wiring | ✅ MERGED (PR #182) |
+| CC-23 | Tokens + quick fixes + 3 primitives | Design substrate: tokens.ts, contrast, 44px, DetailDrawer/StatusChip/BannerStack | ✅ MERGED (PR #183) |
+| CC-24 | Subtraction + glossary | Delete duplicates, one verb per state, optional notes | ✅ MERGED (PRs #184/#185) |
+| CC-25 | Live-camera QR scanning | Viewfinder decode loop, one shared QrScannerDialog | ✅ MERGED (PR #186) |
+| CC-26 | Daily-check admin viewer | The pencil-whipping falsifier — pre-pilot gate | ✅ MERGED (PR #195) |
+| CC-27 | FulfillmentChecklist rebuild | MUI + tokens re-skin, behavior parity | ✅ MERGED (PR #196) |
+| CC-28 | Today-lite bridge | ~~RESERVED — exists only if D5 = Option B~~ | ⛔ MOOT (D5 = Option A; never built) |
+| — | Copy-link invites | Email-independent onboarding (delivery: EMAIL/LINK) | ✅ MERGED (PR #200) |
 
 ---
 
@@ -65,7 +66,7 @@
 
 **CC-09 · Awaiting-Pickup thread — ✅ MERGED.** Operator Awaiting-Pickup cards; pickup seeds checkout with held lines; TTL-sweep pause and residual-hold release were acceptance criteria — ⟲ confirm both shipped, and whether the optional `Rig.requestId` landed (CC-14's pre-flight depends on it).
 
-**Wave-0 patches — ✅ MERGED.** EmailLog-FAILED alert, URL-filters rollout, batch6a date-unify.
+**Wave-0 patches — ⚠️ PARTIAL.** EmailLog-FAILED alert ✅ and URL-filters rollout ✅ are merged; **`batch6a-date-unify.patch` is still PENDING** (verified 2026-07-22: `admin/hubs/page.tsx` still has an unconverted `toLocaleDateString` date site). The loose patch lives at repo root; CC-19 owns landing it.
 
 **CC-10 · Field-fix logging — 🔄 IN REVIEW (PR #180).** Operators log a fixed-in-field issue on any vehicle or unit (COMPLETED task, no alert, no status flip) or report vehicle damage (IN_PROGRESS, vehicle → IN_MAINTENANCE, DAMAGE_REPORTED alert); admin maintenance close handles vehicle repairs. Merge on CI green + staging smoke — first item in the landing order.
 

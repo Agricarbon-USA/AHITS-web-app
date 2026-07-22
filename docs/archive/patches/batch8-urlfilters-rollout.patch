@@ -1,0 +1,186 @@
+From 6ebd27565b3a37401398cfddea8cb491626546e9 Mon Sep 17 00:00:00 2001
+From: Fable <fable@local>
+Date: Fri, 10 Jul 2026 13:35:51 -0700
+Subject: [PATCH] Batch 8: URL-persist admin deployment + request list filters
+ (FND-48)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Roll the useUrlFilters hook (shipped on inventory) to the deployments and requests
+admin lists so filters are deep-linkable, reload-safe, and back-button correct.
+- deployments: showEnded/operator/project -> URL keys ended/operatorId/projectId
+- requests: tab/type/status/hub -> URL; free-text requester stays local (matches
+  inventory — avoids per-keystroke URL churn)
+- both pages wrapped in <Suspense> (useSearchParams requirement)
+
+Four-agent-reviewed (behavior-preserving vs the prior local state). Hardening from
+review: tamperable URL values coerced to the known option set (tab/type/status) and
+select value props guarded against out-of-range ids (operator/project/hub) so a stale
+or hand-edited param can't disable a filter, blank a control, or flash during the
+async options load on a valid deep-link.
+---
+ src/app/(admin)/admin/deployments/page.tsx | 31 ++++++++++++++-----
+ src/app/(admin)/admin/requests/page.tsx    | 36 ++++++++++++++++------
+ 2 files changed, 50 insertions(+), 17 deletions(-)
+
+diff --git a/src/app/(admin)/admin/deployments/page.tsx b/src/app/(admin)/admin/deployments/page.tsx
+index af33c75..c95d3cf 100644
+--- a/src/app/(admin)/admin/deployments/page.tsx
++++ b/src/app/(admin)/admin/deployments/page.tsx
+@@ -25,6 +25,7 @@ import type { HubOption, UserOption } from '@/components/shared/DispositionDialo
+ import { useCanEdit, EditGuard, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
+ import { ConditionSelect } from '@/components/shared/ConditionSelect'
+ import { useToast } from '@/components/shared/useToast'
++import { useUrlFilters } from '@/hooks/useUrlFilters'
+ import {
+   RentalVehicleForm, rentalFieldsToVehiclePayload, isRentalFormValid,
+   type RentalVehicleFields,
+@@ -1214,14 +1215,28 @@ function DeploymentDrawer({
+ 
+ // ── Main Page ─────────────────────────────────────────────────────
+ 
++// FND-48: admin deployment-list filters live in the URL (deep-linkable, reload-safe,
++// back-button correct). Module scope so the useUrlFilters setter stays referentially stable.
++const DEPLOYMENT_FILTER_DEFAULTS = { ended: '', operatorId: '', projectId: '' }
++
+ export default function AdminDeploymentsPage() {
++  return (
++    <React.Suspense>
++      <AdminDeploymentsContent />
++    </React.Suspense>
++  )
++}
++
++function AdminDeploymentsContent() {
+   const canEdit = useCanEdit()
+   const [rigs, setRigs] = React.useState<Rig[]>([])
+   const [loading, setLoading] = React.useState(true)
+   const toast = useToast()
+-  const [showEnded, setShowEnded] = React.useState(false)
+-  const [filterOperator, setFilterOperator] = React.useState('')
+-  const [filterProject, setFilterProject] = React.useState('')
++  // FND-48: URL-persisted filters (deep-linkable, reload-safe).
++  const { filters, setFilters } = useUrlFilters(DEPLOYMENT_FILTER_DEFAULTS)
++  const showEnded = filters.ended === 'true'
++  const filterOperator = filters.operatorId
++  const filterProject = filters.projectId
+   const [operators, setOperators] = React.useState<UserOption[]>([])
+   const [projects, setProjects] = React.useState<{ id: string; name: string }[]>([])
+   const [vehicles, setVehicles] = React.useState<VehicleOption[]>([])
+@@ -1360,22 +1375,22 @@ export default function AdminDeploymentsPage() {
+       )}
+ 
+       <Stack direction="row" spacing={1.5} mb={2.5} alignItems="center" flexWrap="wrap">
+-        <TextField select size="small" label="All Operators" value={filterOperator}
+-          onChange={(e) => setFilterOperator(e.target.value)} sx={{ minWidth: 160 }}>
++        <TextField select size="small" label="All Operators" value={!filterOperator || operators.some((o) => o.id === filterOperator) ? filterOperator : ''}
++          onChange={(e) => setFilters({ operatorId: e.target.value })} sx={{ minWidth: 160 }}>
+           <MenuItem value="">All Operators</MenuItem>
+           {operators.filter((o) => o.role === 'OPERATOR').map((o) => (
+             <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>
+           ))}
+         </TextField>
+         {projects.length > 0 && (
+-          <TextField select size="small" label="All Projects" value={filterProject}
+-            onChange={(e) => setFilterProject(e.target.value)} sx={{ minWidth: 160 }}>
++          <TextField select size="small" label="All Projects" value={!filterProject || projects.some((p) => p.id === filterProject) ? filterProject : ''}
++            onChange={(e) => setFilters({ projectId: e.target.value })} sx={{ minWidth: 160 }}>
+             <MenuItem value="">All Projects</MenuItem>
+             {projects.map((p) => <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>)}
+           </TextField>
+         )}
+         <FormControlLabel
+-          control={<Switch checked={showEnded} onChange={(e) => setShowEnded(e.target.checked)} size="small" />}
++          control={<Switch checked={showEnded} onChange={(e) => setFilters({ ended: e.target.checked ? 'true' : '' })} size="small" />}
+           label={<Typography variant="body2">Show ended</Typography>}
+         />
+       </Stack>
+diff --git a/src/app/(admin)/admin/requests/page.tsx b/src/app/(admin)/admin/requests/page.tsx
+index 9afc079..5a72953 100644
+--- a/src/app/(admin)/admin/requests/page.tsx
++++ b/src/app/(admin)/admin/requests/page.tsx
+@@ -12,6 +12,7 @@ import SendIcon from '@mui/icons-material/Send'
+ import AddIcon from '@mui/icons-material/Add'
+ import { StatusChip } from '@/components/shared/StatusChip'
+ import { useToast } from '@/components/shared/useToast'
++import { useUrlFilters } from '@/hooks/useUrlFilters'
+ import { MutationButton } from '@/components/shared/ReadOnly'
+ import { FulfillmentChecklist, type ChecklistLine, type LineActionData } from '@/components/shared/FulfillmentChecklist'
+ import {
+@@ -510,7 +511,19 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
+ 
+ // ── Page ──────────────────────────────────────────────────────────────────────
+ 
++// FND-48: admin request-list dropdown/tab filters live in the URL (deep-linkable, reload-safe).
++const REQUEST_STATUS_OPTIONS = ['DRAFT', 'REQUESTED', 'STAGED', 'FORWARDED', 'FULFILLED', 'DENIED', 'CANCELLED']
++const REQUEST_FILTER_DEFAULTS = { tab: 'ACTIVE', type: 'ALL', status: 'ALL', hub: 'ALL' }
++
+ export default function AdminRequestsPage() {
++  return (
++    <React.Suspense>
++      <AdminRequestsContent />
++    </React.Suspense>
++  )
++}
++
++function AdminRequestsContent() {
+   const [requests, setRequests] = React.useState<ReqRow[] | null>(null)
+   const [hubs, setHubs] = React.useState<HubOption[]>([])
+   const [operators, setOperators] = React.useState<OperatorOption[]>([])
+@@ -520,11 +533,16 @@ export default function AdminRequestsPage() {
+   const [categories, setCategories] = React.useState<CategoryOption[]>([])
+   const [composerOpen, setComposerOpen] = React.useState(false)
+   const [composerDataLoaded, setComposerDataLoaded] = React.useState(false)
+-  const [filterType, setFilterType] = React.useState('ALL')
+-  const [filterStatus, setFilterStatus] = React.useState('ALL')
+-  const [filterHub, setFilterHub] = React.useState('ALL')
++  // FND-48: dropdown/tab filters live in the URL (deep-linkable, reload-safe); the free-text
++  // requester search stays local (per-keystroke URL churn isn't worth it — matches inventory).
++  const { filters, setFilters } = useUrlFilters(REQUEST_FILTER_DEFAULTS)
++  // Coerce URL-tamperable values to the known option set so a stale/hand-edited param
++  // (e.g. ?tab=foo) can't disable a filter or blank a control.
++  const activeTab: 'ACTIVE' | 'CLOSED' = filters.tab === 'CLOSED' ? 'CLOSED' : 'ACTIVE'
++  const filterType = filters.type === 'RESERVATION' || filters.type === 'MATERIAL' ? filters.type : 'ALL'
++  const filterStatus = REQUEST_STATUS_OPTIONS.includes(filters.status) ? filters.status : 'ALL'
++  const filterHub = filters.hub
+   const [filterRequester, setFilterRequester] = React.useState('')
+-  const [activeTab, setActiveTab] = React.useState<'ACTIVE' | 'CLOSED'>('ACTIVE')
+   const showToast = useToast()
+ 
+   const load = React.useCallback(async () => {
+@@ -596,7 +614,7 @@ export default function AdminRequestsPage() {
+       <ToggleButtonGroup
+         value={activeTab}
+         exclusive
+-        onChange={(_e, v) => { if (v) setActiveTab(v as 'ACTIVE' | 'CLOSED') }}
++        onChange={(_e, v) => { if (v) setFilters({ tab: v as 'ACTIVE' | 'CLOSED' }) }}
+         size="small"
+         sx={{ mb: 2 }}
+       >
+@@ -606,18 +624,18 @@ export default function AdminRequestsPage() {
+ 
+       {/* Filter bar */}
+       <Stack direction="row" spacing={1.5} mb={2} flexWrap="wrap">
+-        <TextField select size="small" label="Type" value={filterType} onChange={(e) => setFilterType(e.target.value)} sx={{ minWidth: 140 }}>
++        <TextField select size="small" label="Type" value={filterType} onChange={(e) => setFilters({ type: e.target.value })} sx={{ minWidth: 140 }}>
+           <MenuItem value="ALL">All types</MenuItem>
+           <MenuItem value="RESERVATION">Reservation</MenuItem>
+           <MenuItem value="MATERIAL">Material</MenuItem>
+         </TextField>
+-        <TextField select size="small" label="Status" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} sx={{ minWidth: 140 }}>
++        <TextField select size="small" label="Status" value={filterStatus} onChange={(e) => setFilters({ status: e.target.value })} sx={{ minWidth: 140 }}>
+           <MenuItem value="ALL">All statuses</MenuItem>
+-          {['DRAFT', 'REQUESTED', 'STAGED', 'FORWARDED', 'FULFILLED', 'DENIED', 'CANCELLED'].map((s) => (
++          {REQUEST_STATUS_OPTIONS.map((s) => (
+             <MenuItem key={s} value={s}>{s.charAt(0) + s.slice(1).toLowerCase()}</MenuItem>
+           ))}
+         </TextField>
+-        <TextField select size="small" label="Hub" value={filterHub} onChange={(e) => setFilterHub(e.target.value)} sx={{ minWidth: 160 }}>
++        <TextField select size="small" label="Hub" value={filterHub === 'ALL' || hubs.some((h) => h.id === filterHub) ? filterHub : 'ALL'} onChange={(e) => setFilters({ hub: e.target.value })} sx={{ minWidth: 160 }}>
+           <MenuItem value="ALL">All hubs</MenuItem>
+           {hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.name}</MenuItem>)}
+         </TextField>
+-- 
+2.34.1
+

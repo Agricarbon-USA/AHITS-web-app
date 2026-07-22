@@ -1,4 +1,6 @@
 # AHITS — Packet Landing Order & Smoke Checklist
+
+> STATUS: canonical · UPDATED: 2026-07-22 · READ-WITH: `AHITS_CLAUDE_CODE_INSTRUCTIONS.md` · `STATUS.md`
 ### Keep this next to Claude Code · 2026-07-10
 
 > ## ⛔️ PROD CUTOVER (CC-04, CC-05) IS DEFERRED — skip both for now
@@ -16,7 +18,7 @@
 1. **CC-01** Release-safety guards *(CI/pipeline — makes the cutover safe)*
 2. **CC-02** Data-integrity fixes *(inventory-truth cluster)*
 3. **CC-03** Offline & trust one-liners *(incl. the 401 fix)*
-4. **Three pending patches** — land EmailLog-FAILED alert, URL-filters rollout, batch6a date-unify *(independent, reviewed)*
+4. **Wave-0 patches** — EmailLog-FAILED alert ✅ and URL-filters rollout ✅ are **merged**; **`batch6a-date-unify.patch` is still PENDING** (loose patch at repo root; CC-19 owns landing it — verified 2026-07-22)
 
 **⛔️ Prod cutover — DEFERRED, skip for now (see banner above):**
 
@@ -36,7 +38,7 @@
 12. **CC-11** Admin-as-operator *(build directly on `deployment_assignments` — no longer waits on 4b′, since prod/4b′ is deferred)*
 
 **Then the reflection increment + the big work, in this order:**
-CC-10 merge → CC-11 → **CC-22** (pilot ops rider) → **CC-23** (tokens + quick fixes + first 3 primitives) → **CC-24** (subtraction + glossary) → **CC-25** (live-camera QR) → CC-12 (Batch 6b/perf) → CC-14 (Today view) → **CC-26** (daily-check viewer — MUST land before the pilot fortnight) → **pilot fortnight** (with **CC-27** FulfillmentChecklist rebuild as scheduled filler) → CC-15 (Map) → CC-16 (QR no-app) → CC-17 (Time/Invoicing) → CC-18 (Week board). *(The pilot slot assumes D5 = Option A; if Max initials Option B, insert the Today-lite bridge packet — CC-28, number reserved — after CC-26.)*
+**MERGED (through 2026-07-21):** CC-10 → CC-11 → CC-22 → CC-23 → CC-24 → CC-25 → CC-12 → CC-14 → CC-26 → CC-27 → **CC-15 (Map — pulled AHEAD of the pilot per D14, shipped 2026-07-21)** + copy-link invites (PR #200). **LIVE QUEUE (post-pilot):** **CC-16** (QR no-app) → **CC-17** (Time/Invoicing — the **full A6 matrix is required first**, D13) → **CC-18** (Week board). **CC-28 is MOOT** (D5 = Option A — the Today-lite bridge was never built). *(CC-13 remains ⛔ SUPERSEDED, absorbed into `AHITS_DOC_CLEANUP_INSTRUCTIONS.md`.)*
 CC-13/CC-19/CC-20 (doc + consistency + dead-code remainder) land whenever convenient. CC-21 is a design spike (no build).
 
 **In parallel, starting now (no code):** the **A6 device pass** — your pilot line — and get a **Sentry DSN** to unblock error tracking.
@@ -73,7 +75,7 @@ CC-13/CC-19/CC-20 (doc + consistency + dead-code remainder) land whenever conven
 
 **CC-25 (live QR):** on a phone (include iOS Safari), a code decodes live from the viewfinder with no shutter tap in operator/scan and both my-deployment scanners; deny camera → falls back to photo capture (not a blank screen); offline shows "can't verify right now" and a bad code shows "not found" — never "Failed to process image"; the camera stream stops on close and resumes after switching apps and back.
 
-**CC-26 (daily-check viewer):** from a failed-check alert, one click opens THAT check with answers + odometer + site + photos; a missed-check alert lands on the vehicle's check history; the vehicle AND deployment drawers reach the viewer; nothing on the viewer is editable.
+**CC-26 (daily-check viewer):** from a failed-check alert, one click opens THAT check (`/admin/vehicles?check=<id>`) with answers + odometer + site + photos; a **missed-check alert** (which has no vehicle record) lands on the operator's active-rig drawer via **`/admin/deployments?operator=<id>`** (D12); the vehicle AND deployment drawers reach the viewer (the deployment drawer transitively, D12); nothing on the viewer is editable.
 
 **CC-27 (FulfillmentChecklist):** BEFORE merge: hub-flow staging smoke — fulfill a request end-to-end through the rebuilt checklist. After: controls in admin/requests are themed MUI (no raw system-font buttons next to MUI ones); every action produces the same result as before (behavior parity).
 

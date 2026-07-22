@@ -1,3 +1,5 @@
+> ⤴ **ARCHIVED (superseded) — moved 2026-07-22.** Historical record; current state lives in `STATUS.md` + the newest handoff. Kept for provenance only — do not act on it.
+
 # AHITS — Amendments to Existing Docs (2026-07-12 reflection increment)
 ### Precise, minimal old→new edits. Apply exactly; don't restyle surrounding text. · 2026-07-12
 

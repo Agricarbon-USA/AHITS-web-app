@@ -1,6 +1,7 @@
 # CC-15 Pre-Launch Rider — Map capstone pulled ahead of the pilot
 
-> STATUS: current · UPDATED: 2026-07-21
+> **STATUS: ✅ EXECUTED 2026-07-21 — PRs #197/#198 merged, staging smoke passed; kept for provenance. Do NOT re-run the paste block below.** See `DECISIONS.md` D14 (EXECUTED note) + `AHITS_LAUNCH_HANDOFF_2026-07-27.md`.
+> STATUS: superseded (executed) · UPDATED: 2026-07-21
 > READ-WITH: `AHITS_CLAUDE_CODE_INSTRUCTIONS.md` (CC-15) · `AHITS_PILOT_CHARTER.md` · `DECISIONS.md`
 > **Decision (owner, 2026-07-21):** full CC-15 (steps 1–6) lands before pilot launch Monday 2026-07-27, under the freeze rules below. Step 7 (NS-4 weather stamps) is explicitly OUT — post-launch.
 

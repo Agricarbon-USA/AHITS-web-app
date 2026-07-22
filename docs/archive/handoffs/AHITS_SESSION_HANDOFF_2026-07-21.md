@@ -1,3 +1,5 @@
+> ⤴ **ARCHIVED (superseded) — SUPERSEDED-BY `AHITS_SESSION_HANDOFF_2026-07-21b.md`, moved 2026-07-22.** Historical; kept for provenance.
+
 # AHITS — Session Handoff · 2026-07-21
 
 > Read `STATUS.md` (§1/§3/§4) and `DECISIONS.md` **D14** first. This handoff only records what moved this session and where to resume; it does not re-narrate decisions.

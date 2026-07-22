@@ -1,3 +1,5 @@
+> ⤴ **ARCHIVED (superseded) — moved 2026-07-22.** Historical record; current state lives in `STATUS.md` + the newest handoff. Kept for provenance only — do not act on it.
+
 > STATUS: session-record · UPDATED: 2026-07-11 · SUPERSEDED-BY: — · READ-WITH: STATUS.md, DECISIONS.md
 
 # AHITS — Session Handoff · 2026-07-11
