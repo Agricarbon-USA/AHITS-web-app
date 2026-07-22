@@ -1,3 +1,5 @@
+> ⤴ **ARCHIVED (superseded) — moved 2026-07-22.** Historical record; current state lives in `STATUS.md` + the newest handoff. Kept for provenance only — do not act on it.
+
 # AHITS — Session Handoff · 2026-07-20 (pilot launch prep)
 
 > STATUS: canonical · UPDATED: 2026-07-20 · READ-WITH: `STATUS.md`, `DECISIONS.md`, `AHITS_PILOT_CHARTER.md`

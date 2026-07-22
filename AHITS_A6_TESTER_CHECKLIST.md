@@ -1,5 +1,7 @@
 # AHITS — A6 Offline Device Test · Tester Checklist
 
+> STATUS: reference (tester-facing companion) · UPDATED: 2026-07-22 · READ-WITH: `AHITS_A6_DEVICE_CHECKLIST.md` (the authoritative matrix + D13/D14 banner)
+
 _A hand-to-a-tester version of `AHITS_A6_DEVICE_CHECKLIST.md`. Follow it top-to-bottom on each device. No engineering background needed. Plan ~45–60 min per device._
 
 **This is the pilot gate:** when every device passes the CRITICAL items, the app is cleared for a real-operator pilot.

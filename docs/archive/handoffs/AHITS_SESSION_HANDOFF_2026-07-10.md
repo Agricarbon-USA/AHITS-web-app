@@ -1,3 +1,5 @@
+> ⤴ **ARCHIVED (superseded) — moved 2026-07-22.** Historical record; current state lives in `STATUS.md` + the newest handoff. Kept for provenance only — do not act on it.
+
 # AHITS — Session Handoff (2026-07-10)
 
 Comprehensive handoff for the next session. Covers **what shipped**, **where it stands (staging/prod)**, **exact resume points**, and **everything forward**. Every code change this session went through the same discipline: build → **multi-agent adversarial review** (antagonist / Fable soundness / calibration / product-operator-lens, plus a reversibility/SRE and data-retention/audit seat for the irreversible DB drop) → fixes incorporated → **verified git patch** that applies cleanly onto `development`. Nothing was committed to your repo by the assistant; everything is delivered as patches your Claude Code (CC) lands.

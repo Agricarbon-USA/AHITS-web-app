@@ -1,4 +1,6 @@
 # AHITS — Packet Landing Order & Smoke Checklist
+
+> STATUS: canonical · UPDATED: 2026-07-22 · READ-WITH: `AHITS_CLAUDE_CODE_INSTRUCTIONS.md` · `STATUS.md`
 ### Keep this next to Claude Code · 2026-07-10
 
 > ## ⛔️ PROD CUTOVER (CC-04, CC-05) IS DEFERRED — skip both for now

@@ -1,4 +1,6 @@
 # AHITS — Idea Compendium
+
+> STATUS: reference (backlog of the possible — not a plan) · UPDATED: 2026-07-22 · READ-WITH: `STATUS.md` + `DECISIONS.md` (they win on currency)
 ### Every open idea, future-state, and concept — compiled, classified, and sortable · 2026-07-11
 
 > **What this is.** One place that scoops together every idea, feature, future-state, and concept floated across the entire AHITS corpus (~120 docs, root + `docs/archive/`), so you can sort through and consider them. It captures **where we've been, what's been considered, what's been denied, and where things are going.** Produced by a six-seat agent pass (extraction · strategy · boundary · dependencies · value · feasibility), grounded in the docs *and* the code/schema.

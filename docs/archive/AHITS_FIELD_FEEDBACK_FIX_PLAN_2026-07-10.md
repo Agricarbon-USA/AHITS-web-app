@@ -1,3 +1,5 @@
+> ⤴ **ARCHIVED (superseded) — moved 2026-07-22.** Historical record; current state lives in `STATUS.md` + the newest handoff. Kept for provenance only — do not act on it.
+
 # AHITS — Field Feedback → Fix Plan (2026-07-10)
 
 Each note below was **investigated against the live code on `development`** (not guessed) by a read-only agent, so the "current state" is what the app actually does today. Verdicts: **BUG** (broken), **GAP** (not built / partial), **FEATURE** (new capability), **UX/PERF** (cross-cutting polish). Effort is rough: S (<½ day), M (½–2 days), L (multi-day / new model).

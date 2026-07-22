@@ -1,5 +1,8 @@
 # AHITS — Session Handoff · 2026-07-21b
 
+> STATUS: superseded · UPDATED: 2026-07-21 · SUPERSEDED-BY: `AHITS_SESSION_HANDOFF_2026-07-22.md` · READ-WITH: `STATUS.md`
+> _(Kept at root as the 2nd-newest handoff; the newest is 2026-07-22. Provenance for the CC-15 + copy-link ship.)_
+
 > Read `STATUS.md` (§1/§3/§4) and `DECISIONS.md` **D14** first. This records what moved after the earlier 2026-07-21 handoff (which planned CC-15). Everything below is **shipped**.
 
 ## Shipped this session

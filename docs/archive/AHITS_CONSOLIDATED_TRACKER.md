@@ -1,3 +1,5 @@
+> ⤴ **ARCHIVED (superseded) — moved 2026-07-22.** Historical record; current state lives in `STATUS.md` + the newest handoff. Kept for provenance only — do not act on it.
+
 # AHITS — Consolidated State, Risk & Roadmap Tracker
 
 _Prepared 2026-06-22. Synthesizes a full code-risk audit, a UX & cross-role audit, the planning-doc trail (PRD v2.4, addendum, independent assessment, Wave 1/Wave 2/Session 4 records, QA staging issues), and live build verification. Intended as the single canonical status doc — the ~22 prior markdown docs should be archived read-only behind this one._

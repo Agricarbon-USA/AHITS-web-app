@@ -1,5 +1,7 @@
 # AHITS — A6 Real-Device Offline Pass (sign-off checklist)
 
+> STATUS: canonical (the pilot device gate) · UPDATED: 2026-07-22 · READ-WITH: `DECISIONS.md` D13 + D14 · `STATUS.md` · `AHITS_LAUNCH_HANDOFF_2026-07-27.md` §1 (Friday)
+
 > **⚠️ PILOT GATE IS A6-LITE, NOT THIS FULL MATRIX — see `DECISIONS.md` D13 (2026-07-20).** The pilot gate is **rows 2, 5, 6, 19, 23 on Android only** (data-safety keystones + live scan). The **full matrix below (now 29 rows × 5 targets, incl. all iOS columns) is PARKED** and its trigger is **BEFORE the Time/Invoicing capstone (CC-17) ships** — offline money-writes must not go live on an unverified offline base. Run A6-Lite for the pilot; run the whole thing before CC-17.
 >
 > **AMENDMENT — `DECISIONS.md` D14 (2026-07-21):** CC-15 adds **row 29 to A6-Lite** (location grant AND deny at the daily check). If CC-15 merges pre-pilot, the **iOS A6-Lite is now rows 2 / 5 / 6 / 19 / 23 / 29** and must re-run on the post-CC-15-merge build (target Fri 2026-07-24); Android (green 07-20) needs a quick re-verify of rows **2 / 19 / 29** only.
