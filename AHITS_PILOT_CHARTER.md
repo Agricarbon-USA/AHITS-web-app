@@ -1,7 +1,7 @@
 # AHITS — Pilot Charter
 ### One page. Fill the placeholders, then this is the plan. · 2026-07-12
 
-> **✅ SIGNED — Maxwell Slater · 2026-07-20. 🟡 PILOT GO — pending ONE gate before the Monday 2026-07-27 start: the iOS A6-Lite pass.** Charter signed (2026-07-20) ✓; A6-Lite **Android** passed (2026-07-20, rows 2/5/6/19/23) ✓; **A6-Lite iOS (installed PWA) still REQUIRED before 07-27** — the cohort now includes iOS operators, so D13's A6-Lite spans both platforms (see `DECISIONS.md` D13 amendment + §3). Placeholders filled: 9 pilot operators (§1), project **CUL005**, D5 = **Option A** (§5), start date **2026-07-27** (contingent on the iOS pass), D7 second contact (Stewart Arbuckle), variance-check owner (Max), sandbox-flip rule confirmed (§4/D6). The **full A6 matrix stays parked to pre-CC-17** (edge rows 20–22 + all-column ceremony). **ONE thing outstanding before the start: the iOS A6-Lite pass (§3).** (Max's escalation phone is now filled — triage card step 7.) This supersedes the "direction, not a plan" framing below.
+> **✅ SIGNED — Maxwell Slater · 2026-07-20. 🟡 PILOT GO — pending ONE gate before the Monday 2026-07-27 start: the iOS A6-Lite pass.** Charter signed (2026-07-20) ✓; A6-Lite **Android** passed (2026-07-20, rows 2/5/6/19/23) ✓ — needs a **quick re-verify of rows 2/19/29** on the post-CC-15 build; **A6-Lite iOS (installed PWA) still REQUIRED before 07-27 — rows 2/5/6/19/23/29** (D13 + D14: the cohort includes iOS operators, and CC-15 added row 29). Placeholders filled: 9 pilot operators (§1), project **CUL005**, D5 = **Option A** (§5), start date **2026-07-27** (contingent on the iOS pass), D7 second contact (Stewart Arbuckle · +44 7747 738364, confirmed), escalation Max · +1 419-944-1939 (confirmed current 2026-07-21), variance-check owner (Max), sandbox-flip rule confirmed (§4/D6, **timing decoupled from Day 1 per D15**). **CC-15 Deployment Map (admin map + crew map + GPS capture) SHIPPED (D14) and launches with the pilot.** The **full A6 matrix stays parked to pre-CC-17** (edge rows 20–22 + all-column ceremony). **ONE thing outstanding before the start: the iOS A6-Lite pass (§3).** This supersedes the "direction, not a plan" framing below.
 >
 > _(Original framing, kept for provenance:)_ The pilot was a *direction, not a plan*: no document named who pilots, on which project, starting when, with what success criteria — while a de-facto pilot had already begun (field feedback exists) ahead of the A6 gate, on staging where email is sandboxed and both hubs have no contact address. This charter closes that.
 
@@ -23,7 +23,7 @@
 - **Start date:** **Monday 2026-07-27** — contingent on the **iOS A6-Lite pass** landing before then (§3). D5 = **Option A** (§5); charter signed + A6-Lite Android green (both 2026-07-20), iOS A6-Lite still to run. The date is the first Monday after the Android pass (20th → 27th); if the iOS pass slips past the 27th, the start slips with it. _(Max: if you meant to start the same week, say so — this reads "first Monday after.")_
 - **Duration:** one pilot fortnight (2 weeks), with CC-27 as scheduled filler and CC-26 landed before it starts.
 - **Pilot owner (drives sessions, decides):** Max.
-- **Second human — pilot-hours contact (D7):** **Stewart Arbuckle · +44 7747 738364** — the person an operator reaches at 6am when Max is unreachable. **A pilot with one human is a single point of failure.** _(Number as given had a trailing stray character "r", dropped as a typo — Max, confirm the digits.)_
+- **Second human — pilot-hours contact (D7):** **Stewart Arbuckle · +44 7747 738364** — the person an operator reaches at 6am when Max is unreachable. **A pilot with one human is a single point of failure.** _(Number **CONFIRMED correct as written** — Max, 2026-07-21.)_
 
 ## 2. The three success metrics (measured, not vibed)
 
@@ -33,10 +33,11 @@
 
 ## 3. The gates that must be green before start
 
-- **A6-Lite device pass (per D13) — rows 2, 5, 6, 19, 23 on BOTH platforms, since the cohort now includes iOS operators:**
-  - [x] **Android — ✅ GREEN. Completed + signed 2026-07-20 (Max)**, rows 2/5/6/19/23 all pass.
-  - [ ] **iOS (installed PWA) — ☐ REQUIRED before the 2026-07-27 start.** ← **the one outstanding pre-start gate.** << Max to run + sign >>.
+- **A6-Lite device pass (per D13, D14) — rows 2, 5, 6, 19, 23, **29** on iOS; the cohort includes iOS operators, and CC-15 added row 29 (location grant/deny at the daily check):**
+  - [x] **Android — ✅ GREEN (2026-07-20, Max)**, rows 2/5/6/19/23. **Quick re-verify on the post-CC-15 build: rows 2 / 19 / 29** (GPS capture touched the check flow).
+  - [ ] **iOS (installed PWA) — ☐ REQUIRED before the 2026-07-27 start — rows 2 / 5 / 6 / 19 / 23 / 29.** ← **the one outstanding pre-start gate** (target Fri 2026-07-24). << Max to run + sign >>.
   - The **full A6 matrix stays PARKED — trigger = before CC-17 (Time/Invoicing) ships** (D13); parked scope = edge rows 20–22 + the all-column ceremony. (`AHITS_A6_DEVICE_CHECKLIST.md`.)
+- [x] **CC-15 Deployment Map SHIPPED (D14)** — PRs #197/#198 merged 2026-07-21, staging-smoked. The **admin map (pins + recency + route history) and the operator crew map launch WITH the pilot**; GPS capture is live on the daily check.
 - [x] **CC-26 daily-check admin viewer landed** — PR #195, live on staging (2026-07-19).
 - [x] **Today view (CC-14) landed** — PRs #190–#194, live on staging (2026-07-19); D5 = Option A (§5).
 - [x] **CC-22 cron heartbeat live** — PR #182; `AHITS_CRON_HEARTBEAT_URL` provisioned on staging.
@@ -44,8 +45,8 @@
 
 ## 4. Sandbox-flip rule (D6)
 
-Email is sandboxed on staging and both hubs currently have **no contact address**. `EMAIL_SANDBOX` is one **global** env var — a per-hub flip is impossible. The rule (D6): **on the charter start date, flip global `EMAIL_SANDBOX` off, AFTER (a) verifying only pilot hubs have contact addresses, (b) auditing all non-hub recipient paths (shop emails, invites, invoice sends) for real addresses in staging data.**
-- **Owner:** Max runs (a) and (b) and does the flip. Not before the start date.
+Email is sandboxed on staging and both hubs currently have **no contact address**. `EMAIL_SANDBOX` is one **global** env var — a per-hub flip is impossible. The rule (D6, timing amended by **D15**): **flip global `EMAIL_SANDBOX` off ONLY AFTER (a) verifying only pilot hubs have contact addresses, and (b) auditing all non-hub recipient paths (shop emails, invites, invoice sends) for real addresses in staging data.** **The flip is gated on the audits (a)+(b) AND a verified Resend sending domain — NOT on the start date (D15):** it happens whenever those land, before or after Monday. Email is optional at launch — copy-link invites onboard everyone by text, so a still-sandboxed Monday gates nothing.
+- **Owner:** Max runs (a) and (b) and does the flip. Audit-then-flip, always; the rollback is flipping back, but sent email doesn't unsend.
 
 ## 5. D5 decision block — Max initials one
 
@@ -58,13 +59,15 @@ Email is sandboxed on staging and both hubs currently have **no contact address*
 
 *(This D5 outcome also feeds the CC-14 packet placeholder — see AMENDMENTS.md.)*
 
-> **Update 2026-07-19 (CC-14 shipped):** Building the full **Today view (CC-14)** landed and deployed to staging (PRs #190–#193), which makes this **Option A in practice — this packet IS the pilot gate, and no CC-28 bridge was built.** D5 is left **uninitialed above** (Max's signature still needed to close it formally). Max's stated operative gate for pilot start: **CC-14 on staging (done) AND this charter signed AND the A6 device pass green.** So the remaining pilot-start blockers are the charter signature and the A6 pass — not the Today view. See `DECISIONS.md` D5 (status) and D11 (the deferred CC-14 glossary sweep).
+> **Update 2026-07-19 (CC-14 shipped) — provenance, now superseded by the signed header:** Building the full **Today view (CC-14)** landed and deployed to staging (PRs #190–#193), making this **Option A in practice — this packet IS the pilot gate, and no CC-28 bridge was built.** _(This paragraph once flagged D5 as "uninitialed"; that is **RESOLVED** — Max initialed D5 = Option A · MS · 2026-07-20 above, and the charter is signed. Kept for provenance.)_ The remaining pilot-start blocker is now the **iOS A6-Lite pass** only. See `DECISIONS.md` D5 (RESOLVED) and D11 (the deferred CC-14 glossary sweep).
 
 ## 6. The variance check — on a calendar, with an owner
 
 Pencil-whipping detection (time-to-complete outliers + a periodic contents spot-check via the CC-26 viewer) is only real if someone actually looks.
 - **Cadence:** every Monday, weeks 1–2, plus a summary variance review **~1 month after start**.
 - **Owner:** **Maxwell Slater** — opens the CC-26 viewer and eyeballs N checks against the time-to-complete outliers.
+- **Also glance at the admin map** in the same slot — pins appear as checks arrive (no new ceremony).
+- **Observational only (NOT a target):** **GPS grant rate** — % of checks carrying coords. Mass denial is a coaching signal (say the location script better) and the map's quiet failure mode; a check counts either way, so this never gates or scores anyone.
 - **Recorded where:** the running pilot log (this doc's appendix).
 
 ---

@@ -6,6 +6,8 @@
 > **What this is NOT.** It's not a commitment or a re-plan — the plan of record stays `AHITS_PHASE3_WORKPLAN_2026-07-10.md` + `STATUS.md`. This is the **backlog of the possible**, for deliberate sorting.
 >
 > **Currency rule (important):** where this compendium and a strategy doc disagree, `DECISIONS.md` + the code win. Two anti-goals in North Star v3 / the Master Roadmap are **stale** — crew visibility and route history were re-opened (scoped) by decision **D2**; they are ACTIVE here, not denied. Real-time GPS tracking remains denied.
+>
+> **Currency update (2026-07-22):** several compendium ideas have since **SHIPPED** — the **Deployment Map** (admin pins + per-rig route-history trail + operator crew map) and **GPS-on-daily-check capture** all landed with **CC-15 (D14, PRs #197/#198, 2026-07-21)**; **copy-link invites** (email-independent onboarding, `delivery: EMAIL/LINK`) shipped as **PR #200** — a CONSIDERED→**SHIPPED** entry that predated this compendium. **NS-4 weather stamps** is now the single **live parked-trigger** behind the map (runs post-pilot). `STATUS.md` wins on what's shipped vs. still open.
 
 ---
 

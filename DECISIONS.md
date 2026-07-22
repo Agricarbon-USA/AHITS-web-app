@@ -52,12 +52,14 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 ### D6 · Email sandbox flip — global flip on charter start date, after the two-part audit
 - **Date:** 2026-07-12 · **Owner:** Max · **Status:** **ACTIVE — rule CONFIRMED as written (2026-07-20).** Execution still pending (runs on the start date, not before).
 - **Recommendation:** `EMAIL_SANDBOX` is one global env var — a per-hub flip is impossible. On the charter start date, flip global EMAIL_SANDBOX off, AFTER (a) verifying only pilot hubs have contact addresses, (b) auditing all non-hub recipient paths (shop emails, invites, invoice sends) for real addresses in staging data.
-- **Confirmation (2026-07-20, Max):** the rule stands exactly as written. **Nothing is flipped now** — the flip is a start-date action gated on audits (a) and (b), owner Max. This entry records the rule as the settled policy; the flip itself is a Day-1 checklist item, not done here.
+- **Confirmation (2026-07-20, Max):** the rule stands exactly as written. **Nothing is flipped now** — the flip is gated on audits (a) and (b), owner Max. This entry records the rule as the settled policy.
+- **TIMING amended by D15 (2026-07-21):** the flip is **decoupled from Day 1** — it happens whenever the Resend sending domain is DNS-verified AND both audits (a)+(b) pass, before OR after the start date, not on a fixed date. **D6's audit content is unchanged**; only the "on the charter start date" timing is superseded. See D15.
 
 ### D7 · Name a second human as pilot-hours contact
 - **Date:** 2026-07-12 · **Owner:** Max · **Status:** ~~PENDING~~ → **ACTIVE / RESOLVED (2026-07-20).**
 - **Recommendation:** name one non-owner reachable during pilot hours to run the "operator can't sync" triage card (`AHITS_PILOT_CHARTER.md`). A one-human pilot is a single point of failure; the first 6am sync failure has no owner today.
-- **Resolution (2026-07-20, Max):** the second pilot-hours contact is **Stewart Arbuckle · +44 7747 738364** (recorded in the charter §1 and the triage card step 5). _(The number as supplied had a trailing stray "r"; recorded without it — Max to confirm the digits.)_ Max's own escalation number (triage card step 7) is still to be filled before the card is printed.
+- **Resolution (2026-07-20, Max):** the second pilot-hours contact is **Stewart Arbuckle · +44 7747 738364** (recorded in the charter §1 and the triage card step 5).
+- **Numbers CONFIRMED (2026-07-21, Max):** both phone numbers are final — **Stewart Arbuckle · +44 7747 738364 is correct as written** (the earlier "confirm the digits / trailing-r" caveat is withdrawn), and **Max's escalation number +1 419-944-1939 (triage card step 7) is confirmed current.** The earlier "escalation still to be filled" note is resolved; **cards may print.**
 
 ### D8 · CC-11 landed the cron-scan half of the D3 exclusion concurrently with the role-gate relax, not before it
 - **Date:** 2026-07-12 · **Owner:** Max · **Status:** RESOLVED · **Superseded-by:** D3 (note, 2026-07-12)
@@ -113,6 +115,15 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **A6-Lite gains row 29:** *location-permission grant AND deny paths at the daily check — the check submits either way.* Because CC-15 is a pre-pilot merge, the **iOS full A6-Lite (rows 2/5/6/19/23/29) must re-run on the final post-merge build** (target Fri 2026-07-24); Android (passed 07-20) needs a quick re-verify of rows 2/19/29 only.
 - **Rationale:** route history is only as good as its data; landing capture before day 1 is the whole point. The freeze + park-to-week-2 fallback keeps the pilot date sacrosanct.
 - **Detail:** `AHITS_CC15_PRELAUNCH_RIDER.md` · CC-15 packet · workplan §7A / Master Roadmap §7.2A.
+- **EXECUTED (2026-07-21):** **both PRs #197 + #198 merged to `development` inside the freeze; the staging smoke passed** (admin map pins with green/amber/red recency + a route trail + the crew map, on seeded `seed-cc15-*` data since cleaned to 0); **`AHITS_MAPBOX_TOKEN` is ENABLED + mounted.** The "awaiting smoke / PR-2 draft-HELD / deploy-hold" bullets above describe the **mid-flight state** and are superseded by this line. The drawer→route-history is a `/admin/map?rig=<id>` link (D12 transitive-reach — Max accepted), not an embedded map. Residual: the iOS A6-Lite re-run (rows 2/5/6/19/23/**29**) on the post-merge build.
+
+### D15 · EMAIL_SANDBOX flip is decoupled from the pilot start date — gated on the audits + a verified sending domain, not a date
+- **Date:** 2026-07-21 · **Owner:** Max · **Status:** ACTIVE · **Supersedes:** **D6's Day-1 *timing* only** — D6's two-audit rule and audit content stand unchanged.
+- **Decision:** The `EMAIL_SANDBOX` off-flip is **NOT a Day-1 action.** It happens **whenever** (1) the Resend sending domain is **DNS-verified**, AND (2) both D6 audits pass — **(a)** only pilot hubs carry contact addresses, **(b)** no stale real addresses on any non-hub recipient path (shop emails, invites, invoice sends). Before OR after Monday 2026-07-27; the pilot does not wait for it. **Email is optional at launch:** copy-link invites (PR #200) onboard everyone by text, so a still-sandboxed Monday gates nothing operator-facing.
+- **Open owner-side dependency chain (records the lead-time item Max controls):** Resend account + sending domain + **DNS records** (Max + whoever controls the domain, possibly UK-side) → create `AHITS_RESEND_API_KEY` in Secret Manager (ENABLED, deploy-SA accessor — the Mapbox recipe) → prove the pipeline via `EMAIL_SANDBOX_TO=maxtslater@gmail.com` (the redirect in `src/lib/email/resend.ts` — sandbox stays on, every send lands in that inbox tagged `[SANDBOX → real@addr]`) → then, after the audits, flip. Prod, when it wakes (D1), will additionally need `AHITS_PROD_RESEND_API_KEY`.
+- **Rationale:** DNS is the one item with lead time Max doesn't fully control; binding the flip to a calendar date risked either a rushed unaudited flip or a blocked launch. Decoupling removes email from the critical path without weakening the audit-before-flip safety rule.
+- **Rollback:** flip `EMAIL_SANDBOX` back on — but sent email doesn't unsend, so **audit before every flip.**
+- **Detail:** `AHITS_LAUNCH_HANDOFF_2026-07-27.md` §1 (Wed/Thu/Mon) · charter §4.
 
 ---
 
