@@ -19,6 +19,28 @@
 
 export const LOCAL_PHOTO_PREFIX = 'localphoto:'
 
+// CC-29 item 2: a hung photo upload on lie-fi wedges the queue exactly like a
+// hung write, so uploadPhotoBlob() is bounded to this. Matches FLUSH_ITEM_TIMEOUT_MS
+// in useOfflineQueue.ts (kept as a local constant here so photoStore has no
+// dependency on the hook).
+const PHOTO_UPLOAD_TIMEOUT_MS = 20_000
+
+/**
+ * CC-29 item 1a: a typed upload failure that tells the queue whether the SERVER
+ * saw and rejected the photo (`serverReached: true` — 413/415/500…, a real failed
+ * attempt that should burn a retry) versus the network never reaching it
+ * (`serverReached: false` — offline/timeout, keep waiting, no retry burned).
+ * resolvePhotoRefs propagates this unchanged so flush() can branch on it.
+ */
+export class PhotoUploadError extends Error {
+  readonly serverReached: boolean
+  constructor(message: string, serverReached: boolean) {
+    super(message)
+    this.name = 'PhotoUploadError'
+    this.serverReached = serverReached
+  }
+}
+
 const DB_NAME = 'ahits_photos'
 const STORE = 'photos'
 const DB_VERSION = 1
@@ -97,17 +119,44 @@ export async function deleteLocalPhoto(ref: string): Promise<void> {
   }
 }
 
-/** Upload a blob to the photos bucket and return its URL. Throws on failure. */
+/**
+ * Upload a blob to the photos bucket and return its URL. Throws a
+ * {@link PhotoUploadError} on failure — `serverReached: false` when fetch itself
+ * threw (offline / aborted timeout: keep waiting), `serverReached: true` when the
+ * server saw and rejected it (413/415/500…: a real failed attempt).
+ *
+ * CC-29 item 2: bounded by PHOTO_UPLOAD_TIMEOUT_MS via AbortController+setTimeout
+ * (NOT AbortSignal.timeout) so the abort path is deterministic under vitest fake
+ * timers in the offline harness; a swallowed real timer would leave the same
+ * lie-fi wedge as no timeout at all.
+ */
 export async function uploadPhotoBlob(blob: Blob, filename = `photo-${Date.now()}.jpg`): Promise<string> {
   const form = new FormData()
   form.append('file', blob, filename)
-  const res = await fetch('/api/uploads', { method: 'POST', body: form })
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), PHOTO_UPLOAD_TIMEOUT_MS)
+  let res: Response
+  try {
+    res = await fetch('/api/uploads', { method: 'POST', body: form, signal: controller.signal })
+  } catch (e) {
+    // fetch threw (offline, DNS, or our abort) — the server was never reached.
+    throw new PhotoUploadError(e instanceof Error ? e.message : 'Upload failed (network)', false)
+  } finally {
+    clearTimeout(timer)
+  }
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}))
-    throw new Error(typeof detail.error === 'string' ? detail.error : `Upload failed (${res.status})`)
+    throw new PhotoUploadError(
+      typeof detail.error === 'string' ? detail.error : `Upload failed (${res.status})`,
+      true, // the server responded — it saw and rejected this photo
+    )
   }
   const data = await res.json()
-  if (!data || typeof data.url !== 'string') throw new Error('Upload returned no URL')
+  if (!data || typeof data.url !== 'string') {
+    // A 2xx with no URL means the server DID process the request but returned an
+    // unusable body — server-reached, so this counts as a real failed attempt.
+    throw new PhotoUploadError('Upload returned no URL', true)
+  }
   return data.url as string
 }
 

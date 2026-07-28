@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createHash } from 'crypto'
 import { prisma } from '@/lib/prisma'
+import { IDEMPOTENCY_IN_FLIGHT_ERROR } from '@/lib/shared-errors'
 
 /**
  * Idempotent-write support for offline replay.
@@ -142,9 +143,11 @@ export async function withIdempotency(
       }
     }
     // Original still in-flight after ~1.55 s — tell the client to retry rather
-    // than double-applying a slow write.
+    // than double-applying a slow write. CC-29 item 6b: the body LEADS with the
+    // shared IDEMPOTENCY_IN_FLIGHT_ERROR constant so the offline queue can sniff
+    // this one transient 409 and keep retrying (vs. treating every 409 terminal).
     return NextResponse.json(
-      { error: 'Request in flight — retry after the original completes.' },
+      { error: `${IDEMPOTENCY_IN_FLIGHT_ERROR} — retry after the original completes.` },
       { status: 409 },
     )
   }
