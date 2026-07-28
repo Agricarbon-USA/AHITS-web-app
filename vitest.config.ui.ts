@@ -12,6 +12,6 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./tests/setup.ui.ts'],
-    include: ['tests/components/**/*.test.{ts,tsx}'],
+    include: ['tests/components/**/*.test.{ts,tsx}', 'tests/offline/**/*.test.{ts,tsx}'],
   },
 })

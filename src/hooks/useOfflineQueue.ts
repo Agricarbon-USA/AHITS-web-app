@@ -2,15 +2,38 @@
 
 import * as React from 'react'
 import type { OfflineQueueItem, MutateResult } from '@/types'
-import { resolvePhotoRefs } from '@/lib/photoStore'
+import { resolvePhotoRefs, PhotoUploadError } from '@/lib/photoStore'
 import { extractCreatedId, itemReferencesPlaceholder, remapPlaceholderId } from '@/lib/offline-remap'
 import { ensurePersistentStorage, getStorageEstimate, probeIdbWritable } from '@/lib/storage-health'
 import { requestSignature } from '@/lib/request-signature'
+import { IDEMPOTENCY_IN_FLIGHT_ERROR } from '@/lib/shared-errors'
 
 const DB_NAME = 'ahits_offline'
 const STORE = 'queue'
 const DB_VERSION = 1
 const MAX_RETRIES = 8
+
+// CC-29 item 2: fetch timeouts so lie-fi (degraded-but-not-dead signal) can't hang
+// a submit on "Submitting…" until the OS timeout (60s+). A mutate() abort enqueues
+// (the operator sees "check queued"); a flush() per-item abort just breaks the pass
+// (unchanged semantics, now bounded). Implemented with AbortController+setTimeout
+// (NOT AbortSignal.timeout) so the abort is deterministic under vitest fake timers.
+const MUTATE_TIMEOUT_MS = 12_000
+const FLUSH_ITEM_TIMEOUT_MS = 20_000
+
+// CC-29 item 6a: a single cross-instance flush owner. 3+ hook instances (AppShell,
+// OfflineBanner, page hooks) each fire online/visibility/30s flushes; without a
+// shared lock they double-send, resurrect deleted items via stale putItem, and
+// double-upload photos. navigator.locks is the primary mechanism; the localStorage
+// lease is the older-WebKit fallback (self-heals on a crashed holder via expiry).
+const FLUSH_LOCK_NAME = 'ahits-outbox-flush'
+const FLUSH_LEASE_KEY = 'ahits_outbox_flush_lease'
+const FLUSH_LEASE_TTL_MS = 30_000
+
+// Shown when even the offline enqueue fails (IDB unwritable) — the ONE case where a
+// write is truly not recorded anywhere.
+const STORAGE_FAILURE_ERROR =
+  "Couldn’t save this action on your device — your change was NOT recorded. Reconnect and try again."
 
 // HTTP statuses that mean "the server received and rejected this for good" —
 // retrying will never succeed, so the item becomes "needs attention" instead of
@@ -87,6 +110,55 @@ function extractError(body: unknown): string {
     }
   }
   return 'Request failed'
+}
+
+// CC-29 item 6a: run `body` under an exclusive cross-instance flush lock. Returns
+// false WITHOUT running when another instance/tab already holds it (overlapping
+// triggers SKIP rather than pile up — the holder is already draining). `body`
+// receives a `heartbeat()` it should call each loop iteration to re-extend the
+// localStorage lease; under navigator.locks the lock is held for the whole
+// callback, so heartbeat is a no-op there.
+async function runExclusiveFlush(
+  body: (heartbeat: () => void) => Promise<void>,
+): Promise<boolean> {
+  const locks = typeof navigator !== 'undefined'
+    ? (navigator as Navigator & { locks?: LockManager }).locks
+    : undefined
+  if (locks?.request) {
+    let ran = false
+    await locks.request(FLUSH_LOCK_NAME, { ifAvailable: true }, async (lock) => {
+      if (!lock) return // not granted → another owner is draining; skip
+      ran = true
+      await body(() => {})
+    })
+    return ran
+  }
+
+  // Fallback: a localStorage lease. test-and-set, re-extended each iteration,
+  // cleared in finally; a crashed holder self-heals once expiresAt passes.
+  const token = newKey()
+  const readLease = (): { token: string; expiresAt: number } | null => {
+    try {
+      const raw = localStorage.getItem(FLUSH_LEASE_KEY)
+      return raw ? (JSON.parse(raw) as { token: string; expiresAt: number }) : null
+    } catch { return null }
+  }
+  const writeLease = () => {
+    try { localStorage.setItem(FLUSH_LEASE_KEY, JSON.stringify({ token, expiresAt: Date.now() + FLUSH_LEASE_TTL_MS })) } catch {}
+  }
+  // Acquire only if there is no live lease (absent or expired). Read+write with no
+  // intervening await so a same-tab concurrent caller can't slip between them.
+  const current = readLease()
+  if (current && current.expiresAt > Date.now() && current.token !== token) return false
+  writeLease()
+  try {
+    await body(() => { if (readLease()?.token === token) writeLease() })
+    return true
+  } finally {
+    try {
+      if (readLease()?.token === token) localStorage.removeItem(FLUSH_LEASE_KEY)
+    } catch {}
+  }
 }
 
 export function useOfflineQueue() {
@@ -177,9 +249,14 @@ export function useOfflineQueue() {
     syncingRef.current = true
     setSyncing(true)
     try {
+      // CC-29 item 6a: only ONE instance/tab drains the shared queue at a time.
+      // syncingRef above is the cheap same-instance fast-path; runExclusiveFlush is
+      // the cross-instance owner — if another owner is already draining, this skips.
+      await runExclusiveFlush(async (heartbeat) => {
       const db = await openDB()
       const items = await getAllItems(db)
       for (const snapshot of items) {
+        heartbeat() // re-extend the localStorage lease (no-op under navigator.locks)
         if (snapshot.id == null) continue
         // Re-read fresh from IDB: an earlier item in THIS pass may have remapped this
         // one's placeholder endpoint (its create succeeded) or quarantined it (its
@@ -197,11 +274,52 @@ export function useOfflineQueue() {
             work = { ...item, body }
             await putItem(db, work) // persist so a later retry doesn't re-upload
           }
-        } catch {
-          // Photos can't upload yet (still offline) — stop; retry next cycle.
+        } catch (err) {
+          // CC-29 item 1: a photo couldn't be resolved. Branch on WHY:
+          if (err instanceof PhotoUploadError && err.serverReached) {
+            // The server saw and REJECTED the photo (413/415/500…) — a real failed
+            // attempt. Burn a retry (mirror the transient branch below); at the cap,
+            // mark 'failed' naming the photo and quarantine placeholder dependents
+            // (mirror the terminal branch), then CONTINUE — not break — so later
+            // plain writes (e.g. a daily check queued after this) drain past it
+            // instead of being wedged behind it head-of-line forever.
+            // `continue` is safe here: a photo-bearing write is never the placeholder
+            // PARENT of a LATER item except deploy-create, and if THIS is that create
+            // the quarantine below fails its dependents, so nothing downstream is left
+            // pointing at an id that will never resolve.
+            const retries = (item.retries ?? 0) + 1
+            const failing = retries >= MAX_RETRIES
+            await putItem(db, {
+              ...item,
+              retries,
+              ...(failing
+                ? { status: 'failed' as const, lastError: `A photo could not be uploaded (${err.message}) — retry or discard this action` }
+                : {}),
+            })
+            if (failing && item.placeholderId) {
+              const all = await getAllItems(db)
+              for (const other of all) {
+                if (other.id == null || other.id === item.id || other.status === 'failed') continue
+                if (itemReferencesPlaceholder(other, item.placeholderId)) {
+                  await putItem(db, {
+                    ...other,
+                    status: 'failed',
+                    lastError: 'A required earlier action failed, so this action could not be applied.',
+                  })
+                }
+              }
+            }
+            continue
+          }
+          // Not server-reached (still offline / can't upload yet) — keep today's
+          // behavior EXACTLY: stop the pass, stay pending, no retry burned. FIFO is
+          // preserved (FND-14-adjacent break semantics).
           break
         }
         let res: Response
+        // CC-29 item 2: bound the per-item send so lie-fi can't hang the whole drain.
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), FLUSH_ITEM_TIMEOUT_MS)
         try {
           const headers: Record<string, string> = { 'Content-Type': 'application/json' }
           if (work.idempotencyKey) headers['Idempotency-Key'] = work.idempotencyKey
@@ -209,10 +327,14 @@ export function useOfflineQueue() {
             method: work.method,
             headers,
             body: work.body !== undefined ? JSON.stringify(work.body) : undefined,
+            signal: controller.signal,
           })
         } catch {
-          // Network dropped mid-flush — stop; the rest stay pending for next time.
+          // Network dropped mid-flush OR the per-item timeout aborted — stop; the
+          // rest stay pending for next time. Unchanged break semantics, now bounded.
           break
+        } finally {
+          clearTimeout(timer)
         }
         if (res.ok) {
           // M1-9: if this was a queued create with a placeholder id, read the
@@ -249,24 +371,40 @@ export function useOfflineQueue() {
           break
         } else if (TERMINAL_STATUSES.has(res.status)) {
           const errBody = await res.json().catch(() => ({}))
-          await putItem(db, { ...work, status: 'failed', lastError: extractError(errBody) })
-          // Q2: if a create that OTHER queued writes depend on failed for good, those
-          // dependents can never have their placeholder remapped to a real id — they'd
-          // otherwise replay against a `pending-…` endpoint and 404. Quarantine the
-          // dependent chain (mark failed) instead of marching on, so ordering and the
-          // exactly-once guarantee stay honest. (Mirror of the success-path remap loop
-          // above; the app's only placeholder-bearing create is deploy-create, whose
-          // dependents don't themselves create — so a single depth-1 pass is complete.)
-          if (work.placeholderId) {
-            const all = await getAllItems(db)
-            for (const other of all) {
-              if (other.id == null || other.id === item.id || other.status === 'failed') continue
-              if (itemReferencesPlaceholder(other, work.placeholderId)) {
-                await putItem(db, {
-                  ...other,
-                  status: 'failed',
-                  lastError: 'A required earlier action failed, so this action could not be applied.',
-                })
+          const errMsg = extractError(errBody)
+          // CC-29 item 6b: a 409 whose body LEADS with withIdempotency's in-flight
+          // marker is TRANSIENT — the losing half of a concurrent flush, where the
+          // original write is still committing. Retry it instead of marking an
+          // already-applied write "Failed" (the false-fail → operator-redoes →
+          // duplicate-write vector). Every OTHER 409 (transfer-accept's "no longer
+          // pending", the item-4 duplicate-check) stays terminal.
+          if (res.status === 409 && errMsg.startsWith(IDEMPOTENCY_IN_FLIGHT_ERROR)) {
+            const retries = (work.retries ?? 0) + 1
+            await putItem(db, {
+              ...work,
+              retries,
+              ...(retries >= MAX_RETRIES ? { status: 'failed' as const, lastError: `Failed after ${MAX_RETRIES} attempts` } : {}),
+            })
+          } else {
+            await putItem(db, { ...work, status: 'failed', lastError: errMsg })
+            // Q2: if a create that OTHER queued writes depend on failed for good, those
+            // dependents can never have their placeholder remapped to a real id — they'd
+            // otherwise replay against a `pending-…` endpoint and 404. Quarantine the
+            // dependent chain (mark failed) instead of marching on, so ordering and the
+            // exactly-once guarantee stay honest. (Mirror of the success-path remap loop
+            // above; the app's only placeholder-bearing create is deploy-create, whose
+            // dependents don't themselves create — so a single depth-1 pass is complete.)
+            if (work.placeholderId) {
+              const all = await getAllItems(db)
+              for (const other of all) {
+                if (other.id == null || other.id === item.id || other.status === 'failed') continue
+                if (itemReferencesPlaceholder(other, work.placeholderId)) {
+                  await putItem(db, {
+                    ...other,
+                    status: 'failed',
+                    lastError: 'A required earlier action failed, so this action could not be applied.',
+                  })
+                }
               }
             }
           }
@@ -280,6 +418,7 @@ export function useOfflineQueue() {
           })
         }
       }
+      })
     } finally {
       syncingRef.current = false
       setSyncing(false)
@@ -366,39 +505,65 @@ export function useOfflineQueue() {
       const run = (async (): Promise<MutateResult<T>> => {
         const idempotencyKey = newKey()
         // Upload any locally-stored photos now (online) and swap their
-        // `localphoto:` refs for real URLs. If this throws (offline / upload
-        // failed) we keep the original body — its local refs and stored blobs are
-        // preserved, and flush() resolves them on reconnect.
-        let body = args.body
+        // `localphoto:` refs for real URLs. CC-29 item 7a: if resolve FAILS we must
+        // NEVER send a body still carrying `localphoto:` refs — routes would persist
+        // dead refs and lose the photo while reporting success. Instead ENQUEUE the
+        // ORIGINAL body (local refs + stored blobs intact) and let flush() own the
+        // photo-retry semantics, which item 1 made wedge-proof (offline waits;
+        // server-rejection burns retries and eventually surfaces "Failed").
+        let body: unknown
         try {
           body = await resolvePhotoRefs(args.body)
         } catch {
-          body = args.body
+          const stored = await enqueue({ endpoint: args.endpoint, method, body: args.body, idempotencyKey, label: args.label, placeholderId: args.placeholderId })
+          if (!stored) {
+            return { ok: false, queued: false, error: STORAGE_FAILURE_ERROR, status: 0, reason: 'storage' as const }
+          }
+          return { ok: true, queued: true, data: null }
         }
+        // CC-29 item 2: bound the send so lie-fi can't hang "Submitting…" for 60s+.
+        // AbortController+setTimeout (not AbortSignal.timeout) so the abort is
+        // deterministic under vitest fake timers. An abort lands in the catch below →
+        // the write ENQUEUES (honest "check queued" toast), never a stuck spinner.
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), MUTATE_TIMEOUT_MS)
         try {
           const res = await fetch(args.endpoint, {
             method,
             headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
             body: body === undefined ? undefined : JSON.stringify(body),
+            signal: controller.signal,
           })
           if (res.ok) {
             const data = (await res.json().catch(() => null)) as T
             return { ok: true, queued: false, data }
+          }
+          // CC-29 item 3: an ONLINE submit that hit a lapsed session (401). flush()'s
+          // 401-parking never protected mutate() — the write was lost with a bare
+          // "Unauthorized". Park it the same way: enqueue (the ALREADY-RESOLVED body —
+          // a 401 response proves the upload succeeded and blobs were deleted, so
+          // `body` carries real URLs, not `args.body`), flag sessionExpired for the
+          // sign-in banner, and return a distinguishable queued success so the caller
+          // says "check saved — sign in to send it" instead of an error.
+          if (res.status === 401) {
+            const stored = await enqueue({ endpoint: args.endpoint, method, body, idempotencyKey, label: args.label, placeholderId: args.placeholderId })
+            if (stored) {
+              setSessionExpired(true)
+              return { ok: true, queued: true, data: null, reason: 'auth' as const }
+            }
+            // Enqueue itself failed → the write is truly unrecorded; surface it.
+            return { ok: false, queued: false, error: STORAGE_FAILURE_ERROR, status: 0, reason: 'storage' as const }
           }
           const errBody = await res.json().catch(() => ({}))
           return { ok: false, queued: false, error: extractError(errBody), status: res.status }
         } catch {
           const stored = await enqueue({ endpoint: args.endpoint, method, body, idempotencyKey, label: args.label, placeholderId: args.placeholderId })
           if (!stored) {
-            return {
-              ok: false,
-              queued: false,
-              error: "Couldn’t save this action on your device — your change was NOT recorded. Reconnect and try again.",
-              status: 0,
-              reason: 'storage' as const,
-            }
+            return { ok: false, queued: false, error: STORAGE_FAILURE_ERROR, status: 0, reason: 'storage' as const }
           }
           return { ok: true, queued: true, data: null }
+        } finally {
+          clearTimeout(timer)
         }
       })()
       inflightRef.current.set(sig, run as Promise<MutateResult<unknown>>)

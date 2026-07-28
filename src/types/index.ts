@@ -116,9 +116,13 @@ export interface OfflineQueueStatus {
 }
 
 // Result of a network-or-queue mutation.
+// CC-29 item 3: the queued variant carries an optional `reason` so an ONLINE 401
+// (session lapsed mid-submit) can be distinguished from a plain offline enqueue —
+// `reason: 'auth'` drives the "sign in to send it" copy. Existing callers that only
+// branch on `queued: true` are unaffected (the field is optional).
 export type MutateResult<T = unknown> =
   | { ok: true; queued: false; data: T }
-  | { ok: true; queued: true; data: null }
+  | { ok: true; queued: true; data: null; reason?: 'auth' }
   | { ok: false; queued: false; error: string; status: number; reason?: 'storage' }
 
 // Dashboard stats

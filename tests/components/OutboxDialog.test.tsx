@@ -47,8 +47,33 @@ describe('OutboxDialog (CC-12 PR1)', () => {
   it('discards a single failed item (not a bulk nuke)', async () => {
     const props = renderOutbox()
     await screen.findByText('Daily check')
-    fireEvent.click(screen.getByRole('button', { name: /Discard/i }))
+    // Exact name — item 1 is aged-out and now also renders a "Stuck? Discard"
+    // button (CC-29 item 1b), so match the failed item's plain "Discard" only.
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }))
     await waitFor(() => expect(props.discardFailed).toHaveBeenCalledWith(2))
+  })
+
+  it('CC-29 item 1b: offers "Stuck? Discard" on a wedged NON-failed item and discards by id', async () => {
+    // Item 1 is pending with an ancient createdAt → past the 24h "stuck" threshold.
+    const props = renderOutbox()
+    await screen.findByText('Launch deployment')
+    const stuck = await screen.findByRole('button', { name: /Stuck\? Discard/i })
+    // window.confirm gates the destructive action — accept it, then it deletes by id.
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    fireEvent.click(stuck)
+    await waitFor(() => expect(props.discardFailed).toHaveBeenCalledWith(1))
+    confirmSpy.mockRestore()
+  })
+
+  it('CC-29 item 1b: a declined confirm does NOT discard the stuck item', async () => {
+    const props = renderOutbox()
+    await screen.findByText('Launch deployment')
+    const stuck = await screen.findByRole('button', { name: /Stuck\? Discard/i })
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    fireEvent.click(stuck)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(props.discardFailed).not.toHaveBeenCalled()
+    confirmSpy.mockRestore()
   })
 
   it('shows an empty state when nothing is queued', async () => {

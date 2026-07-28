@@ -19,6 +19,12 @@ interface OutboxDialogProps {
   syncing: boolean
 }
 
+// CC-29 item 1b: a NON-failed item that has retried this many times OR sat this long
+// is "stuck" — it never reached terminal 'failed' (e.g. an offline photo that can't
+// upload yet) but the operator needs an escape hatch so it can't wedge silently.
+const STUCK_RETRIES = 3
+const STUCK_AGE_MS = 24 * 60 * 60 * 1000
+
 // CC-12 PR1: the OUTBOX — the honest, per-item view of the offline queue. Shows
 // each queued action's label + (for failed items) its lastError, with per-item
 // Retry / Discard. Replaces the old blind bulk "Dismiss all failed" so an
@@ -26,9 +32,14 @@ interface OutboxDialogProps {
 export function OutboxDialog({ open, onClose, listAll, retryItem, discardFailed, syncing }: OutboxDialogProps) {
   const [items, setItems] = React.useState<OfflineQueueItem[]>([])
   const [busyId, setBusyId] = React.useState<number | null>(null)
+  // CC-29 item 1b: the wall-clock captured at load time (Date.now() is impure in
+  // render). Refreshed on open and after each action — fresh enough for the age
+  // check on a modal the operator opens on demand.
+  const [loadedAt, setLoadedAt] = React.useState(0)
 
   const load = React.useCallback(async () => {
     setItems(await listAll())
+    setLoadedAt(Date.now())
   }, [listAll])
 
   React.useEffect(() => {
@@ -55,6 +66,13 @@ export function OutboxDialog({ open, onClose, listAll, retryItem, discardFailed,
     }
   }
 
+  // CC-29 item 1b: discard a STUCK (non-failed) item behind a one-tap confirm — this
+  // is a write the office never received, so the copy makes the loss explicit.
+  const onDiscardStuck = async (id: number) => {
+    if (!window.confirm('This action will be permanently removed from this phone — the office never received it. Discard?')) return
+    await onDiscard(id)
+  }
+
   return (
     <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', pr: 1 }}>
@@ -71,6 +89,9 @@ export function OutboxDialog({ open, onClose, listAll, retryItem, discardFailed,
             {items.map((item) => {
               const failed = item.status === 'failed'
               const id = item.id
+              // CC-29 item 1b: a non-failed item that's retried a lot or aged out is
+              // "stuck" — offer a discard so it can't wedge the queue with no escape.
+              const stuck = !failed && ((item.retries ?? 0) >= STUCK_RETRIES || (loadedAt > 0 && loadedAt - item.createdAt > STUCK_AGE_MS))
               return (
                 <Box key={id ?? `${item.endpoint}-${item.createdAt}`} sx={{ py: 1.25 }}>
                   <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
@@ -96,6 +117,15 @@ export function OutboxDialog({ open, onClose, listAll, retryItem, discardFailed,
                       </Button>
                       <Button size="small" color="error" disabled={busyId === id} onClick={() => onDiscard(id)}>
                         Discard
+                      </Button>
+                    </Stack>
+                  )}
+                  {stuck && id != null && (
+                    <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                      <Button size="small" color="error" variant="outlined" disabled={busyId === id}
+                        startIcon={busyId === id ? <CircularProgress size={14} /> : undefined}
+                        onClick={() => onDiscardStuck(id)}>
+                        Stuck? Discard
                       </Button>
                     </Stack>
                   )}

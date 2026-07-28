@@ -220,7 +220,14 @@ export default function OperatorDailyCheckPage() {
     setSubmitting(false)
     if (result.ok && result.queued) {
       setSubmitted(true)
-      showToast({ message: 'No network — check queued, will sync when online', severity: 'info' })
+      // CC-29 item 3: an ONLINE 401 (session lapsed mid-submit) parks the write like
+      // an offline enqueue but needs sign-in framing — the OfflineBanner then carries
+      // the operator to /login and flush() drains on re-auth.
+      if (result.reason === 'auth') {
+        showToast({ message: 'Session expired — check saved on this phone. Sign in to send it.', severity: 'warning' })
+      } else {
+        showToast({ message: 'No network — check queued, will sync when online', severity: 'info' })
+      }
     } else if (result.ok) {
       setSubmitted(true)
       showToast({ message: `Daily check submitted — ${passFail ? 'Pass ✓' : 'Fail ✗ — admin notified'}`, severity: passFail ? 'success' : 'warning' })
