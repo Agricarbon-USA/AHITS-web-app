@@ -1,10 +1,10 @@
-import { SignJWT, jwtVerify } from 'jose'
+import { jwtVerify } from 'jose'
 import { cookies } from 'next/headers'
 import type { UserRole } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-
-const SESSION_COOKIE = 'ahits_session'
-const SESSION_DURATION = 60 * 60 * 24 // 24h in seconds
+// CC-29 item 5: the mint/renew helpers, cookie shape, and durations live in one
+// edge-safe module (no prisma/next-headers) shared with proxy.ts so there's no drift.
+import { SESSION_COOKIE, mintSessionToken, sessionCookieOptions } from '@/lib/auth/session-edge'
 
 export interface SessionPayload {
   userId: string
@@ -40,11 +40,16 @@ function getSecret() {
 }
 
 export async function createSession(payload: SignedClaims): Promise<string> {
-  return new SignJWT({ ...payload, mustChangePin: payload.mustChangePin === true })
-    .setProtectedHeader({ alg: 'HS256' })
-    .setIssuedAt()
-    .setExpirationTime('24h')
-    .sign(getSecret())
+  // CC-29 item 5: stamp authAt = "now" (epoch seconds) — the anchor for the 14-day
+  // sliding-session cap. This runs at login and change-pin (a fresh credential entry),
+  // so the cap resets only on a real re-auth; silent proxy renewal carries authAt
+  // through unchanged. Delegated to the shared edge helper so the claim set is identical
+  // to what the renewal path re-mints.
+  return mintSessionToken({
+    ...payload,
+    mustChangePin: payload.mustChangePin === true,
+    authAt: Math.floor(Date.now() / 1000),
+  })
 }
 
 export async function getSession(): Promise<SessionPayload | null> {
@@ -124,13 +129,8 @@ export async function requireAdmin(): Promise<SessionPayload | null> {
 
 export async function setSessionCookie(token: string) {
   const cookieStore = await cookies()
-  cookieStore.set(SESSION_COOKIE, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    maxAge: SESSION_DURATION,
-    path: '/',
-  })
+  // CC-29 item 5: the exact same flags the proxy renewal uses (shared definition).
+  cookieStore.set(SESSION_COOKIE, token, sessionCookieOptions())
 }
 
 export async function clearSession() {
