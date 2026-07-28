@@ -34,10 +34,16 @@ const PHOTO_UPLOAD_TIMEOUT_MS = 20_000
  */
 export class PhotoUploadError extends Error {
   readonly serverReached: boolean
-  constructor(message: string, serverReached: boolean) {
+  // CC-30: the HTTP status when the server responded (undefined when it was never
+  // reached). `message` may carry server-authored text — which can echo the stored
+  // object path, and therefore the operator's original filename — so telemetry
+  // reports this NUMBER instead of the message. The message stays operator-facing.
+  readonly status?: number
+  constructor(message: string, serverReached: boolean, status?: number) {
     super(message)
     this.name = 'PhotoUploadError'
     this.serverReached = serverReached
+    this.status = status
   }
 }
 
@@ -149,13 +155,14 @@ export async function uploadPhotoBlob(blob: Blob, filename = `photo-${Date.now()
     throw new PhotoUploadError(
       typeof detail.error === 'string' ? detail.error : `Upload failed (${res.status})`,
       true, // the server responded — it saw and rejected this photo
+      res.status,
     )
   }
   const data = await res.json()
   if (!data || typeof data.url !== 'string') {
     // A 2xx with no URL means the server DID process the request but returned an
     // unusable body — server-reached, so this counts as a real failed attempt.
-    throw new PhotoUploadError('Upload returned no URL', true)
+    throw new PhotoUploadError('Upload returned no URL', true, res.status)
   }
   return data.url as string
 }

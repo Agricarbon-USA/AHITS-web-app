@@ -362,8 +362,20 @@ export function useOfflineQueue() {
             })
             // CC-30: only at the cap — a burned retry is normal and must not page
             // anyone; exhausting it means the operator's photo-bearing write is
-            // abandoned. (err.message is a photo *error string*, never contents.)
-            if (failing) reportItemFailed({ ...item, retries }, photoFailError)
+            // abandoned.
+            //
+            // CLAMPED to the status code, deliberately: `err.message` is
+            // server-authored text, and /api/uploads' 500 branch returns
+            // `'Upload failed: ' + <supabase error>`, which can echo the stored
+            // object path — and that path embeds the operator's original filename.
+            // The operator still sees the full message (photoFailError, written to
+            // IDB above); only the telemetry is reduced to the numeric status.
+            if (failing) {
+              reportItemFailed(
+                { ...item, retries },
+                err.status ? `photo upload rejected (HTTP ${err.status})` : 'photo upload rejected (status unknown)',
+              )
+            }
             if (failing && item.placeholderId) {
               const all = await getAllItems(db)
               for (const other of all) {
