@@ -70,6 +70,11 @@ afterEach(async () => {
   await prisma.vehicle.deleteMany()
   await prisma.project.deleteMany()
   await prisma.inviteToken.deleteMany()
+  // account_audit_log references users (actorId + targetUserId) with no ON DELETE
+  // CASCADE, so it must be cleared BEFORE users or the user delete FK-violates. First
+  // exercised by CC-31's PIN_LOCKED test (the first to drive PATCH /api/users/[id] →
+  // writeAudit); the table was previously never populated in tests, so the gap was latent.
+  await prisma.accountAuditLog.deleteMany()
   await prisma.user.deleteMany()
   await prisma.hub.deleteMany()
   await prisma.category.deleteMany()
