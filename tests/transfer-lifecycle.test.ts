@@ -16,7 +16,7 @@ vi.mock('../src/lib/auth/session', () => ({
   requireAdmin: () => Promise.resolve((mockSession as { role?: string } | null)?.role === 'ADMIN' ? mockSession : null),
 }))
 
-vi.mock('../src/lib/alerts', () => ({ createAlert: vi.fn().mockResolvedValue({}) }))
+vi.mock('../src/lib/alerts', () => ({ createAlert: vi.fn().mockResolvedValue({}), resolveActiveAlert: vi.fn().mockResolvedValue({}) }))
 
 describe('End-of-deployment TRANSFER lifecycle', () => {
   let op1: Awaited<ReturnType<typeof createOperator>>
