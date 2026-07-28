@@ -241,8 +241,10 @@ export default function RequestsPage() {
                           </Typography>
                         )}
                         {req.status === 'STAGED' && req.requestType === 'RESERVATION' && req.stockReservedAt && req.fulfillerHubName && (
+                          /* CC-32 (1.3): say "Staged" to the operator the same way the
+                             chip does (chip labels in lib/status.ts are UNTOUCHED — D9). */
                           <Typography variant="caption" display="block" color="success.main">
-                            Stock reserved at {req.fulfillerHubName}
+                            Staged at {req.fulfillerHubName} for pickup
                           </Typography>
                         )}
                       </Box>
