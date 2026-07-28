@@ -1,17 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/auth/session'
-import { getDailyCheckAdoption } from '@/lib/pilot-metrics'
+import { getPilotMetrics } from '@/lib/pilot-metrics'
 
-// CC-14: admin read of the Pilot Charter metric 1 (daily-check adoption denominator).
-// Must exist day 1 of the pilot. Optional ?date=YYYY-MM-DD (defaults to today's
-// business date). Admin-only.
+// CC-14 / CC-31: admin read of the Pilot Charter dashboard payload — per-day adoption,
+// time-to-complete distribution, GPS grant rate, the day's checks (drill-down), and the
+// most-recent day's per-rig operator+vehicle breakdown. Optional ?from/?to (YYYY-MM-DD);
+// defaults to the pilot fortnight to date. Admin-only.
 export async function GET(req: NextRequest) {
   const session = await requireAdmin()
   if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-  const day = req.nextUrl.searchParams.get('date') ?? undefined
-  const validDay = day && /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : undefined
+  const from = req.nextUrl.searchParams.get('from') ?? undefined
+  const to = req.nextUrl.searchParams.get('to') ?? undefined
 
-  const adoption = await getDailyCheckAdoption(validDay)
-  return NextResponse.json({ data: adoption })
+  const data = await getPilotMetrics(from, to)
+  return NextResponse.json({ data })
 }
