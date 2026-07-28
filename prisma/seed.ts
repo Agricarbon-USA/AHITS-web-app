@@ -4,6 +4,54 @@ import bcrypt from 'bcryptjs'
 
 const prisma = new PrismaClient()
 
+// CC-30 / D16 — hosts that mean "a real, shared, fleet-serving database".
+// Supabase serves both the direct connection (db.<ref>.supabase.co) and the
+// poolers (aws-0-<region>.pooler.supabase.com), so match either.
+const LIVE_DB_HOST_RE = /supabase\.co$|pooler\.supabase\.com$/
+const DANGEROUS_OVERRIDE = 'yes-i-mean-staging'
+
+/**
+ * Refuse to seed a live/shared database.
+ *
+ * Prefers DIRECT_URL (what `prisma db seed`/migrate actually use for a direct
+ * connection) and falls back to DATABASE_URL. Fails CLOSED: a URL that cannot be
+ * parsed is treated as suspect and refused, matching the philosophy of
+ * scripts/check-migration-safety.sh — a guard you can't trust is worse than none.
+ */
+function assertNotLiveDatabase() {
+  if (process.env.AHITS_DANGEROUS_TARGET === DANGEROUS_OVERRIDE) {
+    console.warn(
+      `⚠️  AHITS_DANGEROUS_TARGET=${DANGEROUS_OVERRIDE} — live-database seed guard BYPASSED on purpose.`,
+    )
+    return
+  }
+
+  const raw = process.env.DIRECT_URL ?? process.env.DATABASE_URL
+  if (!raw) return // no URL configured — Prisma will fail on its own terms.
+
+  let host: string
+  try {
+    host = new URL(raw).hostname
+  } catch {
+    // A connection string we can't parse (e.g. an unescaped character in the
+    // password) might still point at the live fleet. Refuse rather than guess.
+    throw new Error(
+      '✋ Refusing to seed: could not parse the database URL, so its host could not be ' +
+        'checked against the live-fleet guard. Fix the URL, or set ' +
+        `AHITS_DANGEROUS_TARGET=${DANGEROUS_OVERRIDE} if you truly mean to seed it.`,
+    )
+  }
+
+  if (LIVE_DB_HOST_RE.test(host)) {
+    throw new Error(
+      `✋ Refusing to seed: the database URL points at '${host}', which is a live/shared ` +
+        'Supabase database. Under D16 the fleet operates on staging, so seeding it would ' +
+        'inject sample data and the well-known PIN 123456 into real accounts. ' +
+        `If you REALLY mean to seed '${host}', re-run with AHITS_DANGEROUS_TARGET=${DANGEROUS_OVERRIDE}.`,
+    )
+  }
+}
+
 async function main() {
   // Safety: this seed creates sample data and well-known accounts. Refuse to
   // run against a production environment unless explicitly overridden.
@@ -13,6 +61,15 @@ async function main() {
         'default accounts. If you really intend to seed production, set ALLOW_PROD_SEED=1.',
     )
   }
+
+  // CC-30 / D16: NODE_ENV is not the fence that matters. A laptop with a
+  // staging-pointed .env has NODE_ENV unset (i.e. not 'production'), so the check
+  // above passes and this seed cheerfully upserts ops@agricarbon.com and two
+  // operators with the well-known PIN 123456 into the LIVE FLEET's database.
+  // Under D16 staging is home, so gate on WHERE the connection points, not on a
+  // label. PrismaClient has already loaded .env by the time this module runs, so
+  // reading process.env here sees the same URL Prisma will actually connect to.
+  assertNotLiveDatabase()
 
   console.log('🌱 Seeding database...')
 

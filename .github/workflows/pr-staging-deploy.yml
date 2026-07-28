@@ -1,43 +1,97 @@
-name: Deploy PR to Staging
+name: Deploy PR to a preview service
+
+# CC-30 / D16 — STAGING IS HOME.
+#
+# This workflow used to deploy ANY PR carrying the `deploy-staging` label straight
+# onto ahits-web-app-staging: no verify job, no migration-safety, DISABLE_SW=true
+# (which kills the offline queue's service worker for the whole fleet), that PR's
+# migrations applied to the live database, and MIN_INSTANCES=0. That was tolerable
+# when staging was a scratch environment. Under D16 the fleet operates on staging
+# indefinitely, so it is production in everything but name and NOTHING may reach it
+# except a reviewed merge.
+#
+# Therefore:
+#   * the `pull_request: [labeled]` trigger is GONE — workflow_dispatch only;
+#   * `service` is a REQUIRED input with no default, so a preview target is always
+#     a deliberate choice rather than an inherited constant;
+#   * a guard step hard-fails if the resolved service is the live one;
+#   * the migrate step is REMOVED (see "Degraded preview" below).
+#
+# The ONLY path to ahits-web-app-staging is: merge to `development` → deploy.yml.
+#
+# ── Degraded preview (read before using this workflow) ───────────────────────────
+# This workflow no longer runs `make cloud-run-migrate`. That step read
+# AHITS_MIGRATE_URL — which under D16 is the PILOT database — and applying an
+# unreviewed PR's migrations to the pilot DB is precisely the blast radius this
+# packet exists to remove. A preview service deployed from here therefore points at
+# whatever schema the shared DB already has: if your PR adds a migration, the preview
+# will run against an UNMIGRATED schema and features touching new columns will error.
+# That is a deliberate trade — a degraded preview beats a live-DB migration from an
+# unreviewed branch. If you need a preview with its own schema, stand up a separate
+# database and pass its secrets via a distinct SECRET_NS; do not point this at the
+# pilot DB.
 
 on:
-  # Manual trigger via: gh workflow run pr-staging-deploy.yml -f pr_number=<N>
+  # Manual only. Example:
+  #   gh workflow run pr-staging-deploy.yml -f pr_number=<N> -f service=ahits-web-app-preview
   workflow_dispatch:
     inputs:
       pr_number:
-        description: 'PR number to deploy to staging'
+        description: 'PR number to deploy'
         required: true
         type: number
-
-  # Also triggers when the "deploy-staging" label is added to a PR
-  pull_request:
-    types: [labeled]
+      service:
+        # No default — naming the target is always an explicit act (see header).
+        description: 'Cloud Run service to deploy to. MUST NOT be ahits-web-app-staging (D16).'
+        required: true
+        type: string
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   deploy:
-    name: Build & Deploy PR to Staging
+    name: Build & Deploy PR to a preview service
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
       issues: write
 
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && github.event.label.name == 'deploy-staging')
-
     steps:
+      # FIRST step in the job: nothing is built, pushed, or deployed until the
+      # target has been proven not to be a live service.
+      - name: Guard — refuse to target the live service
+        env:
+          TARGET_SERVICE: ${{ inputs.service }}
+        run: |
+          # Normalize (strip whitespace, lowercase) so a stray space or capital
+          # letter can't smuggle the live service name past a literal compare.
+          normalized="$(printf '%s' "$TARGET_SERVICE" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+
+          if [ -z "$normalized" ]; then
+            echo "::error::REFUSING: pr-staging-deploy requires an explicit non-empty 'service' input."
+            exit 1
+          fi
+
+          if [ "$normalized" = "ahits-web-app-staging" ] || [ "$normalized" = "ahits-web-app" ]; then
+            echo "::error::REFUSING: pr-staging-deploy may never target ahits-web-app-staging (D16 — staging is home)"
+            echo ""
+            echo "  Requested service: '$TARGET_SERVICE'"
+            echo "  The live fleet runs on ahits-web-app-staging; ahits-web-app is production."
+            echo "  The only path to either is a reviewed merge (development → deploy.yml)."
+            echo "  Pick a distinct preview service name, e.g. ahits-web-app-preview-<topic>."
+            exit 1
+          fi
+
+          echo "✅ Target service '$TARGET_SERVICE' is not a live service — proceeding."
+
       - name: Resolve PR metadata
         id: pr
         uses: actions/github-script@v7
         with:
           script: |
-            const prNumber = context.eventName === 'workflow_dispatch'
-              ? parseInt(context.payload.inputs.pr_number)
-              : context.payload.pull_request.number;
+            const prNumber = parseInt(context.payload.inputs.pr_number);
 
             const { data: pr } = await github.rest.pulls.get({
               owner: context.repo.owner,
@@ -63,48 +117,36 @@ jobs:
           make docker-build TAG=pr-${{ steps.pr.outputs.sha }} GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }} DISABLE_SW=true
           make docker-push  TAG=pr-${{ steps.pr.outputs.sha }} GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }}
 
-      # Apply pending Prisma migrations to staging BEFORE the new revision serves,
-      # so a PR preview never runs code against an unmigrated schema (this gap let
-      # a DAILY_CHECK_FAILED enum migration ship un-applied on a preview deploy).
-      # Mirrors the migrate job in deploy.yml: reads AHITS_MIGRATE_URL (Supabase
-      # session pooler) via make cloud-run-migrate. Migrations must be
-      # backward-compatible — the old revision is still serving while this runs.
-      - name: Set up Node (for prisma migrate)
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
+      # NOTE: no `make cloud-run-migrate` step here — deliberately. See the
+      # "Degraded preview" note in the header: previews must never migrate the
+      # pilot database. Migrations reach a live DB only via deploy.yml, which
+      # gates them behind verify + migration-safety.
 
-      - name: Install deps (for prisma migrate)
-        run: npm ci
-
-      - name: Apply pending migrations to staging
-        run: make cloud-run-migrate GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }}
-
-      - name: Deploy to staging
+      - name: Deploy to the preview service
         run: |
           make cloud-run-deploy \
-            SERVICE=ahits-web-app-staging \
+            SERVICE=${{ inputs.service }} \
             TAG=pr-${{ steps.pr.outputs.sha }} \
             MIN_INSTANCES=0 \
             GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }} \
             EMAIL_SANDBOX=true
 
-      - name: Get staging URL & comment on PR
+      - name: Get preview URL & comment on PR
         uses: actions/github-script@v7
         env:
           GCP_PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+          TARGET_SERVICE: ${{ inputs.service }}
         with:
           script: |
             const { execSync } = require('child_process');
             const url = execSync(
-              `make cloud-run-url SERVICE=ahits-web-app-staging GCP_PROJECT=${process.env.GCP_PROJECT}`
+              `make cloud-run-url SERVICE=${process.env.TARGET_SERVICE} GCP_PROJECT=${process.env.GCP_PROJECT}`
             ).toString().trim();
 
             const prNumber = ${{ steps.pr.outputs.number }};
             const shortSha = '${{ steps.pr.outputs.sha }}'.substring(0, 7);
 
-            // Replace any previous staging deploy comment
+            // Replace any previous preview deploy comment
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -126,9 +168,13 @@ jobs:
               issue_number: prNumber,
               body: [
                 '<!-- staging-deploy -->',
-                '### 🚀 Staging deploy complete',
+                '### 🚀 Preview deploy complete',
                 `**URL:** ${url}`,
+                `**Service:** \`${process.env.TARGET_SERVICE}\``,
                 `**Commit:** \`${shortSha}\``,
                 `**PR:** #${prNumber}`,
+                '',
+                '> ⚠️ Degraded preview: no migrations were applied (D16 — previews never migrate the pilot DB).',
+                '> If this PR adds a migration, the preview runs against an unmigrated schema.',
               ].join('\n'),
             });
