@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
+import * as Sentry from '@sentry/nextjs'
 import { PrismaClient } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getDeploymentRostersForDisplay } from '@/lib/deployment-assignments'
@@ -18,10 +19,23 @@ const CRON_DISPATCH_LOCK = BigInt('7654321098')
 // backend session. DATABASE_URL is a transaction-mode pgBouncer (port 6543); using
 // it for session-level advisory locks is unsafe because acquire and release can
 // hit different backends through the pool.
-// Returns null if DIRECT_URL is unavailable (dev/test envs that lack it skip the guard).
-async function tryAcquireCronLock(): Promise<PrismaClient | null> {
+// CC-30: a DISCRIMINATED result, not a bare null.
+//
+// This used to return null for three very different situations — "no DIRECT_URL
+// configured", "another run holds the lock", and "the connection threw" — and
+// handleCron turned the last two into the same HTTP 200 {skipped:'advisory-lock'}.
+// A dead database therefore looked GREEN to Cloud Scheduler forever: it never
+// retried and nothing showed up in its dashboards. Contention and a failed connect
+// are now distinguishable, so the caller can answer 200 for one and 500 for the other.
+type CronLockResult =
+  | { kind: 'acquired'; client: PrismaClient }
+  | { kind: 'no-direct-url' }
+  | { kind: 'contention' }
+  | { kind: 'connect-error'; error: unknown }
+
+async function tryAcquireCronLock(): Promise<CronLockResult> {
   const directUrl = process.env.DIRECT_URL
-  if (!directUrl) return null
+  if (!directUrl) return { kind: 'no-direct-url' }
 
   const lockClient = new PrismaClient({ datasourceUrl: directUrl })
   try {
@@ -30,12 +44,12 @@ async function tryAcquireCronLock(): Promise<PrismaClient | null> {
     `
     if (!rows[0]?.acquired) {
       await lockClient.$disconnect()
-      return null
+      return { kind: 'contention' }
     }
-    return lockClient
-  } catch {
-    await lockClient.$disconnect()
-    return null
+    return { kind: 'acquired', client: lockClient }
+  } catch (err) {
+    await lockClient.$disconnect().catch(() => {})
+    return { kind: 'connect-error', error: err }
   }
 }
 
@@ -283,8 +297,13 @@ async function run() {
         })
       }
     }
-  } catch {
-    /* inventory_stock missing / transient — non-fatal */
+  } catch (err) {
+    // CC-30: this catch used to be bare. The drift assertion IS the monitoring —
+    // a broken QUERY here was indistinguishable from a clean pass, so "no drift
+    // detected" could mean "the detector is broken." Still non-fatal (the run's
+    // other duties must continue), but no longer silent.
+    console.error('[cron] invariant/drift check errored', err)
+    Sentry.captureException(err)
   }
 
   // 8b) Inventory invariant checks. Violations indicate a write-path bug — raise an
@@ -384,8 +403,12 @@ async function run() {
         sample: JSON.stringify(inv5.slice(0, 3)),
       })
     }
-  } catch {
-    /* schema missing / transient — non-fatal */
+  } catch (err) {
+    // CC-30: same as the drift block above — INV-1..5 are the invariant monitors,
+    // so a failing invariant QUERY must not look like five passing invariants.
+    // Non-fatal by design; visible now.
+    console.error('[cron] invariant/drift check errored', err)
+    Sentry.captureException(err)
   }
 
   // 8c) FND-8/FND-17: surface FAILED outbound emails (a swallowed invoice / shop / hub /
@@ -450,6 +473,13 @@ async function run() {
   //   (b) In-app secondary signal: persist lastRunAt (read by the admin alerts route's
   //       staleness check, since a dead cron can't self-report its own silence).
   //   (c) Required re-arm: resolve CRON_SILENT if the previous run(s) left it active.
+  //
+  // CC-30 VERIFIED: these three statements are the LAST in run(), so an uncaught
+  // throw anywhere in the scans above aborts before any of them — a crashed run
+  // cannot stamp the heartbeat, ping healthchecks.io, or clear CRON_SILENT. Left
+  // structurally as-is deliberately. Note this is why the invariant/drift catches
+  // above stay non-fatal: those checks are now Sentry-visible, and the run's other
+  // duties (dispatch, alerts, heartbeat) must still complete.
   const heartbeatUrl = process.env.CRON_HEARTBEAT_URL
   if (heartbeatUrl) {
     await fetch(heartbeatUrl, { signal: AbortSignal.timeout(3000) }).catch(() => {})
@@ -463,20 +493,33 @@ async function run() {
 async function handleCron(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const lockClient = await tryAcquireCronLock()
+  const lock = await tryAcquireCronLock()
+
   // DIRECT_URL not configured (dev/test) — run without overlap guard.
-  if (lockClient === null && !process.env.DIRECT_URL) {
+  if (lock.kind === 'no-direct-url') {
     return NextResponse.json({ ok: true, ...(await run()) })
   }
-  // Lock present but not acquired — another fire is already running.
-  if (lockClient === null) {
+
+  // Lock present but not acquired — another fire is already running. Genuinely
+  // benign: the other run is doing the work. 200 so Scheduler does not retry.
+  if (lock.kind === 'contention') {
     return NextResponse.json({ ok: true, skipped: 'advisory-lock', reason: 'concurrent run in progress' })
+  }
+
+  // CC-30: could not even reach the database to ask for the lock. This is NOT
+  // contention — nothing ran, no scan happened, and no heartbeat will be stamped.
+  // Answer 500 so Cloud Scheduler RETRIES and the failure shows up in its
+  // dashboards, instead of a dead DB reading as a permanently healthy skip.
+  if (lock.kind === 'connect-error') {
+    console.error('[cron] advisory-lock connect failed — cron did not run', lock.error)
+    Sentry.captureException(lock.error)
+    return NextResponse.json({ error: 'advisory-lock-connect-error' }, { status: 500 })
   }
 
   try {
     return NextResponse.json({ ok: true, ...(await run()) })
   } finally {
-    await releaseCronLock(lockClient)
+    await releaseCronLock(lock.client)
   }
 }
 
