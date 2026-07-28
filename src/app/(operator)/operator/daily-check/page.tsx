@@ -433,6 +433,12 @@ export default function OperatorDailyCheckPage() {
               rowsTouchedRef.current = false
               pastStep0Ref.current = false
               setStaleTemplate(false)
+              // CC-32 (2.2): an UNTYPED site is the previous vehicle's prefill, so it has
+              // to be cleared here — the incoming fetch only seeds an EMPTY field, so
+              // leaving it would file vehicle B's check under vehicle A's site with
+              // nobody having typed it. A site the operator typed is left alone: the
+              // same site with a different vehicle is the normal case.
+              if (!siteTouchedRef.current) setSite('')
             }}
             required
             fullWidth

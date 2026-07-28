@@ -210,6 +210,34 @@ describe('CC-32 (2.2) the site is pre-filled from the last check on this vehicle
     expect(await screen.findByLabelText('Site / location')).toHaveValue('')
   })
 
+  // The trap this one guards: the fetch only seeds an EMPTY field, so an untyped
+  // prefill left in place across a vehicle switch would file vehicle B's check under
+  // vehicle A's site — wrong data that nobody typed and no cue to notice it.
+  it('does NOT carry one vehicle\'s prefilled site into another vehicle\'s check', async () => {
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.startsWith('/api/deployments')) {
+        return jsonRes([{ id: 'rig1', vehicles: [
+          { id: 'rv1', vehicle: { id: 'v1', name: 'Truck 1', type: 'TRUCK' } },
+          { id: 'rv2', vehicle: { id: 'v2', name: 'Truck 2', type: 'TRUCK' } },
+        ] }])
+      }
+      if (url.startsWith('/api/checklist-templates')) return jsonRes({ items: TEMPLATE_ITEMS })
+      if (url.startsWith('/api/vehicles/v2')) return jsonRes({ data: { id: 'v2', lastCheckSite: 'South Pivot' } })
+      if (url.startsWith('/api/vehicles/')) return jsonRes({ data: { id: 'v1', lastCheckSite: 'North 40 — Gate B' } })
+      return jsonRes({})
+    }))
+    render(<OperatorDailyCheckPage />)
+
+    const site = await screen.findByLabelText('Site / location')
+    await waitFor(() => expect(site).toHaveValue('North 40 — Gate B')) // vehicle 1's site
+
+    // Switch to vehicle 2 — its own last site must win, not vehicle 1's leftover.
+    fireEvent.mouseDown(screen.getByRole('combobox'))
+    fireEvent.click(await screen.findByRole('option', { name: 'Truck 2' }))
+    await waitFor(() => expect(site).toHaveValue('South Pivot'))
+  })
+
   it('never overwrites a site the operator typed', async () => {
     vi.stubGlobal('fetch', mockFetch({ lastCheckSite: 'North 40 — Gate B' }))
     render(<OperatorDailyCheckPage />)
