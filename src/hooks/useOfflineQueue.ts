@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import * as Sentry from '@sentry/nextjs'
 import type { OfflineQueueItem, MutateResult } from '@/types'
 import { resolvePhotoRefs, PhotoUploadError } from '@/lib/photoStore'
 import { extractCreatedId, itemReferencesPlaceholder, remapPlaceholderId } from '@/lib/offline-remap'
@@ -41,6 +42,68 @@ const STORAGE_FAILURE_ERROR =
 // 401 is deliberately NOT terminal: an expired session must not discard a
 // queued write (FND-14b). It is parked and retried after re-auth.
 const TERMINAL_STATUSES = new Set([400, 403, 404, 409, 410, 422])
+
+// ── CC-30: server-side eyes on the offline queue ──────────────────────────────
+// Client Sentry was init-only (SentryProvider does init + a request_id tag and
+// nothing else), so the queue's two silent-failure modes — an evicted IndexedDB
+// losing unsent field work, and an item going terminally 'failed' — were invisible
+// unless an operator happened to mention it. These helpers report both.
+//
+// Every capture is BEST-EFFORT: Sentry is already a no-op when no DSN is
+// configured (SentryProvider never calls init), and a telemetry call must never
+// throw into queue logic. Hence the try/catch on all of them.
+//
+// PRIVACY: never send item.body, photo contents, or any payload data. Labels,
+// endpoints, methods, and error strings only.
+
+const IDENTITY_KEY = 'ahits_identity'
+
+// The hook has no auth context, so read the identity cache useAuth writes.
+// Tag the id ONLY — never the operator's name or email.
+function currentUserId(): string {
+  try {
+    const raw = window.localStorage.getItem(IDENTITY_KEY)
+    if (!raw) return 'unknown'
+    const id = (JSON.parse(raw) as { id?: string } | null)?.id
+    return typeof id === 'string' && id ? id : 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
+function reportPossibleDataLoss(oldHint: number): void {
+  try {
+    Sentry.captureMessage('offline-queue possible-data-loss', {
+      level: 'error',
+      tags: { userId: currentUserId() },
+      extra: { oldHint },
+    })
+  } catch {
+    /* telemetry must never break the queue */
+  }
+}
+
+// Called at EVERY item -> 'failed' transition. CC-29 raised these from three to
+// six (it added a photo-upload retry-cap, that branch's own dependent-quarantine
+// loop, and a second transient retry-cap for the in-flight-409 path); each one is
+// a write the operator believes landed, so each one reports.
+function reportItemFailed(item: OfflineQueueItem, lastError: string | null): void {
+  try {
+    Sentry.captureMessage('offline-queue item failed', {
+      level: 'warning',
+      tags: { userId: currentUserId() },
+      extra: {
+        label: item.label,
+        endpoint: item.endpoint,
+        method: item.method,
+        lastError,
+        retries: item.retries ?? 0,
+      },
+    })
+  } catch {
+    /* telemetry must never break the queue */
+  }
+}
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -289,23 +352,44 @@ export function useOfflineQueue() {
             // pointing at an id that will never resolve.
             const retries = (item.retries ?? 0) + 1
             const failing = retries >= MAX_RETRIES
+            const photoFailError = `A photo could not be uploaded (${err.message}) — retry or discard this action`
             await putItem(db, {
               ...item,
               retries,
               ...(failing
-                ? { status: 'failed' as const, lastError: `A photo could not be uploaded (${err.message}) — retry or discard this action` }
+                ? { status: 'failed' as const, lastError: photoFailError }
                 : {}),
             })
+            // CC-30: only at the cap — a burned retry is normal and must not page
+            // anyone; exhausting it means the operator's photo-bearing write is
+            // abandoned.
+            //
+            // CLAMPED to the status code, deliberately: `err.message` is
+            // server-authored text, and /api/uploads' 500 branch returns
+            // `'Upload failed: ' + <supabase error>`, which can echo the stored
+            // object path — and that path embeds the operator's original filename.
+            // The operator still sees the full message (photoFailError, written to
+            // IDB above); only the telemetry is reduced to the numeric status.
+            if (failing) {
+              reportItemFailed(
+                { ...item, retries },
+                err.status ? `photo upload rejected (HTTP ${err.status})` : 'photo upload rejected (status unknown)',
+              )
+            }
             if (failing && item.placeholderId) {
               const all = await getAllItems(db)
               for (const other of all) {
                 if (other.id == null || other.id === item.id || other.status === 'failed') continue
                 if (itemReferencesPlaceholder(other, item.placeholderId)) {
+                  const quarantineError =
+                    'A required earlier action failed, so this action could not be applied.'
                   await putItem(db, {
                     ...other,
                     status: 'failed',
-                    lastError: 'A required earlier action failed, so this action could not be applied.',
+                    lastError: quarantineError,
                   })
+                  // CC-30: dependent quarantined by the photo-branch failure above.
+                  reportItemFailed(other, quarantineError)
                 }
               }
             }
@@ -380,13 +464,20 @@ export function useOfflineQueue() {
           // pending", the item-4 duplicate-check) stays terminal.
           if (res.status === 409 && errMsg.startsWith(IDEMPOTENCY_IN_FLIGHT_ERROR)) {
             const retries = (work.retries ?? 0) + 1
+            const hitRetryCap = retries >= MAX_RETRIES
+            const retryCapError = `Failed after ${MAX_RETRIES} attempts`
             await putItem(db, {
               ...work,
               retries,
-              ...(retries >= MAX_RETRIES ? { status: 'failed' as const, lastError: `Failed after ${MAX_RETRIES} attempts` } : {}),
+              ...(hitRetryCap ? { status: 'failed' as const, lastError: retryCapError } : {}),
             })
+            // CC-30: the in-flight-409 retry path exhausted its cap.
+            if (hitRetryCap) reportItemFailed({ ...work, retries }, retryCapError)
           } else {
             await putItem(db, { ...work, status: 'failed', lastError: errMsg })
+            // CC-30: terminal rejection — the server saw this write and refused it
+            // for good. The operator's work is not going to land.
+            reportItemFailed(work, errMsg)
             // Q2: if a create that OTHER queued writes depend on failed for good, those
             // dependents can never have their placeholder remapped to a real id — they'd
             // otherwise replay against a `pending-…` endpoint and 404. Quarantine the
@@ -399,11 +490,16 @@ export function useOfflineQueue() {
               for (const other of all) {
                 if (other.id == null || other.id === item.id || other.status === 'failed') continue
                 if (itemReferencesPlaceholder(other, work.placeholderId)) {
+                  const quarantineError =
+                    'A required earlier action failed, so this action could not be applied.'
                   await putItem(db, {
                     ...other,
                     status: 'failed',
-                    lastError: 'A required earlier action failed, so this action could not be applied.',
+                    lastError: quarantineError,
                   })
+                  // CC-30: dependent quarantined by an upstream terminal failure.
+                  // Reported per-item so the blast radius of one bad create is visible.
+                  reportItemFailed(other, quarantineError)
                 }
               }
             }
@@ -411,11 +507,16 @@ export function useOfflineQueue() {
         } else {
           // 5xx / 408 / 429 — transient; retry up to the cap.
           const retries = (work.retries ?? 0) + 1
+          const hitRetryCap = retries >= MAX_RETRIES
+          const retryCapError = `Failed after ${MAX_RETRIES} attempts`
           await putItem(db, {
             ...work,
             retries,
-            ...(retries >= MAX_RETRIES ? { status: 'failed' as const, lastError: `Failed after ${MAX_RETRIES} attempts` } : {}),
+            ...(hitRetryCap ? { status: 'failed' as const, lastError: retryCapError } : {}),
           })
+          // CC-30: only when the cap is actually hit — a burned retry is normal and
+          // must not page anyone; exhausting the cap means the write is abandoned.
+          if (hitRetryCap) reportItemFailed({ ...work, retries }, retryCapError)
         }
       }
       })
@@ -601,6 +702,12 @@ export function useOfflineQueue() {
           const items = await getAllItems(db)
           if (items.filter((i) => i.status !== 'failed').length === 0) {
             setPossibleDataLoss(true)
+            // CC-30: THE tripwire. A previous session recorded pending work
+            // (oldHint > 0), this session flushed nothing, and the queue is now
+            // empty — i.e. the browser evicted IndexedDB and took unsent field
+            // writes with it. This is the P0 that was failing completely silently;
+            // 'error' level because the operator's work is already gone.
+            reportPossibleDataLoss(oldHint)
           }
         } catch {}
       }
