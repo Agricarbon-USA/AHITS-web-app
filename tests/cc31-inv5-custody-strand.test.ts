@@ -52,8 +52,12 @@ async function runCron() {
 
 /** Push a unit's updatedAt into the past ( @updatedAt can't be set via prisma.update ). */
 async function ageUnit(unitId: string, days: number) {
+  // Compute the past timestamp in JS and bind it directly: Prisma binds a JS number as
+  // bigint, and make_interval(days => bigint) doesn't exist (42883). Raw UPDATE bypasses
+  // @updatedAt auto-management, so the value sticks.
+  const past = new Date(Date.now() - days * 86_400_000)
   await prisma.$executeRaw`
-    UPDATE "inventory_units" SET "updatedAt" = now() - make_interval(days => ${days})
+    UPDATE "inventory_units" SET "updatedAt" = ${past}
     WHERE "id" = ${unitId}
   `
 }
