@@ -297,6 +297,23 @@ async function run() {
         })
       }
     }
+    // CC-31 item 2d (per-item drift): resolve any ACTIVE per-item INVENTORY_DRIFT alert
+    // whose item is no longer in the drift set. Driven off the active alerts (like the
+    // EMAIL_FAILED pass below) so nothing orphans. The type filter is MANDATORY —
+    // LOW_INVENTORY shares sourceTable 'inventory_items', and this scan must not enumerate
+    // (hence resolve) LOW_INVENTORY rows. Sits INSIDE the item-8 try, AFTER a SUCCESSFUL
+    // drift query: a thrown query lands in the catch and clears nothing (a broken detector
+    // must never read as "all clean").
+    const driftingIds = new Set(drift.map((d) => d.id))
+    const activeDriftAlerts = await prisma.alert.findMany({
+      where: { type: 'INVENTORY_DRIFT', sourceTable: 'inventory_items', resolved: false },
+      select: { sourceId: true },
+    })
+    for (const a of activeDriftAlerts) {
+      if (a.sourceId && !driftingIds.has(a.sourceId)) {
+        await resolveActiveAlert('INVENTORY_DRIFT', 'inventory_items', a.sourceId)
+      }
+    }
   } catch (err) {
     // CC-30: this catch used to be bare. The drift assertion IS the monitoring —
     // a broken QUERY here was indistinguishable from a clean pass, so "no drift
@@ -323,6 +340,11 @@ async function run() {
         count: inv1.length,
         sample: JSON.stringify(inv1.slice(0, 3)),
       })
+    } else {
+      // CC-31 item 2d: clean pass → resolve any prior INV-1 alert (same source triple).
+      // Runs ONLY because the query above succeeded (a thrown query lands in the catch and
+      // resolves nothing — a broken detector must never read as "all clean").
+      await resolveActiveAlert('INVENTORY_DRIFT', 'inventory_stock', 'inv1-negative-stock')
     }
 
     // INV-2: reservedQty must never exceed quantity
@@ -338,6 +360,8 @@ async function run() {
         count: inv2.length,
         sample: JSON.stringify(inv2.slice(0, 3)),
       })
+    } else {
+      await resolveActiveAlert('INVENTORY_DRIFT', 'inventory_stock', 'inv2-reserved-exceeds-stock')
     }
 
     // INV-3: held↔reserved mirror
@@ -362,6 +386,8 @@ async function run() {
         count: inv3.length,
         sample: JSON.stringify(inv3.slice(0, 3).map((r) => ({ ...r, heldOutstanding: Number(r.heldOutstanding), reservedQty: Number(r.reservedQty) }))),
       })
+    } else {
+      await resolveActiveAlert('INVENTORY_DRIFT', 'inventory_stock', 'inv3-held-reserved-mismatch')
     }
 
     // INV-4: orphan holds (unreleased holds on non-FULFILLED requests)
@@ -379,6 +405,8 @@ async function run() {
         count: inv4.length,
         sample: JSON.stringify(inv4.slice(0, 3)),
       })
+    } else {
+      await resolveActiveAlert('INVENTORY_DRIFT', 'deployment_request_lines', 'inv4-orphan-holds')
     }
 
     // INV-5: custody strands (IN_TRANSIT >14d or CHECKED_OUT/IN_TRANSIT with no open kit item)
@@ -388,11 +416,35 @@ async function run() {
       WHERE u."deletedAt" IS NULL
         AND (
           (u."status" = 'IN_TRANSIT' AND u."updatedAt" < NOW() - INTERVAL '14 days')
-          OR (u."status" IN ('CHECKED_OUT','IN_TRANSIT') AND NOT EXISTS (
-                SELECT 1 FROM "kit_items" ki
-                JOIN "kits" k ON k."id" = ki."kitId"
-                JOIN "rigs" rg ON rg."id" = k."rigId" AND rg."endedAt" IS NULL
-                WHERE ki."inventoryUnitId" = u."id" AND ki."removedAt" IS NULL))
+          OR (u."status" IN ('CHECKED_OUT','IN_TRANSIT')
+                -- CC-31 item 1a: age-qualify the strandless arm. End-of-deployment
+                -- legitimately produces exactly this state (GOOD serialized units set
+                -- IN_TRANSIT awaiting hub receipt at end/route.ts:159-169; TRANSFER
+                -- dispositions leave kit items open on an ENDED rig at :122-124/:292-303,
+                -- so rg."endedAt" IS NULL excludes them and the unit looks strandless).
+                -- Only flag once it has sat un-updated past 72h. The 14-day IN_TRANSIT
+                -- arm above keeps its own age.
+                AND u."updatedAt" < NOW() - INTERVAL '72 hours'
+                AND NOT EXISTS (
+                  SELECT 1 FROM "kit_items" ki
+                  JOIN "kits" k ON k."id" = ki."kitId"
+                  JOIN "rigs" rg ON rg."id" = k."rigId" AND rg."endedAt" IS NULL
+                  WHERE ki."inventoryUnitId" = u."id" AND ki."removedAt" IS NULL)
+                -- CC-31 item 1b: exclude units whose state is explained by an in-flight
+                -- flow, so a normal end-of-deployment never cries wolf.
+                -- (i) an active, un-expired HUB_RETURN link still awaiting hub receipt.
+                AND NOT EXISTS (
+                  SELECT 1 FROM "status_links" sl
+                  WHERE sl."type" = 'HUB_RETURN' AND sl."inventoryUnitId" = u."id"
+                    AND sl."state" IN ('ISSUED','VIEWED') AND sl."expiresAt" > NOW())
+                -- (ii) a PENDING transfer. The end route creates TransferItem rows with
+                -- kitItemId only (end/route.ts:300), so matching THROUGH the kit item is
+                -- the load-bearing arm; the nullable ti."inventoryUnitId" is belt-and-braces.
+                AND NOT EXISTS (
+                  SELECT 1 FROM "transfer_items" ti
+                  JOIN "transfer_requests" tr ON tr."id" = ti."transferRequestId" AND tr."status" = 'PENDING'
+                  JOIN "kit_items" tki ON tki."id" = ti."kitItemId"
+                  WHERE (tki."inventoryUnitId" = u."id" OR ti."inventoryUnitId" = u."id")))
         )
     `
     if (inv5.length > 0) {
@@ -402,6 +454,8 @@ async function run() {
         count: inv5.length,
         sample: JSON.stringify(inv5.slice(0, 3)),
       })
+    } else {
+      await resolveActiveAlert('INVENTORY_DRIFT', 'inventory_units', 'inv5-custody-strands')
     }
   } catch (err) {
     // CC-30: same as the drift block above — INV-1..5 are the invariant monitors,

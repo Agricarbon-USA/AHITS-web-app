@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { reserveAtHub, releaseAtHub, drawReservedFromHub } from '@/lib/inventory-stock'
+import { resolveActiveAlert } from '@/lib/alerts'
 
 // M6 / Addendum §F — Deployment Requests data layer. Raw SQL (no generated-client
 // coupling, same approach as lib/checklist-templates). R1 extends the original
@@ -588,6 +589,27 @@ async function releaseReservedStock(requestId: string, tx: RawTx): Promise<void>
  *   complete — MATERIAL only:     FORWARDED → FULFILLED
  */
 export async function applyRequestTransition(
+  id: string,
+  action: RequestAction,
+  requestType: string,
+  extra?: TransitionExtra,
+): Promise<TransitionResult> {
+  const result = await _applyRequestTransition(id, action, requestType, extra)
+  // CC-31 item 2b: a MATERIAL request raises a MATERIAL_REQUEST alert (created at
+  // /api/deployment-requests[/id]) that never auto-resolved — it accreted all fortnight.
+  // Any SUCCESSFUL transition that ends the request's need for attention clears it:
+  // fulfill/complete/decline/cancel. Placed here (not in the routes) so the public
+  // status-link path (applyReservationTransition, which calls this same export with
+  // 'complete'/'cancel') converges for free. Runs post-commit on the global client;
+  // harmless no-op for RESERVATION ids (no such active alert). Best-effort — never
+  // undoes a committed transition. A re-raise mints a fresh alert (activeKey re-arm).
+  if (result.ok && (action === 'fulfill' || action === 'complete' || action === 'decline' || action === 'cancel')) {
+    await resolveActiveAlert('MATERIAL_REQUEST', 'deployment_requests', id).catch(() => {})
+  }
+  return result
+}
+
+async function _applyRequestTransition(
   id: string,
   action: RequestAction,
   requestType: string,

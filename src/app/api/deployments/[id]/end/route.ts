@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { isAuthorizedForRig } from '@/lib/deployment-auth'
 import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
-import { createAlert } from '@/lib/alerts'
+import { createAlert, resolveActiveAlert } from '@/lib/alerts'
 import { withIdempotency } from '@/lib/idempotency'
 import { issueHubReturnLinks } from '@/lib/status-links'
 import { filterAllowedPhotoUrls } from '@/lib/photo-security'
@@ -329,6 +329,15 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       data: { removedAt: now },
     })
   })
+
+  // CC-31 item 2c: ending the deployment returns its equipment, so any per-kit-item
+  // EQUIPMENT_NOT_RETURNED alert (raised at /api/daily-check when kit has been out >90d)
+  // no longer describes reality — resolve it for every kit item on the ended rig. The
+  // key is the same triple the raise uses. Best-effort: a resolve failure must never fail
+  // the end (the deployment is already committed above); a fresh 90d-out rig re-raises.
+  for (const ki of allKitItems) {
+    await resolveActiveAlert('EQUIPMENT_NOT_RETURNED', 'kit_items', ki.id).catch(() => {})
+  }
 
   // Wave F-R (soft-gate, best-effort): issue HUB_RETURN confirmation links for
   // serialized GOOD units set IN_TRANSIT inside the transaction. Non-blocking; if

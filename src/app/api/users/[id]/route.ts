@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
 import { hashPin } from '@/lib/auth/pin'
+import { resolveActiveAlert } from '@/lib/alerts'
 import { writeAudit, type AuditAction } from '@/lib/audit'
 import { pinSchema, money } from '@/lib/validation'
 
@@ -108,6 +109,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   try {
     const user = await prisma.user.update({ where: { id }, data })
+    // CC-31 item 2a: a PIN reset or explicit unlock clears the lockout, so the
+    // PIN_LOCKED alert (raised at lib/auth/pin.ts:41) no longer describes reality —
+    // auto-resolve it so it leaves the bell without a manual Resolve click. Best-effort:
+    // a resolve failure must never fail the account update. A later re-lock raises fresh.
+    if (pin || unlockPin) {
+      await resolveActiveAlert('PIN_LOCKED', 'users', id).catch(() => {})
+    }
     for (const a of actions) await writeAudit(session.userId, a.action, id, a.meta)
     const { pinHash: _omit, ...safeUser } = user
     return NextResponse.json({ data: safeUser })
