@@ -18,7 +18,7 @@ vi.mock('../src/lib/auth/session', () => ({
     Promise.resolve((mockSession as { role?: string } | null)?.role === 'ADMIN' ? mockSession : null),
 }))
 vi.mock('../src/lib/audit', () => ({ writeAudit: vi.fn().mockResolvedValue(undefined) }))
-vi.mock('../src/lib/alerts', () => ({ createAlert: vi.fn().mockResolvedValue({}) }))
+vi.mock('../src/lib/alerts', () => ({ createAlert: vi.fn().mockResolvedValue({}), resolveActiveAlert: vi.fn().mockResolvedValue({}) }))
 
 function postReq(body: unknown) {
   return new NextRequest('http://localhost/api/users/invite/complete', {
