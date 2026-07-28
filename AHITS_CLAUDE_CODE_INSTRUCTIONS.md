@@ -47,6 +47,9 @@
 | CC-27 | FulfillmentChecklist rebuild | MUI + tokens re-skin, behavior parity | ✅ MERGED (PR #196) |
 | CC-28 | Today-lite bridge | ~~RESERVED — exists only if D5 = Option B~~ | ⛔ MOOT (D5 = Option A; never built) |
 | — | Copy-link invites | Email-independent onboarding (delivery: EMAIL/LINK) | ✅ MERGED (PR #200) |
+| CC-29 | Offline trust floor (pre-launch tier 1) | Photo-wedge, lie-fi timeout, online-401 park, concurrent-flush mutex + transient-409, dead-localphoto, late-sync date semantics (D26), sliding session renewal (D27), flush-lifecycle test harness | ✅ MERGED (PRs #202/#203/#205) — on-device staging smoke = last pre-first-operator gate |
+
+> **Landing order superseded by the 2026-07-28 re-baseline (STATUS §4 / D17):** the live queue is **CC-29 (✅) → CC-32 → CC-30 → CC-31 → CC-16S → CC-33**. The CC-16 "NEXT" flag above is stale — CC-16 was split (CC-16S ships the step-0 security now; CC-16-proper is PARKED, D18).
 
 ---
 

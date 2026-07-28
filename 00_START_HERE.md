@@ -51,7 +51,9 @@ Before writing code, also read `CLAUDE.md` + `AGENTS.md` (deploy flow + the DB/m
 | ask **"what about production?"** | `AHITS_PROD_CUTOVER_DEFERRED.md` — short answer: deferred, not a gate |
 | read the **product spec** | `AHITS_PRD_v2.md` + `AHITS_PRD_v2.1_ADDENDUM.md` |
 | run the **pilot device gate** | `AHITS_A6_TESTER_CHECKLIST.md` |
-| run the **pilot / launch week** | `AHITS_PILOT_CHARTER.md` (the signed contract) + `AHITS_LAUNCH_HANDOFF_2026-07-27.md` (the day-by-day launch-week plan) |
+| run the **pilot / launch week** | `AHITS_PILOT_CHARTER.md` (the signed contract) + `AHITS_LAUNCH_HANDOFF_2026-07-27.md` (day-by-day; **the fixed 07-27 date is void — rolling start per D17**) |
+| see the **2026-07-28 six-seat review** (findings, file:line evidence) | `AHITS_SIX_SEAT_REVIEW_2026-07-28.md` |
+| run the **pilot-floor build queue** (CC-29/30/31/16S — gates the first operator) | `AHITS_CC29-31_PILOT_FLOOR_PACKETS.md` + workplan §15 |
 
 ---
 
