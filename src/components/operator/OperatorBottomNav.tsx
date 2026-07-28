@@ -7,6 +7,7 @@ import ChecklistIcon from '@mui/icons-material/Checklist'
 import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner'
 import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck'
+import MapIcon from '@mui/icons-material/Map'
 import { usePathname, useRouter } from 'next/navigation'
 import { useIncomingPendingCount } from '@/hooks/useIncomingPendingCount'
 
@@ -14,12 +15,19 @@ import { useIncomingPendingCount } from '@/hooks/useIncomingPendingCount'
 // (the hamburger drawer still holds the full nav incl. read-only browse).
 // CC-14: Requests added here (was drawer-only), and the pending transfer/handoff badge
 // moved onto the My Deployment tab (was drawer-only) — that's where Accept/Decline live.
+// CC-32 (3.1): Map added as a 6th tab — the pilot's marquee trust surface was
+// drawer-only, so seeing where the crew last checked in cost a hamburger tap plus a
+// drawer hunt every time. Tradeoff weighed and decided (Max ruled 2026-07-28): 6 tabs
+// ≈ 65px each at 390px — tight, but within MUI BottomNavigation's showLabels spec and
+// every label here is one short word. The alternative (swallowing Requests back into
+// the drawer) would demote a surface CC-14 promoted for cause. No badge on Map.
 const ITEMS = [
   { label: 'Home', href: '/operator/dashboard', icon: <DashboardIcon /> },
   { label: 'Check', href: '/operator/daily-check', icon: <ChecklistIcon /> },
   { label: 'My Deployment', href: '/operator/my-deployment', icon: <LocalShippingIcon />, badge: true },
   { label: 'Requests', href: '/operator/requests', icon: <PlaylistAddCheckIcon /> },
   { label: 'Scan', href: '/operator/scan', icon: <QrCodeScannerIcon /> },
+  { label: 'Map', href: '/operator/map', icon: <MapIcon /> },
 ]
 
 export function OperatorBottomNav() {

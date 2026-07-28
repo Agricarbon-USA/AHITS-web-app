@@ -25,7 +25,17 @@ export function FreshnessIndicator({ updatedAt, isValidating, onRefresh }: Fresh
       {onRefresh && (
         <Tooltip title="Refresh">
           <span>
-            <IconButton size="small" aria-label="Refresh" onClick={onRefresh} disabled={isValidating}>
+            {/* CC-32 (3.2): 44px hit area via padding — the icon stays small so the
+                caption row keeps its density. Per CC-32 (2.9a) this is now the ONLY
+                honest refresh affordance on the operator's Today screen (the error copy
+                names it by name), so it has to be hittable with a gloved thumb. */}
+            <IconButton
+              size="small"
+              aria-label="Refresh"
+              onClick={onRefresh}
+              disabled={isValidating}
+              sx={{ minHeight: 44, minWidth: 44 }}
+            >
               <RefreshIcon fontSize="small" />
             </IconButton>
           </span>

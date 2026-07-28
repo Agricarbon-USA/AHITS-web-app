@@ -86,7 +86,9 @@ export const DeploymentVehiclesCard = React.memo(function DeploymentVehiclesCard
             })}
           </Stack>
         )}
-        <Stack direction="row" spacing={1}>
+        {/* CC-32 (3.2): 44px hit area for the whole action row (the CC-23 wrapping-sx
+            pattern, as used on the accept/decline banners in my-deployment). */}
+        <Stack direction="row" spacing={1} sx={{ '& .MuiButton-root': { minHeight: 44, fontSize: 16 } }}>
           <Button size="small" variant="outlined" startIcon={<AddIcon />} onClick={onAddVehicles}>
             Add Vehicles
           </Button>
@@ -178,7 +180,8 @@ export const DeploymentKitCard = React.memo(function DeploymentKitCard({
             })}
           </Stack>
         )}
-        <Stack direction="row" spacing={1}>
+        {/* CC-32 (3.2): 44px hit area for the whole action row. */}
+        <Stack direction="row" spacing={1} sx={{ '& .MuiButton-root': { minHeight: 44, fontSize: 16 } }}>
           <Button size="small" variant="outlined" startIcon={<AddIcon />} onClick={onAddItems}>
             Add Items
           </Button>

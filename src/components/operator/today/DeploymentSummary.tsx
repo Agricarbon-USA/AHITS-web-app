@@ -38,7 +38,8 @@ export function DeploymentSummary({ deployment, onOpenDeployment }: Props) {
               </Typography>
             </Stack>
           </Box>
-          <Button size="small" onClick={onOpenDeployment} sx={{ flexShrink: 0 }}>
+          {/* CC-32 (3.2): 44px hit area — sibling of VehicleChecks/WaitingOnMe. */}
+          <Button size="small" onClick={onOpenDeployment} sx={{ flexShrink: 0, minHeight: 44, minWidth: 44, fontSize: 16 }}>
             My Deployment
           </Button>
         </Stack>

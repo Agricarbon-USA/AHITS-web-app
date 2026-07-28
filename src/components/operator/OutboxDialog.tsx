@@ -82,7 +82,8 @@ export function OutboxDialog({ open, onClose, listAll, retryItem, discardFailed,
       <DialogContent>
         {items.length === 0 ? (
           <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
-            Nothing queued — everything has synced.
+            {/* CC-32 (2.8): plainer than "Nothing queued — everything has synced." */}
+            All caught up — everything sent.
           </Typography>
         ) : (
           <Stack divider={<Divider />} spacing={0}>
@@ -109,7 +110,10 @@ export function OutboxDialog({ open, onClose, listAll, retryItem, discardFailed,
                     </Typography>
                   )}
                   {failed && id != null && (
-                    <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                    /* CC-32 (3.2): 44px hit area. Checked after the CC-29/CC-30 rebase
+                       — these are the operator's only recovery path for a write the
+                       office never received, so they are primary, not dense-secondary. */
+                    <Stack direction="row" spacing={1} sx={{ mt: 1, '& .MuiButton-root': { minHeight: 44, fontSize: 16 } }}>
                       <Button size="small" variant="outlined" disabled={busyId === id}
                         startIcon={busyId === id ? <CircularProgress size={14} /> : undefined}
                         onClick={() => onRetry(id)}>
@@ -121,7 +125,8 @@ export function OutboxDialog({ open, onClose, listAll, retryItem, discardFailed,
                     </Stack>
                   )}
                   {stuck && id != null && (
-                    <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                    /* CC-32 (3.2): 44px hit area (the stuck-item escape hatch). */
+                    <Stack direction="row" spacing={1} sx={{ mt: 1, '& .MuiButton-root': { minHeight: 44, fontSize: 16 } }}>
                       <Button size="small" color="error" variant="outlined" disabled={busyId === id}
                         startIcon={busyId === id ? <CircularProgress size={14} /> : undefined}
                         onClick={() => onDiscardStuck(id)}>
