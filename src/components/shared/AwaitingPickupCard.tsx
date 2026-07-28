@@ -3,6 +3,11 @@
 import * as React from 'react'
 import { Box, Typography, Card, CardContent, Button, Stack, Chip, List, ListItem, ListItemText } from '@mui/material'
 import LocalShippingIcon from '@mui/icons-material/LocalShipping'
+import { formatDate } from '@/lib/utils'
+
+// CC-32 (2.7): a hold inside this window is emphasised — the operator is about to
+// lose the stock if they don't collect it.
+const HOLD_SOON_MS = 24 * 60 * 60 * 1000
 
 export interface AwaitingPickupLine {
   id: string
@@ -30,6 +35,16 @@ interface Props {
 // CC-09: composable "Ready for Pickup" card. Placed on the operator dashboard now;
 // designed for the CC-14 Today view — receives all data as props, owns no fetching.
 export function AwaitingPickupCard({ request, onPickUp }: Props) {
+  // CC-32 (2.7): holdExpiresAt was received and never rendered — so "is my stuff still
+  // at the hub?" was a phone call. Date.now() is impure in render, so the wall-clock is
+  // stamped once on mount (0 until then, which simply defers the amber emphasis by a
+  // tick — the date line itself does not depend on it).
+  const [now, setNow] = React.useState(0)
+  React.useEffect(() => { setNow(Date.now()) }, [])
+  const holdExpiresSoon =
+    now > 0 && request.holdExpiresAt != null &&
+    new Date(request.holdExpiresAt).getTime() - now < HOLD_SOON_MS
+
   return (
     <Card sx={{ border: '1px solid', borderColor: 'warning.main' }}>
       <CardContent>
@@ -51,6 +66,18 @@ export function AwaitingPickupCard({ request, onPickUp }: Props) {
         {request.hubName && (
           <Typography variant="body2" color="text.secondary" mb={1}>
             Pick up from: <strong>{request.hubName}</strong>
+          </Typography>
+        )}
+
+        {/* CC-32 (2.7): the hold deadline, finally shown. */}
+        {request.holdExpiresAt && (
+          <Typography
+            variant="body2"
+            mb={1}
+            color={holdExpiresSoon ? 'warning.main' : 'text.secondary'}
+            fontWeight={holdExpiresSoon ? 600 : 400}
+          >
+            Held until {formatDate(request.holdExpiresAt)}
           </Typography>
         )}
 

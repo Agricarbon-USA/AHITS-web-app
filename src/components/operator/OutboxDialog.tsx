@@ -82,7 +82,8 @@ export function OutboxDialog({ open, onClose, listAll, retryItem, discardFailed,
       <DialogContent>
         {items.length === 0 ? (
           <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
-            Nothing queued — everything has synced.
+            {/* CC-32 (2.8): plainer than "Nothing queued — everything has synced." */}
+            All caught up — everything sent.
           </Typography>
         ) : (
           <Stack divider={<Divider />} spacing={0}>

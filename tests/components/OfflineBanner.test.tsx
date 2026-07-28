@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // CC-12 PR1: the 401-parked-queue prompt. When a flush parks on 401 with items
@@ -42,5 +42,33 @@ describe('OfflineBanner — 401 parked prompt (CC-12 PR1)', () => {
     // Nothing renders (no banners) — and certainly no sign-in prompt.
     expect(screen.queryByText(/sign in to send/i)).not.toBeInTheDocument()
     expect(container.querySelector('[role="link"]')).toBeNull()
+  })
+})
+
+// CC-32 (2.8) / P0-3: the queue banner was dead text — the Outbox opened only from the
+// FAILED banner, so an operator whose actions were merely PENDING had no way to see
+// what was in the queue and sent a "did my check go through?" text instead. The banner
+// now carries the same door. Queue-engine internals are untouched.
+describe('OfflineBanner — Outbox opens from the merely-PENDING queue banner (CC-32 2.8)', () => {
+  it('offers View on the pending-queue banner and opens the Outbox', async () => {
+    Object.assign(queue, { pending: 1 })
+    render(<OfflineBanner />)
+
+    expect(await screen.findByText(/1 action\(s\) waiting to sync/i)).toBeInTheDocument()
+    const view = screen.getByRole('button', { name: 'View' })
+    fireEvent.click(view)
+
+    // The dialog opened and read the queue — no failed item required to get here.
+    expect(await screen.findByRole('heading', { name: 'Outbox' })).toBeInTheDocument()
+    await waitFor(() => expect(queue.listAll).toHaveBeenCalled())
+  })
+
+  it('offers View while offline with actions queued', async () => {
+    Object.assign(queue, { isOffline: true, pending: 2 })
+    render(<OfflineBanner />)
+
+    expect(await screen.findByText(/2 action\(s\) queued/i)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'View' }))
+    expect(await screen.findByRole('heading', { name: 'Outbox' })).toBeInTheDocument()
   })
 })
