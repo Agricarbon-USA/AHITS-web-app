@@ -53,6 +53,13 @@ const serwist = new Serwist({
           // survive offline like the other field reads it assembles. Trailing slash so
           // this doesn't also swallow /api/operators (the roster dropdown endpoint).
           pathname.startsWith('/api/operator/') ||
+          // CC-32 (3.1): the operator crew map is now a bottom-nav tab, so it has to
+          // survive offline like every other field read — last-cached pins under a
+          // freshness stamp beat a red "Failed to load crew map" dead end. EXACT match,
+          // deliberately NOT startsWith('/api/map'): /api/map/pins and
+          // /api/map/route-history are ADMIN endpoints and must stay out of the
+          // operator's cache.
+          pathname === '/api/map/crew' ||
           pathname.startsWith('/api/notifications')),
       method: 'GET',
       handler: new NetworkFirst({

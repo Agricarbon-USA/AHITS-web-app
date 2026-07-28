@@ -7,9 +7,14 @@ import { writeAudit } from '@/lib/audit'
 import { getActivePrimaryForRig, getRequiredPrimaryForRig, getActiveRigForOperator } from '@/lib/deployment-assignments'
 import { reassignPrimary, createHandoff } from '@/lib/deployment-handoffs'
 
+// CC-32 (2.3): the handoff note is OPTIONAL — mandatory typing at every end-of-day
+// handoff bought nothing the roster already records. Relaxed server-side in the same
+// PR as the client (the CC-24 item-4 precedent), otherwise the client change 400s.
+// Defaulted to '' rather than made nullable: deployment_handoffs."note" is TEXT NOT
+// NULL, so this needs no schema change and no migration.
 const schema = z.object({
   toOperatorId: z.string(),
-  note: z.string().min(1, 'Note is required'),
+  note: z.string().optional().default(''),
   force: z.boolean().optional(),
 })
 

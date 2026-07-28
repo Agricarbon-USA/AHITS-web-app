@@ -378,10 +378,13 @@ export default function OperatorScanPage() {
               >
                 Start Daily Check
               </Button>
+              {/* CC-32 (3.2): 44px hit area — both are primary field actions taken
+                  at a vehicle, gloved, and were ~30px targets. */}
               <Button
                 variant="outlined"
                 color="success"
                 size="small"
+                sx={{ minHeight: 44, fontSize: 16 }}
                 onClick={() => { setFieldFixNotes(''); setFieldFixOpen(true) }}
               >
                 Log fixed issue
@@ -390,6 +393,7 @@ export default function OperatorScanPage() {
                 variant="outlined"
                 color="warning"
                 size="small"
+                sx={{ minHeight: 44, fontSize: 16 }}
                 onClick={() => { setReportDamageNotes(''); setReportDamageOpen(true) }}
               >
                 Report damage

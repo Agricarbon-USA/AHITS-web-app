@@ -29,7 +29,7 @@ import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 import { newPlaceholderId } from '@/lib/offline-remap'
 import { useAuth } from '@/hooks/useAuth'
 import { groupBy, formatDate } from '@/lib/utils'
-import { NOTE_PRESETS } from '@/lib/note-presets'
+import { NOTE_PRESETS, HANDOFF_NOTE_PRESETS } from '@/lib/note-presets'
 import { stockAvailabilityLabel } from '@/lib/stock-format'
 import { VEHICLE_TYPE_ORDER, vehicleTypeLabel } from '@/lib/vehicle-types'
 
@@ -310,7 +310,7 @@ function NewDeploymentDialog({
         }
       })
       setKitItems(m)
-      setStep(2)
+      setStep(1) // CC-32 (2.4): the kit step is now index 1 (was 2) — same screen
       setError(result.error ?? 'A unit was just taken. Please reselect.')
     } else {
       setError(result.error ?? 'Failed')
@@ -322,23 +322,23 @@ function NewDeploymentDialog({
     <Dialog open={true} onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>{pickupPreset ? 'Pick Up Reservation' : 'Start Deployment'}</DialogTitle>
       <DialogContent>
+        {/* CC-32 (2.4): 4 steps → 2. The old "Details" step held one optional label and
+            the old "Start" step held one optional note — two guaranteed "Next" taps
+            through screens that could not block anything. The label now heads Build Rig
+            and the note+presets close Build Kit. Everything else is byte-preserved:
+            the UR-006 blocker alert stays on the kit step, the 409-reselect still lands
+            on the kit step, and the final button behaviour is unchanged. */}
         <Stepper activeStep={step} sx={{ mb: 3, mt: 1 }}>
-          <Step><StepLabel>Details</StepLabel></Step>
           <Step><StepLabel>Build Rig</StepLabel></Step>
           <Step><StepLabel>Build Kit</StepLabel></Step>
-          {/* CC-32 (1.1): the retired deployment verb is gone — this step is "Start". */}
-          <Step><StepLabel>Start</StepLabel></Step>
         </Stepper>
 
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
         {step === 0 && (
-          <TextField label="Label (optional)" value={label} onChange={(e) => setLabel(e.target.value)} fullWidth
-            placeholder="e.g. TX Summer Run" autoFocus />
-        )}
-
-        {step === 1 && (
           <Box>
+            <TextField label="Label (optional)" value={label} onChange={(e) => setLabel(e.target.value)} fullWidth
+              placeholder="e.g. TX Summer Run" sx={{ mb: 2 }} />
             <Typography variant="body2" color="text.secondary" mb={2}>Select your vehicles</Typography>
             {unassignedVehicles.length === 0 ? (
               <Typography variant="body2" color="text.secondary">No available vehicles.</Typography>
@@ -377,7 +377,7 @@ function NewDeploymentDialog({
           </Box>
         )}
 
-        {step === 2 && (
+        {step === 1 && (
           <Box>
             <Typography variant="body2" color="text.secondary" mb={2}>Pack your kit</Typography>
             {availableItems.length === 0 ? (
@@ -506,7 +506,8 @@ function NewDeploymentDialog({
             )}
             {/* UR-006: surface exactly what blocks the start HERE (on the kit step),
                 so the operator isn't left staring at a greyed-out Start Deployment
-                button on the next step with no explanation. */}
+                button with no explanation. CC-32 (2.4): the button now sits on this
+                same step, so the alert and the thing it explains are finally adjacent. */}
             {(hasUnselectedSerialized || (hasConsumableInKit && !sourceHubId)) && (
               <Alert severity="info" sx={{ mt: 2 }}>
                 Before you can start:
@@ -514,39 +515,36 @@ function NewDeploymentDialog({
                 {hasConsumableInKit && !sourceHubId && <div>• Choose a source hub for the consumable items.</div>}
               </Alert>
             )}
-          </Box>
-        )}
-
-        {step === 3 && (
-          <Box>
-            {/* CC-24: the note is optional now — one-tap presets fill it, free text
-                stays available, and launch no longer requires it. */}
-            <Stack direction="row" spacing={1} sx={{ mb: 1 }} flexWrap="wrap" useFlexGap>
-              {NOTE_PRESETS.map((p) => (
-                <Chip key={p} label={p} size="small" variant="outlined" onClick={() => setNote(p)} />
-              ))}
-            </Stack>
-            <TextField
-              label="Deployment note (optional)"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              multiline rows={3}
-              fullWidth
-              placeholder="e.g. Heading out for TX soil sampling run"
-              autoFocus
-            />
+            {/* CC-24: the note is optional — one-tap presets fill it, free text stays
+                available, and starting no longer requires it. CC-32 (2.4): folded in
+                below the UR-006 blocker alert (which must stay on this step) instead of
+                owning a step of its own. */}
+            <Box sx={{ mt: 3 }}>
+              <Stack direction="row" spacing={1} sx={{ mb: 1 }} flexWrap="wrap" useFlexGap>
+                {NOTE_PRESETS.map((p) => (
+                  <Chip key={p} label={p} size="small" variant="outlined" onClick={() => setNote(p)} />
+                ))}
+              </Stack>
+              <TextField
+                label="Deployment note (optional)"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                multiline rows={3}
+                fullWidth
+                placeholder="e.g. Heading out for TX soil sampling run"
+              />
+            </Box>
           </Box>
         )}
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
         <Button onClick={onClose} disabled={loading}>Cancel</Button>
         {step > 0 && <Button onClick={() => setStep((s) => s - 1)} disabled={loading}>Back</Button>}
-        {step < 3 ? (
-          // UR-006: block leaving the kit step until serialized units are picked
-          // and a source hub is chosen — so the user can never reach the note step
-          // (and Start Deployment) in a state that leaves it silently disabled.
-          <Button variant="contained" onClick={() => setStep((s) => s + 1)}
-            disabled={loading || (step === 2 && (hasUnselectedSerialized || (hasConsumableInKit && !sourceHubId)))}>
+        {step < 1 ? (
+          // CC-32 (2.4): with 2 steps the only "Next" is Build Rig → Build Kit, so the
+          // UR-006 gate that used to guard leaving the kit step now lives solely on the
+          // final button below (unchanged) — the note step it was protecting is gone.
+          <Button variant="contained" onClick={() => setStep((s) => s + 1)} disabled={loading}>
             Next
           </Button>
         ) : (
@@ -855,7 +853,8 @@ export default function MyRigPage() {
   }
 
   const handleHandoffInitiate = async () => {
-    if (!rig || !handoffTargetId || !handoffNote.trim()) return
+    // CC-32 (2.3): the note is optional now (server relaxed too) — no empty-note guard.
+    if (!rig || !handoffTargetId) return
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       showToast({ message: 'Initiating a handoff needs an internet connection.', severity: 'warning' })
       return
@@ -1849,8 +1848,15 @@ export default function MyRigPage() {
               options={operators.filter((o) => o.id !== rig.operator.id).map((o) => ({ value: o.id, label: o.name }))}
             />
           </Box>
+          {/* CC-32 (2.3): the note is optional now — one-tap presets fill it, free text
+              stays available, and the handoff no longer requires typing at all. */}
+          <Stack direction="row" spacing={1} sx={{ mb: 1 }} flexWrap="wrap" useFlexGap>
+            {HANDOFF_NOTE_PRESETS.map((p) => (
+              <Chip key={p} label={p} size="small" variant="outlined" onClick={() => setHandoffNote(p)} />
+            ))}
+          </Stack>
           <TextField
-            label="Note (required)"
+            label="Note (optional)"
             value={handoffNote}
             onChange={(e) => setHandoffNote(e.target.value)}
             multiline rows={2} fullWidth
@@ -1860,7 +1866,7 @@ export default function MyRigPage() {
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => setHandoffOpen(false)} disabled={handoffLoading}>Cancel</Button>
           <Button variant="contained" color="warning"
-            disabled={!handoffTargetId || !handoffNote.trim() || handoffLoading}
+            disabled={!handoffTargetId || handoffLoading}
             onClick={handleHandoffInitiate}
             startIcon={handoffLoading ? <CircularProgress size={16} color="inherit" /> : null}>
             {handoffLoading ? 'Sending…' : 'Send Handoff Request'}

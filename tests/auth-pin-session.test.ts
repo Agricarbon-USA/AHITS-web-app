@@ -7,7 +7,7 @@ import { createOperator } from './helpers/fixtures'
 // These exercise the REAL auth logic — only the I/O edges are stubbed:
 //   • next/headers cookies() is faked so getSession can read a controllable token
 //   • alerts are no-ops
-vi.mock('../src/lib/alerts', () => ({ createAlert: vi.fn().mockResolvedValue({}) }))
+vi.mock('../src/lib/alerts', () => ({ createAlert: vi.fn().mockResolvedValue({}), resolveActiveAlert: vi.fn().mockResolvedValue({}) }))
 
 let cookieToken: string | undefined
 vi.mock('next/headers', () => ({

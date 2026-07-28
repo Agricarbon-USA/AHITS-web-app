@@ -76,8 +76,9 @@ describe('OutboxDialog (CC-12 PR1)', () => {
     confirmSpy.mockRestore()
   })
 
+  // CC-32 (2.8): plainer empty-state copy — "All caught up — everything sent."
   it('shows an empty state when nothing is queued', async () => {
     renderOutbox({ listAll: vi.fn(async () => []) })
-    expect(await screen.findByText(/Nothing queued/i)).toBeInTheDocument()
+    expect(await screen.findByText(/All caught up/i)).toBeInTheDocument()
   })
 })
