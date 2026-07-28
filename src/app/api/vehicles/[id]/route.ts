@@ -55,6 +55,18 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
   })
   if (!vehicle) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
+  // CC-32 (2.2): the vehicle's most recent NON-EMPTY daily-check site, so the daily
+  // check can pre-fill a field the operator otherwise retypes every morning. Purely
+  // additive and read-side — no schema change, no write path, no status semantics.
+  // Not derived from the `dailyChecks: take: 10` include above: ten checks with a
+  // blank site would hide a real one. Null (field left empty) when nothing qualifies.
+  const lastSiteCheck = await prisma.dailyCheck.findFirst({
+    where: { vehicleId: id, AND: [{ site: { not: null } }, { site: { not: '' } }] },
+    orderBy: [{ date: 'desc' }, { submittedAt: 'desc' }],
+    select: { site: true },
+  })
+  const lastCheckSite = lastSiteCheck?.site ?? null
+
   // Merge hub + assigned-operator names via raw SQL (hubId newer than client).
   let hubId: string | null = null
   let hubName: string | null = null
@@ -72,7 +84,7 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
     if (rows[0]) { hubId = rows[0].hubId; hubName = rows[0].hubName }
   } catch { /* hubId column missing pre-migration */ }
 
-  return NextResponse.json({ data: { ...vehicle, assignedOperatorId, hubId, hubName, assignedOperatorName } })
+  return NextResponse.json({ data: { ...vehicle, assignedOperatorId, hubId, hubName, assignedOperatorName, lastCheckSite } })
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {

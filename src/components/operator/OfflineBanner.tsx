@@ -130,6 +130,16 @@ export function OfflineBanner() {
           severity={isOffline ? 'warning' : 'info'}
           icon={syncing ? <CircularProgress size={16} /> : undefined}
           sx={bannerSx}
+          // CC-32 (2.8) / P0-3: this banner was dead text — the Outbox opened only from
+          // the FAILED banner, so an operator with a merely-pending queue had no way to
+          // see what was in it and sent a "did my check go through?" text instead. The
+          // dialog already renders pending rows read-only with Waiting/Sending chips;
+          // this is only the missing door. Queue-engine internals are untouched.
+          action={
+            <Button size="small" color="inherit" onClick={() => setOutboxOpen(true)}>
+              View
+            </Button>
+          }
         >
           {isOffline
             ? `You're offline — showing cached data.${pending > 0 ? ` ${pending} action(s) queued.` : ''}`
