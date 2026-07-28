@@ -19,10 +19,18 @@
 # Scoping: the waiver applies only to the single SQL statement it immediately precedes
 # (i.e. within the same ;-delimited chunk), NOT to the entire file.
 #
-# Production hard-fail: when GITHUB_BASE_REF=production, an acknowledged destructive
-# statement is still a HARD FAIL unless PR_LABELS contains 'destructive-migration-approved'.
-# This ensures the W0-10 DROP and any other irreversible production migration requires
-# explicit human sign-off via a labelled PR (see held/README.md §11).
+# Live-branch hard-fail: when GITHUB_BASE_REF is `production` OR `development`, an
+# acknowledged destructive statement is still a HARD FAIL unless PR_LABELS contains
+# 'destructive-migration-approved'. This ensures the W0-10 DROP and any other
+# irreversible migration requires explicit human sign-off via a labelled PR (see
+# held/README.md §11).
+#
+# CC-30 / D16 (2026-07-28): `development` joined that list. Under D16 the fleet
+# operates on staging indefinitely, so `development` is an environment-bearing
+# branch whose merges auto-migrate the PILOT database via deploy.yml. Treating it as
+# "a branch with no environment behind it" — the old asymmetry — had it exactly
+# backwards: an acknowledged DROP could reach the live fleet's DB with no label and
+# no sign-off. Both live branches now require the same approval artifact.
 set -euo pipefail
 
 BASE="${1:-origin/development}"
@@ -103,8 +111,9 @@ for f in "${FILES[@]}"; do
 
     # ── Disposition ───────────────────────────────────────────────────────────
     if $waived; then
-      if [[ "$BASE_REF" == "production" ]] && ! echo ",$PR_LABELS," | grep -q ",destructive-migration-approved,"; then
-        echo "::error file=$f::HARD FAIL — acknowledged destructive migration targeting production requires the 'destructive-migration-approved' PR label. Add it (project lead only) and re-run CI."
+      # CC-30/D16: both live branches (production AND development) require the label.
+      if [[ "$BASE_REF" == "production" || "$BASE_REF" == "development" ]] && ! echo ",$PR_LABELS," | grep -q ",destructive-migration-approved,"; then
+        echo "::error file=$f::HARD FAIL — acknowledged destructive migration targeting '$BASE_REF' requires the 'destructive-migration-approved' PR label. Add it (project lead only) and re-run CI. (D16: development auto-migrates the pilot database, so it is gated exactly like production.)"
         [ -n "$hit_lines" ] && printf '%s\n' "$hit_lines"
         file_fail=1
       else

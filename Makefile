@@ -23,7 +23,22 @@ SECRET_NS     ?= AHITS
 # Non-prod email guard (FND-16): staging sets this true so real shops/hubs/
 # operators are never emailed; prod sets it false. Kept in --set-env-vars so it
 # persists across deploys (an env var set only in the console is wiped next deploy).
-EMAIL_SANDBOX ?= false
+#
+# CC-30 / D16: the DEFAULT is now `true` (safe-by-default). It used to be `false`,
+# so any hand-run `make cloud-run-deploy` that forgot to pass EMAIL_SANDBOX would
+# silently arm real outbound email to real shops and operators. deploy-prod passes
+# EMAIL_SANDBOX=false explicitly — that remains the single, deliberate opt-out at
+# cutover.
+EMAIL_SANDBOX ?= true
+# Sandbox destination (FND-16 companion). NOT a secret — it's an address, so it
+# belongs in --set-env-vars alongside EMAIL_SANDBOX itself.
+#
+# CC-30: this was previously set NOWHERE in the repo, and its absence is not
+# harmless: src/lib/email/resend.ts logs the send as SKIPPED and returns null when
+# EMAIL_SANDBOX is on with no EMAIL_SANDBOX_TO. SKIPPED is not FAILED, so the cron's
+# EMAIL_FAILED scan never raises an alert — every sandboxed email vanished silently.
+# Setting a real default means sandboxed mail is actually deliverable and observable.
+EMAIL_SANDBOX_TO ?= maxtslater@gmail.com
 
 .PHONY: help dev build start lint typecheck verify \
         db-generate db-migrate db-migrate-dev db-studio db-seed db-reset \
@@ -68,10 +83,47 @@ db-migrate-dev: ## Create + apply migration (development)
 db-studio: ## Open Prisma Studio
 	npx prisma studio
 
+# CC-30 / D16 — live-database guard for the two destructive DB targets.
+#
+# Why a SECOND layer when prisma/seed.ts already guards: `make db-reset` runs
+# `prisma migrate reset` (drop → re-create → reseed) and never reaches seed.ts's
+# check before the drop has already happened. And make does NOT see prisma's dotenv
+# loading — `$(DATABASE_URL)` is empty in a plain `make` invocation even when .env
+# defines it — so the .env grep fallback below is the load-bearing half, not a
+# nicety.
+#
+# Resolution order: shell env first (an explicitly exported URL wins), then .env.
+# DIRECT_URL is preferred over DATABASE_URL because it is the direct connection
+# these commands actually use. The greps are ^-anchored so DATABASE_URL_TEST and
+# friends can't satisfy the DATABASE_URL lookup.
+DANGEROUS_OVERRIDE := yes-i-mean-staging
+
+define GUARD_LIVE_DB
+	@URL="$${DIRECT_URL:-$$DATABASE_URL}"; \
+	if [ -z "$$URL" ] && [ -f .env ]; then \
+	  URL="$$(grep -E '^DIRECT_URL=' .env | head -1 | cut -d= -f2- | tr -d '\042\047')"; \
+	fi; \
+	if [ -z "$$URL" ] && [ -f .env ]; then \
+	  URL="$$(grep -E '^DATABASE_URL=' .env | head -1 | cut -d= -f2- | tr -d '\042\047')"; \
+	fi; \
+	if [ "$$AHITS_DANGEROUS_TARGET" = "$(DANGEROUS_OVERRIDE)" ]; then \
+	  echo "⚠️  AHITS_DANGEROUS_TARGET=$(DANGEROUS_OVERRIDE) — live-database guard BYPASSED on purpose."; \
+	elif echo "$$URL" | grep -qE 'supabase\.co|pooler\.supabase\.com'; then \
+	  HOST="$$(echo "$$URL" | sed -E 's#^[a-z+]*://[^@]*@##; s#[:/?].*$$##')"; \
+	  echo "✋ REFUSING: '$$HOST' is a live/shared Supabase database."; \
+	  echo "   Under D16 the fleet operates on staging — dropping or seeding it would"; \
+	  echo "   destroy real field data / inject the well-known PIN 123456 into real accounts."; \
+	  echo "   If you REALLY mean to target it, re-run with AHITS_DANGEROUS_TARGET=$(DANGEROUS_OVERRIDE)"; \
+	  exit 1; \
+	fi
+endef
+
 db-seed: ## Seed the database with sample data
+	$(GUARD_LIVE_DB)
 	npx tsx prisma/seed.ts
 
 db-reset: ## Reset DB and re-seed (DEV ONLY)
+	$(GUARD_LIVE_DB)
 	npx prisma migrate reset
 
 # ── Testing (safe: isolated local DB, NEVER production) ───────────
@@ -146,7 +198,7 @@ cloud-run-deploy: ## Deploy image to Cloud Run. Set SERVICE, TAG, MIN_INSTANCES.
 	  --project $(GCP_PROJECT) \
 	  --allow-unauthenticated \
 	  --min-instances=$(MIN_INSTANCES) \
-	  --set-env-vars="NODE_ENV=production,APP_TIMEZONE=America/Chicago,EMAIL_SANDBOX=$(EMAIL_SANDBOX)" \
+	  --set-env-vars="NODE_ENV=production,APP_TIMEZONE=America/Chicago,EMAIL_SANDBOX=$(EMAIL_SANDBOX),EMAIL_SANDBOX_TO=$(EMAIL_SANDBOX_TO)" \
 	  --set-secrets="DATABASE_URL=$(SECRET_NS)_DATABASE_URL:latest,DIRECT_URL=$(SECRET_NS)_DIRECT_URL:latest,NEXT_PUBLIC_SUPABASE_URL=$(SECRET_NS)_NEXT_PUBLIC_SUPABASE_URL:latest,NEXT_PUBLIC_SUPABASE_ANON_KEY=$(SECRET_NS)_NEXT_PUBLIC_SUPABASE_ANON_KEY:latest,SUPABASE_SERVICE_ROLE_KEY=$(SECRET_NS)_SUPABASE_SERVICE_ROLE_KEY:latest,PIN_SESSION_SECRET=$(SECRET_NS)_PIN_SESSION_SECRET:latest,RESEND_API_KEY=$(SECRET_NS)_RESEND_API_KEY:latest,EMAIL_FROM=$(SECRET_NS)_EMAIL_FROM:latest,NEXT_PUBLIC_APP_URL=$(SECRET_NS)_NEXT_PUBLIC_APP_URL:latest,CRON_SECRET=$(SECRET_NS)_CRON_SECRET:latest,CRON_HEARTBEAT_URL=$(SECRET_NS)_CRON_HEARTBEAT_URL:latest,SENTRY_DSN=$(SECRET_NS)_SENTRY_DSN:latest,MAPBOX_TOKEN=$(SECRET_NS)_MAPBOX_TOKEN:latest"
 
 cloud-run-url: ## Print URL of a Cloud Run service. Set SERVICE.
@@ -170,10 +222,13 @@ cloud-run-migrate: ## Apply pending migrations to the deployed DB. Set GCP_PROJE
 	  DATABASE_URL="$$DB_URL" DIRECT_URL="$$DB_URL" npx prisma migrate deploy
 
 # ── High-level deploy targets ──────────────────────────────────────
+# CC-30 / D16: MIN_INSTANCES=1, not 0. Staging is home — the fleet's 6am first-open
+# must not eat a Cloud Run cold start. A scale-to-zero service is fine for a scratch
+# environment and wrong for the one the crew depends on at the start of a shift.
 deploy-staging: ## Build, push, and deploy to staging. Override TAG as needed.
 	$(MAKE) docker-build
 	$(MAKE) docker-push
-	$(MAKE) cloud-run-deploy SERVICE=$(APP_NAME)-staging MIN_INSTANCES=0 SECRET_NS=AHITS EMAIL_SANDBOX=true
+	$(MAKE) cloud-run-deploy SERVICE=$(APP_NAME)-staging MIN_INSTANCES=1 SECRET_NS=AHITS EMAIL_SANDBOX=true
 
 deploy-prod: ## Build, push, and deploy to production (uses AHITS_PROD_* secrets).
 	$(MAKE) docker-build

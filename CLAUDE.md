@@ -65,30 +65,52 @@ before the PR is merged. There is **no `main` branch** — the integration branc
 is `development` (deploys to staging) and `production` is the release branch
 (deploys to prod).
 
-## 5. Trigger the staging deploy
+## 5. Get it reviewed and merged — that is the deploy
 
-```bash
-PR_NUMBER=$(gh pr view --json number --jq .number)
-gh workflow run pr-staging-deploy.yml -f pr_number=$PR_NUMBER
-```
+**There is no way to push a branch onto staging. Merging is the deploy.**
 
-Then watch it:
+Under **D16 (staging is home)** the fleet operates on `ahits-web-app-staging`
+indefinitely, so it is production in everything but name. The ONLY path to it is:
+
+> **merge to `development` → `deploy.yml` runs `verify` → `migration-safety` →
+> `migrate` → `deploy`**
+
+Any failing job stops the deploy. So: get CI green, get the PR reviewed, merge it.
+The deploy runs itself.
+
+Watch the post-merge deploy:
 
 ```bash
 gh run watch
 ```
 
-The staging URL will be posted as a comment on the PR when the deploy finishes. You can also check it with:
+Confirm what actually landed:
 
 ```bash
-gh pr view --comments
+make cloud-run-url SERVICE=ahits-web-app-staging
+```
+
+If a deploy goes bad, **do not push a fix onto staging** — roll traffic back to the
+previous revision and open a revert PR. See `PILOT_ROLLBACK.md`.
+
+### Need a throwaway preview instead?
+
+`pr-staging-deploy.yml` still exists, but it is `workflow_dispatch`-only and **requires**
+an explicit `service` input that is **not** a live service — it hard-fails otherwise. It
+also applies **no migrations**, so a preview of a PR that adds a migration runs against an
+unmigrated schema (a deliberately degraded preview; see that workflow's header).
+
+```bash
+gh workflow run pr-staging-deploy.yml \
+  -f pr_number=$(gh pr view --json number --jq .number) \
+  -f service=ahits-web-app-preview-<topic>
 ```
 
 ## Notes
 
-- The staging service is `ahits-web-app-staging` on Cloud Run in `us-central1`.
-- You can also trigger an on-demand staging preview by adding the `deploy-staging` label to any open PR: `gh pr edit $PR_NUMBER --add-label deploy-staging` (runs `pr-staging-deploy.yml`).
-- **Auto-deploys (`deploy.yml`):** landing changes on `development` deploys to **staging**; landing changes on `production` deploys to **prod**. Each run is `verify` (lint, type-check, build, tests) → **`migrate`** (`make cloud-run-migrate`) → `deploy`, and will not deploy if an earlier job fails. Promote staging → prod by merging `development` into `production` (e.g. a PR with `--base production`).
+- The staging service is `ahits-web-app-staging` on Cloud Run in `us-central1`. **D16: this is the service the fleet actually uses.** Treat it as production: the only way in is a reviewed merge to `development`. There is no label, no manual dispatch, and no local `make deploy-staging` that may legitimately target it.
+- **Auto-deploys (`deploy.yml`):** landing changes on `development` deploys to **staging**; landing changes on `production` deploys to **prod**. Each run is `verify` (lint, type-check, build, tests) → **`migration-safety`** → **`migrate`** (`make cloud-run-migrate`) → `deploy` → **env-drift check**, and will not deploy if an earlier job fails. Promote staging → prod by merging `development` into `production` (e.g. a PR with `--base production`).
+- **Rolling back:** never hand-revert a schema. Roll traffic to the previous Cloud Run revision, then land a revert PR. Full play + lost-write reconciliation queries: `PILOT_ROLLBACK.md`.
 - Migrate-on-deploy **is live** (the `migrate` job in `deploy.yml`), superseding the old manual step. The Docker image itself still does not run migrations.
 - ✅ **Prod migrate-secret namespacing — FIXED.** `make cloud-run-migrate` reads `$(SECRET_NS)_MIGRATE_URL`, and `deploy.yml` passes `SECRET_NS=AHITS_PROD` on the `production` branch. **Prod cutover is deferred — see DECISIONS.md D1.** The real remaining work is the from-scratch Cloud Run + DB standup, not one secret. When you are ready for prod go-live, follow `PROD_CUTOVER_RUNBOOK.md`.
 - Do **not** deploy directly from a local machine to production; always go through the PR + GitHub Actions flow.
@@ -107,11 +129,17 @@ outage, and manual-migration/secret ordering has repeatedly stalled deploys.
   that references a table/column the migration hasn't added yet errors at runtime.
   Additive (nullable columns, new tables) is safe; destructive drops must lag the
   code that stopped using them. **This is enforced in CI** — the `migration-safety`
-  job (`.github/workflows/ci.yml` → `scripts/check-migration-safety.sh`) fails a PR
+  job (`scripts/check-migration-safety.sh`) fails any change
   whose newly-added migrations contain `DROP TABLE`/`DROP COLUMN`/`TRUNCATE`/`RENAME`/
   `SET NOT NULL`/`ADD COLUMN … NOT NULL` without a `DEFAULT`. A drop that legitimately
   lags the code that stopped using it can opt out with a
   `-- migration-safety: acknowledged <reason>` line in the migration.
+  **CC-30/D16:** the gate now runs in **both** `ci.yml` (on PRs) **and** `deploy.yml`
+  (on pushes to `development`/`production`, before the `migrate` job) — a direct push
+  no longer bypasses it. An *acknowledged* destructive migration is a hard fail on
+  **both** live branches unless the PR carries the `destructive-migration-approved`
+  label; since a push can't carry a label, such a migration can only land via a
+  labelled PR.
 - **A new secret must exist in Secret Manager _before_ the deploy that mounts it.**
   Cloud Run validates `--set-secrets` references at deploy time; deploying first
   fails the release. Create the `AHITS_*` secret, confirm an ENABLED version, then

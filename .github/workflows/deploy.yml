@@ -21,6 +21,57 @@ jobs:
   verify:
     uses: ./.github/workflows/verify.yml
 
+  # CC-30 / D16: migration-safety on the LIVE branch, not just on PRs.
+  #
+  # Until now this gate lived ONLY in ci.yml (pull_request-triggered), so a direct
+  # push to `development` skipped it entirely while the `migrate` job below happily
+  # applied whatever it found to the pilot database. Under D16 `development` is an
+  # environment-bearing branch; it gets the same gate production-targeting PRs get.
+  #
+  # CONSEQUENCE (intended): an *acknowledged* destructive migration can now reach a
+  # live DB ONLY through a PR carrying the `destructive-migration-approved` label —
+  # a direct push carrying one FAILS the deploy. That asymmetry is the point: the
+  # label is a PR-only artifact, so the reviewed path is the only path.
+  migration-safety:
+    name: Backward-compatible migrations
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The script fails closed when the base can't be resolved, and resolving
+          # `github.event.before` requires the full history.
+          fetch-depth: 0
+
+      - name: Check migrations added by this push
+        env:
+          # On a push event there is no base_ref and no PR labels. Derive the base
+          # ref from the branch being pushed (ref_name is `development` or
+          # `production` — this workflow has no other triggers) so a production push
+          # gets the production disposition. PR_LABELS is empty by construction: a
+          # push cannot carry a label, which is exactly what makes an acknowledged
+          # destructive migration fail here and pass only via a labelled PR.
+          GITHUB_BASE_REF: ${{ github.ref_name }}
+          PR_LABELS: ''
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          # Branch-create / force-push: `github.event.before` is the all-zeros SHA.
+          # NOTE (CC-30, verified empirically): the script does NOT fail closed on
+          # this input. `git rev-parse --verify --quiet 000…0` exits 0 (git accepts
+          # the null SHA syntactically), so the script's base-resolution guard passes;
+          # the subsequent `git diff 000…0...HEAD` then errors, but that error is
+          # swallowed by `2>/dev/null || true`, leaving the file list EMPTY and the
+          # script reporting a green "no migrations to check". Skipping explicitly
+          # with a loud warning is therefore strictly better than letting it run and
+          # silently pass. Branch protection on `development` (require a PR) removes
+          # this path altogether; until then the warning is the signal.
+          if [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ] || [ -z "$BEFORE_SHA" ]; then
+            echo "::warning::migration-safety: branch create or force-push detected (github.event.before is the null SHA) — cannot determine which migrations are new, so this gate is SKIPPED for this run. Land migrations through a PR so ci.yml can check them."
+            exit 0
+          fi
+
+          bash scripts/check-migration-safety.sh "$BEFORE_SHA"
+
   # Apply pending Prisma migrations to the target database BEFORE deploying.
   # The Supabase *direct* connection is IPv6-only (unreachable from IPv4-only GHA
   # runners), so this reads AHITS_MIGRATE_URL — the Supabase *session pooler*
@@ -31,7 +82,10 @@ jobs:
   # backward-compatible (old code is still serving while this runs).
   migrate:
     name: Apply DB migrations
-    needs: verify
+    # CC-30: gated on migration-safety too — a backward-incompatible migration must
+    # not reach the live DB, and a failed gate means no deploy at all (deploy needs
+    # migrate).
+    needs: [verify, migration-safety]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -82,6 +136,65 @@ jobs:
           else
             make deploy-staging TAG=${{ github.sha }} GCP_PROJECT=${{ secrets.GCP_PROJECT_ID }}
           fi
+
+      # CC-30 / D16: prove the pilot config actually landed.
+      #
+      # `make cloud-run-deploy` uses --set-env-vars, which REPLACES the entire env
+      # set on every deploy — so any value set by hand in the Cloud Run console dies
+      # at the next merge, silently. Three settings are load-bearing for the pilot
+      # and all three fail quietly when wrong: EMAIL_SANDBOX (off ⇒ real shops and
+      # operators get emailed), EMAIL_SANDBOX_TO (empty ⇒ every sandboxed send is
+      # logged SKIPPED and never raises EMAIL_FAILED), and minScale (0 ⇒ the fleet's
+      # 6am first-open eats a cold start). A deploy that reverts any of them must go
+      # RED, not green.
+      #
+      # Staging only: prod has its own posture (EMAIL_SANDBOX=false is the deliberate
+      # cutover opt-out) and is not yet stood up — see DECISIONS.md D1.
+      - name: Verify deployed env (staging pilot config)
+        if: github.ref == 'refs/heads/development'
+        run: |
+          set -euo pipefail
+
+          gcloud run services describe ahits-web-app-staging \
+            --region us-central1 \
+            --project "${{ secrets.GCP_PROJECT_ID }}" \
+            --format json > /tmp/svc.json
+
+          # Container env is a list of {name, value} objects — look up BY NAME, never
+          # by index. `// empty` so a missing key yields "" rather than the string
+          # "null".
+          get_env() {
+            jq -r --arg k "$1" \
+              '[.spec.template.spec.containers[]?.env[]? | select(.name == $k) | .value] | first // empty' \
+              /tmp/svc.json
+          }
+
+          EMAIL_SANDBOX_ACTUAL="$(get_env EMAIL_SANDBOX)"
+          EMAIL_SANDBOX_TO_ACTUAL="$(get_env EMAIL_SANDBOX_TO)"
+
+          # minScale is an ANNOTATION, and its value is a STRING ("1", not 1).
+          # Absent annotation ⇒ empty ⇒ treated as drift, which is correct: no
+          # annotation means Cloud Run's default of scale-to-zero.
+          MIN_SCALE_ACTUAL="$(jq -r \
+            '.spec.template.metadata.annotations["autoscaling.knative.dev/minScale"] // empty' \
+            /tmp/svc.json)"
+
+          echo "Observed on ahits-web-app-staging:"
+          echo "  EMAIL_SANDBOX    = '${EMAIL_SANDBOX_ACTUAL}'   (expected 'true')"
+          echo "  EMAIL_SANDBOX_TO = '${EMAIL_SANDBOX_TO_ACTUAL}'   (expected non-empty)"
+          echo "  minScale         = '${MIN_SCALE_ACTUAL}'   (expected '1')"
+
+          drift=""
+          [ "$EMAIL_SANDBOX_ACTUAL" = "true" ] || drift="${drift} EMAIL_SANDBOX(got='${EMAIL_SANDBOX_ACTUAL}',want='true')"
+          [ -n "$EMAIL_SANDBOX_TO_ACTUAL" ]    || drift="${drift} EMAIL_SANDBOX_TO(got=EMPTY,want=non-empty)"
+          [ "$MIN_SCALE_ACTUAL" = "1" ]        || drift="${drift} minScale(got='${MIN_SCALE_ACTUAL}',want='1')"
+
+          if [ -n "$drift" ]; then
+            echo "::error::env-drift on ahits-web-app-staging — the deploy did not land the pilot config. Mismatched keys:${drift}. Fix the Makefile's cloud-run-deploy/deploy-staging targets (console-set values do NOT survive --set-env-vars). See CC-30 / D16."
+            exit 1
+          fi
+
+          echo "✅ env-drift check passed — pilot config is live."
 
       - name: Show service URL
         run: |
