@@ -106,11 +106,13 @@ export function AwaitingPickupCard({ request, onPickUp }: Props) {
           )}
         </List>
 
+        {/* CC-32 (3.2): 44px hit area (CC-23 precedent) — this is the morning
+            surface's most time-sensitive action and it was a ~30px target. */}
         <Button
           variant="contained"
           color="warning"
           size="small"
-          sx={{ mt: 1.5 }}
+          sx={{ mt: 1.5, minHeight: 44, minWidth: 44, fontSize: 16 }}
           onClick={() => onPickUp(request)}
         >
           Pick Up

@@ -30,7 +30,9 @@ export function MyRequestsSummary({ requests, onOpenRequests }: Props) {
               </Typography>
             </Box>
           </Stack>
-          <Button size="small" onClick={(e) => { e.stopPropagation(); onOpenRequests() }}>
+          {/* CC-32 (3.2): 44px hit area — sibling of VehicleChecks/WaitingOnMe. */}
+          <Button size="small" sx={{ minHeight: 44, minWidth: 44, fontSize: 16, flexShrink: 0 }}
+            onClick={(e) => { e.stopPropagation(); onOpenRequests() }}>
             View all
           </Button>
         </Stack>
