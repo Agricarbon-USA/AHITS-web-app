@@ -8,7 +8,7 @@ import type { OfflineQueueItem } from '@/types'
 // queue instance), so no hook mock is needed.
 
 const ITEMS: OfflineQueueItem[] = [
-  { id: 1, endpoint: '/api/deployments', method: 'POST', body: {}, createdAt: 1, retries: 0, status: 'pending', label: 'Launch deployment' },
+  { id: 1, endpoint: '/api/deployments', method: 'POST', body: {}, createdAt: 1, retries: 0, status: 'pending', label: 'Start deployment' },
   { id: 2, endpoint: '/api/daily-check', method: 'POST', body: {}, createdAt: 2, retries: 3, status: 'failed', label: 'Daily check', lastError: 'Vehicle already checked today' },
 ]
 
@@ -29,7 +29,7 @@ function renderOutbox(over: Partial<React.ComponentProps<typeof OutboxDialog>> =
 describe('OutboxDialog (CC-12 PR1)', () => {
   it('lists each queued item by label, with the failed item’s error', async () => {
     renderOutbox()
-    expect(await screen.findByText('Launch deployment')).toBeInTheDocument()
+    expect(await screen.findByText('Start deployment')).toBeInTheDocument()
     expect(screen.getByText('Daily check')).toBeInTheDocument()
     expect(screen.getByText(/Vehicle already checked today/)).toBeInTheDocument()
   })
@@ -56,7 +56,7 @@ describe('OutboxDialog (CC-12 PR1)', () => {
   it('CC-29 item 1b: offers "Stuck? Discard" on a wedged NON-failed item and discards by id', async () => {
     // Item 1 is pending with an ancient createdAt → past the 24h "stuck" threshold.
     const props = renderOutbox()
-    await screen.findByText('Launch deployment')
+    await screen.findByText('Start deployment')
     const stuck = await screen.findByRole('button', { name: /Stuck\? Discard/i })
     // window.confirm gates the destructive action — accept it, then it deletes by id.
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
@@ -67,7 +67,7 @@ describe('OutboxDialog (CC-12 PR1)', () => {
 
   it('CC-29 item 1b: a declined confirm does NOT discard the stuck item', async () => {
     const props = renderOutbox()
-    await screen.findByText('Launch deployment')
+    await screen.findByText('Start deployment')
     const stuck = await screen.findByRole('button', { name: /Stuck\? Discard/i })
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
     fireEvent.click(stuck)

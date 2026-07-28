@@ -32,7 +32,9 @@ export default function OfflinePage() {
         </p>
         <div style={{ display: 'grid', gap: 12, maxWidth: 320, margin: '0 auto' }}>
           <Link href="/operator/daily-check" style={linkStyle}>Daily Check</Link>
-          <Link href="/operator/scan" style={linkStyle}>Scan / Check In · Out</Link>
+          {/* CC-32 (1.2): one custody pair, always Out-then-In — matches the
+              dashboard's Scan card exactly (the reversed order is retired). */}
+          <Link href="/operator/scan" style={linkStyle}>Scan / Check Out · In</Link>
           <Link href="/operator/my-deployment" style={linkStyle}>My Deployment</Link>
           <Link href="/operator/dashboard" style={linkStyle}>Dashboard</Link>
         </div>

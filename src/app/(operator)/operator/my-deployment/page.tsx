@@ -326,7 +326,8 @@ function NewDeploymentDialog({
           <Step><StepLabel>Details</StepLabel></Step>
           <Step><StepLabel>Build Rig</StepLabel></Step>
           <Step><StepLabel>Build Kit</StepLabel></Step>
-          <Step><StepLabel>Launch</StepLabel></Step>
+          {/* CC-32 (1.1): the retired deployment verb is gone — this step is "Start". */}
+          <Step><StepLabel>Start</StepLabel></Step>
         </Stepper>
 
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
@@ -503,12 +504,12 @@ function NewDeploymentDialog({
             {kitItems.size === 0 && (
               <Alert severity="warning" sx={{ mt: 1 }}>Starting with empty kit</Alert>
             )}
-            {/* UR-006: surface exactly what blocks launch HERE (on the kit step),
-                so the operator isn't left staring at a greyed-out Launch button on
-                the next step with no explanation. */}
+            {/* UR-006: surface exactly what blocks the start HERE (on the kit step),
+                so the operator isn't left staring at a greyed-out Start Deployment
+                button on the next step with no explanation. */}
             {(hasUnselectedSerialized || (hasConsumableInKit && !sourceHubId)) && (
               <Alert severity="info" sx={{ mt: 2 }}>
-                Before you can launch:
+                Before you can start:
                 {hasUnselectedSerialized && <div>• Pick a unit for each selected serialized item above.</div>}
                 {hasConsumableInKit && !sourceHubId && <div>• Choose a source hub for the consumable items.</div>}
               </Alert>
@@ -543,7 +544,7 @@ function NewDeploymentDialog({
         {step < 3 ? (
           // UR-006: block leaving the kit step until serialized units are picked
           // and a source hub is chosen — so the user can never reach the note step
-          // (and the Launch button) in a state that leaves Launch silently disabled.
+          // (and Start Deployment) in a state that leaves it silently disabled.
           <Button variant="contained" onClick={() => setStep((s) => s + 1)}
             disabled={loading || (step === 2 && (hasUnselectedSerialized || (hasConsumableInKit && !sourceHubId)))}>
             Next
@@ -551,7 +552,10 @@ function NewDeploymentDialog({
         ) : (
           <Button variant="contained" onClick={launch} disabled={loading || hasUnselectedSerialized || (hasConsumableInKit && !sourceHubId)}
             startIcon={loading ? <CircularProgress size={16} color="inherit" /> : null}>
-            {loading ? 'Launching…' : pickupPreset ? 'Pick Up' : 'Launch Deployment'}
+            {/* CC-32 (1.1): ONE verb for creating a deployment — "Start Deployment".
+                The pickup branch keeps "Pick Up", the one taking-verb. D11
+                vocabulary, confirmed by Max 2026-07-28. */}
+            {loading ? 'Starting…' : pickupPreset ? 'Pick Up' : 'Start Deployment'}
           </Button>
         )}
       </DialogActions>

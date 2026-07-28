@@ -218,7 +218,8 @@ function NewDeploymentDialog({
           <Step><StepLabel>Assign</StepLabel></Step>
           <Step><StepLabel>Build Rig</StepLabel></Step>
           <Step><StepLabel>Build Kit</StepLabel></Step>
-          <Step><StepLabel>Launch</StepLabel></Step>
+          {/* CC-32 (1.1): the retired deployment verb is gone — this step is "Start". */}
+          <Step><StepLabel>Start</StepLabel></Step>
         </Stepper>
         {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
         {step === 0 && (
@@ -344,7 +345,8 @@ function NewDeploymentDialog({
         ) : (
           <Button variant="contained" onClick={launch} disabled={loading || hasUnresolved}
             startIcon={loading ? <CircularProgress size={16} color="inherit" /> : null}>
-            {loading ? 'Launching…' : 'Launch Deployment'}
+            {/* CC-32 (1.1): one deployment verb app-wide — matches the operator dialog. */}
+            {loading ? 'Starting…' : 'Start Deployment'}
           </Button>
         )}
       </DialogActions>
