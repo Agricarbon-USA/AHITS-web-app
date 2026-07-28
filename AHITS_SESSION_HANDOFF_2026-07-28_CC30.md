@@ -60,17 +60,20 @@ re-appended.)
 
 ## Resume points / open items
 
-### 1. ⚠️ Merge order — #206 collides with CC-29 PR-1 in `useOfflineQueue.ts`
+### 1. ✅ Merge order with CC-29 — RESOLVED, no action needed
 
-Both branch from `development`; whichever lands second conflicts. The **cron half of
-#206 is conflict-free** (CC-29 doesn't touch that route).
+CC-29 landed first (#202/#203/#205 merged to `development` during this session), so
+**#206 was rebased onto post-CC-29 `development` and its instrumentation re-anchored**;
+#204 was rebased too. Both branches are current with `development`.
 
-Resolution is **not just re-anchoring the four sites** — CC-29 adds `-> 'failed'` paths
-that #206 cannot know about and that would land uninstrumented (a photo-upload
-retry-cap, its own dependent-quarantine loop, and a second transient retry-cap
-ternary). After the merge there are ~6 failure transitions, not 3. Call
-`reportItemFailed(...)` at each new one, or CC-29's new wedge-proofing fails as
-silently as the old code did. Full site-by-site table is in **#206's body**.
+Worth knowing *why* this wasn't a mechanical re-anchor: CC-29 raised the number of
+`-> 'failed'` transitions in `useOfflineQueue.ts` from **three to six**, and the three
+new ones are exactly CC-29's new wedge-proofing paths (photo-upload retry-cap, that
+branch's own dependent-quarantine loop, and the in-flight-409 retry-cap). Left alone
+they would have shipped **blind** — defeating the purpose of #206. All six are now
+instrumented, plus the data-loss tripwire; site-by-site table in **#206's body**.
+CC-29's `tests/offline` flush-lifecycle harness passes with the captures in place
+(`test:ui` 18 files / 84 tests, up from 17/74).
 
 ### 2. Latent trap found — the migration-safety gate is a false green on macOS
 
