@@ -47,6 +47,9 @@ interface RequestRow {
   fulfillerHubName: string | null
   stockReservedAt: string | null
   fulfillerOperatorId: string | null
+  // CC-31 item 4: an admin can file a request FOR an operator (forOperatorId); that
+  // operator now sees it here (read-only). Gate Cancel to the actual requester.
+  requestedById: string
 }
 
 const TERMINAL = new Set(['FULFILLED', 'CANCELLED', 'DENIED'])
@@ -265,7 +268,11 @@ export default function RequestsPage() {
                           >
                             Mark Handled
                           </Button>
-                        ) : (
+                        ) : req.requestedById === user?.userId ? (
+                          // CC-31 item 4: only the actual requester may cancel. A request
+                          // surfaced only because it was filed FOR this operator (forOperatorId)
+                          // is read-only here — the write route 403s a non-requester cancel, so
+                          // showing the button would just error.
                           <Button
                             size="small"
                             color="error"
@@ -281,7 +288,7 @@ export default function RequestsPage() {
                           >
                             Cancel
                           </Button>
-                        )
+                        ) : null
                       )}
                     </Stack>
                   </CardContent>
