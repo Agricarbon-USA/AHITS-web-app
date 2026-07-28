@@ -181,7 +181,12 @@ export default function OperatorDailyCheckPage() {
 
   const buildPayload = (coords: CheckCoords = {}) => ({
     vehicleId,
-    date,
+    // CC-29 item 4a: stamp the ORIGINAL business date at submit-click, NOT the `date`
+    // state — so a form left open overnight is filed under the day the operator
+    // actually hit Submit, and a late offline replay carries THAT date (the server
+    // trusts it within a bounded past window; see the daily-check route). businessDate()
+    // is called here (an event handler), never in render.
+    date: businessDate(),
     odometer: odometer ? parseInt(odometer) : undefined,
     site: site || undefined,
     checklistJson: checklist.map(({ key, label, value, note }) => ({ key, label, value, note: note || undefined })),
@@ -322,13 +327,17 @@ export default function OperatorDailyCheckPage() {
               ))
             }
           </TextField>
+          {/* CC-29 item 4a: the business date is stamped automatically at submit —
+              the server ignores a client-edited value, so this is a read-only display
+              (an editable field that lies invited the review's 1.1 tail finding). */}
           <TextField
             type="date"
             label="Date"
             value={date}
-            onChange={(e) => setDate(e.target.value)}
             fullWidth
+            disabled
             InputLabelProps={{ shrink: true }}
+            helperText="Set automatically"
           />
           <OdometerField value={odometer} onChange={setOdometer} lastKnown={lastOdometer} />
           <TextField

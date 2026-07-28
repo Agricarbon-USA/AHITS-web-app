@@ -25,6 +25,32 @@ function isNonTrivialPin(pin: string): boolean {
 export const newPinSchema = pinSchema.refine(isNonTrivialPin, 'Choose a less guessable PIN')
 
 /**
+ * CC-29 item 7b: a `photoUrls` array that REJECTS unresolved `localphoto:` refs. The
+ * offline queue must upload each photo and swap its `localphoto:<uuid>` ref for a real
+ * URL before a write is sent (photoStore.resolvePhotoRefs). A body that still carries a
+ * local ref means the client sent prematurely — reject it so the queue SURFACES the
+ * failure instead of the route persisting a dead ref that renders as a broken image.
+ * `filterAllowedPhotoUrls` (photo-security.ts) already drops these at Photo-row creation;
+ * this closes the raw-array persistence path (the transfer row, and any future route).
+ * The prefix is LOCAL_PHOTO_PREFIX from photoStore — hardcoded here to keep this
+ * server-side module free of the client photo store.
+ */
+export const PHOTO_NOT_UPLOADED_MSG = 'Photo not yet uploaded — retry when online'
+
+export const photoUrlsField = () =>
+  z.array(z.string().refine((u) => !u.startsWith('localphoto:'), PHOTO_NOT_UPLOADED_MSG)).default([])
+
+/**
+ * True when a failed parse is (at least partly) an unresolved-localphoto rejection.
+ * The route answers 422 for it rather than a generic 400 — deliberately: withIdempotency
+ * caches 400 responses but NOT 422, so a corrected re-send (same Idempotency-Key, now
+ * carrying real URLs) is a fresh attempt instead of a frozen/mismatched cached failure.
+ */
+export function isPhotoNotUploadedError(err: z.ZodError): boolean {
+  return err.issues.some((i) => i.message === PHOTO_NOT_UPLOADED_MSG)
+}
+
+/**
  * Monetary amount. Stored as Postgres NUMERIC(10,2); validate at the API
  * boundary as a non-negative number with at most two decimal places so a
  * float like 19.999 is rejected rather than silently truncated. The 1e-9

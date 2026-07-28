@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
+import { photoUrlsField, isPhotoNotUploadedError } from '@/lib/validation'
 import { prisma } from '@/lib/prisma'
 import { isAuthorizedForRig } from '@/lib/deployment-auth'
 import { requireAuth } from '@/lib/auth/session'
@@ -26,7 +27,7 @@ const dispositionSchema = z.object({
   invoiceNumber: z.string().optional(),
   repairHubId: z.string().optional(),
   inoperableNotes: z.string().optional(),
-  photoUrls: z.array(z.string()).default([]),
+  photoUrls: photoUrlsField(), // CC-29 item 7b: reject unresolved localphoto: refs (422)
 }).superRefine((v, ctx) => {
   // G1: a "Return to Hub" disposition must name a destination hub. Without it the
   // server skips the per-hub stock credit and the quantity vanishes from hub
@@ -79,7 +80,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
   const body = await req.json()
   const parsed = schema.safeParse(body)
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
+  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: isPhotoNotUploadedError(parsed.error) ? 422 : 400 }) // CC-29 item 7b: localphoto ref -> 422
 
   const { note } = parsed.data
   let { itemDispositions } = parsed.data

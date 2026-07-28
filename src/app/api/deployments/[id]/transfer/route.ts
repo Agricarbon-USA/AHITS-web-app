@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
+import { photoUrlsField, isPhotoNotUploadedError } from '@/lib/validation'
 import { prisma } from '@/lib/prisma'
 import { isAuthorizedForRig } from '@/lib/deployment-auth'
 import { getActivePrimaryForRig, getRequiredPrimaryForRig, hydrateTransfersFromRig } from '@/lib/deployment-assignments'
@@ -9,7 +10,7 @@ import { withIdempotency } from '@/lib/idempotency'
 const schema = z.object({
   toOperatorId: z.string().min(1, 'Destination operator is required'),
   note: z.string().min(1, 'Note is required'),
-  photoUrls: z.array(z.string()).default([]),
+  photoUrls: photoUrlsField(), // CC-29 item 7b: reject unresolved localphoto: refs (422)
   vehicleIds: z.array(z.string()).default([]),
   items: z.array(z.object({
     kitItemId: z.string(),
@@ -56,7 +57,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
   const body = await req.json()
   const parsed = schema.safeParse(body)
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
+  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: isPhotoNotUploadedError(parsed.error) ? 422 : 400 }) // CC-29 item 7b: localphoto ref -> 422
 
   const { toOperatorId, note, photoUrls, vehicleIds, items } = parsed.data
 

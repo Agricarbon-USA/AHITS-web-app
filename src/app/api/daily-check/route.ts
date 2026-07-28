@@ -7,6 +7,14 @@ import { createAlert, resolveActiveAlert } from '@/lib/alerts'
 import { applyOdometerReading } from '@/lib/maintenance'
 import { parsePagination } from '@/lib/validation'
 import { businessDate } from '@/lib/business-date'
+import { withIdempotency } from '@/lib/idempotency'
+
+// CC-29 item 4b: a client-stamped business date is trusted only within this bounded
+// PAST window (days). Older-than-window or ANY future date is clamped to today's
+// business date — the clamp's original job (block pre/future-dating to dodge the
+// missed-check alert, FND-7) is preserved; only the bounded past is newly trusted so
+// a legitimately late offline replay files under the day it was performed.
+const PAST_WINDOW_DAYS = 3
 
 const schema = z.object({
   vehicleId: z.string(),
@@ -75,6 +83,15 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  // CC-29 (discovered gap): wrap in withIdempotency (scope 'daily-check'). Item 4c
+  // replaces the past-date upsert-update with a 409, so retry-safety can no longer
+  // rely on the upsert alone — an exact replay whose 201 ack was lost (lie-fi) would
+  // otherwise re-send and hit the new duplicate-check 409, a FALSE "Failed" for a
+  // check that DID land. The idempotency layer returns the cached 201 for an exact
+  // replay (handler never re-runs); a genuinely-different past-day check (new key)
+  // still 409s. Same-day submits each mint a fresh key, so the upsert-update below is
+  // untouched. No Idempotency-Key header → passes straight through (unchanged).
+  return withIdempotency(req, 'daily-check', async () => {
   const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
@@ -82,10 +99,23 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
   const { vehicleId, checklistJson, passFail, issues, odometer, site, durationMs, gpsLat, gpsLng, gpsAccuracy } = parsed.data
-  // Clamp to server-side business date so a check can't be pre-dated or
-  // future-dated to dodge the missed-check alert (note: a check synced a day
-  // late is recorded as today, not the day it was performed).
-  const date = businessDate()
+  // CC-29 item 4b: trust the client-stamped business date only inside the bounded
+  // PAST window; clamp anything older or ANY future date to today. YYYY-MM-DD is
+  // lexicographically ordered so the string comparisons are the date comparisons
+  // (the schema regex already guarantees the shape). FND-7: the clamp still blocks
+  // pre/future-dating — future dates fail `<= today` and are clamped — only a check
+  // performed up to PAST_WINDOW_DAYS ago is newly trusted at its performed date.
+  const today = businessDate()
+  const earliest = businessDate(new Date(Date.now() - PAST_WINDOW_DAYS * 86_400_000))
+  const clientDate = parsed.data.date
+  let date: string
+  if (clientDate >= earliest && clientDate <= today) {
+    date = clientDate
+  } else {
+    date = today
+    console.warn('[daily-check] client date out of window, clamped', { clientDate, earliest, today })
+  }
+  const isToday = date === today
 
   // Daily checks may be performed on ANY active vehicle/equipment — not just
   // items in the operator's deployment. Operators routinely inspect a vehicle
@@ -99,6 +129,22 @@ export async function POST(req: NextRequest) {
   })
   if (!vehicleExists) {
     return NextResponse.json({ error: 'Vehicle not found.' }, { status: 404 })
+  }
+
+  // CC-29 item 4c: a late replay must never SILENTLY overwrite (or be overwritten by)
+  // an existing check via the upsert. If this is a PAST date (≠ today) and a check
+  // already exists for (vehicle, date, operator), surface a 409 — the queue marks it
+  // 'failed' (409 ∈ TERMINAL_STATUSES) with this message, discard-able in the Outbox,
+  // never merged. Same-day (date === today) keeps the upsert-update below: same-day
+  // edit/resubmit is a feature, and withIdempotency already dedupes exact replays.
+  if (!isToday) {
+    const existing = await prisma.dailyCheck.findUnique({
+      where: { vehicleId_date_operatorId: { vehicleId, date: new Date(date), operatorId: session.userId } },
+      select: { id: true },
+    })
+    if (existing) {
+      return NextResponse.json({ error: `A check for ${date} already exists for this vehicle.` }, { status: 409 })
+    }
   }
 
   const check = await prisma.dailyCheck.upsert({
@@ -195,6 +241,9 @@ export async function POST(req: NextRequest) {
         where: { id: vehicleId, deletedAt: null },
         select: { name: true },
       })
+      // CC-29 item 4d: a late FAILING check may still RAISE — admins should hear about
+      // a real problem regardless of which day it was performed. Only the RESOLVE
+      // paths below are gated on the check's own date.
       await createAlert('DAILY_CHECK_FAILED', 'vehicles', vehicleId, {
         name: vehicle?.name ?? vehicleId,
         operatorName: session.name,
@@ -203,15 +252,20 @@ export async function POST(req: NextRequest) {
         // The dedup update refreshes this, so a re-raise points at the latest failure.
         checkId: check.id,
       })
-    } else {
+    } else if (isToday) {
+      // CC-29 item 4d: a yesterday PASS must not clear TODAY's live failed-vehicle
+      // alert — only a check performed today speaks to today's condition.
       await resolveActiveAlert('DAILY_CHECK_FAILED', 'vehicles', vehicleId)
     }
-    // Any submitted check (pass or fail) clears the MISSED alert — the operator
-    // checked in for the day regardless of outcome.
-    await resolveActiveAlert('DAILY_CHECK_MISSED', 'operators', session.userId)
+    // CC-29 item 4d: only a check performed TODAY clears today's MISSED alert — a
+    // late replay of yesterday's check must not mark today as covered.
+    if (isToday) {
+      await resolveActiveAlert('DAILY_CHECK_MISSED', 'operators', session.userId)
+    }
   } catch (err) {
     console.error('[POST /api/daily-check] daily-check-failed alert failed', err)
   }
 
   return NextResponse.json({ data: check }, { status: 201 })
+  })
 }

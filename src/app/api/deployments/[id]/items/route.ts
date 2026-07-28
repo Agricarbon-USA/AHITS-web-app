@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
+import { photoUrlsField, isPhotoNotUploadedError } from '@/lib/validation'
 import { prisma } from '@/lib/prisma'
 import { getAuthorizedActiveRig } from '@/lib/deployment-auth'
 import { getActivePrimaryForRig, getRequiredPrimaryForRig, hydrateRigOperator } from '@/lib/deployment-assignments'
@@ -56,7 +57,7 @@ const addSchema = z.object({
   // Optional: adding a tool mid-deployment shouldn't require typing a note
   // (low-friction field use). A note still flows to the check-out log when given.
   note: z.string().optional(),
-  photoUrls: z.array(z.string()).default([]),
+  photoUrls: photoUrlsField(), // CC-29 item 7b: reject unresolved localphoto: refs (422)
   // Required when any item is CONSUMABLE — identifies which hub to draw from.
   sourceHubId: z.string().optional(),
 })
@@ -77,7 +78,7 @@ const dispositionSchema = z.object({
   invoiceNumber: z.string().optional(),
   repairHubId: z.string().optional(),
   inoperableNotes: z.string().optional(),
-  photoUrls: z.array(z.string()).default([]),
+  photoUrls: photoUrlsField(), // CC-29 item 7b: reject unresolved localphoto: refs (422)
 }).superRefine((v, ctx) => {
   // G1: a "Return to Hub" disposition must name a destination hub, else the
   // per-hub stock credit is skipped and the quantity vanishes from hub views.
@@ -113,7 +114,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
   const body = await req.json()
   const parsed = addSchema.safeParse(body)
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
+  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: isPhotoNotUploadedError(parsed.error) ? 422 : 400 }) // CC-29 item 7b: localphoto ref -> 422
 
   const { items, note, photoUrls, sourceHubId } = parsed.data
   const kit = await prisma.kit.findFirst({ where: { rigId: id } })
@@ -299,7 +300,7 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
 
   const body = await req.json()
   const parsed = removeSchema.safeParse(body)
-  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
+  if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: isPhotoNotUploadedError(parsed.error) ? 422 : 400 }) // CC-29 item 7b: localphoto ref -> 422
 
   const { note, itemDispositions } = parsed.data
   const now = new Date()
