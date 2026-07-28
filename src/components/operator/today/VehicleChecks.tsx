@@ -45,7 +45,14 @@ export function VehicleChecks({ vehicles, checkedVehicleIds, onCheck }: Props) {
                 {isDone ? (
                   <StatusChip label="Done" color="success" />
                 ) : (
-                  <Button size="small" variant="outlined" onClick={() => onCheck(rv.vehicleId)}>
+                  /* CC-32 (3.2): 44px hit area per the CC-23 daily-check toggle
+                     precedent. Visual density stays compact; the target does not. */
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => onCheck(rv.vehicleId)}
+                    sx={{ minHeight: 44, minWidth: 44, fontSize: 16, flexShrink: 0 }}
+                  >
                     Check
                   </Button>
                 )}

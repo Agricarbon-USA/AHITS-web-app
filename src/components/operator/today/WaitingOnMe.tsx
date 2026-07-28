@@ -46,7 +46,14 @@ export function WaitingOnMe({ transfers, handoffs, onReview }: Props) {
           ))}
         </Stack>
         <Box mt={1.5}>
-          <Button size="small" variant="contained" color="info" onClick={onReview}>
+          {/* CC-32 (3.2): 44px hit area (CC-23 precedent). */}
+          <Button
+            size="small"
+            variant="contained"
+            color="info"
+            onClick={onReview}
+            sx={{ minHeight: 44, minWidth: 44, fontSize: 16 }}
+          >
             Review
           </Button>
         </Box>

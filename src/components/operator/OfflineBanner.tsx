@@ -51,7 +51,8 @@ export function OfflineBanner() {
       priority: BANNER_PRIORITY.CRITICAL,
       node: (
         <Alert severity="warning" sx={bannerSx}
-          action={<Button size="small" color="inherit" component={Link} href="/login">Sign in</Button>}>
+          action={<Button size="small" color="inherit" component={Link} href="/login"
+            sx={{ minHeight: 44, fontSize: 16 }}>Sign in</Button>}>
           Session expired — sign in to send {pending} saved action{pending === 1 ? '' : 's'}.
         </Alert>
       ),
@@ -90,7 +91,8 @@ export function OfflineBanner() {
       priority: BANNER_PRIORITY.CRITICAL,
       node: (
         <Alert severity="error" sx={bannerSx}
-          action={<Button size="small" color="inherit" onClick={() => setOutboxOpen(true)}>Review</Button>}>
+          action={<Button size="small" color="inherit" onClick={() => setOutboxOpen(true)}
+            sx={{ minHeight: 44, fontSize: 16 }}>Review</Button>}>
           {failed} action(s) couldn&apos;t be applied. Open the Outbox to retry or discard each.
         </Alert>
       ),
@@ -136,7 +138,8 @@ export function OfflineBanner() {
           // dialog already renders pending rows read-only with Waiting/Sending chips;
           // this is only the missing door. Queue-engine internals are untouched.
           action={
-            <Button size="small" color="inherit" onClick={() => setOutboxOpen(true)}>
+            <Button size="small" color="inherit" onClick={() => setOutboxOpen(true)}
+              sx={{ minHeight: 44, fontSize: 16 }}>
               View
             </Button>
           }
