@@ -39,18 +39,24 @@ jobs:
           GITHUB_BASE_REF: ${{ github.base_ref }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
 
-  # Hard-fail any PR targeting `production` whose added migrations DROP the legacy
+  # Hard-fail any PR targeting a LIVE branch whose added migrations DROP the legacy
   # operator columns/table (operatorId, assignedOperatorId, rig_operators) that the
   # W0-10 completion patches (held/batch5-pr4c-drop.patch) are waiting to land.
   # Requires the `destructive-migration-approved` label to proceed — that label must
   # be added by a project lead AFTER all §11 gate conditions are satisfied.
   #
+  # CC-30 / D16 (2026-07-28): this used to run ONLY for production-targeting PRs.
+  # Under D16 the fleet lives on staging, which `development` deploys to and
+  # auto-migrates — so the held 4b'/4c drop patches were one acknowledged-comment
+  # away from the pilot database. Both live branches are now guarded, and BASE is
+  # parametrized off the PR's actual target instead of being hardcoded.
+  #
   # NOTE: same label-add caveat as migration-safety above — push or manually re-run
   # after adding the label.
   production-drop-guard:
-    name: Production DROP guard (W0-10 operator columns)
+    name: Live-branch DROP guard (W0-10 operator columns)
     runs-on: ubuntu-latest
-    if: github.base_ref == 'production'
+    if: github.base_ref == 'production' || github.base_ref == 'development'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -59,9 +65,16 @@ jobs:
       - name: Detect DROP of legacy operator objects in added migrations
         env:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          # CC-30: the PR's real target branch (production or development — the job
+          # `if:` admits no others), so the diff is taken against what this PR would
+          # actually land on.
+          BASE_BRANCH: ${{ github.base_ref }}
         run: |
-          BASE="origin/production"
-          git fetch --quiet origin production 2>/dev/null || true
+          BASE="origin/${BASE_BRANCH}"
+          # Fetch the SAME branch we diff against — fetching a hardcoded `production`
+          # while diffing origin/development would rely on fetch-depth:0 having
+          # happened to bring it along.
+          git fetch --quiet origin "${BASE_BRANCH}" 2>/dev/null || true
 
           mapfile -t FILES < <(
             git diff --diff-filter=AM --name-only "${BASE}...HEAD" \
@@ -101,6 +114,6 @@ jobs:
           fi
 
           echo ""
-          echo "❌ production-drop-guard: PR targets production and drops legacy operator objects."
+          echo "❌ production-drop-guard: PR targets the live branch '${BASE_BRANCH}' and drops legacy operator objects."
           echo "   Add the 'destructive-migration-approved' label (project lead only) after confirming ALL §11 gate conditions in held/README.md, then re-run CI."
           exit 1
