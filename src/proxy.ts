@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { jwtVerify } from 'jose'
+// CC-29 item 5: sliding session renewal. These come from the jose-only edge module
+// (NOT src/lib/auth/session.ts — that pulls prisma + next/headers into the edge
+// bundle). One shared definition of the mint helper, cookie flags, and durations.
+import { SESSION_COOKIE, sessionCookieOptions, maybeRenewSessionToken } from '@/lib/auth/session-edge'
 
 // NOTE: this file is the app's Next.js middleware. Next.js 16 renamed the
 // `middleware` file convention to `proxy` (this repo is on next@^16), so the build
@@ -135,7 +139,7 @@ async function handleRequest(request: NextRequest, requestId: string) {
     return NextResponse.next()
   }
 
-  const token = request.cookies.get('ahits_session')?.value
+  const token = request.cookies.get(SESSION_COOKIE)?.value
 
   if (!token) {
     if (pathname.startsWith('/api/')) {
@@ -147,6 +151,17 @@ async function handleRequest(request: NextRequest, requestId: string) {
   try {
     const { payload } = await jwtVerify(token, getSecret())
     const role = payload.role as string
+
+    // CC-29 item 5: sliding renewal. Past half-life (and within the 14-day cap since
+    // authAt), re-mint the token with the SAME claims + a fresh 24h exp so a shift-long
+    // session never hits the synchronized mid-shift JWT cliff. Computed here (the single
+    // authenticated chokepoint every page + API request crosses) and applied to the
+    // response ACTUALLY returned below. SECURITY TRADEOFF: fixed 24h bounds a stolen
+    // token to ≤24h; sliding renewal lets an ACTIVELY-used stolen token live longer,
+    // bounded to ≤14 days since PIN entry (never infinite). Instant revocation is
+    // unaffected — every API route still runs DB-backed getSession() (tokenVersion /
+    // isActive / role), so suspend/force-logout kill a renewed token on its next request.
+    const renewedToken = await maybeRenewSessionToken(payload as Record<string, unknown>, Math.floor(Date.now() / 1000))
 
     // UR-004: a forced-PIN-reset operator (mustChangePin, carried in the JWT)
     // must set a new PIN before doing anything else — enforced SERVER-SIDE here,
@@ -198,7 +213,13 @@ async function handleRequest(request: NextRequest, requestId: string) {
       )
     }
 
-    return nextWithCsp(request, csp, nonce, requestId)
+    const response = nextWithCsp(request, csp, nonce, requestId)
+    // CC-29 item 5: set the renewed cookie on the response actually returned. Applied
+    // on the main pass-through (every page + API request); the rare in-block redirects
+    // above renew on the operator's very next request. Renewal changes exp only — never
+    // claims, never mustChangePin.
+    if (renewedToken) response.cookies.set(SESSION_COOKIE, renewedToken, sessionCookieOptions())
+    return response
   } catch {
     if (pathname.startsWith('/api/')) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
