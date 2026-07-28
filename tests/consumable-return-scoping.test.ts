@@ -14,7 +14,7 @@ vi.mock('../src/lib/auth/session', () => ({
   requireAdmin: () => Promise.resolve((mockSession as { role?: string } | null)?.role === 'ADMIN' ? mockSession : null),
 }))
 
-vi.mock('../src/lib/alerts', () => ({ createAlert: vi.fn().mockResolvedValue({}) }))
+vi.mock('../src/lib/alerts', () => ({ createAlert: vi.fn().mockResolvedValue({}), resolveActiveAlert: vi.fn().mockResolvedValue({}) }))
 
 describe('Consumable return: unit scoping', () => {
   it('does not return units from other active rigs', async () => {

@@ -21,7 +21,7 @@ vi.mock('../src/lib/auth/session', () => ({
   requireAdmin: () =>
     Promise.resolve((mockSession as { role?: string } | null)?.role === 'ADMIN' ? mockSession : null),
 }))
-vi.mock('../src/lib/alerts', () => ({ createAlert: vi.fn().mockResolvedValue({}) }))
+vi.mock('../src/lib/alerts', () => ({ createAlert: vi.fn().mockResolvedValue({}), resolveActiveAlert: vi.fn().mockResolvedValue({}) }))
 
 let keyCounter = 0
 function jsonReq(url: string, method: string, body: unknown) {

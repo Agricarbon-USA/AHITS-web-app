@@ -69,8 +69,11 @@ export default function OperatorTodayPage() {
       </Stack>
 
       {error && (
+        /* CC-32 (2.9a): the old copy named a pull-down gesture that does not exist on
+           an installed iOS PWA. Name the affordance that actually exists on this
+           screen instead: the FreshnessIndicator's refresh arrow, directly above. */
         <Alert severity="error" sx={{ mb: 2 }}>
-          Couldn&apos;t load your day. Pull to refresh, or check your connection.
+          Couldn&apos;t load your day. Tap the refresh arrow above, or check your connection.
         </Alert>
       )}
 
@@ -122,10 +125,16 @@ export default function OperatorTodayPage() {
           <MyRequestsSummary requests={openRequests} onOpenRequests={() => router.push('/operator/requests')} />
 
           {nothingToShow && !error && (
+            /* CC-32 (2.9b): the old copy ("When you pick up a rig, your day shows up
+               here") misdirected a SECOND-SEAT operator into starting a duplicate
+               deployment — under the secondary-operator deferral, the crewmate's rig
+               legitimately carries the checks. This is the honest reading of that
+               state. The MODEL fix (getActiveRigForOperator) is its own pre-CC-17
+               packet and is deliberately NOT touched here. */
             <EmptyState
               icon={<EventAvailableIcon fontSize="inherit" />}
-              title="No active deployment"
-              description="You're not on a deployment right now. When you pick up a rig, your day shows up here. You can still scan equipment below."
+              title="No deployment assigned to you yet"
+              description="If you're riding with a crew today, your crewmate's rig carries the checks for now — see My Deployment for anything waiting on you. You can still scan equipment below."
             />
           )}
 

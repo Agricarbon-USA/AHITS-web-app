@@ -51,7 +51,8 @@ export function OfflineBanner() {
       priority: BANNER_PRIORITY.CRITICAL,
       node: (
         <Alert severity="warning" sx={bannerSx}
-          action={<Button size="small" color="inherit" component={Link} href="/login">Sign in</Button>}>
+          action={<Button size="small" color="inherit" component={Link} href="/login"
+            sx={{ minHeight: 44, fontSize: 16 }}>Sign in</Button>}>
           Session expired — sign in to send {pending} saved action{pending === 1 ? '' : 's'}.
         </Alert>
       ),
@@ -90,7 +91,8 @@ export function OfflineBanner() {
       priority: BANNER_PRIORITY.CRITICAL,
       node: (
         <Alert severity="error" sx={bannerSx}
-          action={<Button size="small" color="inherit" onClick={() => setOutboxOpen(true)}>Review</Button>}>
+          action={<Button size="small" color="inherit" onClick={() => setOutboxOpen(true)}
+            sx={{ minHeight: 44, fontSize: 16 }}>Review</Button>}>
           {failed} action(s) couldn&apos;t be applied. Open the Outbox to retry or discard each.
         </Alert>
       ),
@@ -130,6 +132,17 @@ export function OfflineBanner() {
           severity={isOffline ? 'warning' : 'info'}
           icon={syncing ? <CircularProgress size={16} /> : undefined}
           sx={bannerSx}
+          // CC-32 (2.8) / P0-3: this banner was dead text — the Outbox opened only from
+          // the FAILED banner, so an operator with a merely-pending queue had no way to
+          // see what was in it and sent a "did my check go through?" text instead. The
+          // dialog already renders pending rows read-only with Waiting/Sending chips;
+          // this is only the missing door. Queue-engine internals are untouched.
+          action={
+            <Button size="small" color="inherit" onClick={() => setOutboxOpen(true)}
+              sx={{ minHeight: 44, fontSize: 16 }}>
+              View
+            </Button>
+          }
         >
           {isOffline
             ? `You're offline — showing cached data.${pending > 0 ? ` ${pending} action(s) queued.` : ''}`
