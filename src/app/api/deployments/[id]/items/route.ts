@@ -459,6 +459,9 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
               purchaseOrder: disp.purchaseOrder ?? null,
               invoiceNumber: disp.invoiceNumber ?? null,
               repairHubId: disp.repairHubId ?? null,
+              // CC-34 (1b): the deployment this damage came from + who reported it.
+              rigId: id,
+              reportedById: session.userId,
               status: 'IN_PROGRESS',
             },
           })
@@ -492,6 +495,13 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
                 inoperableReportedById: session.userId,
               },
             })
+            // CC-34 (1c): ring the bell on an inoperable flip so triage happens before
+            // someone opens the maintenance page. review-inoperable clears this same
+            // ('inventory_units', unitId) key on RETIRE or REPAIR. Scoped to a real unit.
+            await createAlert('DAMAGE_REPORTED', 'inventory_units', targetUnit.id, {
+              itemName: kitItem.item.name,
+              operatorId: session.userId,
+            }, tx)
           }
           if (disp.photoUrls.length > 0) {
             await tx.photo.createMany({

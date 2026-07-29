@@ -34,10 +34,30 @@ export async function GET(req: NextRequest) {
 
   // NOTE: overdue-alert creation lives in the cron dispatcher (a GET must not write).
 
+  // CC-34 (1b): rigId/reportedById are scalar FKs (no @relation, house pattern), so
+  // resolve their labels with two batched lookups and attach rig/reportedBy to each task.
+  const rigIds = [...new Set(tasks.map((t) => t.rigId).filter((v): v is string => !!v))]
+  const reporterIds = [...new Set(tasks.map((t) => t.reportedById).filter((v): v is string => !!v))]
+  const [rigs, reporters] = await Promise.all([
+    rigIds.length
+      ? prisma.rig.findMany({ where: { id: { in: rigIds } }, select: { id: true, label: true } })
+      : Promise.resolve([]),
+    reporterIds.length
+      ? prisma.user.findMany({ where: { id: { in: reporterIds } }, select: { id: true, name: true } })
+      : Promise.resolve([]),
+  ])
+  const rigById = new Map(rigs.map((r) => [r.id, r]))
+  const reporterById = new Map(reporters.map((u) => [u.id, u]))
+  const withReported = tasks.map((t) => ({
+    ...t,
+    rig: t.rigId ? rigById.get(t.rigId) ?? null : null,
+    reportedBy: t.reportedById ? reporterById.get(t.reportedById) ?? null : null,
+  }))
+
   // Cost/spend data is admin-only (§10.2). Strip cost fields for operators.
   const data = session.role === 'ADMIN'
-    ? tasks
-    : tasks.map(({ estimatedCost, actualCost, ...rest }) => {
+    ? withReported
+    : withReported.map(({ estimatedCost, actualCost, ...rest }) => {
         void estimatedCost
         void actualCost
         return rest
