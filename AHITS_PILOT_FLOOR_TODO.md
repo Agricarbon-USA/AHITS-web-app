@@ -1,4 +1,4 @@
-# AHITS — Pilot-Floor To-Do · one page, current as of 2026-07-28 ~3:15pm
+# AHITS — Pilot-Floor To-Do · one page, current as of 2026-07-28 evening (CC-31+CC-32 FULLY LANDED)
 
 > STATUS: working checklist (snapshot — tick freely; `STATUS.md` stays canonical) · UPDATED: 2026-07-28
 > Everything below comes from `AHITS_CC29-31_PILOT_FLOOR_PACKETS.md` + the CC-30 Max checklist + the owner riders (workplan §15). When this page and STATUS disagree, STATUS wins.
@@ -52,16 +52,22 @@
 |---|--------|-----------|-------|
 | ✅ | CC-29 | Offline trust floor | code DONE — your phone smokes remain (§1) |
 | ✅ | CC-30 | Ops floor | DONE end-to-end |
-| ▶ | **CC-32** | Friction & flow | **IN FLIGHT** (parallel w/ CC-31) — paste includes the word-list confirmation line |
-| ▶ | **CC-31** | Accuracy + /admin/pilot dashboard | **IN FLIGHT** (parallel w/ CC-32) |
-| then | **CC-16S** | Public-link security | ready anytime — zero collisions with either in-flight packet |
+| ✅ | **CC-32** | Friction & flow | **FULLY LANDED** — #209 glossary + #210 + #211 + #212 docs all merged (shepherded by CC-31 post-green) |
+| ✅ | **CC-31** | Accuracy + /admin/pilot dashboard | **FULLY LANDED** — PR-1 + #214 (dashboard) + #215 + #213 green-fix + docs #216-218; browser-smoked pre-merge on preview services |
+| ▶ NEXT | **CC-16S** | Public-link security | **paste anytime** — prepend one warmup item: fix the latent TTL hold-release cron bug (make_interval(hours => $1) throws 42883, swallowed by try/catch — hold expiry has silently no-op'd; same swallowed-SQL family as the INV-5 bind bug; un-silence the catch too) |
 | last | **CC-33** | Simplify & unify | after CC-16S (rebases on CC-32's merged strings) |
+| NEW | **CC-34** | Maintenance speaks (deployment drawer health, one "Report a problem" verb, check→task promotion, scheduled-task UI — the D24 bridge's other half) | after CC-33 · packet: `AHITS_CC34_MAINTENANCE_PACKET.md` · D29 recorded by its session |
 
-**Parallel-run rules for CC-32 ∥ CC-31** (the close contract's new rule, in effect):
-- Whichever session you pasted FIRST owns STATUS/DECISIONS at close; tell the second one explicitly: "you are the second-started parallel session — close with a uniquely-named handoff only."
-- File overlap is minimal but real at ONE point: both touch `daily-check/page.tsx` (CC-32 items 2.1/2.2/2.5/2.6 vs CC-31 item 5's durationMs stamp). Whoever merges second rebases — expected, small.
-- CC-31's index migration will be the migration-safety gate's **first run against a PR that actually contains a migration** — watch that check on its PR; it should pass (additive CREATE INDEX) and seeing it exercise for real is a bonus.
-- Merge order between them doesn't matter otherwise; each deploys to staging on merge (no operators live yet).
+**Incident CLOSED (evening):** #213 landed 3 root-cause fixes, dev went green, the full convoy merged. Residual items now live in §2b below.
+
+**§2b · Post-convoy residuals (yours):**
+- [ ] **Retroactive PR-1 smoke** (staging): one cron force-run watched in the bell (INV-5 no longer cries wolf on a normal end-of-deployment) + lock/reset a test PIN → PIN_LOCKED self-clears
+- [ ] **Delete the two preview services:** `gcloud run services delete ahits-web-app-preview-cc31-pr3 ahits-web-app-preview-cc31-pr2 --region us-central1`
+- [ ] **GitHub: "Include administrators" ON** — dev is green, nothing needs a direct push anymore; this seals the incident category permanently
+- [ ] Note: the expired-link smoke correctly freed one genuinely-stranded unit on staging (Manual Corer → AVAILABLE) — expected, recorded
+- [ ] Optional: ask any session to remove the `ahits-cc31-worktree` folder when convenient
+
+**Parallel-run rules (unchanged):** first-started session owns STATUS/DECISIONS; both touch `daily-check/page.tsx` at one point (second-to-merge rebases); CC-31's index migration = the migration gate's first real-migration run (watch it pass).
 
 ## 5 · First-operator gate (the finish line of this page)
 
