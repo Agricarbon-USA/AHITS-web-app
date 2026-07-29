@@ -159,7 +159,7 @@ export function TransferDialog({
 
   return (
     <Dialog open={true} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Transfer Equipment</DialogTitle>
+      <DialogTitle>Transfer — Selected Gear</DialogTitle>{/* CC-33 (D22) */}
       <DialogContent>
         <Stepper activeStep={step} sx={{ mb: 3, mt: 1 }}>
           <Step><StepLabel>Destination</StepLabel></Step>
