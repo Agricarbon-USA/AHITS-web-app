@@ -56,8 +56,8 @@
 | ✅ | **CC-32** | Friction & flow | **FULLY LANDED** — #209 glossary + #210 + #211 + #212 docs all merged (shepherded by CC-31 post-green) |
 | ✅ | **CC-31** | Accuracy + /admin/pilot dashboard | **FULLY LANDED** — PR-1 + #214 (dashboard) + #215 + #213 green-fix + docs #216-218; browser-smoked pre-merge on preview services |
 | ✅~ | **CC-16S** | Public-link security + TTL warmup | **#220 + #221 MERGED & LIVE on staging** (deploy-guard run; nonce fix in). Remaining: say "go" on #222 docs · portal 3-part eyeball smoke · one cron watch (= TTL first fire + CC-31 retro smoke + PIN self-clear) · preview-service delete via Cloud Console. |
-| 🔵 PRs OPEN | **CC-33** | Simplify & unify | **#223 (dead-code + forward-removal, D21) + #224 (unified Transfer, D22) OPEN + green in CI (incl. node DB suite), awaiting Max's staging smoke.** batch6a landed by hand (PR-1); my-deployment 1,924→1,905. Pre-merge #223: drain live `FORWARDED + fulfillerOperatorId` row (Rider B #7). Handoff: `AHITS_SESSION_HANDOFF_2026-07-28_CC33.md` |
-| last | **CC-34** | Maintenance speaks | **paste WITH Rider C** (BLOCKING fixes: vehicle-status fetch premise, consumable alert-key trap, photo backstop, stale-nag backfill guard, in-kit repair close, session SPLIT: PR-1+2 then PR-3; D29 appends at PR-1 close) |
+| ✅ | **CC-33** | Simplify & unify | **#223 + #224 MERGED 2026-07-29, both staging deploys GREEN. D21/D22 EXECUTED.** FORWARDED-drain SELECT ran read-only → **0 live rows** (no drain needed). Anti-regrowth met (1,924→1,905); handoff grep = 0. **Owed (you, physical): the two-phone Transfer smoke on live staging.** ("Text the crew" moot until onboarding — put "Transfer" in the one-pager instead.) |
+| ▶ LAST | **CC-34** | Maintenance speaks | **paste WITH Rider C** (BLOCKING fixes: vehicle-status fetch premise, consumable alert-key trap, photo backstop, stale-nag backfill guard, in-kit repair close, session SPLIT: PR-1+2 then PR-3; D29 appends at PR-1 close) |
 
 **Incident CLOSED (evening):** #213 landed 3 root-cause fixes, dev went green, the full convoy merged. Residual items now live in §2b below.
 
