@@ -17,6 +17,7 @@ import { StatusChip } from '@/components/shared/StatusChip'
 import { RepairReviewDialog } from '@/components/shared/RepairReviewDialog'
 import { PhotoGallery } from '@/components/shared/PhotoGallery'
 import { useCanEdit, MutationButton } from '@/components/shared/ReadOnly'
+import { SearchableSelect } from '@/components/shared/SearchableSelect'
 
 interface InoperableUnit {
   id: string
@@ -168,6 +169,27 @@ export default function AdminMaintenancePage() {
   const [fieldFixSubject, setFieldFixSubject] = React.useState<'vehicle' | 'item'>('vehicle')
   const [fieldFixItems, setFieldFixItems] = React.useState<{ id: string; name: string }[]>([])
   const [fieldFixItemId, setFieldFixItemId] = React.useState('')
+  // CC-34 (3a): Add scheduled task — the first UI caller of POST /api/maintenance, so
+  // D24's named Wintex/Giddings service rows are finally enterable. PER_DEPLOYMENT is not
+  // offered (D29-4); the zod enum keeps it dormant.
+  const [schedOpen, setSchedOpen] = React.useState(false)
+  const [schedSubject, setSchedSubject] = React.useState<'vehicle' | 'item'>('vehicle')
+  const [schedVehicleId, setSchedVehicleId] = React.useState('')
+  const [schedItemId, setSchedItemId] = React.useState('')
+  const [schedVehicles, setSchedVehicles] = React.useState<{ id: string; name: string }[]>([])
+  const [schedItems, setSchedItems] = React.useState<{ id: string; name: string }[]>([])
+  const [schedTaskName, setSchedTaskName] = React.useState('')
+  const [schedIntervalType, setSchedIntervalType] = React.useState<'DAYS' | 'MONTHS' | 'MILEAGE'>('DAYS')
+  const [schedIntervalValue, setSchedIntervalValue] = React.useState('')
+  const [schedPriority, setSchedPriority] = React.useState<'HIGH' | 'MEDIUM' | 'LOW'>('MEDIUM')
+  const [schedNextDue, setSchedNextDue] = React.useState('')
+  const [schedNextOdometer, setSchedNextOdometer] = React.useState('')
+  const [schedSaving, setSchedSaving] = React.useState(false)
+  // CC-34 (3c): close a unit repair back to an active deployment (DEPLOYMENT destination),
+  // not just a hub — the complete route already validates + stores it.
+  const [closeDestType, setCloseDestType] = React.useState<'HUB' | 'DEPLOYMENT'>('HUB')
+  const [closeRigId, setCloseRigId] = React.useState('')
+  const [activeRigs, setActiveRigs] = React.useState<{ id: string; label: string; operatorName: string | null }[]>([])
 
   const loadInoperable = React.useCallback(async () => {
     try {
@@ -236,6 +258,12 @@ export default function AdminMaintenancePage() {
     loadLinks()
     loadInoperable()
     fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(Array.isArray(d) ? d : (d?.data ?? []))).catch(() => {})
+    // CC-34 (3c): active deployments for the "return to a deployment" close destination.
+    fetch('/api/deployments?active=true')
+      .then((r) => r.json())
+      .then((d: { id: string; label: string | null; operator?: { name: string | null } | null }[]) =>
+        setActiveRigs((Array.isArray(d) ? d : []).map((r) => ({ id: r.id, label: r.label ?? 'Deployment', operatorName: r.operator?.name ?? null }))))
+      .catch(() => {})
   }, [load, loadLinks, loadInoperable])
 
   // Deep link from a dashboard alert (?task=<id>) auto-opens that task once.
@@ -451,6 +479,68 @@ export default function AdminMaintenancePage() {
     }
   }
 
+  // CC-34 (3a): open the Add-scheduled-task dialog. Reuses /api/vehicles + /api/inventory
+  // for the subject picker (SearchableSelect).
+  async function openSched() {
+    setSchedSubject('vehicle')
+    setSchedVehicleId('')
+    setSchedItemId('')
+    setSchedTaskName('')
+    setSchedIntervalType('DAYS')
+    setSchedIntervalValue('')
+    setSchedPriority('MEDIUM')
+    setSchedNextDue('')
+    setSchedNextOdometer('')
+    setSchedOpen(true)
+    try {
+      const [vRes, iRes] = await Promise.all([fetch('/api/vehicles'), fetch('/api/inventory?pageSize=200')])
+      const vd = await vRes.json()
+      const id = await iRes.json()
+      setSchedVehicles((vd.data ?? []).map((v: { id: string; name: string }) => ({ id: v.id, name: v.name })))
+      setSchedItems((id.data ?? []).map((i: { id: string; name: string }) => ({ id: i.id, name: i.name })))
+    } catch {
+      setSchedVehicles([])
+      setSchedItems([])
+    }
+  }
+
+  async function submitSched() {
+    const subjectId = schedSubject === 'vehicle' ? schedVehicleId : schedItemId
+    const interval = Number(schedIntervalValue)
+    if (!subjectId || !schedTaskName.trim() || !Number.isInteger(interval) || interval < 1) return
+    setSchedSaving(true)
+    try {
+      const res = await fetch('/api/maintenance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...(schedSubject === 'vehicle' ? { vehicleId: schedVehicleId } : { itemId: schedItemId }),
+          taskName: schedTaskName.trim(),
+          intervalType: schedIntervalType,
+          intervalValue: interval,
+          priority: schedPriority,
+          // Native date input → ISO datetime; server defaults it from the interval when omitted.
+          ...(schedNextDue && (schedIntervalType === 'DAYS' || schedIntervalType === 'MONTHS')
+            ? { nextDue: new Date(schedNextDue).toISOString() } : {}),
+          ...(schedNextOdometer && schedIntervalType === 'MILEAGE'
+            ? { nextOdometer: Number(schedNextOdometer) } : {}),
+        }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not add scheduled task.', severity: 'error' })
+        return
+      }
+      showToast({ message: 'Scheduled task added.', severity: 'success' })
+      setSchedOpen(false)
+      load()
+    } catch {
+      showToast({ message: 'Network error. Please try again.', severity: 'error' })
+    } finally {
+      setSchedSaving(false)
+    }
+  }
+
   return (
     <Box>
       <Stack direction="row" alignItems="center" justifyContent="space-between" mb={0.5} flexWrap="wrap" gap={1}>
@@ -459,7 +549,10 @@ export default function AdminMaintenancePage() {
           <Typography variant="h5">Maintenance</Typography>
           {!canEdit && <Chip size="small" label="View only" variant="outlined" />}
         </Stack>
-        <MutationButton size="small" variant="outlined" onClick={openFieldFix}>Log field fix</MutationButton>
+        <Stack direction="row" spacing={1}>
+          <MutationButton size="small" variant="outlined" onClick={openSched}>Add scheduled task</MutationButton>
+          <MutationButton size="small" variant="outlined" onClick={openFieldFix}>Log field fix</MutationButton>
+        </Stack>
       </Stack>
       <Typography color="text.secondary" mb={2} variant="body2">
         Damage reports from the field and scheduled vehicle/equipment service. Assign a shop or hub, track the repair, and close it out.
@@ -608,6 +701,30 @@ export default function AdminMaintenancePage() {
 
               <Divider sx={{ my: 2 }} />
               <Typography variant="subtitle2" mb={1.5}>Repair details</Typography>
+              {/* CC-34 (3c): one-tap shop status (D29-3 "≤2 clicks") — each chip PATCHes immediately. */}
+              {canEdit && selected.status !== 'COMPLETED' && (
+                <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap mb={1.5}>
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    clickable
+                    disabled={saving}
+                    label="Delivered to shop today"
+                    onClick={() => patch(selected.id, { dateDelivered: new Date().toISOString() }, 'Marked delivered to shop.')}
+                  />
+                  {selected.status !== 'IN_PROGRESS' && (
+                    <Chip
+                      size="small"
+                      variant="outlined"
+                      color="warning"
+                      clickable
+                      disabled={saving}
+                      label="Repair started"
+                      onClick={() => setStatus(selected, 'IN_PROGRESS')}
+                    />
+                  )}
+                </Stack>
+              )}
               <Stack spacing={2}>
                 <TextField select size="small" label="Repair type" value={draft.repairType}
                   onChange={(e) => setD({ repairType: e.target.value })} disabled={!canEdit}>
@@ -664,7 +781,7 @@ export default function AdminMaintenancePage() {
                       if (selected.isDamageReport) {
                         // Vehicle damage: no return destination needed — close directly.
                         if (selected.vehicle && !selected.unit) { completeTask(selected) }
-                        else { setCloseHubId(''); setCloseMethod(''); setCloseOpen(true) }
+                        else { setCloseHubId(''); setCloseMethod(''); setCloseDestType('HUB'); setCloseRigId(''); setCloseOpen(true) }
                       } else {
                         completeTask(selected)
                       }
@@ -809,6 +926,117 @@ export default function AdminMaintenancePage() {
         </DialogActions>
       </Dialog>
 
+      {/* CC-34 (3a): Add scheduled task — the D24 bridge (named service rows become enterable) */}
+      <Dialog open={schedOpen} onClose={() => setSchedOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Add scheduled task</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} pt={0.5}>
+            <Typography variant="body2" color="text.secondary">
+              A recurring service on a vehicle or item — e.g. &ldquo;Wintex: hydraulic oil service&rdquo; every 90 days.
+              It shows as Upcoming and flags Overdue when due.
+            </Typography>
+            <TextField
+              select
+              label="Subject"
+              value={schedSubject}
+              onChange={(e) => { setSchedSubject(e.target.value as 'vehicle' | 'item'); setSchedVehicleId(''); setSchedItemId('') }}
+              fullWidth
+            >
+              <MenuItem value="vehicle">Vehicle</MenuItem>
+              <MenuItem value="item">Inventory item</MenuItem>
+            </TextField>
+            {schedSubject === 'vehicle' ? (
+              <SearchableSelect
+                label="Vehicle"
+                value={schedVehicleId}
+                onChange={setSchedVehicleId}
+                options={schedVehicles.map((v) => ({ value: v.id, label: v.name }))}
+                required
+              />
+            ) : (
+              <SearchableSelect
+                label="Item"
+                value={schedItemId}
+                onChange={setSchedItemId}
+                options={schedItems.map((i) => ({ value: i.id, label: i.name }))}
+                required
+              />
+            )}
+            <TextField
+              label="Task name"
+              value={schedTaskName}
+              onChange={(e) => setSchedTaskName(e.target.value)}
+              fullWidth
+              required
+              placeholder="e.g. Wintex: hydraulic oil service"
+            />
+            <Stack direction="row" spacing={2}>
+              <TextField
+                select
+                label="Interval"
+                value={schedIntervalType}
+                onChange={(e) => setSchedIntervalType(e.target.value as 'DAYS' | 'MONTHS' | 'MILEAGE')}
+                fullWidth
+              >
+                <MenuItem value="DAYS">Every N days</MenuItem>
+                <MenuItem value="MONTHS">Every N months</MenuItem>
+                <MenuItem value="MILEAGE">Every N miles</MenuItem>
+              </TextField>
+              <TextField
+                label={schedIntervalType === 'MILEAGE' ? 'Miles' : schedIntervalType === 'MONTHS' ? 'Months' : 'Days'}
+                value={schedIntervalValue}
+                onChange={(e) => setSchedIntervalValue(e.target.value.replace(/[^0-9]/g, ''))}
+                fullWidth
+                required
+                inputProps={{ inputMode: 'numeric' }}
+              />
+            </Stack>
+            <TextField
+              select
+              label="Priority"
+              value={schedPriority}
+              onChange={(e) => setSchedPriority(e.target.value as 'HIGH' | 'MEDIUM' | 'LOW')}
+              fullWidth
+            >
+              <MenuItem value="HIGH">High</MenuItem>
+              <MenuItem value="MEDIUM">Medium</MenuItem>
+              <MenuItem value="LOW">Low</MenuItem>
+            </TextField>
+            {schedIntervalType === 'MILEAGE' ? (
+              <TextField
+                label="Next-service odometer (optional)"
+                value={schedNextOdometer}
+                onChange={(e) => setSchedNextOdometer(e.target.value.replace(/[^0-9]/g, ''))}
+                fullWidth
+                inputProps={{ inputMode: 'numeric' }}
+                helperText="Defaults to the vehicle's current odometer + the interval."
+              />
+            ) : (
+              <TextField
+                type="date"
+                label="First due (optional)"
+                value={schedNextDue}
+                onChange={(e) => setSchedNextDue(e.target.value)}
+                fullWidth
+                InputLabelProps={{ shrink: true }}
+                helperText="Defaults to today + the interval."
+              />
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setSchedOpen(false)} disabled={schedSaving}>Cancel</Button>
+          <MutationButton
+            color="primary"
+            variant="contained"
+            disabled={schedSaving || !(schedSubject === 'vehicle' ? schedVehicleId : schedItemId) || !schedTaskName.trim() || !(Number(schedIntervalValue) >= 1)}
+            onClick={submitSched}
+          >
+            {schedSaving ? 'Saving…' : 'Add task'}
+          </MutationButton>
+        </DialogActions>
+      </Dialog>
+
       {/* A.4: close repair — choose return destination (no default) */}
       <Dialog open={closeOpen} onClose={() => setCloseOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle>Close repair</DialogTitle>
@@ -816,12 +1044,27 @@ export default function AdminMaintenancePage() {
           <Stack spacing={2} pt={0.5}>
             <Typography variant="body2" color="text.secondary">
               Choose where this unit returns. There is no default — the repair can&rsquo;t be closed until a destination is selected.
+              The unit returns to service either way; physically getting it there is the human step.
             </Typography>
-            <TextField select label="Return to hub" value={closeHubId} onChange={(e) => setCloseHubId(e.target.value)} fullWidth required>
-              {hubs.length === 0
-                ? <MenuItem value="" disabled>No hubs configured</MenuItem>
-                : hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.name} — {h.city}, {h.state}</MenuItem>)}
+            {/* CC-34 (3c): equipment can return wherever needed — a hub or straight to an active deployment. */}
+            <TextField select label="Return to" value={closeDestType}
+              onChange={(e) => { setCloseDestType(e.target.value as 'HUB' | 'DEPLOYMENT'); setCloseHubId(''); setCloseRigId('') }} fullWidth>
+              <MenuItem value="HUB">A hub</MenuItem>
+              <MenuItem value="DEPLOYMENT">An active deployment</MenuItem>
             </TextField>
+            {closeDestType === 'HUB' ? (
+              <TextField select label="Hub" value={closeHubId} onChange={(e) => setCloseHubId(e.target.value)} fullWidth required>
+                {hubs.length === 0
+                  ? <MenuItem value="" disabled>No hubs configured</MenuItem>
+                  : hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.name} — {h.city}, {h.state}</MenuItem>)}
+              </TextField>
+            ) : (
+              <TextField select label="Deployment" value={closeRigId} onChange={(e) => setCloseRigId(e.target.value)} fullWidth required>
+                {activeRigs.length === 0
+                  ? <MenuItem value="" disabled>No active deployments</MenuItem>
+                  : activeRigs.map((r) => <MenuItem key={r.id} value={r.id}>{r.label}{r.operatorName ? ` — ${r.operatorName}` : ''}</MenuItem>)}
+              </TextField>
+            )}
             <TextField select label="How it gets there (optional)" value={closeMethod} onChange={(e) => setCloseMethod(e.target.value as '' | 'DELIVER' | 'SHIP')} fullWidth>
               <MenuItem value="">Not specified</MenuItem>
               <MenuItem value="DELIVER">Deliver</MenuItem>
@@ -834,12 +1077,12 @@ export default function AdminMaintenancePage() {
           <MutationButton
             color="success"
             variant="contained"
-            disabled={saving || !closeHubId}
+            disabled={saving || (closeDestType === 'HUB' ? !closeHubId : !closeRigId)}
             onClick={async () => {
               if (!selected) return
               await completeTask(selected, {
-                returnDestinationType: 'HUB',
-                returnDestinationId: closeHubId,
+                returnDestinationType: closeDestType,
+                returnDestinationId: closeDestType === 'HUB' ? closeHubId : closeRigId,
                 repairMethod: closeMethod || undefined,
               })
               setCloseOpen(false)
