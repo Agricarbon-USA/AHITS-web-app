@@ -48,6 +48,11 @@
 | CC-28 | Today-lite bridge | ~~RESERVED — exists only if D5 = Option B~~ | ⛔ MOOT (D5 = Option A; never built) |
 | — | Copy-link invites | Email-independent onboarding (delivery: EMAIL/LINK) | ✅ MERGED (PR #200) |
 | CC-29 | Offline trust floor (pre-launch tier 1) | Photo-wedge, lie-fi timeout, online-401 park, concurrent-flush mutex + transient-409, dead-localphoto, late-sync date semantics (D26), sliding session renewal (D27), flush-lifecycle test harness | ✅ MERGED (PRs #202/#203/#205) — on-device staging smoke = last pre-first-operator gate |
+| CC-32 | Friction & flow (operator-experience floor) | D11 glossary sweep, one-time failure entry, site prefill, 2-step builder, template-race fix, GPS warm-capture, openable Outbox, honest copy, Map bottom-nav tab (D28), 44px pass | ✅ MERGED (PRs #209/#210/#211/#212) — #210/#211 shepherded to merge by CC-31 |
+| CC-30 | Ops floor (D16 staging-is-home) | Pipeline hardening (no preview onto live, migration-safety gates development, seed/reset guards, env-drift check) + server-side eyes (Sentry on data-loss/failed, cron catches, advisory-lock 500) | ✅ MERGED (PRs #204/#206) |
+| CC-31 | Accuracy floor + pilot dashboard | INV-5 false-alarm fix + alert auto-resolves (PR-1, on `development`); expired-link unjam + forOperatorId scope + durationMs + indexes (PR-2 #215); /admin/pilot dashboard + metrics API (PR-3 #214) | ⏳ CODE COMPLETE — PR-1 on `development`; #215/#214 OPEN + green, awaiting Max's staging smoke. Green-fix #213 MERGED. |
+| CC-16S | Public-surface security (CC-16 step 0) | s/[token] REVOKED/EXPIRED read-after leak + FND-6 Date.now() idempotency shard | 📋 QUEUED — NEXT (D18) |
+| CC-33 | Simplify & unify | Dead-code sweep, Forward→Operator removal (D21), one unified Transfer entry (D22) | 📋 QUEUED |
 
 > **Landing order superseded by the 2026-07-28 re-baseline (STATUS §4 / D17):** the live queue is **CC-29 (✅) → CC-32 → CC-30 → CC-31 → CC-16S → CC-33**. The CC-16 "NEXT" flag above is stale — CC-16 was split (CC-16S ships the step-0 security now; CC-16-proper is PARKED, D18).
 
