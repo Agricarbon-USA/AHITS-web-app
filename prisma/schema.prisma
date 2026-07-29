@@ -1037,6 +1037,11 @@ model DeploymentRequest {
   @@index([status])
   @@index([requestType])
   @@index([fulfillerHubId])
+  // CC-31 item 7: requestedById + forOperatorId are queried on every Today load
+  // (listRequests' operator scope now ORs in forOperatorId — item 4) and by the
+  // hold-TTL sweep — but were unindexed. Cheap additive indexes.
+  @@index([requestedById])
+  @@index([forOperatorId])
   @@map("deployment_requests")
 }
 

@@ -20,6 +20,7 @@ import { useToast } from '@/components/shared/useToast'
 import { useCanEdit, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 import { useMultiSelect } from '@/components/shared/useMultiSelect'
 import { BulkActionBar } from '@/components/shared/BulkActionBar'
+import { StatusChip } from '@/components/shared/StatusChip'
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -466,6 +467,11 @@ export default function AdminHubsPage() {
                           <TableBody>
                             {hub.units.map((u) => {
                               const isResolved = u.state === 'REVOKED' || u.state === 'COMPLETED'
+                              // CC-31 item 3b: an ISSUED/VIEWED link past its expiry sits in this
+                              // "awaiting receipt" list forever (EXPIRED is computed-at-read, never
+                              // persisted). Flag it so the admin knows Received now bypasses the
+                              // recipient's expired clock (item 3a) — or Reissue mints a fresh link.
+                              const isExpired = !isResolved && new Date(u.expiresAt).getTime() < Date.now()
                               const stateChip = isResolved
                                 ? RESOLVED_STATE_CHIP[u.state as 'REVOKED' | 'COMPLETED']
                                 : ACTIVE_STATE_CHIP[u.state as 'ISSUED' | 'VIEWED' | 'ACTED']
@@ -534,7 +540,10 @@ export default function AdminHubsPage() {
                                   </TableCell>
                                   {inboundFilter === 'active' && (
                                     <TableCell align="right">
-                                      <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                                      <Stack direction="row" spacing={0.5} justifyContent="flex-end" alignItems="center">
+                                        {isExpired && (
+                                          <StatusChip label="Expired link" color="warning" />
+                                        )}
                                         {u.state === 'ACTED' ? (
                                           // Discrepancy row — review required before receive/dismiss
                                           <>

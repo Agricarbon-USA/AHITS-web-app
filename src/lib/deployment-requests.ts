@@ -117,6 +117,10 @@ interface RequestRow {
   notes: string | null
   neededBy: Date | null
   createdAt: Date
+  // CC-31 item 4: carried so the operator Requests page can gate the Cancel action to the
+  // actual requester — a request surfaced only via forOperatorId (admin-filed FOR the
+  // operator) stays read-only (mirrors the write route, which never authorizes forOperatorId).
+  requestedById: string
   requestedByName: string | null
   forOperatorName: string | null
   projectName: string | null
@@ -164,7 +168,7 @@ export async function listRequests(requestedById?: string): Promise<RequestRow[]
   if (requestedById) {
     return prisma.$queryRaw<RequestRow[]>`
       SELECT r."id", r."status"::text AS "status", r."requestType"::text AS "requestType",
-             r."label", r."notes", r."neededBy", r."createdAt",
+             r."label", r."notes", r."neededBy", r."createdAt", r."requestedById",
              r."fulfillerHubId", fh."name" AS "fulfillerHubName",
              r."fulfillerOperatorId", r."decisionNote", r."decidedAt", r."fulfilledAt",
              r."stockReservedAt",
@@ -175,13 +179,14 @@ export async function listRequests(requestedById?: string): Promise<RequestRow[]
       LEFT JOIN "users" fo ON fo."id" = r."forOperatorId"
       LEFT JOIN "projects" p ON p."id" = r."projectId"
       LEFT JOIN "hubs" fh ON fh."id" = r."fulfillerHubId"
-      WHERE (r."requestedById" = ${requestedById} OR r."fulfillerOperatorId" = ${requestedById})
+      WHERE (r."requestedById" = ${requestedById} OR r."fulfillerOperatorId" = ${requestedById}
+             OR r."forOperatorId" = ${requestedById})
       ORDER BY r."createdAt" DESC
     `
   }
   return prisma.$queryRaw<RequestRow[]>`
     SELECT r."id", r."status"::text AS "status", r."requestType"::text AS "requestType",
-           r."label", r."notes", r."neededBy", r."createdAt",
+           r."label", r."notes", r."neededBy", r."createdAt", r."requestedById",
            r."fulfillerHubId", fh."name" AS "fulfillerHubName",
            r."fulfillerOperatorId", r."decisionNote", r."decidedAt", r."fulfilledAt",
            r."stockReservedAt",

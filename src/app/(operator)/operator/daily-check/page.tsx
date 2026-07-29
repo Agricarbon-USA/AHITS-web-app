@@ -255,7 +255,7 @@ export default function OperatorDailyCheckPage() {
   const selectedVehicleName =
     vehicles.find((rv) => rv.vehicle.id === vehicleId)?.vehicle.name ?? ''
 
-  const buildPayload = (coords: CheckCoords = {}) => ({
+  const buildPayload = (coords: CheckCoords = {}, durationMs?: number) => ({
     vehicleId,
     // CC-29 item 4a: stamp the ORIGINAL business date at submit-click, NOT the `date`
     // state — so a form left open overnight is filed under the day the operator
@@ -269,8 +269,10 @@ export default function OperatorDailyCheckPage() {
     issues: issues || undefined,
     passFail,
     // CC-14: passive time-to-complete, measured at submit-click (correct even if the
-    // check later syncs from the offline queue). undefined until the mount clock starts.
-    durationMs: startedAtRef.current ? Date.now() - startedAtRef.current : undefined,
+    // check later syncs from the offline queue). CC-31 item 5: stamped by the caller
+    // BEFORE the up-to-10s GPS wait and passed in, so the GPS wait no longer inflates it
+    // (charter metric 2 honesty). undefined until the mount clock starts.
+    durationMs,
     // CC-15 (D2): attestation GPS captured just before enqueue; the keys are absent when
     // location was unavailable, so the payload — online or queued offline — carries no
     // coords rather than nulls.
@@ -283,6 +285,10 @@ export default function OperatorDailyCheckPage() {
     if (!passFail && !issues.trim()) { setError('Describe the issue(s) that caused a fail'); return }
     setSubmitting(true)
     setError('')
+    // CC-31 item 5: stamp the time-to-complete NOW, before the up-to-10s GPS wait below,
+    // so captureLocation()'s latency doesn't inflate the measured check duration (charter
+    // metric 2, whose "trending down" reading was confounded by the GPS wait riding it).
+    const durationMs = startedAtRef.current ? Date.now() - startedAtRef.current : undefined
     // CC-15 (D2): capture the attestation GPS ON-DEVICE, before enqueue, so the coords
     // ride the queued payload when offline. Resolve-or-skip — this never throws and
     // never blocks: a denied/dismissed/timed-out fix returns {} and the check submits
@@ -300,7 +306,7 @@ export default function OperatorDailyCheckPage() {
     const result = await mutate({
       endpoint: '/api/daily-check',
       method: 'POST',
-      body: buildPayload(coords),
+      body: buildPayload(coords, durationMs),
       label: 'Daily check',
     })
     setSubmitting(false)

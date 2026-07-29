@@ -231,8 +231,19 @@ export type TransitionResult =
  * maintenance task (recurrence/cost/return-to-service stay a human admin step
  * via the existing complete endpoint); it only flags the task for finalization.
  */
-export async function applyTransition(link: ResolvedStatusLink, input: TransitionInput): Promise<TransitionResult> {
-  if (!isLinkActionable(link)) {
+export async function applyTransition(
+  link: ResolvedStatusLink,
+  input: TransitionInput,
+  // CC-31 item 3a: an admin confirming a HUB_RETURN on the hub's behalf may bypass the
+  // link's EXPIRY clock only. The state gate (REVOKED/COMPLETED) is never bypassed.
+  opts?: { bypassExpiry?: boolean },
+): Promise<TransitionResult> {
+  // Split the actionability gate: state-terminal (REVOKED/COMPLETED) always refuses;
+  // expiry refuses unless the caller supersedes it. isLinkActionable() (public, used by
+  // the login-less recipient path) is unchanged — it always enforces both.
+  const stateTerminal = link.state === 'REVOKED' || link.state === 'COMPLETED'
+  const expired = link.state === 'EXPIRED' || link.expiresAt.getTime() < Date.now()
+  if (stateTerminal || (expired && !opts?.bypassExpiry)) {
     return { ok: false, status: 409, error: 'This link is no longer active.' }
   }
   const action = input.action.toUpperCase()
