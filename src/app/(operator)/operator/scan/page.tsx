@@ -13,6 +13,7 @@ import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { ConditionSelect } from '@/components/shared/ConditionSelect'
 import { QrScannerDialog, type QrResolveResult } from '@/components/shared/QrScannerDialog'
+import { ReportProblemDialog, type ReportProblemSubject } from '@/components/shared/ReportProblemDialog'
 import type { ReturnCondition } from '@/lib/status'
 
 interface UnitInfo {
@@ -58,13 +59,12 @@ export default function OperatorScanPage() {
   const [returnCondition, setReturnCondition] = React.useState<ReturnCondition>('GOOD')
   const [actionLoading, setActionLoading] = React.useState(false)
   const [addDialogOpen, setAddDialogOpen] = React.useState(false)
-  // CC-10: field-fix and report-damage dialogs
+  // CC-10 field-fix dialog (now serves vehicles AND units — CC-34 (2b)).
   const [fieldFixOpen, setFieldFixOpen] = React.useState(false)
   const [fieldFixNotes, setFieldFixNotes] = React.useState('')
   const [fieldFixSaving, setFieldFixSaving] = React.useState(false)
-  const [reportDamageOpen, setReportDamageOpen] = React.useState(false)
-  const [reportDamageNotes, setReportDamageNotes] = React.useState('')
-  const [reportDamageSaving, setReportDamageSaving] = React.useState(false)
+  // CC-34 (2a): the one "Report a problem" verb, shared for units and vehicles.
+  const [report, setReport] = React.useState<ReportProblemSubject | null>(null)
 
   React.useEffect(() => {
     fetch('/api/deployments')
@@ -109,52 +109,42 @@ export default function OperatorScanPage() {
     }
   }, [])
 
-  async function submitVehicleFieldFix() {
-    if (!vehicle || !fieldFixNotes.trim()) return
+  // CC-34 (2b): field-fix now serves a scanned unit OR vehicle, routed through the offline
+  // queue (was a raw online-only fetch) so a fix logged in the field survives no signal.
+  async function submitFieldFix() {
+    const subjectName = vehicle?.name ?? unit?.inventoryItem.name
+    if (!fieldFixNotes.trim() || (!vehicle && !unit)) return
     setFieldFixSaving(true)
-    try {
-      const res = await fetch('/api/maintenance/field-fix', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vehicleId: vehicle.id, notes: fieldFixNotes.trim() }),
-      })
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}))
-        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not log fix.', severity: 'error' })
-        return
-      }
-      showToast({ message: 'Field fix logged.', severity: 'success' })
-      setFieldFixOpen(false)
-    } catch {
-      showToast({ message: 'Network error. Please try again.', severity: 'error' })
-    } finally {
-      setFieldFixSaving(false)
+    const body = vehicle
+      ? { vehicleId: vehicle.id, notes: fieldFixNotes.trim() }
+      : { inventoryUnitId: unit!.id, itemId: unit!.inventoryItem.id, notes: fieldFixNotes.trim() }
+    const result = await mutate({
+      endpoint: '/api/maintenance/field-fix',
+      method: 'POST',
+      body,
+      label: `Log fixed issue — ${subjectName ?? 'item'}`,
+    })
+    setFieldFixSaving(false)
+    if (!result.ok) {
+      showToast({ message: result.error || 'Could not log fix.', severity: 'error' })
+      return
     }
+    showToast({
+      message: result.queued ? 'Fix saved on this phone — will sync when online.' : 'Field fix logged.',
+      severity: result.queued ? 'info' : 'success',
+    })
+    setFieldFixOpen(false)
   }
 
-  async function submitVehicleReportDamage() {
-    if (!vehicle || !reportDamageNotes.trim()) return
-    setReportDamageSaving(true)
-    try {
-      const res = await fetch(`/api/vehicles/${vehicle.id}/report-damage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notes: reportDamageNotes.trim() }),
-      })
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}))
-        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not report damage.', severity: 'error' })
-        return
-      }
-      showToast({ message: 'Damage reported. An admin will manage the repair.', severity: 'success' })
-      setReportDamageOpen(false)
-      // Refresh vehicle panel so IN_MAINTENANCE status shows immediately.
-      const vehRes = await fetch(`/api/vehicles/by-qr/${encodeURIComponent(vehicle.qrCodeId)}`)
-      if (vehRes.ok) { const json = await vehRes.json(); setVehicle(json.vehicle) }
-    } catch {
-      showToast({ message: 'Network error. Please try again.', severity: 'error' })
-    } finally {
-      setReportDamageSaving(false)
+  // CC-34 (2a): after a report is applied online, refresh the scanned panel so an
+  // "Out of service" flip shows immediately. Queued (offline) reports skip this.
+  const refetchScanned = async () => {
+    if (vehicle) {
+      const r = await fetch(`/api/vehicles/by-qr/${encodeURIComponent(vehicle.qrCodeId)}`)
+      if (r.ok) { const j = await r.json(); setVehicle(j.vehicle) }
+    } else if (unit) {
+      const r = await fetch(`/api/inventory/units/by-qr/${encodeURIComponent(unit.qrCodeId)}`)
+      if (r.ok) { const j = await r.json(); setUnit({ ...j.unit, inventoryItem: j.item }) }
     }
   }
 
@@ -334,6 +324,26 @@ export default function OperatorScanPage() {
                   )}
                 </Stack>
               )}
+
+              {/* CC-34 (2a/2b): available on EVERY scanned unit — including gear in a
+                  crewmate's kit or already in maintenance (RIDER C 2a-a). Report is
+                  annotation, not return; field-fix logs an on-the-spot repair. */}
+              <Stack spacing={1} mt={1}>
+                <Button
+                  variant="outlined" color="warning" size="small"
+                  sx={{ minHeight: 44, fontSize: 16 }}
+                  onClick={() => setReport({ kind: 'unit', id: unit.id, name: unit.inventoryItem.name })}
+                >
+                  Report a problem
+                </Button>
+                <Button
+                  variant="outlined" color="success" size="small"
+                  sx={{ minHeight: 44, fontSize: 16 }}
+                  onClick={() => { setFieldFixNotes(''); setFieldFixOpen(true) }}
+                >
+                  Log fixed issue
+                </Button>
+              </Stack>
             </Stack>
           </Paper>
         )}
@@ -389,14 +399,16 @@ export default function OperatorScanPage() {
               >
                 Log fixed issue
               </Button>
+              {/* CC-34 (2a): the shared one-verb dialog replaces the bespoke online-only
+                  report-damage dialog (photo-capable, offline-safe). */}
               <Button
                 variant="outlined"
                 color="warning"
                 size="small"
                 sx={{ minHeight: 44, fontSize: 16 }}
-                onClick={() => { setReportDamageNotes(''); setReportDamageOpen(true) }}
+                onClick={() => setReport({ kind: 'vehicle', id: vehicle.id, name: vehicle.name })}
               >
-                Report damage
+                Report a problem
               </Button>
             </Stack>
           </Paper>
@@ -416,9 +428,9 @@ export default function OperatorScanPage() {
         </DialogActions>
       </Dialog>
 
-      {/* CC-10: Log fixed issue on vehicle */}
+      {/* CC-10 / CC-34 (2b): Log fixed issue — serves a scanned vehicle OR unit. */}
       <Dialog open={fieldFixOpen} onClose={() => setFieldFixOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>Log fixed issue — {vehicle?.name}</DialogTitle>
+        <DialogTitle>Log fixed issue — {vehicle?.name ?? unit?.inventoryItem.name}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} pt={0.5}>
             <Typography variant="body2" color="text.secondary">
@@ -442,45 +454,20 @@ export default function OperatorScanPage() {
             variant="contained"
             color="success"
             disabled={fieldFixSaving || !fieldFixNotes.trim()}
-            onClick={submitVehicleFieldFix}
+            onClick={submitFieldFix}
           >
             {fieldFixSaving ? 'Saving…' : 'Log fix'}
           </Button>
         </DialogActions>
       </Dialog>
 
-      {/* CC-10: Report damage on vehicle */}
-      <Dialog open={reportDamageOpen} onClose={() => setReportDamageOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>Report damage — {vehicle?.name}</DialogTitle>
-        <DialogContent>
-          <Stack spacing={2} pt={0.5}>
-            <Typography variant="body2" color="text.secondary">
-              Opens a repair task. An admin will assign a shop and close it out. The vehicle will be marked IN MAINTENANCE.
-            </Typography>
-            <TextField
-              label="What happened"
-              value={reportDamageNotes}
-              onChange={(e) => setReportDamageNotes(e.target.value)}
-              multiline
-              rows={3}
-              fullWidth
-              required
-              placeholder="Describe the damage"
-            />
-          </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setReportDamageOpen(false)} disabled={reportDamageSaving}>Cancel</Button>
-          <Button
-            variant="contained"
-            color="warning"
-            disabled={reportDamageSaving || !reportDamageNotes.trim()}
-            onClick={submitVehicleReportDamage}
-          >
-            {reportDamageSaving ? 'Reporting…' : 'Report damage'}
-          </Button>
-        </DialogActions>
-      </Dialog>
+      {/* CC-34 (2a): the one shared report verb (units + vehicles), offline-safe + photos. */}
+      <ReportProblemDialog
+        open={!!report}
+        subject={report}
+        onClose={() => setReport(null)}
+        onReported={({ queued }) => { if (!queued) void refetchScanned() }}
+      />
     </Box>
   )
 }

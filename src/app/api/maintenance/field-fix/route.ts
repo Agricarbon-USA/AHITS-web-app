@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
+import { withIdempotency } from '@/lib/idempotency'
 
 const schema = z
   .object({
@@ -21,7 +22,14 @@ const schema = z
  * flip any vehicle/unit status and does NOT fire a DAMAGE_REPORTED alert — the
  * issue was noticed and fixed on the spot.
  */
+// CC-34 (2b): now routed through the operator offline queue (scan page mutate()), so wrap
+// in withIdempotency — a timeout-replay of the same POST must not create a duplicate
+// COMPLETED task. Body-hash bound; tolerates a missing Idempotency-Key for online callers.
 export async function POST(req: NextRequest) {
+  return withIdempotency(req, 'maintenance.field-fix', () => _POST(req))
+}
+
+async function _POST(req: NextRequest) {
   const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 

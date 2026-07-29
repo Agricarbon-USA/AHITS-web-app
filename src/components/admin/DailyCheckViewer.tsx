@@ -3,13 +3,16 @@
 import * as React from 'react'
 import {
   Dialog, DialogTitle, DialogContent, IconButton, Typography, Stack, Box, Chip, Divider,
-  List, ListItem, ListItemText, CircularProgress,
+  List, ListItem, ListItemText, CircularProgress, Button, Checkbox, FormControlLabel,
 } from '@mui/material'
 import CloseIcon from '@mui/icons-material/Close'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import CancelIcon from '@mui/icons-material/Cancel'
 import PlaceIcon from '@mui/icons-material/Place'
+import BuildIcon from '@mui/icons-material/Build'
+import { useRouter } from 'next/navigation'
 import { PhotoGallery } from '@/components/shared/PhotoGallery'
+import { useToast } from '@/components/shared/useToast'
 import { formatDate } from '@/lib/utils'
 
 // CC-26: read-only daily-check viewer — the surface that shows a submitted check's FULL
@@ -163,9 +166,37 @@ function FactRow({ label, value }: { label: string; value: string }) {
 // details. Reachable from the vehicle drawer, the deployment drawer, and a failed-check
 // alert deep-link (?check=<id> on /admin/vehicles).
 export function DailyCheckViewer({ checkId, open, onClose }: { checkId: string | null; open: boolean; onClose: () => void }) {
+  const router = useRouter()
+  const showToast = useToast()
   const [check, setCheck] = React.useState<ViewerCheck | null>(null)
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  // CC-34 (2c): admin can promote a failing check into a repair task (never automatic).
+  const [flipVehicle, setFlipVehicle] = React.useState(false)
+  const [opening, setOpening] = React.useState(false)
+
+  async function openRepairTask() {
+    if (!check) return
+    setOpening(true)
+    try {
+      const res = await fetch(`/api/daily-check/${check.id}/open-task`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ flipVehicle }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not open a repair task.', severity: 'error' })
+        return
+      }
+      onClose()
+      router.push(`/admin/maintenance?task=${d.data.id}`)
+    } catch {
+      showToast({ message: 'Network error. Please try again.', severity: 'error' })
+    } finally {
+      setOpening(false)
+    }
+  }
 
   React.useEffect(() => {
     if (!open || !checkId) return
@@ -173,6 +204,7 @@ export function DailyCheckViewer({ checkId, open, onClose }: { checkId: string |
     setLoading(true)
     setError(null)
     setCheck(null)
+    setFlipVehicle(false)
     fetch(`/api/daily-check/${checkId}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.status === 404 ? 'This check could not be found.' : 'Could not load this check.'))))
       .then((d) => { if (active) setCheck(d.data as ViewerCheck) })
@@ -193,6 +225,23 @@ export function DailyCheckViewer({ checkId, open, onClose }: { checkId: string |
         {loading && <Stack alignItems="center" py={4}><CircularProgress /></Stack>}
         {error && <Typography color="error" variant="body2">{error}</Typography>}
         {check && <DailyCheckDetails check={check} />}
+        {/* CC-34 (2c): on a failing check, promote it to a repair task in one click —
+            the operator's words + the check's photos carry over; two clicks from the bell. */}
+        {check && !check.passFail && (
+          <Box mt={2}>
+            <Divider sx={{ mb: 1.5 }} />
+            <FormControlLabel
+              control={<Checkbox checked={flipVehicle} onChange={(e) => setFlipVehicle(e.target.checked)} />}
+              label="Also take the vehicle out of service"
+            />
+            <Button
+              variant="contained" color="warning" fullWidth startIcon={<BuildIcon />}
+              disabled={opening} onClick={openRepairTask} sx={{ mt: 1 }}
+            >
+              {opening ? 'Opening…' : 'Open repair task from this check'}
+            </Button>
+          </Box>
+        )}
       </DialogContent>
     </Dialog>
   )
