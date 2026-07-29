@@ -1,8 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
+import type { StatusLinkType } from '@prisma/client'
 import { rateLimit, clientIp } from '@/lib/rate-limit'
 import { resolveStatusLink, markViewed, isLinkActionable, ALLOWED_ACTIONS } from '@/lib/status-links'
 import { getRequest, getLineChecklist } from '@/lib/deployment-requests'
 import { VEHICLE_TYPE_LABELS, type VehicleTypeValue } from '@/lib/vehicle-types'
+
+// Human label per link type, shown on a dead-link page in place of any subject data.
+const LINK_LABELS: Record<StatusLinkType, string> = {
+  WORK_ORDER: 'Repair Work Order',
+  HUB_RETURN: 'Hub Return',
+  INVOICE: 'Invoice',
+  RESERVATION: 'Rig Reservation Request',
+}
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params
@@ -21,6 +30,24 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
 
   const expired = link.expiresAt.getTime() < Date.now()
   const actionable = isLinkActionable(link)
+  const state = expired && link.state !== 'COMPLETED' ? 'EXPIRED' : link.state
+
+  // §3.4 read-after leak: a dead link (REVOKED / COMPLETED / clock-expired) must
+  // NOT serve the subject payload — it would leak live hub inventory (availableUnits
+  // / substitutableItems on a stale RESERVATION) or asset/problem/serial details on a
+  // stale WORK_ORDER / HUB_RETURN. Return a minimal body and skip the getRequest /
+  // getLineChecklist queries entirely — don't build-then-strip. The portal page falls
+  // back to its own header copy (the LINK_LABELS string) when subject fields are absent.
+  if (!actionable) {
+    return NextResponse.json({
+      type: link.type,
+      state,
+      actionable: false,
+      allowedActions: [],
+      label: LINK_LABELS[link.type],
+      subject: {},
+    })
+  }
 
   // Build a scoped, least-privilege context payload per link type.
   let subject: Record<string, unknown> = {}
@@ -86,10 +113,11 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
 
   return NextResponse.json({
     type: link.type,
-    state: expired && link.state !== 'COMPLETED' ? 'EXPIRED' : link.state,
+    state,
     actionable,
-    allowedActions: actionable ? ALLOWED_ACTIONS[link.type] : [],
+    allowedActions: ALLOWED_ACTIONS[link.type],
     recipientName: link.recipientName,
+    label: LINK_LABELS[link.type],
     subject,
   })
 }
