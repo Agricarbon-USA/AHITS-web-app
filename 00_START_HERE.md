@@ -29,7 +29,7 @@
 | 3 | `AHITS_STATE_OF_THE_APP_2026-07-10.md` | 4 | The honest, code-grounded snapshot: what's solid, what's broken, the corrections to the roadmap. |
 | 4 | `DECISIONS.md` | 1 | The settled questions (prod deferred, Map scope, admin exclusion, W0-10). Don't re-open these. |
 | 5 | `AHITS_PHASE3_WORKPLAN_2026-07-10.md` (§0–§2) | 3 | The current executable sequence + the three locked decisions. |
-| 6 | the newest `AHITS_LAUNCH_HANDOFF_*` / `AHITS_SESSION_HANDOFF_*` file (now `AHITS_SESSION_HANDOFF_2026-07-28_CC31.md`; prior same-day: `_CC32.md`, `_CC30.md`, `_CC29-BUILD.md`) | 2 | What last shipped + exact resume points. During launch week the LAUNCH_HANDOFF is canonical. |
+| 6 | the newest `AHITS_LAUNCH_HANDOFF_*` / `AHITS_SESSION_HANDOFF_*` file (now `AHITS_SESSION_HANDOFF_2026-07-28_CC33.md`; prior same-day: `_CC31.md`, `_CC32.md`, `_CC30.md`, `_CC29-BUILD.md`) | 2 | What last shipped + exact resume points. During launch week the LAUNCH_HANDOFF is canonical. |
 | 7 | `AHITS_PHASE3PLUS_NORTH_STAR_v3.md` (§1–§2) | 4 | *Why* the plan is shaped this way: the two loops, the friction budget. |
 
 Before writing code, also read `CLAUDE.md` + `AGENTS.md` (deploy flow + the DB/migration non-negotiables + this Next.js is not the one you know).
@@ -53,7 +53,7 @@ Before writing code, also read `CLAUDE.md` + `AGENTS.md` (deploy flow + the DB/m
 | run the **pilot device gate** | `AHITS_A6_TESTER_CHECKLIST.md` |
 | run the **pilot / launch week** | `AHITS_PILOT_CHARTER.md` (the signed contract) + `AHITS_LAUNCH_HANDOFF_2026-07-27.md` (day-by-day; **the fixed 07-27 date is void — rolling start per D17**) |
 | see the **2026-07-28 six-seat review** (findings, file:line evidence) | `AHITS_SIX_SEAT_REVIEW_2026-07-28.md` |
-| run the **pilot-floor build queue** (CC-29/30/31/16S — gates the first operator) | `AHITS_CC29-31_PILOT_FLOOR_PACKETS.md` + workplan §15 |
+| run the **pilot-floor build queue** (CC-29/30/31/16S/33/34 — gates the first operator) | `AHITS_CC29-31_PILOT_FLOOR_PACKETS.md` **+ paste-along riders in `AHITS_PACKET_ERRATA_2026-07-29.md`** + workplan §15 |
 
 ---
 
