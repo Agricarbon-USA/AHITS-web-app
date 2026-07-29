@@ -26,7 +26,7 @@
 | CC-07 | Mobile quick-win triage | Leaf-level drawer/search/filter/table fixes | ✅ MERGED |
 | CC-08 | Hubs discrepancy + bulk verify | Discrepancy review view, deliberate Dismiss, bulk select | ✅ MERGED |
 | CC-09 | Awaiting-Pickup thread | Fulfilled-reservation visibility → seeded checkout | ✅ MERGED |
-| — | Wave-0 patches | EmailLog-FAILED alert ✅, URL-filters rollout ✅ — **batch6a date-unify still PENDING** (loose patch; CC-19 owns landing it) | ⚠️ PARTIAL |
+| — | Wave-0 patches | EmailLog-FAILED alert ✅, URL-filters rollout ✅, **batch6a date-unify ✅ landed by hand in CC-33 PR-1 (#223) — admin/hubs toLocaleDateString → formatDateTime; patch file deleted** | ✅ (pending on #223 merge) |
 | CC-10 | Field-fix logging | Fixed-in-field log + vehicle damage path | ✅ MERGED (PR #180) |
 | CC-11 | Admin-as-operator | Admin holds rigs; excluded from money loop (D3) | ✅ MERGED (PR #181) |
 | CC-12 | Batch 6b + perf | Monolith split, SWR, outbox view, 401 prompt | ✅ MERGED (PRs #187–#189) |
@@ -36,7 +36,7 @@
 | CC-16 | No-app QR daily-check | Public per-vehicle QR check form | 📋 QUEUED — **NEXT (live queue)** |
 | CC-17 | Time/Invoicing/Availability | The money loop | 📋 QUEUED (full A6 matrix required first — D13) |
 | CC-18 | N-5 Week board | Read-only manager's week | 📋 QUEUED |
-| CC-19 | Consistency & dead-code | Envelope/fetchJson/withAuth, verified deletions; land `batch6a-date-unify.patch` | 📋 QUEUED (rolling, unscheduled — batch6a still pending) |
+| CC-19 | Consistency & dead-code | Envelope/fetchJson/withAuth, verified deletions; ~~land `batch6a-date-unify.patch`~~ (**batch6a landed by CC-33 PR-1 #223**) | 📋 QUEUED (rolling, unscheduled — batch6a now cleared) |
 | CC-20 | Dead-end record readers | Remainder only — #1 moved to CC-26 | 🅿 PARKED (trigger: first pilot dispute needing history) |
 | CC-21 | Mounted collection units | Design spike, decision first, no build | 🧪 SPIKE |
 | CC-22 | Pilot ops rider | Cron dead-man heartbeat + Sentry wiring | ✅ MERGED (PR #182) |
@@ -51,10 +51,10 @@
 | CC-32 | Friction & flow (operator-experience floor) | D11 glossary sweep, one-time failure entry, site prefill, 2-step builder, template-race fix, GPS warm-capture, openable Outbox, honest copy, Map bottom-nav tab (D28), 44px pass | ✅ MERGED (PRs #209/#210/#211/#212) — #210/#211 shepherded to merge by CC-31 |
 | CC-30 | Ops floor (D16 staging-is-home) | Pipeline hardening (no preview onto live, migration-safety gates development, seed/reset guards, env-drift check) + server-side eyes (Sentry on data-loss/failed, cron catches, advisory-lock 500) | ✅ MERGED (PRs #204/#206) |
 | CC-31 | Accuracy floor + pilot dashboard | INV-5 false-alarm fix + alert auto-resolves (PR-1); expired-link unjam + forOperatorId scope + durationMs + indexes (PR-2 #215); /admin/pilot dashboard + metrics API (PR-3 #214) | ✅ MERGED (PR-1 + #214 + #215 + green-fix #213) — preview-smoked (pilot page + expired-link `bypassExpiry` eyeballed). PR-1 owes a retroactive staging smoke. |
-| CC-16S | Public-surface security (CC-16 step 0) | s/[token] REVOKED/EXPIRED read-after leak + FND-6 Date.now() idempotency shard | 📋 QUEUED — NEXT (D18) |
-| CC-33 | Simplify & unify | Dead-code sweep, Forward→Operator removal (D21), one unified Transfer entry (D22) | 📋 QUEUED |
+| CC-16S | Public-surface security (CC-16 step 0) | s/[token] REVOKED/EXPIRED read-after leak + FND-6 Date.now() idempotency shard | ✅ MERGED (#220 TTL-warmup + #221 read-after-leak) |
+| CC-33 | Simplify & unify | Dead-code sweep, Forward→Operator removal (D21), one unified Transfer entry (D22); **batch6a date-unify landed by hand (PR-1)** | 🔵 PRs OPEN — #223 (dead-code + forward-removal) + #224 (unified Transfer), green in CI incl. node DB suite, awaiting Max's staging smoke |
 
-> **Landing order superseded by the 2026-07-28 re-baseline (STATUS §4 / D17):** the live queue is **CC-29 (✅) → CC-32 → CC-30 → CC-31 → CC-16S → CC-33**. The CC-16 "NEXT" flag above is stale — CC-16 was split (CC-16S ships the step-0 security now; CC-16-proper is PARKED, D18).
+> **Landing order superseded by the 2026-07-28 re-baseline (STATUS §4 / D17):** the live queue is **CC-29 (✅) → CC-32 (✅) → CC-30 (✅) → CC-31 (✅) → CC-16S (✅ #220/#221) → CC-33 (PRs #223/#224 open) → CC-34** (CC-34 pastes with RIDER C in `AHITS_PACKET_ERRATA_2026-07-29.md`). The CC-16 "NEXT" flag above is stale — CC-16 was split (CC-16S ships the step-0 security now; CC-16-proper is PARKED, D18).
 
 ---
 
@@ -74,7 +74,7 @@
 
 **CC-09 · Awaiting-Pickup thread — ✅ MERGED.** Operator Awaiting-Pickup cards; pickup seeds checkout with held lines; TTL-sweep pause and residual-hold release were acceptance criteria — ⟲ confirm both shipped, and whether the optional `Rig.requestId` landed (CC-14's pre-flight depends on it).
 
-**Wave-0 patches — ⚠️ PARTIAL.** EmailLog-FAILED alert ✅ and URL-filters rollout ✅ are merged; **`batch6a-date-unify.patch` is still PENDING** (verified 2026-07-22: `admin/hubs/page.tsx` still has an unconverted `toLocaleDateString` date site). The loose patch lives at repo root; CC-19 owns landing it.
+**Wave-0 patches — ✅ (on #223 merge).** EmailLog-FAILED alert ✅ and URL-filters rollout ✅ are merged; **`batch6a-date-unify.patch` was landed by hand in CC-33 PR-1 (#223)** — the last unconverted `admin/hubs/page.tsx` `toLocaleDateString` site is now `formatDateTime` from `@/lib/utils`, and the loose patch file was deleted from the repo root.
 
 **CC-10 · Field-fix logging — 🔄 IN REVIEW (PR #180).** Operators log a fixed-in-field issue on any vehicle or unit (COMPLETED task, no alert, no status flip) or report vehicle damage (IN_PROGRESS, vehicle → IN_MAINTENANCE, DAMAGE_REPORTED alert); admin maintenance close handles vehicle repairs. Merge on CI green + staging smoke — first item in the landing order.
 
