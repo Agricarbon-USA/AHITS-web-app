@@ -18,8 +18,13 @@
   - **2c:** NEW admin-only `api/daily-check/[id]/open-task` (`withIdempotency`) — notes from issues + failing items, re-links check photos (keeps `dailyCheckId`), `reportedById = check.operatorId`, optional flipVehicle, resolves `DAILY_CHECK_FAILED`, does NOT raise DAMAGE_REPORTED. `DailyCheckViewer` gains the one-click promote button.
   - Node test `tests/cc34-report-and-promote.test.ts` (photo-422, vehicle stillUsable-default-flip, promotion).
 
+## Known v1 (do NOT re-file as breakage)
+- **Secondary-operator rig attribution on `report-problem`.** `getActiveRigForOperator` is PRIMARY-only (SQL filters `role = 'PRIMARY'`), so a **secondary** operator reporting a unit problem gets `rigId: null` — the task + bell still fire correctly, only the rig label is absent. Nullable-by-design, consistent with CC-14's documented "secondary sees no active deployment" v1 limitation. Max will smoke as PRIMARY and won't hit it.
+- **`reportedById` added to vehicle `report-damage`** — the packet said "keep the task as-is otherwise," but 1b is exactly "the reporter gets a home," so setting it here is additive and correct (rigId stays null — scanning a vehicle has no rig context).
+
 ## Owed before merge (Max)
-- **Per-PR staging smoke** (evening). PR-1 first (its migration must land before PR-2's routes run). **Do NOT preview PR-1** — previews apply no migrations, so maintenance surfaces would 500 against the un-migrated pilot DB (actively misleading). PR-2 preview only AFTER PR-1's merge migrates staging.
+- **Per-PR staging smoke** (evening). PR-1 first (its migration must land before PR-2's routes run).
+- **Merge order + re-confirm:** merge **#226 first**, then — because `development` is branch-protected `strict: true` — **update #227 to latest `development`** (its base collapses once #226 lands), let CI re-run in isolation, confirm green, THEN merge #227. Do not merge a stale #227. **Do NOT preview PR-1** — previews apply no migrations, so maintenance surfaces would 500 against the un-migrated pilot DB (actively misleading). PR-2 preview only AFTER PR-1's merge migrates staging.
 - PR-2 airplane-mode smoke is the Antagonist gate (both report routes offline-safe): report a unit offline → reconnect → task+photo+bell appear, unit STILL in kit; "Out of service" → In Maintenance on scan.
 
 ## Resume points — SESSION 2 (PR-3 "schedules become real", the value center)
