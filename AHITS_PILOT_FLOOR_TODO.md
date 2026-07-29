@@ -1,4 +1,4 @@
-# AHITS — Pilot-Floor To-Do · one page, current as of 2026-07-28 evening (CC-31+CC-32 FULLY LANDED)
+# AHITS — Pilot-Floor To-Do · current as of 2026-07-29 morning — ONE packet left
 
 > STATUS: working checklist (snapshot — tick freely; `STATUS.md` stays canonical) · UPDATED: 2026-07-28
 > Everything below comes from `AHITS_CC29-31_PILOT_FLOOR_PACKETS.md` + the CC-30 Max checklist + the owner riders (workplan §15). When this page and STATUS disagree, STATUS wins.
@@ -15,7 +15,8 @@
   - [ ] Weak signal → submit → "saved, will sync" within ~12s, never a stuck spinner
   - [ ] Two tabs, 3 queued actions, reconnect → no false "Failed"; photo-wedge Discard works from Outbox
   - [ ] Forced-expired session, ONLINE submit → "check saved, sign in to send" (not "Unauthorized"); after sign-in it lands
-  - [ ] **Overnight replay (start TONIGHT):** queue a check in airplane mode this evening → sync tomorrow morning → it shows under TODAY's date; tomorrow's real check untouched
+  - [ ] **Overnight replay:** queue a check in airplane mode in the evening → sync next morning → it shows under the day it was PERFORMED; the real morning check untouched
+  - [ ] Two-phone Transfer smoke (from CC-33): Entire rig flips ownership on accept; Selected gear doesn't; nothing says "Handoff"
   - [ ] Admin "force logout" still boots a phone on its next tap
 
 ## 2 · CC-30 — Ops floor (FULLY LANDED ✅ — all six step-7 anchors green, both deploys green)
@@ -56,8 +57,8 @@
 | ✅ | **CC-32** | Friction & flow | **FULLY LANDED** — #209 glossary + #210 + #211 + #212 docs all merged (shepherded by CC-31 post-green) |
 | ✅ | **CC-31** | Accuracy + /admin/pilot dashboard | **FULLY LANDED** — PR-1 + #214 (dashboard) + #215 + #213 green-fix + docs #216-218; browser-smoked pre-merge on preview services |
 | ✅~ | **CC-16S** | Public-link security + TTL warmup | **#220 + #221 MERGED & LIVE on staging** (deploy-guard run; nonce fix in). Remaining: say "go" on #222 docs · portal 3-part eyeball smoke · one cron watch (= TTL first fire + CC-31 retro smoke + PIN self-clear) · preview-service delete via Cloud Console. |
-| ✅ | **CC-33** | Simplify & unify | **#223 + #224 MERGED 2026-07-29, both staging deploys GREEN. D21/D22 EXECUTED.** FORWARDED-drain SELECT ran read-only → **0 live rows** (no drain needed). Anti-regrowth met (1,924→1,905); handoff grep = 0. **Owed (you, physical): the two-phone Transfer smoke on live staging.** ("Text the crew" moot until onboarding — put "Transfer" in the one-pager instead.) |
-| ▶ LAST | **CC-34** | Maintenance speaks | **paste WITH Rider C** (BLOCKING fixes: vehicle-status fetch premise, consumable alert-key trap, photo backstop, stale-nag backfill guard, in-kit repair close, session SPLIT: PR-1+2 then PR-3; D29 appends at PR-1 close) |
+| ✅ | **CC-33** | Simplify & unify | **FULLY LANDED** — #223 + #224 + #225 docs merged, deploys green, D21/D22 EXECUTED, FORWARDED drain was 0 rows. Two-phone Transfer smoke folds into the §1 phone-smoke session. |
+| ▶ IN FLIGHT | **CC-34** | Maintenance speaks | Pasted WITH Rider C. Session 1 = PR-1+PR-2 (D29 appends at PR-1 close; watch the migration gate SCAN PR-1's migration); session 2 = PR-3 (stale-damage count SELECT before its merge). |
 
 **Incident CLOSED (evening):** #213 landed 3 root-cause fixes, dev went green, the full convoy merged. Residual items now live in §2b below.
 
