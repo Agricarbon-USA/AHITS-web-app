@@ -60,5 +60,11 @@ export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id:
   // Soft-delete (CR-8): preserve the repair/damage record rather than hard-delete.
   const notFound = await writeOr404(() => prisma.maintenanceTask.update({ where: { id }, data: { deletedAt: new Date() } }), 'Task not found')
   if (notFound) return notFound
+  // CC-34 (1c): a report mis-filed and deleted (instead of completed) must not leave a
+  // permanent bell ghost — resolve its active alert, mirroring the complete route.
+  await prisma.alert.updateMany({
+    where: { sourceTable: 'maintenance_tasks', sourceId: id, resolved: false },
+    data: { resolved: true, resolvedAt: new Date(), activeKey: null },
+  })
   return NextResponse.json({ ok: true })
 }

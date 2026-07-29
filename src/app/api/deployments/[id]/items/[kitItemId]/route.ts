@@ -6,6 +6,7 @@ import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { withIdempotency } from '@/lib/idempotency'
 import { restoreToHub, resyncItemTotal } from '@/lib/inventory-stock'
+import { createAlert } from '@/lib/alerts' // CC-34 (1c): close the scan-return orphan flip
 
 const bodySchema = z.object({
   quantity: z.number().int().min(1).optional(),
@@ -46,7 +47,7 @@ async function _DELETE(
 
   const kitItem = await prisma.kitItem.findUnique({
     where: { id: kitItemId },
-    include: { item: { select: { itemType: true, hubId: true } }, kit: { select: { rigId: true } } },
+    include: { item: { select: { itemType: true, hubId: true, name: true } }, kit: { select: { rigId: true } } },
   })
   if (!kitItem || kitItem.removedAt) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (kitItem.kit.rigId !== rigId) return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -96,6 +97,36 @@ async function _DELETE(
             condition: returnConditionToLogCondition(returnCondition),
           },
         })
+        // CC-34 (1c): a serialized scan-return that flips the unit for maintenance must
+        // reach /admin/maintenance and the bell — a status flip with no task/alert is a
+        // silent orphan. Scoped to the serialized branch (non-null unit) so the alert
+        // activeKey is unit-specific; consumables (no resolvable unit) are skipped.
+        if (returnCondition === 'IN_MAINTENANCE') {
+          const task = await tx.maintenanceTask.create({
+            data: {
+              itemId: kitItem.inventoryItemId,
+              inventoryUnitId: kitItem.inventoryUnitId,
+              taskName: `Damage repair: ${kitItem.item.name}`,
+              isDamageReport: true,
+              status: 'IN_PROGRESS',
+              rigId,
+              reportedById: session.userId,
+              notes: body.data.notes ?? null,
+            },
+          })
+          await createAlert('DAMAGE_REPORTED', 'maintenance_tasks', task.id, {
+            itemName: kitItem.item.name,
+            operatorId: session.userId,
+          }, tx)
+        } else if (returnCondition === 'INOPERABLE') {
+          // Keep the INOPERABLE flip (review-queue semantics) but ring the bell so triage
+          // happens before someone opens the maintenance page. review-inoperable resolves
+          // this same ('inventory_units', unitId) key on RETIRE or REPAIR.
+          await createAlert('DAMAGE_REPORTED', 'inventory_units', kitItem.inventoryUnitId, {
+            itemName: kitItem.item.name,
+            operatorId: session.userId,
+          }, tx)
+        }
       }
     } else {
       const removeQty = body.data.quantity ?? kitItem.quantity

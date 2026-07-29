@@ -9,7 +9,7 @@ const RIG_INCLUDE = {
   project: { select: { id: true, name: true } },
   vehicles: {
     where: { removedAt: null },
-    include: { vehicle: { select: { id: true, name: true, type: true, isRental: true, rentalAgreementUrl: true } } },
+    include: { vehicle: { select: { id: true, name: true, type: true, status: true, isRental: true, rentalAgreementUrl: true } } },
   },
   kits: {
     include: {
@@ -37,7 +37,7 @@ const RIG_INCLUDE = {
 const RIG_GET_INCLUDE = {
   vehicles: {
     where: { removedAt: null },
-    include: { vehicle: { select: { id: true, name: true, type: true, isRental: true, rentalAgreementUrl: true } } },
+    include: { vehicle: { select: { id: true, name: true, type: true, status: true, isRental: true, rentalAgreementUrl: true } } },
   },
   kits: {
     include: {
@@ -88,12 +88,37 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   // source of operator attribution; the legacy Rig.operatorId fallback was dropped.
   const ro = await getDeploymentRosterForDisplay(id)
   const operator = ro.operator ? { id: ro.operator.id, name: ro.operator.name } : { id: 'unknown', name: 'Unknown operator' }
+
+  // CC-34 (1a): the one drawer query for open maintenance on this rig's assets, so the
+  // deployment surface can flag an IN_MAINTENANCE/damaged vehicle or unit instead of
+  // rendering it healthy. status/isDamageReport drive the per-row Damage / Service-due chip.
+  const rigVehicleIds = rig.vehicles.map((rv) => rv.vehicle.id)
+  const rigUnitIds = rig.kits
+    .flatMap((k) => k.items)
+    .map((ki) => ki.inventoryUnit?.id)
+    .filter((v): v is string => !!v)
+  const openTasks =
+    rigVehicleIds.length || rigUnitIds.length
+      ? await prisma.maintenanceTask.findMany({
+          where: {
+            deletedAt: null,
+            status: { not: 'COMPLETED' },
+            OR: [
+              ...(rigVehicleIds.length ? [{ vehicleId: { in: rigVehicleIds } }] : []),
+              ...(rigUnitIds.length ? [{ inventoryUnitId: { in: rigUnitIds } }] : []),
+            ],
+          },
+          select: { id: true, taskName: true, status: true, isDamageReport: true, vehicleId: true, inventoryUnitId: true },
+        })
+      : []
+
   return NextResponse.json({
     ...rig,
     operatorId: ro.operatorId ?? null,
     operator,
     project: ro.projects[0] ?? null,
     secondaryOperators: ro.secondaryOperators,
+    openTasks,
   })
 }
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
+import { resolveActiveAlert } from '@/lib/alerts' // CC-34 (1c): triage clears the bell
 
 const schema = z.object({
   unitId: z.string(),
@@ -70,6 +71,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       })
     })
   }
+
+  // CC-34 (1c): triaging an inoperable unit (either RETIRE or REPAIR) clears the
+  // DAMAGE_REPORTED bell raised when the unit was flagged inoperable in the field
+  // (deployments end/items/scan-return). Same ('inventory_units', unitId) activeKey.
+  await resolveActiveAlert('DAMAGE_REPORTED', 'inventory_units', unitId)
 
   return NextResponse.json({ ok: true })
 }

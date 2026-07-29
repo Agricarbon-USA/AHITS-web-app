@@ -61,6 +61,10 @@ interface MaintenanceTask {
   repairHub: Ref | null
   hub: Ref | null
   photos: PhotoRef[]
+  // CC-34 (1b): the deployment a damage report came from + who reported it (scalar FKs
+  // resolved server-side). Null for schedules / admin field-fix / review-inoperable.
+  rig: { id: string; label: string | null } | null
+  reportedBy: { id: string; name: string } | null
 }
 
 type HubOption = { id: string; name: string; city: string; state: string }
@@ -519,7 +523,20 @@ export default function AdminMaintenancePage() {
                 </TableCell>
                 <TableCell><StatusChip status={t.status} kind="maintenance" /></TableCell>
                 <TableCell><StatusChip status={t.priority} kind="priority" variant="outlined" /></TableCell>
-                <TableCell><Typography variant="body2">{t.isDamageReport ? fmtDate(t.createdAt) : fmtDate(t.nextDue)}</Typography></TableCell>
+                <TableCell>
+                  {/* CC-34 (1b): damage rows show who reported it and from which deployment,
+                      not just a bare date; schedules keep the due date. */}
+                  {t.isDamageReport ? (
+                    <>
+                      <Typography variant="body2">
+                        {[t.reportedBy?.name, t.rig?.label].filter(Boolean).join(' · ') || '—'}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">{fmtDate(t.createdAt)}</Typography>
+                    </>
+                  ) : (
+                    <Typography variant="body2">{fmtDate(t.nextDue)}</Typography>
+                  )}
+                </TableCell>
                 <TableCell><Typography variant="body2">{t.shopName ?? t.repairHub?.name ?? '—'}</Typography></TableCell>
                 <TableCell>{woChip(woLinks.get(t.id))}</TableCell>
                 <TableCell align="right"><Typography variant="body2">{fmtMoney(t.actualCost ?? t.estimatedCost)}</Typography></TableCell>
@@ -549,6 +566,13 @@ export default function AdminMaintenancePage() {
               </Typography>
               {selected.unit && (
                 <Box mt={0.5}><StatusChip status={selected.unit.status} kind="equipment" /></Box>
+              )}
+              {/* CC-34 (1b): who reported this damage and from which deployment. */}
+              {selected.isDamageReport && (selected.reportedBy || selected.rig) && (
+                <Typography variant="body2" color="text.secondary" mt={1}>
+                  Reported{selected.reportedBy ? ` by ${selected.reportedBy.name}` : ''}
+                  {selected.rig ? ` · from ${selected.rig.label ?? 'a deployment'}` : ''}
+                </Typography>
               )}
               {!selected.isDamageReport && (
                 <Typography variant="body2" color="text.secondary" mt={1}>
