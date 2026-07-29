@@ -13,6 +13,7 @@ import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import WarehouseIcon from '@mui/icons-material/Warehouse'
 import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck'
 import MapIcon from '@mui/icons-material/Map'
+import InsightsIcon from '@mui/icons-material/Insights'
 import SettingsIcon from '@mui/icons-material/Settings'
 import LogoutIcon from '@mui/icons-material/Logout'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
@@ -31,6 +32,9 @@ const NAV_ITEMS = [
   { label: 'Projects', href: '/admin/projects', icon: FolderIcon },
   { label: 'Users', href: '/admin/users', icon: PeopleIcon },
   { label: 'Reports', href: '/admin/reports', icon: BarChartIcon },
+  // CC-31 item 6e: the pilot-metrics watch. Admin-only — deliberately NOT added to
+  // OPERATOR_VIEW_HREFS / proxy.ts's OPERATOR_VIEW_ADMIN_PATHS.
+  { label: 'Pilot', href: '/admin/pilot', icon: InsightsIcon },
   { label: 'Settings', href: '/admin/settings', icon: SettingsIcon },
 ]
 
