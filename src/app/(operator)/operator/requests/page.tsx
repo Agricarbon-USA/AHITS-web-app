@@ -67,7 +67,6 @@ export default function RequestsPage() {
   const [cancellingId, setCancellingId] = React.useState<string | null>(null)
   // CC-14: confirm before cancelling a request (was a one-tap irreversible action).
   const [confirmCancelId, setConfirmCancelId] = React.useState<string | null>(null)
-  const [fulfillingId, setFulfillingId] = React.useState<string | null>(null)
   const [activeTab, setActiveTab] = React.useState<'ACTIVE' | 'CLOSED'>('ACTIVE')
   const showToast = useToast()
   const { mutate, isOffline } = useOfflineQueue()
@@ -128,28 +127,9 @@ export default function RequestsPage() {
     }
   }
 
-  // CC-24: a MATERIAL request's `complete` action moves NO stock — it only
-  // notifies the requester — so it's labelled "handled", not "fulfilled".
-  // "Fulfill" is reserved for the stock-moving reservation flow (the `fulfill`
-  // action / FulfillmentChecklist), which is untouched.
-  const handleFulfill = async (id: string) => {
-    setFulfillingId(id)
-    const result = await mutate({
-      endpoint: `/api/deployment-requests/${id}`,
-      method: 'PATCH',
-      body: { action: 'complete' },
-      label: 'Mark handled',
-    })
-    setFulfillingId(null)
-    if (result.ok && result.queued) {
-      showToast({ message: 'Marked handled — will sync when online.', severity: 'info' })
-    } else if (result.ok) {
-      showToast({ message: 'Request marked handled.', severity: 'success' })
-      await load()
-    } else {
-      showToast({ message: result.error, severity: 'error' })
-    }
-  }
+  // CC-33 (E2): removed handleFulfill + the operator "Mark Handled" path — the
+  // Forward→Operator branch is gone (D21). Admin "Mark Handled" closes any stale
+  // FORWARDED-to-operator row; operators only ever Cancel their own requests.
 
   const displayed = (requests ?? []).filter((r) =>
     activeTab === 'ACTIVE' ? !TERMINAL.has(r.status) : TERMINAL.has(r.status),
@@ -251,44 +231,27 @@ export default function RequestsPage() {
                           </Typography>
                         )}
                       </Box>
-                      {!TERMINAL.has(req.status) && (
-                        req.status === 'FORWARDED' && req.fulfillerOperatorId === user?.userId ? (
-                          <Button
-                            size="small"
-                            color="success"
-                            variant="contained"
-                            disabled={fulfillingId === req.id}
-                            startIcon={
-                              fulfillingId === req.id ? (
-                                <CircularProgress size={12} color="inherit" />
-                              ) : null
-                            }
-                            onClick={() => void handleFulfill(req.id)}
-                            sx={{ flexShrink: 0 }}
-                          >
-                            Mark Handled
-                          </Button>
-                        ) : req.requestedById === user?.userId ? (
-                          // CC-31 item 4: only the actual requester may cancel. A request
-                          // surfaced only because it was filed FOR this operator (forOperatorId)
-                          // is read-only here — the write route 403s a non-requester cancel, so
-                          // showing the button would just error.
-                          <Button
-                            size="small"
-                            color="error"
-                            variant="outlined"
-                            disabled={cancellingId === req.id}
-                            startIcon={
-                              cancellingId === req.id ? (
-                                <CircularProgress size={12} color="inherit" />
-                              ) : null
-                            }
-                            onClick={() => setConfirmCancelId(req.id)}
-                            sx={{ flexShrink: 0 }}
-                          >
-                            Cancel
-                          </Button>
-                        ) : null
+                      {/* CC-33 (E2): forward→operator removed — the "Mark Handled" arm is gone.
+                          Cancel is the sole action, and (CC-31 item 4) only the actual requester
+                          may cancel. A request surfaced only because it was filed FOR this operator
+                          (forOperatorId) is read-only here — the write route 403s a non-requester
+                          cancel, so showing the button would just error. */}
+                      {!TERMINAL.has(req.status) && req.requestedById === user?.userId && (
+                        <Button
+                          size="small"
+                          color="error"
+                          variant="outlined"
+                          disabled={cancellingId === req.id}
+                          startIcon={
+                            cancellingId === req.id ? (
+                              <CircularProgress size={12} color="inherit" />
+                            ) : null
+                          }
+                          onClick={() => setConfirmCancelId(req.id)}
+                          sx={{ flexShrink: 0 }}
+                        >
+                          Cancel
+                        </Button>
                       )}
                     </Stack>
                   </CardContent>

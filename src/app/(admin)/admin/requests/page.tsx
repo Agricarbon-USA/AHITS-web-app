@@ -153,44 +153,8 @@ function ForwardHubDialog({ requestId, hubs, onClose, onSuccess }: {
   )
 }
 
-// ── Forward Operator Dialog ───────────────────────────────────────────────────
-
-function ForwardOperatorDialog({ requestId, operators, onClose, onSuccess }: {
-  requestId: string; operators: OperatorOption[]; onClose: () => void; onSuccess: () => void
-}) {
-  const [opId, setOpId] = React.useState('')
-  const [busy, setBusy] = React.useState(false)
-  const [error, setError] = React.useState('')
-  const showToast = useToast()
-
-  const submit = async () => {
-    if (!opId) return
-    setBusy(true)
-    const r = await patchRequest(requestId, { action: 'forward', fulfillerOperatorId: opId })
-    setBusy(false)
-    if (r.ok) { showToast({ message: 'Forwarded to operator.', severity: 'success' }); onSuccess() }
-    else setError(r.error ?? 'Failed.')
-  }
-
-  return (
-    <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>Forward to Operator</DialogTitle>
-      <DialogContent>
-        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-        <TextField select label="Operator" value={opId} onChange={(e) => setOpId(e.target.value)} fullWidth sx={{ mt: 1 }}>
-          <MenuItem value="">— Select operator —</MenuItem>
-          {operators.map((o) => <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>)}
-        </TextField>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose} disabled={busy}>Cancel</Button>
-        <Button variant="contained" onClick={() => void submit()} disabled={!opId || busy}>
-          {busy ? <CircularProgress size={16} color="inherit" /> : 'Forward'}
-        </Button>
-      </DialogActions>
-    </Dialog>
-  )
-}
+// CC-33 (E1): removed ForwardOperatorDialog — the never-used Forward→Operator branch (D21).
+// The stale-row read side (operator-name chip) stays; admin "Mark Handled" closes such rows.
 
 // ── Decline Dialog ────────────────────────────────────────────────────────────
 
@@ -236,7 +200,7 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
   const [lines, setLines] = React.useState<LineRow[] | null>(null)
   const [progress, setProgress] = React.useState<{ checked: number; total: number } | null>(null)
   const [linesLoading, setLinesLoading] = React.useState(false)
-  const [dialog, setDialog] = React.useState<'hub' | 'operator' | 'decline' | null>(null)
+  const [dialog, setDialog] = React.useState<'hub' | 'decline' | null>(null) // CC-33 (E1): 'operator' removed
   const [busy, setBusy] = React.useState<string | null>(null)
   const showToast = useToast()
 
@@ -422,9 +386,7 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
                     <Button size="small" variant="outlined" disabled={!!busy} onClick={() => setDialog('hub')}>
                       Forward → Hub
                     </Button>
-                    <Button size="small" variant="outlined" disabled={!!busy} onClick={() => setDialog('operator')}>
-                      Forward → Operator
-                    </Button>
+                    {/* CC-33 (E1): Forward → Operator button removed (D21). */}
                     <Button size="small" variant="outlined" color="error" disabled={!!busy} onClick={() => setDialog('decline')}>
                       Decline
                     </Button>
@@ -496,10 +458,7 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
         <ForwardHubDialog requestId={req.id} hubs={hubs} onClose={() => setDialog(null)}
           onSuccess={() => { setDialog(null); onRefresh() }} />
       )}
-      {dialog === 'operator' && (
-        <ForwardOperatorDialog requestId={req.id} operators={operators} onClose={() => setDialog(null)}
-          onSuccess={() => { setDialog(null); onRefresh() }} />
-      )}
+      {/* CC-33 (E1): ForwardOperatorDialog mount removed (D21). */}
       {dialog === 'decline' && (
         <DeclineDialog requestId={req.id} onClose={() => setDialog(null)}
           onSuccess={() => { setDialog(null); onRefresh() }} />

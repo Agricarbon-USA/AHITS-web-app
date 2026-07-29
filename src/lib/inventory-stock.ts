@@ -225,30 +225,5 @@ export async function allHubStockForScan(db: RawClient = prisma): Promise<HubSto
   `
 }
 
-export interface LowStockHubRow {
-  itemId: string
-  itemName: string | null
-  hubId: string
-  hubName: string | null
-  quantity: number
-  threshold: number
-}
-
-/**
- * Per-hub low-stock rows: a hub's stock at or below the item's lowStockThreshold.
- * The follow-on MIGRATE slice routes these through the notification dispatcher as
- * per-hub LOW_INVENTORY alerts (replacing the single-hub item-level scan).
- */
-export async function lowStockByHub(db: RawClient = prisma): Promise<LowStockHubRow[]> {
-  return db.$queryRaw<LowStockHubRow[]>`
-    SELECT s."itemId", i."name" AS "itemName", s."hubId", h."name" AS "hubName",
-           s."quantity", i."lowStockThreshold" AS "threshold"
-    FROM "inventory_stock" s
-    JOIN "inventory_items" i ON i."id" = s."itemId"
-    LEFT JOIN "hubs" h ON h."id" = s."hubId"
-    WHERE i."deletedAt" IS NULL
-      AND i."lowStockThreshold" IS NOT NULL
-      AND s."quantity" <= i."lowStockThreshold"
-    ORDER BY s."quantity" ASC
-  `
-}
+// CC-33 (A3): removed dead lowStockByHub + LowStockHubRow (superseded by allHubStockForScan,
+// the cron's live import).
