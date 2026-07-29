@@ -12,6 +12,7 @@ import TerrainIcon from '@mui/icons-material/Terrain'
 import AgricultureIcon from '@mui/icons-material/Agriculture'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { ReportProblemButton } from '@/components/shared/ReportProblemDialog'
+import { maintenanceStatusMeta } from '@/lib/status'
 
 // CC-12 PR3: the two heavy presentational cards of My Deployment, extracted off
 // the ~2000-line container and wrapped in React.memo. With stable props, opening a
@@ -49,10 +50,13 @@ interface VehiclesCardProps {
   setRemovingVehicles: (v: boolean) => void
   onAddVehicles: () => void
   onRemoveSelected: () => void
+  // CC-34 (3d): open maintenance-task status keyed by vehicle id (read-only "In repair"
+  // caption). Memoized upstream so the memo boundary holds.
+  repairByVehicle?: Record<string, string>
 }
 
 export const DeploymentVehiclesCard = React.memo(function DeploymentVehiclesCard({
-  vehicles, removingVehicles, selVehicles, setSelVehicles, setRemovingVehicles, onAddVehicles, onRemoveSelected,
+  vehicles, removingVehicles, selVehicles, setSelVehicles, setRemovingVehicles, onAddVehicles, onRemoveSelected, repairByVehicle,
 }: VehiclesCardProps) {
   return (
     <Card sx={{ flex: 1 }}>
@@ -64,8 +68,10 @@ export const DeploymentVehiclesCard = React.memo(function DeploymentVehiclesCard
           <Stack spacing={0.5} mb={1}>
             {vehicles.map((rv) => {
               const Icon = VEHICLE_ICON[rv.vehicle.type] ?? LocalShippingIcon
+              const repair = repairByVehicle?.[rv.vehicle.id]
               return (
-                <Stack key={rv.id} direction="row" alignItems="center" spacing={1} flexWrap="wrap" useFlexGap sx={{ minWidth: 0 }}>
+                <Box key={rv.id}>
+                <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" useFlexGap sx={{ minWidth: 0 }}>
                   {removingVehicles && (
                     <Checkbox size="small" checked={selVehicles.has(rv.vehicle.id)}
                       onChange={(e) => {
@@ -89,6 +95,14 @@ export const DeploymentVehiclesCard = React.memo(function DeploymentVehiclesCard
                     </Box>
                   )}
                 </Stack>
+                {/* CC-34 (3d): read-only repair state — human label via lib/status.ts, no
+                    chip+caption stacking (RIDER C #12). */}
+                {repair && (
+                  <Typography variant="caption" color="warning.main" sx={{ pl: 3.5 }}>
+                    In repair — {maintenanceStatusMeta(repair).label}
+                  </Typography>
+                )}
+                </Box>
               )
             })}
           </Stack>
@@ -130,10 +144,12 @@ interface KitCardProps {
   onRemoveSelected: () => void
   onLogUsage: (ki: KitRow) => void
   onReturnItem: (ki: KitRow) => void
+  // CC-34 (3d): open maintenance-task status keyed by inventory-unit id. Memoized upstream.
+  repairByUnit?: Record<string, string>
 }
 
 export const DeploymentKitCard = React.memo(function DeploymentKitCard({
-  kitItems, removingItems, selItems, setSelItems, setRemovingItems, onAddItems, onRemoveSelected, onLogUsage, onReturnItem,
+  kitItems, removingItems, selItems, setSelItems, setRemovingItems, onAddItems, onRemoveSelected, onLogUsage, onReturnItem, repairByUnit,
 }: KitCardProps) {
   return (
     <Card sx={{ flex: 1 }}>
@@ -145,8 +161,10 @@ export const DeploymentKitCard = React.memo(function DeploymentKitCard({
           <Stack spacing={0.5} mb={1}>
             {kitItems.map((ki) => {
               const isLow = ki.item.lowStockThreshold != null && ki.quantity <= ki.item.lowStockThreshold
+              const repair = ki.inventoryUnit ? repairByUnit?.[ki.inventoryUnit.id] : undefined
               return (
-                <Stack key={ki.id} direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
+                <Box key={ki.id}>
+                <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
                   {removingItems && (
                     <Checkbox size="small" checked={selItems.has(ki.id)}
                       onChange={(e) => {
@@ -188,6 +206,14 @@ export const DeploymentKitCard = React.memo(function DeploymentKitCard({
                     </Tooltip>
                   )}
                 </Stack>
+                {/* CC-34 (3d): read-only repair state — human label via lib/status.ts, no
+                    chip+caption stacking (RIDER C #12). */}
+                {repair && (
+                  <Typography variant="caption" color="warning.main" sx={{ pl: removingItems ? 5 : 0 }}>
+                    In repair — {maintenanceStatusMeta(repair).label}
+                  </Typography>
+                )}
+                </Box>
               )
             })}
           </Stack>

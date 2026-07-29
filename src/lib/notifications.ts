@@ -25,8 +25,20 @@ export function presentAlert(alert: {
   const subject = str(meta.itemName) ?? str(meta.taskName) ?? str(meta.name)
   let message: string
   switch (alert.type) {
-    case 'DAMAGE_REPORTED': message = `${subject ?? 'An item'} was reported damaged in the field.`; break
-    case 'MAINTENANCE_OVERDUE': message = `${str(meta.taskName) ?? 'A maintenance task'} is overdue${meta.daysPastDue ? ` by ${meta.daysPastDue} day(s)` : ''}.`; break
+    // CC-34 (3e): the shop-completed work order reuses this type with a phase marker —
+    // check it FIRST so a READY_TO_FINALIZE alert reads as "review and finalize", not "damaged".
+    case 'DAMAGE_REPORTED':
+      message = meta.phase === 'READY_TO_FINALIZE'
+        ? `Repair completed by ${str(meta.shop) ?? 'the shop'} — review and finalize in Maintenance.`
+        : `${subject ?? 'An item'} was reported damaged in the field.`
+      break
+    // CC-34 (3b): the stale-damage marker (staleDamageDays) reuses this type — check it
+    // FIRST so a forgotten damage repair reads as a gentle nudge, not a calendar "overdue".
+    case 'MAINTENANCE_OVERDUE':
+      message = meta.staleDamageDays != null
+        ? `${str(meta.taskName) ?? 'A maintenance task'} — no updates in ${meta.staleDamageDays} days. Worth a look.`
+        : `${str(meta.taskName) ?? 'A maintenance task'} is overdue${meta.daysPastDue ? ` by ${meta.daysPastDue} day(s)` : ''}.`
+      break
     case 'EQUIPMENT_NOT_RETURNED': message = `${subject ?? 'Equipment'} has not been returned on time.`; break
     case 'LOW_INVENTORY': {
       const hubPart = str(meta.hubName) ? ` at ${str(meta.hubName)}` : ''

@@ -81,9 +81,21 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           await tx.vehicle.update({ where: { id: task.vehicleId! }, data: { status: 'ACTIVE' as never } })
         }
       } else {
+        // CC-34 (3c): a "Still usable" field report (PR-2a) leaves a unit IN_MAINTENANCE
+        // while it stays in the operator's kit. Flipping such a unit straight to AVAILABLE
+        // on close would strand it — AVAILABLE inside an OPEN kit item on an ACTIVE rig, so
+        // it's double-issuable and invisible to INV-5. If an open kit item still references
+        // the unit, restore it to CHECKED_OUT (still in the kit); otherwise AVAILABLE (hub).
+        const restoreStatusFor = async (unitId: string): Promise<'AVAILABLE' | 'CHECKED_OUT'> => {
+          const openKit = await tx.kitItem.findFirst({
+            where: { inventoryUnitId: unitId, removedAt: null, kit: { rig: { endedAt: null } } },
+            select: { id: true },
+          })
+          return openKit ? 'CHECKED_OUT' : 'AVAILABLE'
+        }
         // Unit damage: restore the specific unit (or the unambiguous UR-029 fallback).
         if (task.unit && task.unit.status === 'IN_MAINTENANCE') {
-          await tx.inventoryUnit.update({ where: { id: task.unit.id }, data: { status: 'AVAILABLE' } })
+          await tx.inventoryUnit.update({ where: { id: task.unit.id }, data: { status: await restoreStatusFor(task.unit.id) } })
         } else if (!task.inventoryUnitId && task.itemId) {
           // UR-029 fallback for legacy tasks created before the unit was linked at
           // creation: if exactly one unit of this item is in maintenance, it's
@@ -95,7 +107,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
             take: 2,
           })
           if (inMaint.length === 1) {
-            await tx.inventoryUnit.update({ where: { id: inMaint[0].id }, data: { status: 'AVAILABLE' } })
+            await tx.inventoryUnit.update({ where: { id: inMaint[0].id }, data: { status: await restoreStatusFor(inMaint[0].id) } })
           }
         }
       }

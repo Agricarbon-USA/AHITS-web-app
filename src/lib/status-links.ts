@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { sendEmail } from '@/lib/email/resend'
 import { hubReturnEmail } from '@/lib/email/templates'
 import { applyRequestTransition } from '@/lib/deployment-requests'
+import { createAlert, resolveActiveAlert } from '@/lib/alerts'
 import type { Prisma, StatusLink, StatusLinkType } from '@prisma/client'
 
 /**
@@ -260,6 +261,12 @@ export async function applyTransition(
     return applyReservationTransition(link, action, actorLabel, note, now)
   }
 
+  // CC-34 (3e): a WORK_ORDER COMPLETED by the shop should enter the real alert pipeline
+  // (Active Alerts + one deduped bell/email), not just a scroll-past notifyAdmins row.
+  // Captured inside the tx, raised AFTER it commits so the alert writes (global client,
+  // not tx) stay consistent with each other and can't orphan on a rolled-back tx.
+  let workOrderCompleted: { taskId: string; shop: string } | null = null
+
   await prisma.$transaction(async (tx) => {
     // Record the event first (always).
     await tx.statusLinkEvent.create({
@@ -295,12 +302,10 @@ export async function applyTransition(
         })
       } else if (action === 'COMPLETED') {
         await tx.statusLink.update({ where: { id: link.id }, data: { state: 'COMPLETED', completedAt: now, actedAt: now } })
-        await notifyAdmins(tx, {
-          type: 'WORK_ORDER_UPDATE',
-          title: `Repair completed — finalize ${taskName}`,
-          body: `${actorLabel} marked the repair complete. Review and finalize in Maintenance to return the unit to service.`,
-          link: adminLink,
-        })
+        // CC-34 (3e): raise a real DAMAGE_REPORTED alert (READY_TO_FINALIZE) post-commit instead
+        // of the bell-only notifyAdmins — see the capture var above. RECEIVED/IN_PROGRESS/INVOICED
+        // keep their bell-only notifyAdmins (portal is deprioritized — D29-3; do not gold-plate).
+        workOrderCompleted = { taskId: link.maintenanceTaskId, shop: actorLabel }
       }
     } else if (link.type === 'HUB_RETURN' && link.inventoryUnitId) {
       const itemName = link.inventoryUnit?.inventoryItem?.name ?? 'an item'
@@ -336,6 +341,16 @@ export async function applyTransition(
       }
     }
   })
+
+  // CC-34 (3e): resolve-then-create so the fresh row has notifiedAt null — the dispatcher
+  // bells + emails it exactly once. resolve first, or the activeKey dedup would swallow the
+  // re-raise and no bell would fire. Self-resolves when the admin completes the task (the
+  // complete route's existing alert updateMany).
+  if (workOrderCompleted) {
+    const { taskId, shop } = workOrderCompleted
+    await resolveActiveAlert('DAMAGE_REPORTED', 'maintenance_tasks', taskId)
+    await createAlert('DAMAGE_REPORTED', 'maintenance_tasks', taskId, { phase: 'READY_TO_FINALIZE', shop })
+  }
 
   const final = await prisma.statusLink.findUnique({ where: { id: link.id }, select: { state: true } })
   return { ok: true, state: final?.state ?? 'ACTED' }

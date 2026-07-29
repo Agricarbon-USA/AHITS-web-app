@@ -104,6 +104,36 @@ async function run() {
     })
   }
 
+  // 1b) CC-34 (3b): damage repairs can go stale. The overdue scan above only touches
+  // scheduled tasks (isDamageReport:false); a forgotten damage repair would otherwise idle
+  // forever with no nag. Flag damage tasks untouched for >7 days by REUSING MAINTENANCE_OVERDUE
+  // (no AlertType enum change) with a staleDamageDays marker — activeKey dedup can't collide
+  // because damage tasks never get the calendar arm above. Any task edit bumps updatedAt and
+  // re-arms the 7-day clock (desired). Bounded orderBy updatedAt asc / take 5 per run: dedup +
+  // the 7-day predicate drain the backlog a handful per pass so one run can't fan out a flood.
+  const STALE_DAMAGE_DAYS = 7
+  const staleCutoff = new Date(now.getTime() - STALE_DAMAGE_DAYS * 86_400_000)
+  const staleDamage = await prisma.maintenanceTask.findMany({
+    where: {
+      isDamageReport: true,
+      status: { not: 'COMPLETED' },
+      deletedAt: null,
+      updatedAt: { lt: staleCutoff },
+    },
+    orderBy: { updatedAt: 'asc' },
+    take: 5,
+    include: { vehicle: { select: { name: true } }, item: { select: { name: true } } },
+  })
+  let staleDamageFlagged = 0
+  for (const t of staleDamage) {
+    await createAlert('MAINTENANCE_OVERDUE', 'maintenance_tasks', t.id, {
+      taskName: t.taskName,
+      itemName: t.item?.name ?? t.vehicle?.name ?? null,
+      staleDamageDays: Math.floor((now.getTime() - t.updatedAt.getTime()) / 86_400_000),
+    })
+    staleDamageFlagged++
+  }
+
   // 2) Reap idempotency keys older than 48h so the dedup table doesn't grow
   // unbounded. The offline queue only replays within minutes of reconnecting,
   // so a 48h window is far longer than any legitimate replay needs.
@@ -551,7 +581,7 @@ async function run() {
   await recordCronHeartbeat().catch(() => {})
   await resolveActiveAlert('CRON_SILENT', CRON_SILENT_SOURCE_TABLE, CRON_SILENT_SOURCE_ID).catch(() => {})
 
-  return { overdueFlagged: due.length, idempotencyReaped, lowInventoryFlagged: lowFlagged, expiryFlagged, missedFlagged, holdsReleased, inventoryDriftFlagged, invariantViolations, emailFailedFlagged, ...dispatch }
+  return { overdueFlagged: due.length, staleDamageFlagged, idempotencyReaped, lowInventoryFlagged: lowFlagged, expiryFlagged, missedFlagged, holdsReleased, inventoryDriftFlagged, invariantViolations, emailFailedFlagged, ...dispatch }
 }
 
 async function handleCron(req: NextRequest) {
