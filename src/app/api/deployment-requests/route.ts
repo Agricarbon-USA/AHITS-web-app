@@ -41,7 +41,7 @@ const bodySchema = z.object({
   projectId: z.string().optional().nullable(),
   forOperatorId: z.string().optional().nullable(),
   fulfillerHubId: z.string().optional().nullable(),
-  fulfillerOperatorId: z.string().optional().nullable(),
+  // CC-33 (E4): fulfillerOperatorId dropped — no client ever sent it (D21).
   status: z.enum(['DRAFT', 'REQUESTED']).default('REQUESTED'),
   lines: z.array(lineSchema).min(1, 'Add at least one requested item or vehicle'),
 })
@@ -77,7 +77,7 @@ async function _POST(req: NextRequest) {
       projectId: d.projectId || null,
       forOperatorId: d.forOperatorId || null,
       fulfillerHubId: d.fulfillerHubId || null,
-      fulfillerOperatorId: d.fulfillerOperatorId || null,
+      fulfillerOperatorId: null, // CC-33 (E4): forward→operator removed (D21)
       status: d.status,
       lines: d.lines.map((l) => ({
         lineType: l.lineType,

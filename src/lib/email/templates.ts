@@ -28,77 +28,9 @@ const base = (title: string, body: string) => `
 </body>
 </html>`
 
-export function maintenanceOverdueEmail(taskName: string, vehicleOrItem: string) {
-  return base(
-    'Maintenance Overdue',
-    `<h3 style="color:#d32f2f;">⚠️ Maintenance Overdue</h3>
-     <p><strong>${esc(taskName)}</strong> is overdue for <strong>${esc(vehicleOrItem)}</strong>.</p>
-     <p>Please schedule this maintenance as soon as possible to prevent equipment damage.</p>`
-  )
-}
-
-export function equipmentNotReturnedEmail(itemName: string, operator: string, expectedDate: string) {
-  return base(
-    'Equipment Not Returned',
-    `<h3 style="color:#e65100;">📦 Equipment Not Returned</h3>
-     <p><strong>${esc(itemName)}</strong> checked out by <strong>${esc(operator)}</strong> was due back on <strong>${esc(expectedDate)}</strong>.</p>
-     <p>Please follow up to ensure the equipment is returned and accounted for.</p>`
-  )
-}
-
-export function damageReportedEmail(item: string, operator: string, notes: string) {
-  return base(
-    'Damage Reported',
-    `<h3 style="color:#d32f2f;">🔧 Damage Reported</h3>
-     <p><strong>${esc(operator)}</strong> reported damage to <strong>${esc(item)}</strong>.</p>
-     <p><strong>Notes:</strong> ${esc(notes)}</p>`
-  )
-}
-
-export function dailyCheckFailedEmail(vehicleName: string, operator: string, issues: string) {
-  return base(
-    'Daily Check Failed',
-    `<h3 style="color:#e65100;">🚗 Daily Vehicle Check — Issues Found</h3>
-     <p><strong>${esc(operator)}</strong> submitted a daily check for <strong>${esc(vehicleName)}</strong> with issues.</p>
-     <p><strong>Issues:</strong> ${esc(issues)}</p>`
-  )
-}
-
-export function pinLockedEmail(userName: string) {
-  return base(
-    'Operator PIN Locked',
-    `<h3 style="color:#1565c0;">🔒 Operator PIN Locked</h3>
-     <p><strong>${esc(userName)}</strong>'s PIN has been locked after too many failed attempts.</p>
-     <p>Please reset their PIN in the Admin → Users panel.</p>`
-  )
-}
-
-export function lowInventoryEmail(itemName: string, quantity: number, threshold: number) {
-  return base(
-    'Low Inventory Alert',
-    `<h3 style="color:#e65100;">📉 Low Inventory</h3>
-     <p><strong>${esc(itemName)}</strong> is low: <strong>${esc(quantity)}</strong> remaining (threshold: ${esc(threshold)}).</p>
-     <p>Consider reordering to avoid supply gaps in the field.</p>`
-  )
-}
-
-export function insuranceExpiringEmail(vehicleName: string, expiryDate: string) {
-  return base(
-    'Insurance Expiring',
-    `<h3 style="color:#e65100;">📋 Insurance Expiring Soon</h3>
-     <p><strong>${esc(vehicleName)}</strong>'s insurance expires on <strong>${esc(expiryDate)}</strong>.</p>
-     <p>Please renew to maintain coverage and compliance.</p>`
-  )
-}
-
-export function registrationExpiringEmail(vehicleName: string, expiryDate: string) {
-  return base(
-    'Registration Expiring',
-    `<h3 style="color:#e65100;">📋 Registration Expiring Soon</h3>
-     <p><strong>${esc(vehicleName)}</strong>'s registration expires on <strong>${esc(expiryDate)}</strong>.</p>
-     <p>Please renew before the expiry date.</p>`
-  )
-}
+// CC-33 (A5): removed 8 caller-less templates (maintenanceOverdue, equipmentNotReturned,
+// damageReported, dailyCheckFailed, pinLocked, lowInventory, insuranceExpiring,
+// registrationExpiring). Alert emails now flow through genericAlertEmail via the dispatcher.
 
 // Generic alert email used by the notification dispatcher for any alert type.
 // `linkUrl` is server-constructed (app URL + path), never user input, so it is

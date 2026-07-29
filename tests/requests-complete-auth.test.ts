@@ -5,9 +5,10 @@ import { prisma } from '../src/lib/prisma'
 import { createOperator, createAdminUser, operatorSession, adminSession } from './helpers/fixtures'
 import { createRequest } from '../src/lib/deployment-requests'
 
-// F5/F6 auth closure: complete action must be callable by the designated
-// fulfillerOperatorId only (not the requester, not an unrelated operator,
-// not on hub-forwarded requests where fulfillerOperatorId is null).
+// CC-33 (E6): the Forward→Operator branch is removed (D21) — `complete` is now
+// ADMIN-ONLY. NO operator may complete a request: not the formerly-designated
+// fulfiller, not the requester, not an unrelated operator. Admin completes any
+// FORWARDED MATERIAL request (hub-forwarded or otherwise).
 
 let mockSession: object | null = null
 vi.mock('../src/lib/auth/session', () => ({
@@ -45,7 +46,7 @@ async function makeForwardedMaterialRequest(requestedById: string, fulfillerOper
 }
 
 describe('complete action authorization', () => {
-  it('allows the assigned fulfiller operator to complete a FORWARDED MATERIAL request', async () => {
+  it('blocks the formerly-designated fulfiller operator from completing (D21: forward→operator removed)', async () => {
     const requester = await createOperator()
     const fulfiller = await createOperator()
     const requestId = await makeForwardedMaterialRequest(requester.id, fulfiller.id)
@@ -54,7 +55,7 @@ describe('complete action authorization', () => {
     const res = await PATCH(patchReq(requestId, { action: 'complete' }), {
       params: Promise.resolve({ id: requestId }),
     })
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(403)
   })
 
   it('blocks the requester (non-fulfiller) from completing', async () => {

@@ -23,13 +23,10 @@
     "test:ui": "vitest run --config vitest.config.ui.ts"
   },
   "dependencies": {
-    "@emotion/cache": "^11.13.1",
     "@emotion/react": "^11.13.3",
-    "@emotion/server": "^11.11.0",
     "@emotion/styled": "^11.13.0",
     "@mui/icons-material": "^6.1.6",
     "@mui/material": "^6.1.6",
-    "@mui/x-date-pickers": "^7.22.1",
     "@prisma/client": "^5.22.0",
     "@sentry/nextjs": "^10.65.0",
     "@serwist/next": "^9.5.11",

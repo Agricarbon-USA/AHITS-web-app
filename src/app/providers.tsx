@@ -3,8 +3,7 @@
 import * as React from 'react'
 import { ThemeProvider, createTheme } from '@mui/material/styles'
 import CssBaseline from '@mui/material/CssBaseline'
-import { LocalizationProvider } from '@mui/x-date-pickers'
-import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
+// CC-33 (C2): removed @mui/x-date-pickers LocalizationProvider — no DatePicker/TimePicker exists.
 import { color, font } from '@/theme/tokens'
 
 const theme = createTheme({
@@ -41,9 +40,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <LocalizationProvider dateAdapter={AdapterDayjs}>
-        {children}
-      </LocalizationProvider>
+      {children}
     </ThemeProvider>
   )
 }

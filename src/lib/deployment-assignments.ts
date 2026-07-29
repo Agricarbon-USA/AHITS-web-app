@@ -176,29 +176,7 @@ export async function getDeploymentRosterForDisplay(
   return map.get(rigId) ?? { operator: null, operatorId: null, secondaryOperators: [], projects: [] }
 }
 
-/** All (active + historical) project links for a deployment, newest first. */
-export async function listDeploymentProjects(rigId: string): Promise<DeploymentProjectRow[]> {
-  return prisma.$queryRaw<DeploymentProjectRow[]>`
-    SELECT dp."id", dp."rigId", dp."projectId", p."name" AS "projectName",
-           dp."addedAt", dp."removedAt"
-    FROM "deployment_projects" dp
-    LEFT JOIN "projects" p ON p."id" = dp."projectId"
-    WHERE dp."rigId" = ${rigId}
-    ORDER BY dp."addedAt" DESC
-  `
-}
-
-/** Currently-active deployments for a project (link not yet removed). */
-export async function listProjectDeployments(projectId: string): Promise<DeploymentProjectRow[]> {
-  return prisma.$queryRaw<DeploymentProjectRow[]>`
-    SELECT dp."id", dp."rigId", dp."projectId", p."name" AS "projectName",
-           dp."addedAt", dp."removedAt"
-    FROM "deployment_projects" dp
-    LEFT JOIN "projects" p ON p."id" = dp."projectId"
-    WHERE dp."projectId" = ${projectId} AND dp."removedAt" IS NULL
-    ORDER BY dp."addedAt" DESC
-  `
-}
+// CC-33 (A2): removed dead listDeploymentProjects / listProjectDeployments (0 importers).
 
 /** Link a project to a deployment (idempotent on the unique (rigId, projectId)). */
 export async function addProjectLink(rigId: string, projectId: string, db: RawClient = prisma): Promise<void> {
@@ -208,13 +186,7 @@ export async function addProjectLink(rigId: string, projectId: string, db: RawCl
     ON CONFLICT ("rigId", "projectId") DO UPDATE SET "removedAt" = NULL`
 }
 
-/** Soft-close a project link (sets removedAt). Returns true if a row changed. */
-export async function removeProjectLink(rigId: string, projectId: string, db: RawClient = prisma): Promise<boolean> {
-  const n = await db.$executeRaw`
-    UPDATE "deployment_projects" SET "removedAt" = now()
-    WHERE "rigId" = ${rigId} AND "projectId" = ${projectId} AND "removedAt" IS NULL`
-  return Number(n) > 0
-}
+// CC-33 (A2): removed dead removeProjectLink (0 importers; removeAllProjectLinks is the live path).
 
 /** Soft-close all active project links for a rig (used when ending or re-projecting). */
 export async function removeAllProjectLinks(rigId: string, db: RawClient = prisma): Promise<void> {
@@ -223,31 +195,8 @@ export async function removeAllProjectLinks(rigId: string, db: RawClient = prism
     WHERE "rigId" = ${rigId} AND "removedAt" IS NULL`
 }
 
-/** All (active + historical) operator assignments for a deployment, newest first. */
-export async function listAssignments(rigId: string): Promise<DeploymentAssignmentRow[]> {
-  return prisma.$queryRaw<DeploymentAssignmentRow[]>`
-    SELECT a."id", a."rigId", a."operatorId", u."name" AS "operatorName",
-           a."role"::text AS "role", a."startedAt", a."endedAt", a."addedById", a."note"
-    FROM "deployment_assignments" a
-    LEFT JOIN "users" u ON u."id" = a."operatorId"
-    WHERE a."rigId" = ${rigId}
-    ORDER BY a."startedAt" DESC
-  `
-}
-
-/** The current PRIMARY assignment for an operator (un-ended), if any. */
-export async function getActivePrimary(operatorId: string): Promise<DeploymentAssignmentRow | null> {
-  const rows = await prisma.$queryRaw<DeploymentAssignmentRow[]>`
-    SELECT a."id", a."rigId", a."operatorId", u."name" AS "operatorName",
-           a."role"::text AS "role", a."startedAt", a."endedAt", a."addedById", a."note"
-    FROM "deployment_assignments" a
-    LEFT JOIN "users" u ON u."id" = a."operatorId"
-    WHERE a."operatorId" = ${operatorId} AND a."role" = 'PRIMARY' AND a."endedAt" IS NULL
-    ORDER BY a."startedAt" DESC
-    LIMIT 1
-  `
-  return rows[0] ?? null
-}
+// CC-33 (A2): removed dead listAssignments / getActivePrimary (0 importers;
+// getActivePrimaryForRig is the live "who runs this rig" path).
 
 /** W0-10 PR-1: true if the operator has an OPEN assignment (any role) on this rig.
  *  The role-agnostic authorization primitive that replaces the legacy
@@ -347,18 +296,7 @@ export async function getVehicleOperators(
   return m
 }
 
-/** Open a new operator assignment on a deployment. */
-export async function addAssignment(
-  input: { rigId: string; operatorId: string; role: AssignmentRole; addedById?: string | null; note?: string | null },
-  db: RawClient = prisma,
-): Promise<string> {
-  const id = randomUUID()
-  await db.$executeRaw`
-    INSERT INTO "deployment_assignments" ("id", "rigId", "operatorId", "role", "addedById", "note")
-    VALUES (${id}, ${input.rigId}, ${input.operatorId},
-            ${input.role}::"DeploymentAssignmentRole", ${input.addedById ?? null}, ${input.note ?? null})`
-  return id
-}
+// CC-33 (A2): removed dead addAssignment (0 importers; ensureOpenAssignment is the live path).
 
 /** Idempotent add: inserts an open assignment only if one of that role isn't already open. */
 export async function ensureOpenAssignment(
@@ -374,13 +312,7 @@ export async function ensureOpenAssignment(
         AND "role" = ${input.role}::"DeploymentAssignmentRole" AND "endedAt" IS NULL)`
 }
 
-/** End an operator's open assignment on a deployment. Returns true if one changed. */
-export async function endAssignment(rigId: string, operatorId: string, db: RawClient = prisma): Promise<boolean> {
-  const n = await db.$executeRaw`
-    UPDATE "deployment_assignments" SET "endedAt" = now()
-    WHERE "rigId" = ${rigId} AND "operatorId" = ${operatorId} AND "endedAt" IS NULL`
-  return Number(n) > 0
-}
+// CC-33 (A2): removed dead endAssignment (0 importers; endAssignmentByRole is the live path).
 
 /** End a specific-role open assignment for an operator on a deployment. */
 export async function endAssignmentByRole(
