@@ -224,10 +224,16 @@ async function run() {
   // the unclaimed remainder back to free availability — guarded per-line by releasedAt
   // (releaseAllHeldForRequest) so a repeat run / admin release / cancel can't
   // double-release. Only reservedQty is freed (quantity totals untouched → no resync).
-  // Math.floor + finite/≥1 guard: make_interval(hours => …) takes an integer, so a
-  // mis-set non-integer/NaN env value must not throw or disable the sweep.
+  // Math.floor + finite/≥1 guard keeps a mis-set non-integer/NaN env value from
+  // producing a garbage cutoff or disabling the sweep.
   const ttlParsed = Math.floor(Number(process.env.HOLD_TTL_HOURS ?? 72))
   const holdTtlHours = Number.isFinite(ttlParsed) && ttlParsed >= 1 ? ttlParsed : 72
+  // Step-7 fix: bind the cutoff as a JavaScript Date, not make_interval(hours => …).
+  // Prisma binds ${holdTtlHours} as bigint and make_interval(hours => bigint) does
+  // not exist (42883) — the exact trap lib/deployment-requests.ts:952 already dodges.
+  // Left as make_interval this sweep threw on EVERY pass and the catch below swallowed
+  // it as "held columns missing", so unclaimed holds NEVER expired.
+  const holdCutoff = new Date(Date.now() - holdTtlHours * 3_600_000)
   let holdsReleased = 0
   try {
     const staleReqs = await prisma.$queryRaw<{ requestId: string; operatorId: string | null; label: string | null }[]>`
@@ -239,7 +245,7 @@ async function run() {
       WHERE l."releasedAt" IS NULL
         AND l."heldQty" > l."claimedQty"
         AND r."status" = 'FULFILLED'
-        AND r."fulfilledAt" < NOW() - make_interval(hours => ${holdTtlHours})
+        AND r."fulfilledAt" < ${holdCutoff}
         AND (r."holdExpiresAt" IS NULL OR r."holdExpiresAt" < NOW())
     `
     for (const row of staleReqs) {
@@ -261,8 +267,12 @@ async function run() {
         }
       }
     }
-  } catch {
-    /* held columns missing / transient — non-fatal */
+  } catch (err) {
+    // CC-30 pattern: surface the failure instead of swallowing it as "held columns
+    // missing". A silent catch here is exactly why the make_interval bug went unseen
+    // for weeks. Still non-fatal to the run.
+    console.error('[cron] stale-hold release errored', err)
+    Sentry.captureException(err)
   }
 
   // 8) #106: inventory drift assertion. For every consumable that participates in the
