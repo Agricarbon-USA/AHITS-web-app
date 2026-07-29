@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import { money, parsePagination } from '@/lib/validation'
+import { nextDueFromInterval } from '@/lib/maintenance'
 
 export async function GET(req: NextRequest) {
   const session = await requireAuth()
@@ -11,6 +12,10 @@ export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const status = searchParams.get('status')
   const vehicleId = searchParams.get('vehicleId')
+  // CC-34 (3d): open tasks for one deployment. PR-1b's scalar `rigId` makes this a
+  // one-line filter — an operator whose gear went to repair can now see it on My
+  // Deployment. Already operator-readable (costs stripped below), so no auth change.
+  const rigId = searchParams.get('rigId')
   const { pageSize, skip } = parsePagination(searchParams)
 
   const tasks = await prisma.maintenanceTask.findMany({
@@ -18,6 +23,7 @@ export async function GET(req: NextRequest) {
       deletedAt: null,
       ...(status && { status: status as never }),
       ...(vehicleId && { vehicleId }),
+      ...(rigId && { rigId }),
     },
     orderBy: [{ status: 'asc' }, { nextDue: 'asc' }],
     take: pageSize,
@@ -85,12 +91,31 @@ export async function POST(req: NextRequest) {
 
   const parsed = createSchema.safeParse(await req.json())
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
+  const input = parsed.data
+  const now = new Date()
+
+  // CC-34 (3a): a schedulable task must never be born unschedulable. A DAYS/MONTHS task
+  // with no explicit first-due date would never trip the calendar overdue scan (it needs
+  // nextDue < now, cron/dispatch:93), and a MILEAGE task with no nextOdometer would never
+  // trip the odometer trigger. Default both from the interval so every created schedule is
+  // live the moment it exists. (The UI omits PER_DEPLOYMENT — D29-4 — which is intentionally
+  // left unscheduled here; its mechanics stay dormant.)
+  let nextDue: Date | undefined = input.nextDue ? new Date(input.nextDue) : undefined
+  if (!nextDue && (input.intervalType === 'DAYS' || input.intervalType === 'MONTHS')) {
+    nextDue = nextDueFromInterval(input.intervalType, input.intervalValue, now) ?? undefined
+  }
+
+  let nextOdometer = input.nextOdometer
+  if (nextOdometer == null && input.intervalType === 'MILEAGE' && input.vehicleId) {
+    const vehicle = await prisma.vehicle.findFirst({
+      where: { id: input.vehicleId, deletedAt: null },
+      select: { odometer: true },
+    })
+    if (vehicle?.odometer != null) nextOdometer = vehicle.odometer + input.intervalValue
+  }
 
   const task = await prisma.maintenanceTask.create({
-    data: {
-      ...parsed.data,
-      nextDue: parsed.data.nextDue ? new Date(parsed.data.nextDue) : undefined,
-    } as never,
+    data: { ...input, nextDue, nextOdometer } as never,
   })
   return NextResponse.json({ data: task }, { status: 201 })
 }

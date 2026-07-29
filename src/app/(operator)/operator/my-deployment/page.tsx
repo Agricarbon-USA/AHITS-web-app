@@ -573,6 +573,8 @@ function NewDeploymentDialog({
 
 export default function MyRigPage() {
   const [rig, setRig] = React.useState<Rig | null | undefined>(undefined)
+  // CC-34 (3d): open maintenance tasks for the active rig (read-only "In repair" captions).
+  const [openTasks, setOpenTasks] = React.useState<{ status: string; vehicle: { id: string } | null; unit: { id: string } | null }[]>([])
   const [vehicles, setVehicles] = React.useState<VehicleOption[]>([])
   const [inventoryItems, setInventoryItems] = React.useState<InventoryOption[]>([])
   const [operators, setOperators] = React.useState<UserOption[]>([])
@@ -688,7 +690,18 @@ export default function MyRigPage() {
     const res = await fetch('/api/deployments?active=true')
     if (res.ok) {
       const data: Rig[] = await res.json()
-      setRig(data[0] ?? null)
+      const activeRig = data[0] ?? null
+      setRig(activeRig)
+      // CC-34 (3d): pull open maintenance tasks for the rig so kit/vehicle rows can show
+      // "In repair" read-only. Best-effort — a failure just leaves no captions.
+      if (activeRig) {
+        fetch(`/api/maintenance?rigId=${activeRig.id}`)
+          .then((r) => (r.ok ? r.json() : { data: [] }))
+          .then((d) => setOpenTasks((d.data ?? []).filter((t: { status: string }) => t.status !== 'COMPLETED')))
+          .catch(() => setOpenTasks([]))
+      } else {
+        setOpenTasks([])
+      }
     }
     await loadTransfers()
   }, [loadTransfers])
@@ -928,6 +941,18 @@ export default function MyRigPage() {
   // the callbacks below unstable deps AND hand the memoized kit card a new `kitItems`
   // prop every render — defeating the memo boundary in production. Keyed on `rig`.
   const kitItems = React.useMemo(() => rig?.kits.flatMap((k) => k.items) ?? [], [rig])
+  // CC-34 (3d): memoize the repair-status maps so the memoized cards' props stay stable
+  // (a fresh object each render would defeat the CC-12 memo boundary — the known scar).
+  const repairByVehicle = React.useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const t of openTasks) if (t.vehicle && !t.unit) m[t.vehicle.id] = t.status
+    return m
+  }, [openTasks])
+  const repairByUnit = React.useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const t of openTasks) if (t.unit) m[t.unit.id] = t.status
+    return m
+  }, [openTasks])
   // CC-12 PR3: kit-row callbacks (defined after kitItems). The memoized kit card
   // hands back a structural row; look up the full kit item by id for the dialogs.
   const onLogUsage = React.useCallback((ki: { id: string }) => {
@@ -1283,6 +1308,7 @@ export default function MyRigPage() {
           setRemovingVehicles={setRemovingVehicles}
           onAddVehicles={onAddVehicles}
           onRemoveSelected={onRemoveVehiclesSelected}
+          repairByVehicle={repairByVehicle}
         />
         <DeploymentKitCard
           kitItems={kitItems}
@@ -1294,6 +1320,7 @@ export default function MyRigPage() {
           onRemoveSelected={onRemoveItemsSelected}
           onLogUsage={onLogUsage}
           onReturnItem={onReturnItem}
+          repairByUnit={repairByUnit}
         />
       </Stack>
 
