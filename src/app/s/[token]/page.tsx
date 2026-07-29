@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useState, use } from 'react'
+import { useEffect, useRef, useState, use } from 'react'
 import { formatDate } from '@/lib/utils'
+import { IDEMPOTENCY_IN_FLIGHT_ERROR } from '@/lib/shared-errors'
 import { FulfillmentChecklist, type ChecklistLine } from '@/components/shared/FulfillmentChecklist'
 import { color, font } from '@/theme/tokens'
 
@@ -47,6 +48,8 @@ interface Context {
   actionable: boolean
   allowedActions: string[]
   recipientName?: string | null
+  // Human label the API sends in place of subject data on a dead link (§3.4).
+  label?: string | null
   subject: Subject
 }
 
@@ -87,6 +90,14 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
   const [chosen, setChosen] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState<string | null>(null)
+  // FND-6 final shard: a per-intent idempotency nonce keyed by (lineId, action). Minted
+  // once per intent, reused for every retry/double-tap of THAT intent (so withIdempotency
+  // dedups the second write), re-minted once the server SETTLES it (2xx or a body-bound 4xx)
+  // so the NEXT intent — including editing the same line to a new qty, or correcting a bad
+  // qty after a cached 400 — gets a fresh key and applies. Held only across network errors
+  // and the transient in-flight 409 (the original write may still land). A random nonce (not
+  // a counter) survives a page reload without colliding with a prior different-body key.
+  const lineActionNonce = useRef<Map<string, string>>(new Map())
 
   useEffect(() => {
     fetch(`/api/s/${token}`)
@@ -158,13 +169,32 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
 
     const onLineAction = async (lineId: string, action: 'confirm' | 'edit' | 'deny', data: { fulfilledQty?: number; resolvedUnitId?: string; substitutedItemId?: string; denyReason?: string }) => {
       if (!actorLabel.trim()) return { ok: false, error: 'Please enter your name first.' }
+      const intentKey = `${lineId}:${action}`
+      let nonce = lineActionNonce.current.get(intentKey)
+      if (!nonce) {
+        nonce = crypto.randomUUID()
+        lineActionNonce.current.set(intentKey, nonce)
+      }
       try {
         const res = await fetch(`/api/s/${token}/transition`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `${token}:line:${lineId}:${action}:${Date.now()}` },
+          headers: { 'Content-Type': 'application/json', 'Idempotency-Key': `${token}:line:${lineId}:${action}:${nonce}` },
           body: JSON.stringify({ lineId, action, actorLabel, ...data }),
         })
         const json = await res.json().catch(() => ({}))
+        // Re-mint on any SERVER-SETTLED response — a 2xx (applied) OR a 4xx the server
+        // won't reconsider (a cached 400 is bound to its body hash) spends this intent, so
+        // the next attempt must get a fresh key: correcting a bad qty after a cached 400 and
+        // reusing the nonce would 422 "already used with a different request" forever. The
+        // ONE exception is the transient in-flight 409 (IDEMPOTENCY_IN_FLIGHT_ERROR): the
+        // original request is STILL running, so keep the nonce — a retry must reuse the key
+        // and can't double-apply. Double-taps still dedup: both taps read the nonce
+        // synchronously before this response settles. Network errors keep it too (catch).
+        const inFlight =
+          res.status === 409 &&
+          typeof json.error === 'string' &&
+          json.error.includes(IDEMPOTENCY_IN_FLIGHT_ERROR)
+        if (!inFlight) lineActionNonce.current.delete(intentKey)
         if (!res.ok) return { ok: false, error: json.error ?? 'Action failed.' }
         return { ok: true }
       } catch {
@@ -196,7 +226,7 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
           <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.6, color: color.inkMuted }}>
             Rig Reservation Request
           </div>
-          <h2 style={{ margin: '6px 0 12px' }}>{s.label ?? 'Rig Reservation'}</h2>
+          <h2 style={{ margin: '6px 0 12px' }}>{s.label ?? ctx.label ?? 'Rig Reservation'}</h2>
           {s.neededBy && <Row label="Needed by" value={formatDate(s.neededBy)} />}
           {s.requester && <Row label="Requester" value={s.requester} />}
           {s.project && <Row label="Project" value={s.project} />}
@@ -258,7 +288,7 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
         <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: 0.6, color: color.inkMuted }}>
           {isWO ? 'Repair Work Order' : ctx.type === 'HUB_RETURN' ? 'Hub Return — Confirm Receipt' : 'Invoice'}
         </div>
-        <h2 style={{ margin: '6px 0 12px' }}>{s.asset ?? 'Equipment'}{s.serialNumber ? ` · #${s.serialNumber}` : ''}</h2>
+        <h2 style={{ margin: '6px 0 12px' }}>{s.asset ?? ctx.label ?? 'Equipment'}{s.serialNumber ? ` · #${s.serialNumber}` : ''}</h2>
         {s.taskName && <Row label="Work" value={s.taskName} />}
         {s.problem && <Row label="Problem" value={s.problem} />}
         {s.shipToHub && <Row label="Return to" value={s.shipToHub} />}
