@@ -16,13 +16,13 @@ import StopCircleIcon from '@mui/icons-material/StopCircle'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner'
 import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline'
-import GroupIcon from '@mui/icons-material/Group'
 import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
 import { TransferDialog } from '@/components/shared/TransferDialog'
 import { DispositionDialog, KitItemSummary } from '@/components/shared/DispositionDialog'
 import { QrScannerDialog, type QrResolveResult } from '@/components/shared/QrScannerDialog'
 import { DeploymentVehiclesCard, DeploymentKitCard, VEHICLE_ICON } from '@/components/operator/DeploymentCards'
-import { SearchableSelect } from '@/components/shared/SearchableSelect'
+import { TransferEntryDialog } from '@/components/operator/TransferEntryDialog' // CC-33 (D22)
+import { EntireRigTransferDialog } from '@/components/operator/EntireRigTransferDialog' // CC-33 (D22)
 import { RentalVehicleForm, RentalVehicleFields, rentalFieldsToVehiclePayload, isRentalFormValid } from '@/components/shared/RentalVehicleForm'
 import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
@@ -585,6 +585,7 @@ export default function MyRigPage() {
   // CC-09: pickup preset — set when navigated from an AwaitingPickupCard
   const [pickupPreset, setPickupPreset] = React.useState<PickupPreset | null>(null)
   const [transferOpen, setTransferOpen] = React.useState(false)
+  const [transferEntryOpen, setTransferEntryOpen] = React.useState(false) // CC-33 (D22): choice router
 
   // Transfers
   const [incomingTransfers, setIncomingTransfers] = React.useState<TransferRow[]>([])
@@ -801,7 +802,7 @@ export default function MyRigPage() {
   const handleHandoffRespond = async () => {
     if (!handoffRespondDialog) return
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      showToast({ message: "Responding to a handoff needs an internet connection. Try again once you're back online.", severity: 'warning' })
+      showToast({ message: "Responding to a transfer needs an internet connection. Try again once you're back online.", severity: 'warning' })
       return
     }
     setHandoffRespondLoading(true)
@@ -814,10 +815,10 @@ export default function MyRigPage() {
       })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
-        showToast({ message: typeof d.error === 'string' ? d.error : `Could not ${action} the handoff.`, severity: 'error' })
+        showToast({ message: typeof d.error === 'string' ? d.error : `Could not ${action} the transfer.`, severity: 'error' })
         return
       }
-      showToast({ message: action === 'accept' ? 'Handoff accepted. You are now the primary operator.' : 'Handoff declined.', severity: 'success' })
+      showToast({ message: action === 'accept' ? 'Transfer accepted. You are now the primary operator.' : 'Transfer declined.', severity: 'success' })
       setHandoffRespondDialog(null)
       setHandoffResponseNote('')
       await load()
@@ -831,7 +832,7 @@ export default function MyRigPage() {
   const handleHandoffCancel = async () => {
     if (!cancelHandoffId) return
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      showToast({ message: "Cancelling a handoff needs an internet connection. Try again once you're back online.", severity: 'warning' })
+      showToast({ message: "Cancelling a transfer needs an internet connection. Try again once you're back online.", severity: 'warning' })
       return
     }
     setCancelHandoffLoading(true)
@@ -839,10 +840,10 @@ export default function MyRigPage() {
       const res = await fetch(`/api/handoffs/${cancelHandoffId}`, { method: 'DELETE' })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
-        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not cancel the handoff.', severity: 'error' })
+        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not cancel the transfer.', severity: 'error' })
         return
       }
-      showToast({ message: 'Handoff cancelled.', severity: 'success' })
+      showToast({ message: 'Transfer cancelled.', severity: 'success' })
       setCancelHandoffId(null)
       await loadTransfers()
     } catch {
@@ -856,7 +857,7 @@ export default function MyRigPage() {
     // CC-32 (2.3): the note is optional now (server relaxed too) — no empty-note guard.
     if (!rig || !handoffTargetId) return
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      showToast({ message: 'Initiating a handoff needs an internet connection.', severity: 'warning' })
+      showToast({ message: 'Initiating a transfer needs an internet connection.', severity: 'warning' })
       return
     }
     setHandoffLoading(true)
@@ -868,10 +869,10 @@ export default function MyRigPage() {
       })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
-        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not initiate handoff.', severity: 'error' })
+        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not initiate transfer.', severity: 'error' })
         return
       }
-      showToast({ message: 'Handoff request sent.', severity: 'success' })
+      showToast({ message: 'Transfer request sent.', severity: 'success' })
       setHandoffOpen(false)
       setHandoffTargetId('')
       setHandoffNote('')
@@ -1039,7 +1040,7 @@ export default function MyRigPage() {
             sx={{ mb: 1.5, width: '100%' }}
           >
             <Typography variant="body2" fontWeight={600}>
-              Deployment Handoff from {h.fromOperatorName}
+              Incoming transfer — entire rig — from {h.fromOperatorName}
             </Typography>
             <Typography variant="caption" color="text.secondary">&ldquo;{h.note}&rdquo;</Typography>
             {/* CC-23: actions in the body (was the Alert `action` slot pulled up
@@ -1071,7 +1072,7 @@ export default function MyRigPage() {
               sx={{ mb: 1.5, width: '100%' }}
             >
               <Typography variant="body2" fontWeight={600}>
-                Incoming Transfer from {tr.fromRig.operator.name}
+                Incoming transfer — selected gear — from {tr.fromRig.operator.name}
               </Typography>
               <Typography variant="body2">{summary}</Typography>
               <Typography variant="caption" color="text.secondary">
@@ -1125,7 +1126,7 @@ export default function MyRigPage() {
 
         {/* Handoff respond dialog (accessible when operator has no rig — they're the recipient) */}
         <Dialog open={!!handoffRespondDialog} onClose={() => setHandoffRespondDialog(null)} maxWidth="xs" fullWidth>
-          <DialogTitle>{handoffRespondDialog?.action === 'accept' ? 'Accept Handoff' : 'Decline Handoff'}</DialogTitle>
+          <DialogTitle>{handoffRespondDialog?.action === 'accept' ? 'Accept Transfer (Entire Rig)' : 'Decline Transfer (Entire Rig)'}</DialogTitle>
           <DialogContent>
             {handoffRespondDialog?.action === 'accept' && (
               <Typography variant="body2" color="text.secondary" mb={1.5}>
@@ -1154,7 +1155,7 @@ export default function MyRigPage() {
         </Dialog>
         {/* Transfer accept/decline dialog — needed here so a rig-less recipient can respond (B3) */}
         <Dialog open={!!respondDialog} onClose={() => setRespondDialog(null)} maxWidth="xs" fullWidth>
-          <DialogTitle>{respondDialog?.action === 'accept' ? 'Accept Transfer' : 'Decline Transfer'}</DialogTitle>
+          <DialogTitle>{respondDialog?.action === 'accept' ? 'Accept Transfer (Selected Gear)' : 'Decline Transfer (Selected Gear)'}</DialogTitle>
           <DialogContent>
             {respondDialog?.action === 'accept' && (
               <Typography variant="body2" color="text.secondary" mb={1.5}>
@@ -1182,16 +1183,16 @@ export default function MyRigPage() {
           </DialogActions>
         </Dialog>
         <Dialog open={!!cancelHandoffId} onClose={() => setCancelHandoffId(null)} maxWidth="xs" fullWidth>
-          <DialogTitle>Cancel Handoff</DialogTitle>
+          <DialogTitle>Cancel Transfer (Entire Rig)</DialogTitle>
           <DialogContent>
-            <Typography>Are you sure you want to cancel this pending handoff request?</Typography>
+            <Typography>Are you sure you want to cancel this pending entire-rig transfer?</Typography>
           </DialogContent>
           <DialogActions sx={{ px: 3, pb: 2 }}>
             <Button onClick={() => setCancelHandoffId(null)} disabled={cancelHandoffLoading}>Keep</Button>
             <Button variant="contained" color="error" onClick={handleHandoffCancel}
               disabled={cancelHandoffLoading}
               startIcon={cancelHandoffLoading ? <CircularProgress size={16} color="inherit" /> : null}>
-              {cancelHandoffLoading ? 'Cancelling…' : 'Cancel Handoff'}
+              {cancelHandoffLoading ? 'Cancelling…' : 'Cancel Transfer'}
             </Button>
           </DialogActions>
         </Dialog>
@@ -1209,7 +1210,7 @@ export default function MyRigPage() {
           sx={{ mb: 1.5 }}
         >
           <Typography variant="body2" fontWeight={600}>
-            Deployment Handoff from {h.fromOperatorName}
+            Incoming transfer — entire rig — from {h.fromOperatorName}
           </Typography>
           <Typography variant="caption" color="text.secondary">&ldquo;{h.note}&rdquo;</Typography>
           {/* CC-23: actions in the body (was the Alert `action` slot + mt:-0.5). */}
@@ -1241,7 +1242,7 @@ export default function MyRigPage() {
             sx={{ mb: 1.5 }}
           >
             <Typography variant="body2" fontWeight={600}>
-              Incoming Transfer from {tr.fromRig.operator.name}
+              Incoming transfer — selected gear — from {tr.fromRig.operator.name}
             </Typography>
             <Typography variant="body2">{summary}</Typography>
             <Typography variant="caption" color="text.secondary">&ldquo;{tr.note}&rdquo;</Typography>
@@ -1321,12 +1322,12 @@ export default function MyRigPage() {
         <Alert key={h.id} severity="warning" icon={false} sx={{ mb: 1.5 }}
           action={
             <Button size="small" color="error" onClick={() => setCancelHandoffId(h.id)}>
-              Cancel Handoff
+              Cancel Transfer
             </Button>
           }
         >
           <Typography variant="body2">
-            ⏳ Waiting for <strong>{h.toOperatorName}</strong> to accept your deployment handoff
+            ⏳ Waiting for <strong>{h.toOperatorName}</strong> to accept your entire-rig transfer
           </Typography>
           <Typography variant="caption" color="text.secondary">&ldquo;{h.note}&rdquo;</Typography>
         </Alert>
@@ -1337,13 +1338,10 @@ export default function MyRigPage() {
           End Deployment off the right edge on a phone). End Deployment is now an
           outlined error button too, matching the others. */}
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="stretch">
+        {/* CC-33 (D22): one "Transfer" entry — the choice dialog routes to entire-rig or selected-gear. */}
         <Button variant="outlined" fullWidth startIcon={<SwapHorizIcon />}
-          onClick={() => setTransferOpen(true)}>
-          Transfer Equipment
-        </Button>
-        <Button variant="outlined" fullWidth startIcon={<GroupIcon />}
-          onClick={() => { setHandoffOpen(true); setHandoffTargetId(''); setHandoffNote('') }}>
-          Hand Off Deployment
+          onClick={() => setTransferEntryOpen(true)}>
+          Transfer
         </Button>
         <Button variant="outlined" color="error" fullWidth startIcon={<StopCircleIcon />}
           onClick={() => setNoteDialog('end')}>
@@ -1777,6 +1775,15 @@ export default function MyRigPage() {
         onResolve={resolvePendingUnit}
       />
 
+      {/* CC-33 (D22): the choice router — "Entire rig" opens the handoff (entire-rig)
+          flow with the same resets; "Selected gear" opens TransferDialog. */}
+      <TransferEntryDialog
+        open={transferEntryOpen}
+        onClose={() => setTransferEntryOpen(false)}
+        onEntireRig={() => { setTransferEntryOpen(false); setHandoffOpen(true); setHandoffTargetId(''); setHandoffNote('') }}
+        onSelectedGear={() => { setTransferEntryOpen(false); setTransferOpen(true) }}
+      />
+
       {transferOpen && (
         <TransferDialog
           rig={rig}
@@ -1791,7 +1798,7 @@ export default function MyRigPage() {
 
       {/* Accept / Decline respond dialog */}
       <Dialog open={!!respondDialog} onClose={() => setRespondDialog(null)} maxWidth="xs" fullWidth>
-        <DialogTitle>{respondDialog?.action === 'accept' ? 'Accept Transfer' : 'Decline Transfer'}</DialogTitle>
+        <DialogTitle>{respondDialog?.action === 'accept' ? 'Accept Transfer (Selected Gear)' : 'Decline Transfer (Selected Gear)'}</DialogTitle>
         <DialogContent>
           <TextField
             label="Response note (optional)"
@@ -1833,50 +1840,24 @@ export default function MyRigPage() {
         </DialogActions>
       </Dialog>
 
-      {/* Hand off deployment — initiate dialog */}
-      <Dialog open={handoffOpen} onClose={() => setHandoffOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle>Hand Off Deployment</DialogTitle>
-        <DialogContent>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Transfer primary responsibility to another operator. They will need to accept before the handoff takes effect.
-          </Typography>
-          <Box sx={{ mb: 2 }}>
-            <SearchableSelect
-              label="Hand off to"
-              value={handoffTargetId}
-              onChange={setHandoffTargetId}
-              options={operators.filter((o) => o.id !== rig.operator.id).map((o) => ({ value: o.id, label: o.name }))}
-            />
-          </Box>
-          {/* CC-32 (2.3): the note is optional now — one-tap presets fill it, free text
-              stays available, and the handoff no longer requires typing at all. */}
-          <Stack direction="row" spacing={1} sx={{ mb: 1 }} flexWrap="wrap" useFlexGap>
-            {HANDOFF_NOTE_PRESETS.map((p) => (
-              <Chip key={p} label={p} size="small" variant="outlined" onClick={() => setHandoffNote(p)} />
-            ))}
-          </Stack>
-          <TextField
-            label="Note (optional)"
-            value={handoffNote}
-            onChange={(e) => setHandoffNote(e.target.value)}
-            multiline rows={2} fullWidth
-            placeholder="e.g. Heading home — handing off to cover the weekend"
-          />
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => setHandoffOpen(false)} disabled={handoffLoading}>Cancel</Button>
-          <Button variant="contained" color="warning"
-            disabled={!handoffTargetId || handoffLoading}
-            onClick={handleHandoffInitiate}
-            startIcon={handoffLoading ? <CircularProgress size={16} color="inherit" /> : null}>
-            {handoffLoading ? 'Sending…' : 'Send Handoff Request'}
-          </Button>
-        </DialogActions>
-      </Dialog>
+      {/* CC-33 (D22 / anti-regrowth): entire-rig transfer initiate dialog extracted to
+          EntireRigTransferDialog. State + submit stay here (DeploymentCards precedent). */}
+      <EntireRigTransferDialog
+        open={handoffOpen}
+        onClose={() => setHandoffOpen(false)}
+        operatorOptions={operators.filter((o) => o.id !== rig.operator.id).map((o) => ({ value: o.id, label: o.name }))}
+        targetId={handoffTargetId}
+        onTargetChange={setHandoffTargetId}
+        note={handoffNote}
+        onNoteChange={setHandoffNote}
+        notePresets={HANDOFF_NOTE_PRESETS}
+        loading={handoffLoading}
+        onSubmit={handleHandoffInitiate}
+      />
 
       {/* Handoff accept / decline respond dialog */}
       <Dialog open={!!handoffRespondDialog} onClose={() => setHandoffRespondDialog(null)} maxWidth="xs" fullWidth>
-        <DialogTitle>{handoffRespondDialog?.action === 'accept' ? 'Accept Handoff' : 'Decline Handoff'}</DialogTitle>
+        <DialogTitle>{handoffRespondDialog?.action === 'accept' ? 'Accept Transfer (Entire Rig)' : 'Decline Transfer (Entire Rig)'}</DialogTitle>
         <DialogContent>
           {handoffRespondDialog?.action === 'accept' && (
             <Typography variant="body2" color="text.secondary" mb={1.5}>
@@ -1906,16 +1887,16 @@ export default function MyRigPage() {
 
       {/* Cancel handoff confirm */}
       <Dialog open={!!cancelHandoffId} onClose={() => setCancelHandoffId(null)} maxWidth="xs" fullWidth>
-        <DialogTitle>Cancel Handoff</DialogTitle>
+        <DialogTitle>Cancel Transfer (Entire Rig)</DialogTitle>
         <DialogContent>
-          <Typography>Are you sure you want to cancel this pending handoff request?</Typography>
+          <Typography>Are you sure you want to cancel this pending entire-rig transfer?</Typography>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => setCancelHandoffId(null)} disabled={cancelHandoffLoading}>Keep</Button>
           <Button variant="contained" color="error" onClick={handleHandoffCancel}
             disabled={cancelHandoffLoading}
             startIcon={cancelHandoffLoading ? <CircularProgress size={16} color="inherit" /> : null}>
-            {cancelHandoffLoading ? 'Cancelling…' : 'Cancel Handoff'}
+            {cancelHandoffLoading ? 'Cancelling…' : 'Cancel Transfer'}
           </Button>
         </DialogActions>
       </Dialog>

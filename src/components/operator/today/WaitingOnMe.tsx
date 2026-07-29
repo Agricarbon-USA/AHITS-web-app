@@ -34,14 +34,14 @@ export function WaitingOnMe({ transfers, handoffs, onReview }: Props) {
             const count = t.vehicles.length + t.items.length
             return (
               <Typography key={t.id} variant="body2" color="text.secondary" sx={{ wordBreak: 'break-word' }}>
-                Transfer from <strong>{from}</strong>
+                Transfer (selected gear) from <strong>{from}</strong>{/* CC-33 (D22) */}
                 {count > 0 ? ` · ${count} item${count === 1 ? '' : 's'}` : ''}
               </Typography>
             )
           })}
           {handoffs.map((h) => (
             <Typography key={h.id} variant="body2" color="text.secondary" sx={{ wordBreak: 'break-word' }}>
-              Handoff from <strong>{h.fromOperatorName ?? 'another operator'}</strong>
+              Transfer (entire rig) from <strong>{h.fromOperatorName ?? 'another operator'}</strong>{/* CC-33 (D22) */}
             </Typography>
           ))}
         </Stack>

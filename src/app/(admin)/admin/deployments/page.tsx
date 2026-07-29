@@ -724,7 +724,7 @@ function DeploymentDrawer({
           <Box sx={{ flex: 1, overflow: 'auto', px: 3, py: 2 }}>
             {outgoingTransfers.length > 0 && (
               <Box mb={2}>
-                <Typography variant="subtitle2" fontWeight={600} mb={1}>Outgoing Pending Transfers</Typography>
+                <Typography variant="subtitle2" fontWeight={600} mb={1}>Outgoing Transfers — selected gear</Typography>{/* CC-33 (D22) */}
                 <Stack spacing={1}>
                   {outgoingTransfers.map((tr) => {
                     const summary = [
@@ -1230,6 +1230,8 @@ function DeploymentDrawer({
         <DialogContent>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             Immediately reassigns primary responsibility. Takes effect without the new operator needing to accept.
+            {/* CC-33 (D22): the admin version of an entire-rig transfer — takes effect without acceptance. */}
+            {' '}(The admin version of an entire-rig transfer.)
           </Typography>
           <TextField
             select label="Reassign to" value={reassignTargetId}
@@ -1509,7 +1511,7 @@ function AdminDeploymentsContent() {
                       <TableCell align="right" onClick={(e) => e.stopPropagation()}>
                         <Stack direction="row" spacing={0.5} justifyContent="flex-end">
                           <EditGuard>
-                            <Tooltip title="Transfer">
+                            <Tooltip title="Transfer selected gear">{/* CC-33 (D22) */}
                               <span>
                                 <IconButton
                                   size="small"
