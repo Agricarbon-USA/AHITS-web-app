@@ -1,53 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { z } from 'zod'
-import { prisma } from '@/lib/prisma'
-import { requireAuth } from '@/lib/auth/session'
-import { parsePagination } from '@/lib/validation'
+import { NextResponse } from 'next/server'
 
-const schema = z.object({
-  action: z.enum(['CHECK_OUT', 'CHECK_IN']),
-  itemId: z.string(),
-  projectId: z.string().optional(),
-  fromLocation: z.string().optional(),
-  toLocation: z.string().optional(),
-  condition: z.enum(['GOOD', 'MINOR_DAMAGE', 'NEEDS_REPAIR', 'MISSING_PARTS']).optional(),
-  expectedReturn: z.string().datetime().optional(),
-  notes: z.string().optional(),
-})
-
+// CC-33 (B2): the GET check-log list handler was dead (0 client callers; the UI reads
+// /api/checkout was never wired). Only the POST 410 tombstone remains — it protects
+// stale PWA clients that still hit the deprecated checkout endpoint.
 export async function POST() {
   return NextResponse.json(
     { error: 'This endpoint is deprecated. Use POST /api/deployments/[id]/items instead.' },
     { status: 410 }
   )
-}
-
-export async function GET(req: NextRequest) {
-  const session = await requireAuth()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-  const { searchParams } = req.nextUrl
-  const itemId = searchParams.get('itemId')
-  const { page, pageSize } = parsePagination(searchParams)
-
-  const where = {
-    ...(itemId && { itemId }),
-    ...(session.role === 'OPERATOR' && { operatorId: session.userId }),
-  }
-
-  const [data, total] = await Promise.all([
-    prisma.checkLog.findMany({
-      where,
-      skip: (page - 1) * pageSize,
-      take: pageSize,
-      orderBy: { submittedAt: 'desc' },
-      include: {
-        item: { select: { id: true, name: true } },
-        operator: { select: { id: true, name: true } },
-      },
-    }),
-    prisma.checkLog.count({ where }),
-  ])
-
-  return NextResponse.json({ data, total, page, pageSize })
 }

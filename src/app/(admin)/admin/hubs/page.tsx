@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { formatDate } from '@/lib/utils'
+import { formatDate, formatDateTime } from '@/lib/utils'
 import {
   Box, Typography, Card, CardContent, Stack, Chip, Alert, CircularProgress,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper, Divider,
@@ -68,8 +68,8 @@ interface HubGroup {
 // ── Helpers ────────────────────────────────────────────────────────
 
 const fmtDate = (iso: string) => formatDate(iso)
-const fmtDateTime = (iso: string) =>
-  new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+// CC-33 (D1): batch6a residue — deterministic, hydration-safe formatting via '@/lib/utils'.
+const fmtDateTime = (iso: string) => formatDateTime(iso)
 const daysAgo = (iso: string) =>
   Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000)
 

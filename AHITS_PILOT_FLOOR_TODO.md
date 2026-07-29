@@ -3,6 +3,7 @@
 > STATUS: working checklist (snapshot — tick freely; `STATUS.md` stays canonical) · UPDATED: 2026-07-28
 > Everything below comes from `AHITS_CC29-31_PILOT_FLOOR_PACKETS.md` + the CC-30 Max checklist + the owner riders (workplan §15). When this page and STATUS disagree, STATUS wins.
 > **The one rule: no operator onboards until section 1 is fully checked.**
+> **Six-seat pre-execution review DONE (2026-07-29): all three queued packets hardened — paste each with its rider from `AHITS_PACKET_ERRATA_2026-07-29.md`. Order confirmed: CC-16S → CC-33 → CC-34.**
 
 ---
 
@@ -54,9 +55,9 @@
 | ✅ | CC-30 | Ops floor | DONE end-to-end |
 | ✅ | **CC-32** | Friction & flow | **FULLY LANDED** — #209 glossary + #210 + #211 + #212 docs all merged (shepherded by CC-31 post-green) |
 | ✅ | **CC-31** | Accuracy + /admin/pilot dashboard | **FULLY LANDED** — PR-1 + #214 (dashboard) + #215 + #213 green-fix + docs #216-218; browser-smoked pre-merge on preview services |
-| ▶ NEXT | **CC-16S** | Public-link security | **paste anytime** — prepend one warmup item: fix the latent TTL hold-release cron bug (make_interval(hours => $1) throws 42883, swallowed by try/catch — hold expiry has silently no-op'd; same swallowed-SQL family as the INV-5 bind bug; un-silence the catch too) |
-| last | **CC-33** | Simplify & unify | after CC-16S (rebases on CC-32's merged strings) |
-| NEW | **CC-34** | Maintenance speaks (deployment drawer health, one "Report a problem" verb, check→task promotion, scheduled-task UI — the D24 bridge's other half) | after CC-33 · packet: `AHITS_CC34_MAINTENANCE_PACKET.md` · D29 recorded by its session |
+| ✅~ | **CC-16S** | Public-link security + TTL warmup | **#220 + #221 MERGED & LIVE on staging** (deploy-guard run; nonce fix in). Remaining: say "go" on #222 docs · portal 3-part eyeball smoke · one cron watch (= TTL first fire + CC-31 retro smoke + PIN self-clear) · preview-service delete via Cloud Console. |
+| 🔵 PRs OPEN | **CC-33** | Simplify & unify | **#223 (dead-code + forward-removal, D21) + #224 (unified Transfer, D22) OPEN + green in CI (incl. node DB suite), awaiting Max's staging smoke.** batch6a landed by hand (PR-1); my-deployment 1,924→1,905. Pre-merge #223: drain live `FORWARDED + fulfillerOperatorId` row (Rider B #7). Handoff: `AHITS_SESSION_HANDOFF_2026-07-28_CC33.md` |
+| last | **CC-34** | Maintenance speaks | **paste WITH Rider C** (BLOCKING fixes: vehicle-status fetch premise, consumable alert-key trap, photo backstop, stale-nag backfill guard, in-kit repair close, session SPLIT: PR-1+2 then PR-3; D29 appends at PR-1 close) |
 
 **Incident CLOSED (evening):** #213 landed 3 root-cause fixes, dev went green, the full convoy merged. Residual items now live in §2b below.
 

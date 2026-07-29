@@ -8,13 +8,13 @@ import { sendEmail } from '@/lib/email/resend'
 import { genericAlertEmail } from '@/lib/email/templates'
 import { prisma } from '@/lib/prisma'
 
-const ADMIN_ONLY_ACTIONS = ['confirm', 'prepare', 'decline', 'fulfill', 'forward'] as const
+// CC-33 (E3): 'complete' is now ADMIN-ONLY — the operator-fulfiller path is gone (D21).
+const ADMIN_ONLY_ACTIONS = ['confirm', 'prepare', 'decline', 'fulfill', 'forward', 'complete'] as const
 
 const patchSchema = z.object({
   action: z.enum(['submit', 'cancel', 'confirm', 'prepare', 'decline', 'fulfill', 'forward', 'complete']),
   decisionNote: z.string().trim().max(2000).optional().nullable(),
   fulfillerHubId: z.string().optional().nullable(),
-  fulfillerOperatorId: z.string().optional().nullable(),
 })
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -54,18 +54,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const result = await getRequest(id)
   if (!result) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  // Operators may only act on their own requests or ones forwarded to them.
+  // CC-33 (E3): operators may only act on their OWN requests. The forwarded-to-operator
+  // escape (fulfillerOperatorId === userId) is gone (D21); 'complete' is admin-only above.
   if (!isAdminOnly && session.role !== 'ADMIN' &&
-      result.requestedById !== session.userId &&
-      result.request.fulfillerOperatorId !== session.userId) {
+      result.requestedById !== session.userId) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  }
-
-  // complete: operator must be the designated fulfiller for a MATERIAL request
-  if (action === 'complete' && session.role !== 'ADMIN') {
-    if (result.request.fulfillerOperatorId !== session.userId || result.request.requestType !== 'MATERIAL') {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
   }
 
   const transition = await applyRequestTransition(id, action as RequestAction, result.request.requestType, extra)
@@ -92,18 +85,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       name: result.request.label ?? 'Material request',
     }).catch(() => {})
   } else if (action === 'forward') {
+    // CC-33 (E3): only the forward-to-HUB link remains — the forward-to-operator
+    // notification arm was removed (D21).
     if (extra.fulfillerHubId) {
       await issueForwardHubLink(id, extra.fulfillerHubId, session.userId, result.request.label).catch(() => {})
-    } else if (extra.fulfillerOperatorId) {
-      await prisma.notification.create({
-        data: {
-          userId: extra.fulfillerOperatorId,
-          type: 'RESERVATION_UPDATE',
-          title: 'Material request assigned to you',
-          body: result.request.label ? `"${result.request.label}" has been forwarded to you.` : 'A material request has been forwarded to you.',
-          link: '/operator/requests',
-        },
-      }).catch(() => {})
     }
   } else if (action === 'complete') {
     await prisma.notification.create({

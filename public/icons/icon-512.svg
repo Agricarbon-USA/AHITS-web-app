@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="AHITS icon">
-  <rect width="512" height="512" rx="92" fill="#2e7d32" />
-  <path d="M96 326h320v38H96z" fill="#1b5e20" />
-  <path d="M138 316c0-64 53-117 117-117h43c64 0 117 53 117 117v21H138z" fill="#f1f8e9" />
-  <circle cx="192" cy="370" r="33" fill="#263238" />
-  <circle cx="320" cy="370" r="33" fill="#263238" />
-  <path d="M229 144h54l27 54H202z" fill="#fbc02d" />
-  <path d="M256 90l-27 54h54z" fill="#ffeb3b" />
-</svg>

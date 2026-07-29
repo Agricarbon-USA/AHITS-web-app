@@ -21,9 +21,4 @@ export async function getAuthorizedActiveRig(id: string, session: Session) {
   return (await isAuthorizedForRig(rig, session)) ? rig : null
 }
 
-/** Fetch + authorize a rig regardless of ended state; null if missing/forbidden. */
-export async function getAuthorizedRig(id: string, session: Session) {
-  const rig = await prisma.rig.findUnique({ where: { id } })
-  if (!rig) return null
-  return (await isAuthorizedForRig(rig, session)) ? rig : null
-}
+// CC-33 (A4): removed dead getAuthorizedRig (0 importers; getAuthorizedActiveRig is the live path).

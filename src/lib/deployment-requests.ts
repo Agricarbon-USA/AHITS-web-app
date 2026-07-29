@@ -54,7 +54,7 @@ export interface CreateRequestInput {
 
 export interface TransitionExtra {
   fulfillerHubId?: string | null
-  fulfillerOperatorId?: string | null
+  // CC-33 (E5): fulfillerOperatorId dropped — forward→operator removed (D21).
   decisionNote?: string | null
 }
 
@@ -804,7 +804,7 @@ async function _applyRequestTransition(
         UPDATE "deployment_requests"
         SET "status" = 'FORWARDED', "updatedAt" = now(),
             "fulfillerHubId" = ${extra?.fulfillerHubId ?? null},
-            "fulfillerOperatorId" = ${extra?.fulfillerOperatorId ?? null},
+            "fulfillerOperatorId" = NULL, -- CC-33 (E5): forward→operator removed; clear any stale value (D21)
             "decisionNote" = ${extra?.decisionNote ?? null}
         WHERE "id" = ${id} AND "status" = 'REQUESTED'
       `
