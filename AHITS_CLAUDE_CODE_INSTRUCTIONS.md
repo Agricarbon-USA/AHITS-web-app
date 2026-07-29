@@ -33,7 +33,7 @@
 | CC-13 | Documentation hygiene | — | ⛔ SUPERSEDED → `AHITS_DOC_CLEANUP_INSTRUCTIONS.md` |
 | CC-14 | NS-10 Today view | Operator front door + NS-5 + operator IA | ✅ MERGED (PRs #190–#194) |
 | CC-15 | Deployment Map | Attestation-GPS pins + route history + crew visibility (D2) | ✅ MERGED (PRs #197/#198, D14) |
-| CC-16 | No-app QR daily-check | Public per-vehicle QR check form | 📋 QUEUED — **NEXT (live queue)** |
+| CC-16 | No-app QR daily-check | Public per-vehicle QR check form | ✂️ SPLIT (D18): step-0 → CC-16S below; CC-16-proper 🅿 PARKED conditional — do NOT build unprompted |
 | CC-17 | Time/Invoicing/Availability | The money loop | 📋 QUEUED (full A6 matrix required first — D13) |
 | CC-18 | N-5 Week board | Read-only manager's week | 📋 QUEUED |
 | CC-19 | Consistency & dead-code | Envelope/fetchJson/withAuth, verified deletions; land `batch6a-date-unify.patch` | 📋 QUEUED (rolling, unscheduled — batch6a still pending) |
@@ -51,7 +51,7 @@
 | CC-32 | Friction & flow (operator-experience floor) | D11 glossary sweep, one-time failure entry, site prefill, 2-step builder, template-race fix, GPS warm-capture, openable Outbox, honest copy, Map bottom-nav tab (D28), 44px pass | ✅ MERGED (PRs #209/#210/#211/#212) — #210/#211 shepherded to merge by CC-31 |
 | CC-30 | Ops floor (D16 staging-is-home) | Pipeline hardening (no preview onto live, migration-safety gates development, seed/reset guards, env-drift check) + server-side eyes (Sentry on data-loss/failed, cron catches, advisory-lock 500) | ✅ MERGED (PRs #204/#206) |
 | CC-31 | Accuracy floor + pilot dashboard | INV-5 false-alarm fix + alert auto-resolves (PR-1); expired-link unjam + forOperatorId scope + durationMs + indexes (PR-2 #215); /admin/pilot dashboard + metrics API (PR-3 #214) | ✅ MERGED (PR-1 + #214 + #215 + green-fix #213) — preview-smoked (pilot page + expired-link `bypassExpiry` eyeballed). PR-1 owes a retroactive staging smoke. |
-| CC-16S | Public-surface security (CC-16 step 0) | s/[token] REVOKED/EXPIRED read-after leak + FND-6 Date.now() idempotency shard | 📋 QUEUED — NEXT (D18) |
+| CC-16S | Public-surface security (CC-16 step 0) | s/[token] REVOKED/EXPIRED read-after leak + FND-6 Date.now() idempotency shard (+ warm-up: cron step-7 stale-hold `make_interval` fix) | ✅ CODE COMPLETE — PRs #220 (cron) + #221 (CC-16S), both green in CI, awaiting Max's staging smoke before merge. Do NOT re-run step 0; CC-16-proper remainder 🅿 PARKED per D18 |
 | CC-33 | Simplify & unify | Dead-code sweep, Forward→Operator removal (D21), one unified Transfer entry (D22) | 📋 QUEUED |
 
 > **Landing order superseded by the 2026-07-28 re-baseline (STATUS §4 / D17):** the live queue is **CC-29 (✅) → CC-32 → CC-30 → CC-31 → CC-16S → CC-33**. The CC-16 "NEXT" flag above is stale — CC-16 was split (CC-16S ships the step-0 security now; CC-16-proper is PARKED, D18).
@@ -275,6 +275,8 @@ Anti-goal guard: no real-time tracking anywhere; positions are last-known from a
 ```
 
 ### CC-16 · Capstone 2 — No-app QR daily-check
+> **✂️ SPLIT per D18 (2026-07-28).** Step 0 (the `s/[token]` security fixes + FND-6 shard) shipped as **CC-16S** — PRs #220/#221, code complete, awaiting staging smoke. **The rest of this packet (the public QR daily-check form) is 🅿 PARKED conditional** — build it ONLY on named evidence of a specific user who won't/can't sustain the installed PWA, or a missed-check chase needing a no-auth path. Do NOT build it unprompted; do NOT re-run step 0.
+
 **Review seats:** Antagonist (public surface), SRE, Integration.
 
 ```
