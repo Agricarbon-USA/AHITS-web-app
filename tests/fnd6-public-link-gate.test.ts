@@ -201,4 +201,32 @@ describe('FND-6 §3.4 minimal body on a dead status link', () => {
     // write a second). This is what the stable per-line key buys: a double-tap dedups.
     expect(await lineEventCount(lineId)).toBe(1)
   })
+
+  it('a cached 400 then a corrected body needs a FRESH key — reusing the key 422s (why the page re-mints on a settled 4xx)', async () => {
+    const { rawToken, lineId } = await seededReservation()
+    const keyBad = `${rawToken}:line:${lineId}:confirm:nonce-1`
+
+    // fulfilledQty 0 fails the schema's .positive() → 400, cached bound to its body hash.
+    const bad = await POST(
+      transitionReq(rawToken, { lineId, action: 'confirm', actorLabel: 'Hub', fulfilledQty: 0 }, keyBad),
+      ctx(rawToken),
+    )
+    expect(bad.status).toBe(400)
+
+    // Reusing the SAME key with a corrected body → 422 body-mismatch. Holding the nonce
+    // across a settled 400 (the old "clear on success only" bug) would wedge here forever.
+    const reuse = await POST(
+      transitionReq(rawToken, { lineId, action: 'confirm', actorLabel: 'Hub', fulfilledQty: 3 }, keyBad),
+      ctx(rawToken),
+    )
+    expect(reuse.status).toBe(422)
+
+    // A FRESH key — what re-minting on the settled 400 produces — lets the correction through.
+    const keyGood = `${rawToken}:line:${lineId}:confirm:nonce-2`
+    const good = await POST(
+      transitionReq(rawToken, { lineId, action: 'confirm', actorLabel: 'Hub', fulfilledQty: 3 }, keyGood),
+      ctx(rawToken),
+    )
+    expect(good.status).toBe(200)
+  })
 })

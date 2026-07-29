@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, use } from 'react'
 import { formatDate } from '@/lib/utils'
+import { IDEMPOTENCY_IN_FLIGHT_ERROR } from '@/lib/shared-errors'
 import { FulfillmentChecklist, type ChecklistLine } from '@/components/shared/FulfillmentChecklist'
 import { color, font } from '@/theme/tokens'
 
@@ -91,9 +92,11 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
   const [done, setDone] = useState<string | null>(null)
   // FND-6 final shard: a per-intent idempotency nonce keyed by (lineId, action). Minted
   // once per intent, reused for every retry/double-tap of THAT intent (so withIdempotency
-  // dedups the second write), cleared on success so the NEXT intent — including editing the
-  // same line to a new qty — mints a fresh key and applies. A random nonce (not a counter)
-  // survives a page reload without colliding with a prior key that carried a different body.
+  // dedups the second write), re-minted once the server SETTLES it (2xx or a body-bound 4xx)
+  // so the NEXT intent — including editing the same line to a new qty, or correcting a bad
+  // qty after a cached 400 — gets a fresh key and applies. Held only across network errors
+  // and the transient in-flight 409 (the original write may still land). A random nonce (not
+  // a counter) survives a page reload without colliding with a prior different-body key.
   const lineActionNonce = useRef<Map<string, string>>(new Map())
 
   useEffect(() => {
@@ -179,13 +182,20 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
           body: JSON.stringify({ lineId, action, actorLabel, ...data }),
         })
         const json = await res.json().catch(() => ({}))
+        // Re-mint on any SERVER-SETTLED response — a 2xx (applied) OR a 4xx the server
+        // won't reconsider (a cached 400 is bound to its body hash) spends this intent, so
+        // the next attempt must get a fresh key: correcting a bad qty after a cached 400 and
+        // reusing the nonce would 422 "already used with a different request" forever. The
+        // ONE exception is the transient in-flight 409 (IDEMPOTENCY_IN_FLIGHT_ERROR): the
+        // original request is STILL running, so keep the nonce — a retry must reuse the key
+        // and can't double-apply. Double-taps still dedup: both taps read the nonce
+        // synchronously before this response settles. Network errors keep it too (catch).
+        const inFlight =
+          res.status === 409 &&
+          typeof json.error === 'string' &&
+          json.error.includes(IDEMPOTENCY_IN_FLIGHT_ERROR)
+        if (!inFlight) lineActionNonce.current.delete(intentKey)
         if (!res.ok) return { ok: false, error: json.error ?? 'Action failed.' }
-        // Clear on success so the next distinct intent (e.g. re-editing this line to a new
-        // qty) mints a fresh key and isn't deduped as a replay. NOTE: a cached 400 (schema
-        // reject IS cacheable) leaves the nonce held, so a corrected retry of the SAME
-        // (lineId, action) with a new body would 422 body-mismatch — out of scope here
-        // (the checklist UI blocks invalid submits client-side before they reach the API).
-        lineActionNonce.current.delete(intentKey)
         return { ok: true }
       } catch {
         return { ok: false, error: 'Network error — please try again.' }
