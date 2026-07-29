@@ -11,6 +11,7 @@ import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import TerrainIcon from '@mui/icons-material/Terrain'
 import AgricultureIcon from '@mui/icons-material/Agriculture'
 import { StatusChip } from '@/components/shared/StatusChip'
+import { ReportProblemButton } from '@/components/shared/ReportProblemDialog'
 
 // CC-12 PR3: the two heavy presentational cards of My Deployment, extracted off
 // the ~2000-line container and wrapped in React.memo. With stable props, opening a
@@ -80,6 +81,12 @@ export const DeploymentVehiclesCard = React.memo(function DeploymentVehiclesCard
                   )}
                   {rv.vehicle.isRental && !rv.vehicle.rentalAgreementUrl && (
                     <StatusChip label="Agreement needed" color="error" variant="outlined" />
+                  )}
+                  {/* CC-34 (2a): report a problem on this vehicle (annotation, offline-safe). */}
+                  {!removingVehicles && (
+                    <Box sx={{ ml: 'auto' }}>
+                      <ReportProblemButton subject={{ kind: 'vehicle', id: rv.vehicle.id, name: rv.vehicle.name }} />
+                    </Box>
                   )}
                 </Stack>
               )
@@ -161,6 +168,11 @@ export const DeploymentKitCard = React.memo(function DeploymentKitCard({
                     {isLow && <WarningAmberIcon fontSize="small" color="warning" />}
                     <Chip size="small" label={`×${ki.quantity}`} color={isLow ? 'warning' : 'default'} />
                   </Stack>
+                  {/* CC-34 (2a): report a problem on this unit — LEFT of the ⊖ so the two
+                      icons aren't same-weight adjacent (RIDER C 2a-b). Units only. */}
+                  {!removingItems && ki.inventoryUnit && (
+                    <ReportProblemButton subject={{ kind: 'unit', id: ki.inventoryUnit.id, name: ki.item.name }} />
+                  )}
                   {!removingItems && ki.item.itemType === 'CONSUMABLE' && (
                     <Tooltip title="Log daily usage">
                       <IconButton size="small" color="warning" sx={{ width: 44, height: 44 }} onClick={() => onLogUsage(ki)}>

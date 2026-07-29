@@ -163,6 +163,11 @@ export default function AdminMaintenancePage() {
   const [fieldFixVehicleId, setFieldFixVehicleId] = React.useState('')
   const [fieldFixNotes, setFieldFixNotes] = React.useState('')
   const [fieldFixSaving, setFieldFixSaving] = React.useState(false)
+  // CC-34 (2b): the admin field-fix can now log against a vehicle OR an inventory item —
+  // the field-fix API has accepted itemId since CC-10, but every mount was vehicle-only.
+  const [fieldFixSubject, setFieldFixSubject] = React.useState<'vehicle' | 'item'>('vehicle')
+  const [fieldFixItems, setFieldFixItems] = React.useState<{ id: string; name: string }[]>([])
+  const [fieldFixItemId, setFieldFixItemId] = React.useState('')
 
   const loadInoperable = React.useCallback(async () => {
     try {
@@ -400,26 +405,36 @@ export default function AdminMaintenancePage() {
   const setD = (patchObj: Partial<Draft>) => setDraft((d) => (d ? { ...d, ...patchObj } : d))
 
   async function openFieldFix() {
+    setFieldFixSubject('vehicle')
     setFieldFixVehicleId('')
+    setFieldFixItemId('')
     setFieldFixNotes('')
     setFieldFixOpen(true)
     try {
-      const res = await fetch('/api/vehicles')
-      const d = await res.json()
-      setFieldFixVehicles((d.data ?? []).map((v: { id: string; name: string }) => ({ id: v.id, name: v.name })))
+      const [vRes, iRes] = await Promise.all([fetch('/api/vehicles'), fetch('/api/inventory?pageSize=100')])
+      const vd = await vRes.json()
+      const id = await iRes.json()
+      setFieldFixVehicles((vd.data ?? []).map((v: { id: string; name: string }) => ({ id: v.id, name: v.name })))
+      setFieldFixItems((id.data ?? []).map((i: { id: string; name: string }) => ({ id: i.id, name: i.name })))
     } catch {
       setFieldFixVehicles([])
+      setFieldFixItems([])
     }
   }
 
   async function submitFieldFix() {
-    if (!fieldFixVehicleId || !fieldFixNotes.trim()) return
+    const subjectId = fieldFixSubject === 'vehicle' ? fieldFixVehicleId : fieldFixItemId
+    if (!subjectId || !fieldFixNotes.trim()) return
     setFieldFixSaving(true)
     try {
       const res = await fetch('/api/maintenance/field-fix', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vehicleId: fieldFixVehicleId, notes: fieldFixNotes.trim() }),
+        body: JSON.stringify(
+          fieldFixSubject === 'vehicle'
+            ? { vehicleId: fieldFixVehicleId, notes: fieldFixNotes.trim() }
+            : { itemId: fieldFixItemId, notes: fieldFixNotes.trim() },
+        ),
       })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
@@ -731,18 +746,44 @@ export default function AdminMaintenancePage() {
             <Typography variant="body2" color="text.secondary">
               Record an issue that was noticed and fixed on the spot. No repair task is opened and no alert is fired.
             </Typography>
+            {/* CC-34 (2b): choose the subject — a vehicle or an inventory item. */}
             <TextField
               select
-              label="Vehicle"
-              value={fieldFixVehicleId}
-              onChange={(e) => setFieldFixVehicleId(e.target.value)}
+              label="Subject"
+              value={fieldFixSubject}
+              onChange={(e) => setFieldFixSubject(e.target.value as 'vehicle' | 'item')}
               fullWidth
-              required
             >
-              {fieldFixVehicles.length === 0
-                ? <MenuItem value="" disabled>Loading vehicles…</MenuItem>
-                : fieldFixVehicles.map((v) => <MenuItem key={v.id} value={v.id}>{v.name}</MenuItem>)}
+              <MenuItem value="vehicle">Vehicle</MenuItem>
+              <MenuItem value="item">Inventory item</MenuItem>
             </TextField>
+            {fieldFixSubject === 'vehicle' ? (
+              <TextField
+                select
+                label="Vehicle"
+                value={fieldFixVehicleId}
+                onChange={(e) => setFieldFixVehicleId(e.target.value)}
+                fullWidth
+                required
+              >
+                {fieldFixVehicles.length === 0
+                  ? <MenuItem value="" disabled>Loading vehicles…</MenuItem>
+                  : fieldFixVehicles.map((v) => <MenuItem key={v.id} value={v.id}>{v.name}</MenuItem>)}
+              </TextField>
+            ) : (
+              <TextField
+                select
+                label="Item"
+                value={fieldFixItemId}
+                onChange={(e) => setFieldFixItemId(e.target.value)}
+                fullWidth
+                required
+              >
+                {fieldFixItems.length === 0
+                  ? <MenuItem value="" disabled>Loading items…</MenuItem>
+                  : fieldFixItems.map((i) => <MenuItem key={i.id} value={i.id}>{i.name}</MenuItem>)}
+              </TextField>
+            )}
             <TextField
               label="What was fixed"
               value={fieldFixNotes}
@@ -760,7 +801,7 @@ export default function AdminMaintenancePage() {
           <MutationButton
             color="primary"
             variant="contained"
-            disabled={fieldFixSaving || !fieldFixVehicleId || !fieldFixNotes.trim()}
+            disabled={fieldFixSaving || !(fieldFixSubject === 'vehicle' ? fieldFixVehicleId : fieldFixItemId) || !fieldFixNotes.trim()}
             onClick={submitFieldFix}
           >
             {fieldFixSaving ? 'Saving…' : 'Log fix'}
