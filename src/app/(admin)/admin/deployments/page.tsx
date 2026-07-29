@@ -56,7 +56,18 @@ interface RigVehicleRow {
   addNote: string
   photoUrls: string[]
   addedAt: string
-  vehicle: { id: string; name: string; type: string; isRental?: boolean; rentalAgreementUrl?: string | null }
+  // CC-34 (1a): status now fetched so an IN_MAINTENANCE truck stops rendering as healthy.
+  vehicle: { id: string; name: string; type: string; status?: string; isRental?: boolean; rentalAgreementUrl?: string | null }
+}
+
+// CC-34 (1a): open (non-completed) maintenance on a rig's assets, from the [id] detail read.
+interface OpenTaskRow {
+  id: string
+  taskName: string
+  status: string
+  isDamageReport: boolean
+  vehicleId: string | null
+  inventoryUnitId: string | null
 }
 
 interface KitItemRow {
@@ -123,6 +134,10 @@ interface TransferRow {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────
+
+// CC-34 (1a): amber "Service due" only for these live states — an UPCOMING task months
+// out is not a deployment-drawer warning. Damage (red) always shows regardless of status.
+const AMBER_TASK_STATES = ['DUE_SOON', 'OVERDUE', 'IN_PROGRESS']
 
 function initials(name: string) {
   return name.split(' ').map((p) => p[0]).join('').slice(0, 2).toUpperCase()
@@ -371,6 +386,8 @@ function DeploymentDrawer({
 }) {
   const router = useRouter()
   const [rig, setRig] = React.useState(initialRig)
+  // CC-34 (1a): open maintenance tasks for this rig's assets, from the [id] detail read.
+  const [openTasks, setOpenTasks] = React.useState<OpenTaskRow[]>([])
   const [removingVehicles, setRemovingVehicles] = React.useState(false)
   const [selVehicles, setSelVehicles] = React.useState<Set<string>>(new Set())
   const [removingItems, setRemovingItems] = React.useState(false)
@@ -408,6 +425,24 @@ function DeploymentDrawer({
 
   React.useEffect(() => { setRig(initialRig) }, [initialRig])
 
+  // CC-34 (1a): the drawer seeds from list data, which carries neither equipment status
+  // nor open maintenance. Pull the full [id] detail on open so the health chips and the
+  // Damage/Service-due badges are present immediately, not only after the first action.
+  React.useEffect(() => {
+    setOpenTasks([])
+    let cancelled = false
+    fetch(`/api/deployments/${initialRig.id}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && !cancelled) {
+          setRig(d)
+          setOpenTasks(d.openTasks ?? [])
+        }
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [initialRig.id])
+
   // When opened from a row shortcut, jump straight into the transfer or
   // end-deployment flow (only valid for active deployments).
   React.useEffect(() => {
@@ -443,9 +478,33 @@ function DeploymentDrawer({
 
   const refresh = async () => {
     const res = await fetch(`/api/deployments/${rig.id}`)
-    if (res.ok) { const d = await res.json(); setRig(d) }
+    if (res.ok) { const d = await res.json(); setRig(d); setOpenTasks(d.openTasks ?? []) } // CC-34 (1a)
     await loadTransfers()
     onUpdated()
+  }
+
+  // CC-34 (1a): render the Damage / Service-due chips for the rig asset matched by `match`,
+  // each deep-linking the exact task (maintenance/page.tsx auto-opens ?task=<id>).
+  const openTaskChips = (match: (t: OpenTaskRow) => boolean) => {
+    const mine = openTasks.filter(match)
+    const damage = mine.find((t) => t.isDamageReport)
+    const service = mine.find((t) => !t.isDamageReport && AMBER_TASK_STATES.includes(t.status))
+    return (
+      <>
+        {damage && (
+          <Tooltip title={damage.taskName}>
+            <Chip size="small" color="error" label="Damage" clickable
+              onClick={() => router.push(`/admin/maintenance?task=${damage.id}`)} />
+          </Tooltip>
+        )}
+        {service && (
+          <Tooltip title={service.taskName}>
+            <Chip size="small" color="warning" variant="outlined" label="Service due" clickable
+              onClick={() => router.push(`/admin/maintenance?task=${service.id}`)} />
+          </Tooltip>
+        )}
+      </>
+    )
   }
 
   const handleReassignPrimary = async () => {
@@ -797,6 +856,12 @@ function DeploymentDrawer({
                       {rv.vehicle.isRental && !rv.vehicle.rentalAgreementUrl && (
                         <StatusChip label="Agreement needed" color="error" variant="outlined" />
                       )}
+                      {/* CC-34 (1a): show the vehicle's health only when it is NOT healthy —
+                          a wall of green "Active" chips is noise; absence reads as fine. */}
+                      {rv.vehicle.status && rv.vehicle.status !== 'ACTIVE' && (
+                        <StatusChip status={rv.vehicle.status} kind="vehicle" />
+                      )}
+                      {openTaskChips((t) => t.vehicleId === rv.vehicle.id)}
                       <StatusChip label={rv.vehicle.type} variant="outlined" sx={{ ml: 'auto !important' }} />
                       {/* CC-26: reach this vehicle's check-history trail (which opens the
                           read-only viewer) — the vehicle drawer owns that list, so link
@@ -854,6 +919,12 @@ function DeploymentDrawer({
                         </Typography>
                       )}
                     </Box>
+                    {/* CC-34 (1a): unit health only when NOT in a normal state, plus any
+                        open maintenance on this specific unit. */}
+                    {ki.inventoryUnit && !['AVAILABLE', 'CHECKED_OUT'].includes(ki.inventoryUnit.status) && (
+                      <StatusChip status={ki.inventoryUnit.status} kind="equipment" />
+                    )}
+                    {ki.inventoryUnit && openTaskChips((t) => t.inventoryUnitId === ki.inventoryUnit?.id)}
                     <StatusChip label={ki.item.categoryRef?.name ?? ki.item.itemType} />
                     <Typography variant="body2" color="text.secondary">×{ki.quantity}</Typography>
                     {isActive && !removingItems && (

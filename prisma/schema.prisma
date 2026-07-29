@@ -660,6 +660,12 @@ model MaintenanceTask {
   dateDelivered  DateTime?
   purchaseOrder  String?
   invoiceNumber  String?
+  // CC-34 (1b): the deployment a damage report came from + who reported it.
+  // Scalar FKs (no @relation) per the house pattern — resolved by batched lookups
+  // in the maintenance GET, kept raw-SQL-tolerant. Both nullable/no-backfill:
+  // review-inoperable and admin field-fix legitimately create tasks with no rig context.
+  rigId          String?
+  reportedById   String?
   deletedAt      DateTime? // CR-8: soft-delete so history isn't orphaned
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
@@ -678,6 +684,8 @@ model MaintenanceTask {
   @@index([inventoryUnitId])
   @@index([deletedAt])
   @@index([repairHubId]) // UR-009: FK filtered by hub inbound / repair views
+  @@index([rigId]) // CC-34 (1b): ?rigId= operator filter (PR-3d) + "reported from" lookups
+  @@index([reportedById]) // CC-34 (1b)
   @@map("maintenance_tasks")
 }
 

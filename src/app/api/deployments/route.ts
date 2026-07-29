@@ -11,7 +11,7 @@ const RIG_INCLUDE = {
   project: { select: { id: true, name: true } },
   vehicles: {
     where: { removedAt: null },
-    include: { vehicle: { select: { id: true, name: true, type: true, isRental: true, rentalAgreementUrl: true } } },
+    include: { vehicle: { select: { id: true, name: true, type: true, status: true, isRental: true, rentalAgreementUrl: true } } },
   },
   kits: {
     include: {
@@ -39,7 +39,7 @@ const RIG_INCLUDE = {
 const RIG_LIST_INCLUDE = {
   vehicles: {
     where: { removedAt: null },
-    include: { vehicle: { select: { id: true, name: true, type: true, isRental: true, rentalAgreementUrl: true } } },
+    include: { vehicle: { select: { id: true, name: true, type: true, status: true, isRental: true, rentalAgreementUrl: true } } },
   },
   kits: {
     include: {
