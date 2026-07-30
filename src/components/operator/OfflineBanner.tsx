@@ -31,7 +31,13 @@ export function OfflineBanner() {
   const showStale = staleQueue && !dismissedStale
   const showQuota = nearQuota && !dismissedQuota
   const showPersistence = persistenceGranted === false && !dismissedPersistence
-  const showQueueAlert = isOffline || pending > 0 || syncing
+  // UXP-1g / E1: the queue banner must NOT key on `syncing` alone. The empty-queue
+  // flush used to flash "Syncing 0 action(s)…" + a header spinner + a ~48px layout
+  // shift every 30s and on every app-return. `syncing` is now only ever true while
+  // real items (pending > 0) are draining — and flush() early-returns before setting
+  // it when nothing is drainable — so `pending > 0 || isOffline` fully covers the
+  // legitimate cases; a real queued item still shows the full sync theater below.
+  const showQueueAlert = isOffline || pending > 0
   const showFailedAlert = failed > 0
 
 
