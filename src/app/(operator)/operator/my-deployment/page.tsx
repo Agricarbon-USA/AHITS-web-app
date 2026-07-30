@@ -26,6 +26,7 @@ import { EntireRigTransferDialog } from '@/components/operator/EntireRigTransfer
 import { RentalVehicleForm, RentalVehicleFields, rentalFieldsToVehiclePayload, isRentalFormValid } from '@/components/shared/RentalVehicleForm'
 import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
+import { useHistoryGuard } from '@/hooks/useHistoryGuard' // UXP-1e: Back closes the respond dialogs
 import { newPlaceholderId } from '@/lib/offline-remap'
 import { useAuth } from '@/hooks/useAuth'
 import { groupBy, formatDate } from '@/lib/utils'
@@ -604,6 +605,12 @@ export default function MyRigPage() {
   const [handoffRespondDialog, setHandoffRespondDialog] = React.useState<{ handoff: HandoffRow; action: 'accept' | 'decline' } | null>(null)
   const [handoffResponseNote, setHandoffResponseNote] = React.useState('')
   const [handoffRespondLoading, setHandoffRespondLoading] = React.useState(false)
+  // UXP-1e: hardware/browser Back closes an open respond dialog instead of leaving the
+  // page. (Two hook lines — D21 anti-regrowth is about new inline dialogs, not wiring
+  // Back-to-close onto existing overlays; flagged in the PR body.) They are modal and
+  // opened one at a time, so only one guard is ever armed.
+  useHistoryGuard(!!respondDialog, () => setRespondDialog(null))
+  useHistoryGuard(!!handoffRespondDialog, () => setHandoffRespondDialog(null))
   const [cancelHandoffId, setCancelHandoffId] = React.useState<string | null>(null)
   const [cancelHandoffLoading, setCancelHandoffLoading] = React.useState(false)
   const [handoffOpen, setHandoffOpen] = React.useState(false)

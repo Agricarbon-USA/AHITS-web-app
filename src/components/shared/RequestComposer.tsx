@@ -23,6 +23,7 @@ import AddIcon from '@mui/icons-material/Add'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import { VEHICLE_TYPE_LABELS } from '@/lib/vehicle-types'
 import { SearchableSelect } from '@/components/shared/SearchableSelect'
+import { useHistoryGuard } from '@/hooks/useHistoryGuard'
 
 // Shared deployment-request composer. Used by BOTH the operator requests page
 // (offline-first: onSubmit routes through the offline queue) and the admin
@@ -452,6 +453,10 @@ export function RequestComposer({
   const [lines, setLines] = React.useState<DraftLine[]>([emptyLine('KIT_ITEM')])
   const [submitting, setSubmitting] = React.useState(false)
   const [error, setError] = React.useState('')
+
+  // UXP-1e: the composer is only mounted while open, so the guard is always armed
+  // here — hardware/browser Back closes it instead of leaving the page.
+  useHistoryGuard(true, onClose)
 
   const updateLine = (key: string, patch: Partial<DraftLine>) =>
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)))
