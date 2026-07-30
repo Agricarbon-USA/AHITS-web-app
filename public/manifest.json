@@ -4,7 +4,7 @@
   "description": "Agricarbon Hardware Inventory & Tracking System",
   "start_url": "/",
   "display": "standalone",
-  "orientation": "any",
+  "orientation": "portrait-primary",
   "background_color": "#ffffff",
   "theme_color": "#2e7d32",
   "icons": [
