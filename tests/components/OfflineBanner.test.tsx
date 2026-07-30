@@ -72,3 +72,25 @@ describe('OfflineBanner — Outbox opens from the merely-PENDING queue banner (C
     expect(await screen.findByRole('heading', { name: 'Outbox' })).toBeInTheDocument()
   })
 })
+
+// UXP-1g / E1: the phantom-sync flash. The queue banner must NOT render on `syncing`
+// alone (empty outbox, online) — that was the "Syncing 0 action(s)…" + spinner +
+// layout-shift blink every 30s. It renders only when there is real work (pending > 0)
+// or the device is offline.
+describe('OfflineBanner — no phantom sync banner (UXP-1g / E1)', () => {
+  it('renders NO queue banner when syncing with an empty, online queue', async () => {
+    Object.assign(queue, { isOffline: false, pending: 0, failed: 0, syncing: true })
+    render(<OfflineBanner />)
+    // No "Syncing…", no "waiting to sync", no "queued" — nothing at all.
+    expect(screen.queryByText(/Syncing/i)).toBeNull()
+    expect(screen.queryByText(/waiting to sync/i)).toBeNull()
+    expect(screen.queryByText(/queued/i)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'View' })).toBeNull()
+  })
+
+  it('still shows the full sync theater while real items are draining', async () => {
+    Object.assign(queue, { isOffline: false, pending: 2, failed: 0, syncing: true })
+    render(<OfflineBanner />)
+    expect(await screen.findByText(/Syncing 2 action\(s\)…/i)).toBeInTheDocument()
+  })
+})

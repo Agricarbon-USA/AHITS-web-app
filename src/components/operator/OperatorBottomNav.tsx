@@ -7,7 +7,6 @@ import ChecklistIcon from '@mui/icons-material/Checklist'
 import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner'
 import PlaylistAddCheckIcon from '@mui/icons-material/PlaylistAddCheck'
-import MapIcon from '@mui/icons-material/Map'
 import { usePathname, useRouter } from 'next/navigation'
 import { useIncomingPendingCount } from '@/hooks/useIncomingPendingCount'
 
@@ -15,19 +14,22 @@ import { useIncomingPendingCount } from '@/hooks/useIncomingPendingCount'
 // (the hamburger drawer still holds the full nav incl. read-only browse).
 // CC-14: Requests added here (was drawer-only), and the pending transfer/handoff badge
 // moved onto the My Deployment tab (was drawer-only) — that's where Accept/Decline live.
-// CC-32 (3.1): Map added as a 6th tab — the pilot's marquee trust surface was
-// drawer-only, so seeing where the crew last checked in cost a hamburger tap plus a
-// drawer hunt every time. Tradeoff weighed and decided (Max ruled 2026-07-28): 6 tabs
-// ≈ 65px each at 390px — tight, but within MUI BottomNavigation's showLabels spec and
-// every label here is one short word. The alternative (swallowing Requests back into
-// the drawer) would demote a surface CC-14 promoted for cause. No badge on Map.
+//
+// UXP-1a (records D30, supersedes D28): back to FIVE tabs — Map is demoted to the
+// drawer (still reachable at /operator/map via OperatorNav's "Crew Map" entry). D28's
+// six-tab premise ("≈65px each at 390px, within showLabels spec") was false as
+// implemented: MUI hardcodes min-width:80px per action, so six tabs = 480px content
+// clipped equally on every phone (measured: at 390px both edge tabs ~35px, Home's
+// label rendered "ne"), and the clipped edge tab was Home — the mechanism behind the
+// "daily checkout only visible from home" report. The width override below is required
+// even at five tabs (5 × 80px = 400px > 390px). **If a sixth tab is ever proposed,
+// re-open D30 first — the OperatorBottomNav test snapshots this array and fails loudly.**
 const ITEMS = [
   { label: 'Home', href: '/operator/dashboard', icon: <DashboardIcon /> },
   { label: 'Check', href: '/operator/daily-check', icon: <ChecklistIcon /> },
   { label: 'My Deployment', href: '/operator/my-deployment', icon: <LocalShippingIcon />, badge: true },
   { label: 'Requests', href: '/operator/requests', icon: <PlaylistAddCheckIcon /> },
   { label: 'Scan', href: '/operator/scan', icon: <QrCodeScannerIcon /> },
-  { label: 'Map', href: '/operator/map', icon: <MapIcon /> },
 ]
 
 export function OperatorBottomNav() {
@@ -53,6 +55,11 @@ export function OperatorBottomNav() {
         showLabels
         value={active === -1 ? false : active}
         onChange={(_, i) => router.push(ITEMS[i].href)}
+        // UXP-1a: defeat MUI's hardcoded min-width:80px per action so five tabs fit
+        // inside 320–430px portrait widths (5 × 80 = 400px would otherwise clip both
+        // edges below 400px). Height/label rules are untouched, so each hit target
+        // stays ≥44px tall.
+        sx={{ '& .MuiBottomNavigationAction-root': { minWidth: 0, px: 0.5 } }}
       >
         {ITEMS.map((i) => (
           <BottomNavigationAction
