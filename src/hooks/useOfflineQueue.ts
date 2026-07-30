@@ -309,6 +309,16 @@ export function useOfflineQueue() {
 
   const flush = React.useCallback(async () => {
     if (syncingRef.current || typeof navigator === 'undefined' || !navigator.onLine) return
+    // UXP-1g / E1: don't stage the sync UI (setSyncing → OfflineBanner queue banner +
+    // AppShell header spinner + ~48px layout shift) when there is nothing drainable. An
+    // empty or all-failed queue must produce zero sync theater on the 30s tick / on
+    // app-return. Probe read-only first; on a read error, fall through to the normal
+    // path (which has its own error handling) rather than skip a real drain.
+    try {
+      const probeDb = await openDB()
+      const hasDrainable = (await getAllItems(probeDb)).some((i) => i.status !== 'failed')
+      if (!hasDrainable) return
+    } catch { /* couldn't read the queue — let the full path try and handle it */ }
     syncingRef.current = true
     setSyncing(true)
     try {

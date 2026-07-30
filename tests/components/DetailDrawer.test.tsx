@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi } from 'vitest'
 import { DetailDrawer } from '@/components/ui/DetailDrawer'
 
@@ -33,6 +33,22 @@ describe('DetailDrawer', () => {
     const backdrop = document.querySelector('.MuiBackdrop-root') as HTMLElement
     expect(backdrop).not.toBeNull()
     backdrop.click()
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  // UXP-1f: every adopter inherits a built-in close X (the two page-local X's that
+  // hit-tested to the notification bell are removed). It must exist and call onClose —
+  // deployments/inventory previously had NO close control on phones.
+  it('renders a built-in Close button that calls onClose', () => {
+    const onClose = vi.fn()
+    render(
+      <DetailDrawer open onClose={onClose}>
+        <div>drawer content</div>
+      </DetailDrawer>,
+    )
+    const closeBtn = screen.getByRole('button', { name: 'Close' })
+    expect(closeBtn).toBeInTheDocument()
+    fireEvent.click(closeBtn)
     expect(onClose).toHaveBeenCalled()
   })
 })

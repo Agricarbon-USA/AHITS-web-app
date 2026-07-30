@@ -24,22 +24,42 @@ interface AppShellProps {
   bottomNav?: React.ReactNode
   /** CC-23: full-bleed banner slot below the AppBar (e.g. the collapse-to-one OfflineBanner). */
   banner?: React.ReactNode
+  /**
+   * UXP-1c (records D32): which viewports get the mobile (bottom-nav) shell.
+   * - `'admin'` (default): width `down('md')` — the historical desktop-vs-mobile split,
+   *   unchanged for the admin app.
+   * - `'device'`: device CLASS — a coarse pointer OR width `down('lg')` — so a phone in
+   *   landscape (Pro Max 932px, Plus 926px) never silently swaps to the desktop shell.
+   *   The operator app passes this. ONE heuristic governs the shell (and there is no
+   *   separate mobile-keyed typography breakpoint in the operator surfaces to diverge
+   *   from — grep-verified).
+   */
+  shellMode?: 'admin' | 'device'
 }
 
-export function AppShell({ nav, children, title = 'AHITS', headerActions, bottomNav, banner }: AppShellProps) {
+export function AppShell({ nav, children, title = 'AHITS', headerActions, bottomNav, banner, shellMode = 'admin' }: AppShellProps) {
   const theme = useTheme()
-  const isMobile = useMediaQuery(theme.breakpoints.down('md'))
+  // All three run unconditionally (hook rule); `shellMode` selects which combination
+  // decides "mobile". Admin keeps the exact md split it always had.
+  const isNarrowMd = useMediaQuery(theme.breakpoints.down('md'))
+  const isNarrowLg = useMediaQuery(theme.breakpoints.down('lg'))
+  const isCoarsePointer = useMediaQuery('(pointer: coarse)')
+  const isMobile = shellMode === 'device' ? (isCoarsePointer || isNarrowLg) : isNarrowMd
   const [drawerOpen, setDrawerOpen] = React.useState(false)
   const [mounted, setMounted] = React.useState(false)
   const { pending, isOffline, syncing } = useOfflineQueue()
 
   React.useEffect(() => setMounted(true), [])
 
-  // MUI v6 useMediaQuery uses useSyncExternalStore — the client reads the real
-  // window.matchMedia value immediately during hydration while the server always
-  // produces false. Gate behind mounted so the first client render matches the
-  // server-rendered HTML and avoids React #418.
-  const effectiveIsMobile = mounted && isMobile
+  // UXP-1d: render the MOBILE composition pre-mount (bottom nav present, temporary
+  // drawer, no permanent 240px drawer). This both (a) stops phones flashing/fossilizing
+  // the desktop shell on cold loads and JS-blocked/failed hydration (review §1.3), and
+  // (b) keeps hydration safe: the server always renders with `mounted === false`, and so
+  // does the first client render, so both produce the mobile frame — they MATCH (no
+  // React #418). Desktop then upgrades to the permanent-drawer shell after mount; that
+  // is a client-only transition, not a hydration mismatch. (Previously this defaulted to
+  // desktop, which is why a 390px phone rendered a 240px permanent drawer until JS ran.)
+  const effectiveIsMobile = mounted ? isMobile : true
 
   const drawer = (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>

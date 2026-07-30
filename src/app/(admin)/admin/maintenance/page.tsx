@@ -5,12 +5,11 @@ import { formatDate } from '@/lib/utils'
 import {
   Box, Typography, Stack, Chip, Divider, Button, TextField, MenuItem,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper,
-  Skeleton, Tabs, Tab, IconButton, CircularProgress,
+  Skeleton, Tabs, Tab, CircularProgress,
   Dialog, DialogTitle, DialogContent, DialogActions,
 } from '@mui/material'
 import { DetailDrawer } from '@/components/ui/DetailDrawer'
 import BuildIcon from '@mui/icons-material/Build'
-import CloseIcon from '@mui/icons-material/Close'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import { useToast } from '@/components/shared/useToast'
 import { StatusChip } from '@/components/shared/StatusChip'
@@ -657,10 +656,11 @@ export default function AdminMaintenancePage() {
       <DetailDrawer open={!!selected} onClose={closeDrawer} width={460} paperSx={{ p: 0 }}>
         {selected && draft && (
           <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-            <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ p: 2, pb: 1 }}>
-              <Typography variant="h6" sx={{ pr: 1 }}>{selected.taskName}</Typography>
-              <IconButton onClick={closeDrawer} size="small"><CloseIcon /></IconButton>
-            </Stack>
+            {/* UXP-1f: close X moved into DetailDrawer (44px, below the AppBar, never
+                the bell). pr:6 keeps a long task name clear of it. */}
+            <Box sx={{ p: 2, pb: 1 }}>
+              <Typography variant="h6" sx={{ pr: 6 }}>{selected.taskName}</Typography>
+            </Box>
             <Divider />
             <Box sx={{ p: 2, overflowY: 'auto', flexGrow: 1 }}>
               <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap mb={1}>
