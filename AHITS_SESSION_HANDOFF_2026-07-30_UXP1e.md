@@ -21,11 +21,14 @@ Built the previously-deferred **UXP-1e** — the last open UXP-1 item, a **P1** 
 ## Throwaway scaffolding — CONFIRMED GONE, never staged
 `src/app/histguard-throwaway/page.tsx` (reproduction of the 3 scenarios with the REAL hook) and the temporary `/histguard-throwaway` entry in `proxy.ts` `PUBLIC_PATHS` were **deleted / reverted** before commit. The PR's six files are the hook + its test + the four adoption edits — nothing else. (`git grep histguard` on the branch → 0.)
 
-## Not covered by the local run (honest residual → staging smoke, needs the authed app + DB)
-1. Daily-check step 2 → **hardware** Back → step 1, **answers still populated, page did NOT reload/remount**; Back → step 0; Back at 0 → leaves.
-2. At step 2, tap another bottom-nav tab → lands there, **no bounce back** (the throwaway route has no bottom nav, so this leg is logic-only locally).
-3. A CC-26 **alert-deep-linked** drawer (`?check=<id>`) → Back → closes and stays closed (the one case where `open` may be URL-derived).
-4. **Admin desktop** drawers now also Back-to-close (intended — packet said adopt in DetailDrawer; flagging so it's not a surprise).
+## ✅ External verification closed the authed-pages leg (audit sandbox, 2026-07-30)
+Prod build of `development` + this PR's diff, **real seeded DB + real Chromium @ 390×844 → 14/14 PASS** across all four scoped surfaces on the REAL authed pages the local no-DB env couldn't drive:
+- daily-check wizard: Back → prior step, answers intact, MOUNT stable (no remount/reload); Back at step 0 disarms and exits.
+- my-deployment respond dialog: Back → closes, page stays, no reload.
+- admin DetailDrawer: Back → closes, page stays, no reload.
+- RequestComposer (fullScreen): Back → closes, page stays; a subsequent Back navigates normally (guard not stuck).
+
+**Remaining leg (only one left):** on-device staging smoke — "daily-check step 2 → hardware Back → step 1, answers still populated, page did NOT reload." (The earlier admin-desktop-drawer and alert-deep-linked-drawer notes are subsumed by the 14/14 authed run; the on-device physical-Back-gesture check is all that remains.)
 
 ## Decisions / tensions
 - **No DECISIONS entry** (instructed — 1e needs none).
