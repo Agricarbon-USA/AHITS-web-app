@@ -17,7 +17,7 @@ export default async function OperatorLayout({ children }: { children: React.Rea
   const session = await getSessionClaims()
   if (!session) redirect('/login')
   return (
-    <AppShell nav={<OperatorNav />} title="AHITS Field" headerActions={<NotificationBell />} bottomNav={<OperatorBottomNav />} banner={<OfflineBanner />}>
+    <AppShell nav={<OperatorNav />} title="AHITS Field" headerActions={<NotificationBell />} bottomNav={<OperatorBottomNav />} banner={<OfflineBanner />} shellMode="device">
       <ToastProvider bottomOffset>
         <RoutePrefetcher />
         <PinChangeGate />

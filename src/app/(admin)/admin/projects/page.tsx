@@ -11,7 +11,6 @@ import { DetailDrawer } from '@/components/ui/DetailDrawer'
 import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
-import CloseIcon from '@mui/icons-material/Close'
 import { useToast } from '@/components/shared/useToast'
 import { useCanEdit, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 
@@ -178,10 +177,9 @@ export default function AdminProjectsPage() {
           <Box sx={{ p: 4, textAlign: 'center' }}><CircularProgress size={28} /></Box>
         ) : detail ? (
           <Stack spacing={2}>
-            <Stack direction="row" alignItems="center" justifyContent="space-between">
-              <Typography variant="h6">{detail.name}</Typography>
-              <IconButton size="small" onClick={() => setDetail(null)}><CloseIcon /></IconButton>
-            </Stack>
+            {/* UXP-1f: close X now lives in DetailDrawer (44px, below the AppBar, never
+                the bell). pr:5 keeps a long name off it. */}
+            <Typography variant="h6" sx={{ pr: 5 }}>{detail.name}</Typography>
             <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
               <StatusPill status={detail.status} />
               <Chip size="small" label={detail.type.replace(/_/g, ' ')} variant="outlined" />
