@@ -4,6 +4,7 @@ import * as React from 'react'
 import { Drawer, IconButton } from '@mui/material'
 import CloseIcon from '@mui/icons-material/Close'
 import type { SxProps, Theme } from '@mui/material/styles'
+import { useHistoryGuard } from '@/hooks/useHistoryGuard'
 
 // CC-23: the one right-anchored detail drawer. Owns the responsive
 // `{ xs: '100%', sm: width }` sizing (full-width on mobile so nothing clips)
@@ -40,6 +41,8 @@ const HEIGHT_XS = 'calc(100% - 56px - env(safe-area-inset-top, 0px))'
 const HEIGHT_SM = 'calc(100% - 64px - env(safe-area-inset-top, 0px))'
 
 export function DetailDrawer({ open, onClose, width = 480, paperSx, children }: DetailDrawerProps) {
+  // UXP-1e: hardware/browser Back closes the drawer instead of leaving the page.
+  useHistoryGuard(open, onClose)
   return (
     <Drawer
       anchor="right"

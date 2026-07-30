@@ -8,6 +8,7 @@ import {
 } from '@mui/material'
 import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
+import { useHistoryGuard } from '@/hooks/useHistoryGuard'
 import { businessDate } from '@/lib/business-date'
 import { DEFAULT_DAILY_CHECKLIST } from '@/types'
 import { OdometerField } from '@/components/operator/OdometerField'
@@ -83,6 +84,10 @@ export default function OperatorDailyCheckPage() {
   const [submitted, setSubmitted] = React.useState(false)
   const [error, setError] = React.useState('')
   const [step, setStep] = React.useState(0)
+  // UXP-1e: hardware/browser Back steps the wizard back (answers intact) instead of
+  // leaving the page. Armed only while past step 0 and not yet submitted — the success
+  // screen has no step nav, so Back should leave normally there.
+  useHistoryGuard(step > 0 && !submitted, () => setStep((s) => Math.max(0, s - 1)))
   // CC-14 (NS-5): the selected vehicle's last-known odometer, for the inline sanity
   // warning. Fetched per vehicle; null while unknown / offline (warning stays silent).
   const [lastOdometer, setLastOdometer] = React.useState<number | null>(null)
