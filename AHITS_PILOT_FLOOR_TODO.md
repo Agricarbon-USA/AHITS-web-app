@@ -3,15 +3,15 @@
 > STATUS: working checklist (snapshot — tick freely; `STATUS.md` stays canonical) · UPDATED: 2026-08-20 by the ten-seat resume review
 > READ-WITH: `AHITS_RESUME_BRIEF_2026-08-20.md` (where-are-we/so-what/what's-next) · `AHITS_TEN_SEAT_RESUME_REVIEW_2026-08-20.md` (evidence) · `AHITS_DECISIONS_PASTE_READY_2026-08-20.md` (paste blocks) · `AHITS_UNDISPUTED_PROGRAM_2026-07-30.md` (waves — RL-1 now shelved)
 > **What changed since 2026-07-30:** pilot attempt 1 ran (~2–3 operators, ~a week) and STALLED — reverted to group texts (owner bandwidth + homework-feel + clunky setup + trust). Window ruled VOID (D33 candidate). **RL-1 SHELVED** (D34 candidate). Code frozen since `c0c19f6` 07-30 — still green. **GAP-4 was found ALREADY FIXED** (PR #220, 07-28, + regression test) — the old §3 build item is closed; only its advisory-lock-branch test survives as filler. `held/*.tar.gz` cleanup: already done.
+> **Green-light session (2026-08-20, same day):** Max ratified the brief's full decision queue — **D30–D36 recorded in `DECISIONS.md`** (D28 marked superseded) · attempt-1 VOID (D33) · RL-1 shelf + revisit triggers (D34) · D1 trigger (D35) · photo policy **YES/YES** (D36) · **UXP-3 before UXP-2** · M-1 search opens now (posting: `AHITS_M1_RETAINER_POSTING_2026-08-20.md`).
 > **The one rule, restated for round 2: no operator re-onboards until §0–§3 are ticked.**
 
 ---
 
 ## 0 · Stabilize & record (FIRST — one desk sitting, ~30 min; no phone, no build session)
 
-- [ ] **Commit the strategy corpus (R2 — single-copy risk).** From the repo root:
-  `git add AHITS_UNDISPUTED_PROGRAM_2026-07-30.md AHITS_VS_AIRTABLE_BAKEOFF_2026-07-30.md AHITS_BAKEOFF_APPENDIX_CHAMPION_DESIGNS_2026-07-30.md AHITS_UX_AUDIT_EVIDENCE_2026-07-29.zip AHITS_PILOT_FLOOR_TODO.md AHITS_RESUME_BRIEF_2026-08-20.md AHITS_TEN_SEAT_RESUME_REVIEW_2026-08-20.md AHITS_DECISIONS_PASTE_READY_2026-08-20.md STATUS.md && git commit -m "docs: 2026-08-20 resume review — attempt-1 recorded, RL-1 shelved, briefing set" && git push`
-- [ ] **Paste the decisions** from `AHITS_DECISIONS_PASTE_READY_2026-08-20.md`: D30/D31/D32 verbatim + D28 mark, then initial-and-paste D33 (attempt-1 void) / D34 (RL-1 shelf) / D35 (D1 trigger). Commit `DECISIONS.md`; archive the paste file.
+- [x] **Strategy corpus COMMITTED** — `b950351` (2026-08-20): the four stranded 07-30 docs + briefing set + refreshed TODO/STATUS. A same-day second commit carries the decision pastes + green-light updates. **[ ] PUSH still owed** — the session bridge has no network: run `git push origin development` from your own terminal.
+- [x] **Decisions RECORDED (2026-08-20, green-lit by Max):** D30–D36 appended to `DECISIONS.md` + D28 marked `Superseded-by: D30` + registry rows for RL-1/CC-18/D35. Paste file archived to `docs/archive/`.
 - [ ] **Stale-data triage** (so relaunch day 1 doesn't open on a wall of red): in Supabase SQL — end any attempt-1 deployment that's actually over; resolve stale MISSED/damage alerts; run the #229-body stale-damage count SELECT (was OPS-g; >15 → triage).
 
 ## 1 · The recording smoke session (~60 min + one overnight — the relaunch's hard gate)
@@ -63,11 +63,11 @@
 
 ## 5 · Build queue (sessions resume here; RL-1 shelved per D34)
 
-1. [ ] **Order decision (Max):** UXP-3 Flow Closers before UXP-2 Sunlight & Touch? (Review recommendation: yes — the stall is loop/trust-shaped: 3a silent-loss, 3b honest lockout, 3c Fulfill-notify "ends the last flow that loses to texting", 3h drafts, 3j preselect. Pre-flight: answer the two photo YES/NOs — recommendation: **library-attach YES** = texting-a-photo parity.) If no: UXP-2 first, as written.
+1. [x] **Order DECIDED (Max, 2026-08-20): UXP-3 Flow Closers FIRST, then UXP-2.** The stall is loop/trust-shaped: 3a silent-loss, 3b honest lockout, 3c Fulfill-notify "ends the last flow that loses to texting", 3h drafts, 3j preselect. **Pre-flight satisfied: photo YES/YES recorded as D36** (library-attach allowed; no-camera never blocks). → [ ] **Next build session = UXP-3**: paste the UXP-3 packet/playbook step WITH `AHITS_UXP3_RIDER_2026-08-20.md`.
 2. [ ] **Draft UXP-6 — Admin Setup & Fleet Onboarding** (the un-audited gap behind "equipment creation feels clunky"; scope sketch in the ten-seat review, Seat 5 §4; acceptance: a full rig's equipment stood up in one phone sitting)
 3. [ ] The other of UXP-2/UXP-3 · ride-alongs: GAP-4's residual advisory-lock-branch test · GAP-10 bell deep-links · UXP-5 E3/E5 (install weight, poller consolidation)
 4. [ ] **P3-NOTIF push decision** rides with UXP-3 (loop closure without pocket-buzz reach still loses to SMS)
-5. [ ] **M-1 search opens** (post the retainer role — signed before CC-17 code-start is a hard gate)
+5. [ ] **M-1 search OPEN (green-lit 2026-08-20)** — posting drafted: `AHITS_M1_RETAINER_POSTING_2026-08-20.md`; Max posts it to a TS/Next contractor pool (signed + drilled before CC-17 code-start is a hard gate)
 
 ## 6 · The horizon (pointers only — do not work ahead of the wave)
 

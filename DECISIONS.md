@@ -7,12 +7,14 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 >
 > | Item | State | Revisit when | Ref |
 > |------|-------|--------------|-----|
-> | Production cutover (environment standup) | DEFERRED | actual go-live (real users) | D1 |
+> | Production cutover (environment standup) | DEFERRED | D35's trigger — earlier of: CC-17-before-first-payroll · >20 operators · parent-IT requirement | D1 · D35 |
 > | W0-10 `4b′`/`4c` DROP patches | HELD | 4a soaked on prod + go/no-go green | D4 |
 > | Map: real-time / live GPS tracking | ANTI-GOAL (permanent) | never (crew visibility is last-known only) | D2 |
 > | Sentry error tracking | SHIPPED (CC-22, PR #182) | — (DSN provisioned; wiring live on staging) | — |
 > | CC-20 #1 (daily-check full-contents viewer) | SHIPPED (CC-26, PR #195) | — (pulled forward as a pilot-fortnight gate) | D12 |
 > | CC-20 remainder (record-reader legibility #2–#6) | PARKED | first pilot dispute needing history a surface can't show | CC-20 |
+> | RL-1 (Airtable read layer, the bake-off's Wave-1 build) | SHELVED | a manager asks for a view twice in one month · build-vs-buy re-opened · CC-17 needs the reporting seam · 6 months elapsed | D34 |
+> | CC-18 (manager week board) | UNDECIDED (RL-1 absorption voided) | reporting pressure arrives, or post-CC-17 by adoption evidence | D34 |
 
 ---
 
@@ -196,7 +198,7 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Rationale:** the synchronized JWT cliff (review §1.3a) bounces the whole fleet mid-task on the same schedule; the 14-day cap keeps the security envelope finite.
 
 ### D28 · Operator bottom nav goes to SIX tabs — Map is promoted out of the drawer; Requests stays
-- **Date:** 2026-07-28 · **Owner:** Max · **Status:** ACTIVE · **Shipped:** CC-32 PR-3 (#211, open at time of writing)
+- **Date:** 2026-07-28 · **Owner:** Max · **Status:** ACTIVE · **Shipped:** CC-32 PR-3 (#211, open at time of writing) · **Superseded-by: D30** (2026-08-20)
 - **Decision:** `OperatorBottomNav` carries **six** tabs — Home / Check / My Deployment / Requests / Scan / **Map** — rather than five. The crew map (D2/D14's last-known attestation surface) was drawer-only, so the pilot's marquee trust surface cost a hamburger tap plus a drawer hunt on every open. Map is added with no badge; **nothing else moves.** The rejected alternative was swallowing **Requests** back into the drawer to hold the count at five.
 - **Rationale:** six tabs land at ≈65px each at 390px — tight, but inside MUI `BottomNavigation`'s `showLabels` spec, and every label here is a single short word. Demoting Requests would undo a promotion **CC-14 made for cause**, trading one regression for another. Max was asked with the tradeoff stated and ruled for six.
 - **Detail:** ships with the offline half of the same item — `sw.ts` caches `/api/map/crew` by **exact** path match (never `startsWith('/api/map')`, which would pull the ADMIN `/api/map/pins` and `/api/map/route-history` into an operator's device cache), and `CrewMapView` moves to `useFreshList` + `FreshnessIndicator` so an offline operator sees last-cached pins under "Data as of HH:MM" instead of a red dead end. **D2/D14 language is preserved verbatim** and is now asserted by a test.
@@ -206,6 +208,49 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Decision:** (1) **Field reality:** breakage is RARE and severity-varied — small stuff is field-patched and logged; revenue-critical (instrument) damage triggers a phone call to Max. Routine service discipline is the REAL value; scheduled-maintenance UI outranks damage-flow polish. (2) **One operator verb — "Report a problem"**: what + photo + note, admin triages. PLUS an optional operator self-triage toggle: "Still usable" (default — gear STAYS in the kit, annotated in place) / "Out of service" (status flips). "Log fixed issue" (field-fix) stays as the already-patched path and finally gets its item/unit mounts. The four-vocabulary problem (Condition / ReturnCondition / canBeFixed / status enums) collapses at the UI only — DB enums untouched. (3) **Shop portal DEPRIORITIZED** — "we're not currently pushing anything to repair shops." No new portal investment; send-to-shop kept as-is; admin manual status updates ≤2 clicks; the close dialog gains the flexible return destination (DEPLOYMENT — which the API already supports — plus hub): "equipment can return wherever needed." (4) **Schedules are calendar/mileage only**; PER_DEPLOYMENT is CUT from the form (mechanics stay dormant in schema).
 - **Revisit triggers:** a real use-based cadence demand ("service every N deployments" actually asked for), or a shop starts genuinely working the emailed portal.
 - **Rationale:** Max's 2026-07-28 complaint ("clunky, not actively speaking across operators, admin, and deployments") + the 2026-07-29 maintenance-seat interrogation. Builds on D24 (mounted units = named tasks on the carrier vehicle — CC-34 PR-3a is how those rows finally become enterable).
+
+### D30 · Operator bottom nav returns to FIVE tabs — Map back to the drawer
+- **Date:** 2026-07-30 (recorded 2026-08-20) · **Owner:** Max · **Status:** ACTIVE · **Shipped:** UXP-1 PR-1 #232 (tip `3264175`), merged 2026-07-30
+- **Decision:** the operator bottom bar returns to FIVE tabs, superseding D28's six. Home / Check / My Deployment / Requests / Scan. The Map ITEM leaves the bar (D28's six-tab promotion reverted); the `/operator/map` route and the drawer's "Crew Map" entry stay. `minWidth:0`/`px:0.5` override fits five tabs at 320–430px. A snapshot test pins the label set so a sixth tab fails loudly, citing this decision.
+- **Supersedes:** D28.
+- **Revisit triggers:** a device pass showing five tabs unusable on a cohort phone, or Map usage data justifying a bar slot.
+- **Rationale:** UXP-1 finding 1.1 — six tabs at 320px clipped labels and shrank tap targets below the 44px floor; Map is a reference surface, not a daily verb.
+
+### D31 · The update prompt goes quiet + auto-apply
+- **Date:** 2026-07-30 (recorded 2026-08-20) · **Owner:** Max · **Status:** ACTIVE · **Shipped:** UXP-1 PR-1 #232, merged 2026-07-30
+- **Decision:** update prompting goes quiet + auto-apply. `ServiceWorkerUpdater.tsx` only: a `hadController` guard kills the false "new version" toast on first install; the snackbar lifts above the tab bar, is dismissible, auto-hides ~8s, re-offers on `visibilitychange`; action color `inherit`. **`sw.ts` untouched** — skipWaiting/clientsClaim still auto-apply on next launch; the evening-deploy rule (D16) remains the guardrail against mid-shift swaps.
+- **Revisit triggers:** a mid-shift chunk-swap incident, or an operator reporting a missed critical update.
+- **Rationale:** UXP-1 finding 1.2 — the old prompt fired on fresh installs (trust-killer for a new operator's first minute) and sat under the tab bar where thumbs dismissed it accidentally.
+
+### D32 · The operator shell keys on DEVICE CLASS, not viewport width
+- **Date:** 2026-07-30 (recorded 2026-08-20) · **Owner:** Max · **Status:** ACTIVE · **Shipped:** UXP-1 PR-2 #233 (tip `9d0ee18`), merged 2026-07-30
+- **Decision:** the operator shell keys on device class, not viewport width. `AppShell` gains `shellMode`: operator surfaces use coarse-pointer OR `down('lg')` → phone shell; rotation NEVER swaps the shell mid-use. Admin keeps `down('md')`. `manifest.json` adds `portrait-primary`. ONE heuristic, no per-page overrides.
+- **Revisit triggers:** a real tablet cohort (coarse-pointer + large screen wanting the desktop composition).
+- **Rationale:** UXP-1 findings 1.3/1.4 — landscape rotation swapped operators into the desktop drawer shell mid-task ("the app changed"), and the pre-mount default rendered desktop-first on phones (hydration flash + mismatch risk).
+
+### D33 · Pilot attempt-1 window VOID — relaunch is a fresh first-operator-live
+- **Date:** 2026-08-20 · **Owner:** Max · **Status:** ACTIVE (green-lit by Max, 2026-08-20 resume session)
+- **Decision:** pilot attempt-1's window is VOID; the relaunch is a fresh first-operator-live. Attempt 1 (~2026-07-30 → ~08-06): 2–3 operators, ~a week of real use, then reversion to group texts/emails. The TODO §5 gate never validly opened (§1 unticked, no one-pager, nothing recorded), so the charter fortnight never started — the window is VOID, not a scored fail. Causes on record: owner bandwidth · daily check "feels like homework" · equipment-creation/day-to-day friction · trust. **Attempt-1 data stays** (snapshot-per-day metrics score those days honestly); the gap is annotated in the pilot log, never the DB. Relaunch = a new first-operator-live under D17's rolling rule, gated by the refreshed `AHITS_PILOT_FLOOR_TODO.md` §4, with the clock ticked the day the first check lands in `/admin/pilot`.
+- **Revisit triggers:** none — this records history. The relaunch gate lives in the TODO.
+- **Rationale:** the corpus's own "Schrödinger's gate" rule (D17; A6 banner): a gate without a recorded result never ran. Retro-scoring an ungated week as a charter fortnight would poison Metric 1 forever.
+
+### D34 · RL-1 (Airtable read layer) SHELVED
+- **Date:** 2026-08-20 · **Owner:** Max · **Status:** ACTIVE (green-lit by Max, 2026-08-20 resume session)
+- **Decision:** the bake-off's Wave-1 read layer (RL-1) does not build now. Consequences accepted with eyes open: stakeholder drivers #1 (manager reporting) and #2 (Airtable familiarity) stay answered by argument, not artifact; the 60-day falsifier (a program §6 monitor) and the no-write-back rule (the program's reserved "D33") are deferred with it — **not** recorded as active; the program's other reservation ("D34", the D1 cutover trigger) is RL-1-independent and pastes today as D35; **CC-18 reverts to undecided** (its "absorbed by RL-1's week board" logic has no falsifier to wait on). Everything RL-1-independent stands: M-1, SEC-1, GAP register, CC-17 gates, monitors minus sync-age/falsifier/write-back lines. The program's §5 packet stays on file, build-ready.
+- **Revisit triggers:** a manager asks for a view twice in one month · any stakeholder re-opens build-vs-buy · CC-17 design needs the reporting seam · 6 months elapsed. Cheapest interim answer to driver #1 if pressure arrives early: the Looker-on-Postgres rung (bake-off §4).
+- **Rationale:** owner call 2026-08-20 — with the pilot stalled at 2–3 operators, the read layer's customer barely exists; relaunch and adoption outrank manager reporting for the next waves.
+
+### D35 · The D1 prod-cutover trigger, written down (GAP-6)
+- **Date:** 2026-08-20 · **Owner:** Max · **Status:** ACTIVE (green-lit by Max, 2026-08-20 resume session) · **Read-with:** D1, D16
+- **Decision:** production stands up at the EARLIER of: **(a)** CC-17 code-complete before the first real payroll period it would serve — money does not live on staging; **(b)** >20 concurrently active operators; **(c)** a UK-parent IT/compliance requirement naming production isolation. Until a trigger fires, D1/D16 govern: staging is home, no reactive prod standup, `PROD_CUTOVER_RUNBOOK.md` is the playbook (and `AHITS_PROD_MIGRATE_URL` gets recreated at go-live, per the runbook's warning).
+- **Revisit triggers:** the trigger list itself only via a written owner decision.
+- **Rationale:** GAP-6 (Undisputed Program §1) — the one RL-1-independent decision that shared RL-1's paste session and must not fall off the truck; an unwritten trigger invites both premature standup and indefinite drift.
+
+### D36 · Photo policy — library-attach is allowed; no-camera never blocks a submit
+- **Date:** 2026-08-20 · **Owner:** Max · **Status:** ACTIVE (green-lit by Max, 2026-08-20 resume session) · **Binding on:** UXP-3 item 3g / GAP-5
+- **Decision:** the two UXP-3 photo pre-flight questions are answered **YES / YES**. (1) **Library-attach YES:** operators may attach an EXISTING photo from the device library wherever the app accepts a photo — live-camera-only capture is not required. "Texting a photo" parity: the photo already taken is a first-class input. (2) **No-camera submit path YES:** a denied/missing camera NEVER blocks a submit — every photo-accepting flow keeps a flow-appropriate path through (attach from library, or submit without photo where the flow permits). Per-surface execution details ride the UXP-3 packet (3g), not this entry.
+- **Revisit triggers:** an evidence-integrity requirement arrives (e.g. an audit demanding provable at-capture liveness/GPS) — then revisit per-flow, never globally.
+- **Rationale:** the UX review's photo cluster (§7): requiring a live camera shot loses to "just texting the photo I already took" — exactly the group-text reversion the relaunch must beat. Answered by Max at the 2026-08-20 resume session.
 
 ---
 
