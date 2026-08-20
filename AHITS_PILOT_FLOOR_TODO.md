@@ -1,80 +1,78 @@
-# AHITS — Pilot-Floor To-Do · current as of 2026-07-29 morning — ONE packet left
+# AHITS — Road to Relaunch → Road to Undisputed · 2026-08-20
 
-> STATUS: working checklist (snapshot — tick freely; `STATUS.md` stays canonical) · UPDATED: 2026-07-28
-> Everything below comes from `AHITS_CC29-31_PILOT_FLOOR_PACKETS.md` + the CC-30 Max checklist + the owner riders (workplan §15). When this page and STATUS disagree, STATUS wins.
-> **The one rule: no operator onboards until section 1 is fully checked.**
-> **Six-seat pre-execution review DONE (2026-07-29): all three queued packets hardened — paste each with its rider from `AHITS_PACKET_ERRATA_2026-07-29.md`. Order confirmed: CC-16S → CC-33 → CC-34.**
+> STATUS: working checklist (snapshot — tick freely; `STATUS.md` stays canonical) · UPDATED: 2026-08-20 by the ten-seat resume review
+> READ-WITH: `AHITS_RESUME_BRIEF_2026-08-20.md` (where-are-we/so-what/what's-next) · `AHITS_TEN_SEAT_RESUME_REVIEW_2026-08-20.md` (evidence) · `AHITS_DECISIONS_PASTE_READY_2026-08-20.md` (paste blocks) · `AHITS_UNDISPUTED_PROGRAM_2026-07-30.md` (waves — RL-1 now shelved)
+> **What changed since 2026-07-30:** pilot attempt 1 ran (~2–3 operators, ~a week) and STALLED — reverted to group texts (owner bandwidth + homework-feel + clunky setup + trust). Window ruled VOID (D33 candidate). **RL-1 SHELVED** (D34 candidate). Code frozen since `c0c19f6` 07-30 — still green. **GAP-4 was found ALREADY FIXED** (PR #220, 07-28, + regression test) — the old §3 build item is closed; only its advisory-lock-branch test survives as filler. `held/*.tar.gz` cleanup: already done.
+> **The one rule, restated for round 2: no operator re-onboards until §0–§3 are ticked.**
 
 ---
 
-## 1 · CC-29 — Offline trust floor (CODE DONE ✅ — phone smokes are the remaining first-operator gate)
+## 0 · Stabilize & record (FIRST — one desk sitting, ~30 min; no phone, no build session)
 
-- [x] ~~Merge PRs~~ **#202 / #203 / #205 / #207 all MERGED, CI + staging deploys green, session close done (D26/D27 recorded, tree clean)**
-- [ ] **YOUR PHONE SMOKES — the one remaining gate** (exact steps: `AHITS_SESSION_HANDOFF_2026-07-28_CC29-BUILD.md` + STATUS §3):
-  - [ ] Airplane mode → submit check → reconnect → syncs exactly once
-  - [ ] Weak signal → submit → "saved, will sync" within ~12s, never a stuck spinner
-  - [ ] Two tabs, 3 queued actions, reconnect → no false "Failed"; photo-wedge Discard works from Outbox
-  - [ ] Forced-expired session, ONLINE submit → "check saved, sign in to send" (not "Unauthorized"); after sign-in it lands
-  - [ ] **Overnight replay:** queue a check in airplane mode in the evening → sync next morning → it shows under the day it was PERFORMED; the real morning check untouched
-  - [ ] Two-phone Transfer smoke (from CC-33): Entire rig flips ownership on accept; Selected gear doesn't; nothing says "Handoff"
-  - [ ] Admin "force logout" still boots a phone on its next tap
+- [ ] **Commit the strategy corpus (R2 — single-copy risk).** From the repo root:
+  `git add AHITS_UNDISPUTED_PROGRAM_2026-07-30.md AHITS_VS_AIRTABLE_BAKEOFF_2026-07-30.md AHITS_BAKEOFF_APPENDIX_CHAMPION_DESIGNS_2026-07-30.md AHITS_UX_AUDIT_EVIDENCE_2026-07-29.zip AHITS_PILOT_FLOOR_TODO.md AHITS_RESUME_BRIEF_2026-08-20.md AHITS_TEN_SEAT_RESUME_REVIEW_2026-08-20.md AHITS_DECISIONS_PASTE_READY_2026-08-20.md STATUS.md && git commit -m "docs: 2026-08-20 resume review — attempt-1 recorded, RL-1 shelved, briefing set" && git push`
+- [ ] **Paste the decisions** from `AHITS_DECISIONS_PASTE_READY_2026-08-20.md`: D30/D31/D32 verbatim + D28 mark, then initial-and-paste D33 (attempt-1 void) / D34 (RL-1 shelf) / D35 (D1 trigger). Commit `DECISIONS.md`; archive the paste file.
+- [ ] **Stale-data triage** (so relaunch day 1 doesn't open on a wall of red): in Supabase SQL — end any attempt-1 deployment that's actually over; resolve stale MISSED/damage alerts; run the #229-body stale-damage count SELECT (was OPS-g; >15 → triage).
 
-## 2 · CC-30 — Ops floor (FULLY LANDED ✅ — all six step-7 anchors green, both deploys green)
+## 1 · The recording smoke session (~60 min + one overnight — the relaunch's hard gate)
 
-- [x] ~~Merge PRs~~ **#204 (pipeline hardening) + #206 (server-side eyes) MERGED**; CC-29 mid-session collision handled (all 6 failed-transitions instrumented, 18 files/84 tests green)
-- [x] **First post-#204 deploy.yml run: GREEN end-to-end** — migration-safety wiring confirmed sound (real BEFORE_SHA, diff ran, non-vacuous) AND the env-drift step passed its first execution (= pipeline-verified min-instances/sandbox values; console item e evidenced)
-- [x] Clamp shipped on #206 (status-code only; operator-facing strings untouched; terminal-branch errMsg deliberately kept — app-authored diagnostics)
-- [x] **#206 MERGED via the new pipeline** — genuinely BLOCKED until all 3 checks green on the updated branch; no override used. The gate works.
-- [x] Doc follow-ups LANDED (PR #208, via the new protection): e/f/g ticked with evidence · handoff items folded · parallel-session rule in the close contract · a step-7 anchor bug fixed (session-edge.ts path) · §1≡§2 invariant maintained
-- Notes: pr-staging-deploy's migrate step was DROPPED (safer than gated — overridable if you ever want DB-backed previews) · the migration gate is false-green when run locally on macOS (CI is the only authoritative run) · DECISIONS untouched, D16 governs
+**Part A — write off as FIELD-PROVED, tick with the date you're confident of** (attempt-1's real week covered these; recording them beats re-running them — Schrödinger's-gate rule):
+- [ ] Fresh install shows NO false "new version" toast (1b first-install guard — attempt-1's real installs covered this) · [ ] Five tabs visible, rotate ≠ shell swap (1a) · [ ] Back on check step 2 → step 1, answers intact (1e) · [ ] Admin drawers: X closes, not the bell (1f) · [ ] No "Syncing 0…" idle flicker (1g) · [ ] Airplane submit → syncs exactly once (CC-29) · [ ] Weak-signal "saved, will sync" ≤12s (CC-29) · [ ] Overnight replay under day PERFORMED (D26) — *only if you actually saw one; else move to Part B*
 
-**Your console checklist — the FINAL SIX, all genuinely yours (record each in STATUS §3):**
-- [ ] **(a) Supabase → Backups:** note plan/retention · enable PITR if offered · run ONE restore drill to a throwaway project (~15 min) · write the steps into `PILOT_ROLLBACK.md`  ← *the single biggest unprotected risk*
-- [ ] **(b) healthchecks.io:** confirm a real cron ping arrived · set grace period < 30 min
-- [ ] **(c) Cloud Scheduler:** pause cron > 30 min → CRON_SILENT banner appears → resume → it clears
-- [ ] **(d) Sentry:** fire the two test buttons in /admin/settings → both events arrive with request_id
-- [x] **Cloud Run min-instances = 1** — verified by the env-drift step's first green run (glance at the console once if you want the human cross-check)
-- [x] **GitHub branch protection: COMPLETE** — approvals 0, all 3 checks required, strict, force-pushes off · **`deploy-staging` label DELETED** (verified 0 hits)
-- [ ] **(h) Mapbox:** token is a pk. public token, URL-restricted to the staging domain
-- [ ] *(i, optional, 5 min)* uptime check on `/api/health`
+**Part B — run DELIBERATELY on staging (field use can't have hit these):**
+- [ ] Post-deploy update toast: above the bar, X, auto-hides (1b — needs the next deploy) · [ ] Wrong URL in PWA → branded 404 → Home (1d)
+- [ ] Two tabs, 3 queued actions, reconnect → no false "Failed"; Outbox Discard works (CC-29)
+- [ ] Force-expired session, ONLINE submit → "check saved, sign in to send" → lands after sign-in (CC-29/D27)
+- [ ] Admin "force logout" boots the phone on its next tap
+- [ ] **Two-phone Transfer** (owed since CC-33/D22): entire rig → ownership flips · selected gear → item moves · nothing says "Handoff"
+- [ ] **Report a problem, airplane mode** (CC-34): scan → photo + note → reconnect → task + photo + bell; unit STILL in kit; "Out of service" → In Maintenance
+- [ ] Drawer truth: damaged unit's chip in the deployment drawer → the exact task (CC-34 3a)
+- [ ] **Schedules / D24 bridge** (CC-34 3a/3c/3d): create the real Wintex-90-day + Giddings rows → real due dates; close a repair to a deployment ≤3 clicks; operator sees "In repair"
+- [ ] Portal: dead link → nothing sensitive · live link works · double-tap lands once
+- [ ] Overnight replay (if not written off in Part A): evening airplane-mode check → syncs next morning under the day PERFORMED
 
-## 3 · Your owner items (no code, no session needed — all cheap, two are capture-now-or-lose-it)
+## 2 · Console/ops (no code — record each result in STATUS §3)
 
-- [x] **CC-32 word list CONFIRMED (Max, 2026-07-28)** — confirmation line included in the CC-32 paste ✓
-- [ ] **Clockify export + tap count** (capture-now: dies when Clockify is replaced): full CSV history export + count its real daily taps per operator
-- [ ] **Mounted-units template bridge** (~30 min, zero code — D24): admin checklist editor → add Wintex items to the Can-Am template, Giddings items to the Bobcat template; add their service schedules as named maintenance tasks on those vehicles
-- [ ] **Stewart:** create his ADMIN account (guide gets written with CC-31)
-- [ ] **Onboarding one-pager** (rolling start = you won't be present every time)
-- [ ] **Group-text baseline** (jot this week's volume — the adoption metric's control arm)
-- [ ] **Triage card:** add one "someone gets hurt" line
+- [ ] **(a) Supabase backups + ONE restore drill** (~35 min, throwaway project; click-path into `PILOT_ROLLBACK.md`) ← **do before anything else here — real field data now exists and this is still "the most probable total-loss path in any scenario."** Also confirm the project didn't pause during the idle weeks.
+- [ ] **GitHub "Include administrators" ON** — 2 clicks, the last open door
+- [ ] **(h) Mapbox token:** pk. + URL-restricted to staging — 5 min
+- [ ] **(b) healthchecks.io:** a real ping arrived during the freeze? grace < 30 min
+- [ ] **(c) CRON_SILENT live fire:** pause cron >30 min → banner → resume → clears
+- [ ] **(d) Sentry:** both test buttons in /admin/settings → events arrive with request_id
+- [ ] **One cron watch** (now observation, not a bug hunt — GAP-4 verified fixed): TTL holds released · INV-5 quiet on a normal end · PIN lock self-clears (ticks the CC-16S + CC-31 retro smokes)
+- [ ] Cloud Run: delete `ahits-web-app-preview-cc31-pr3` + `-pr2`
+- [ ] Remove `ahits-cc31-worktree` + `ahits-cc34-pr3-worktree` if still present (~/Downloads) · ~~held/*.tar.gz~~ ✅ already gone
+- [ ] *(optional)* uptime check on `/api/health`
 
-## 4 · The packet queue
+## 3 · Owner items — **capture the baselines THIS WEEK, while the crew is still reverted** (the stall re-opened the control arm; it dies the day re-onboarding starts)
 
-| # | Packet | What it is | State |
-|---|--------|-----------|-------|
-| ✅ | CC-29 | Offline trust floor | code DONE — your phone smokes remain (§1) |
-| ✅ | CC-30 | Ops floor | DONE end-to-end |
-| ✅ | **CC-32** | Friction & flow | **FULLY LANDED** — #209 glossary + #210 + #211 + #212 docs all merged (shepherded by CC-31 post-green) |
-| ✅ | **CC-31** | Accuracy + /admin/pilot dashboard | **FULLY LANDED** — PR-1 + #214 (dashboard) + #215 + #213 green-fix + docs #216-218; browser-smoked pre-merge on preview services |
-| ✅~ | **CC-16S** | Public-link security + TTL warmup | **#220 + #221 MERGED & LIVE on staging** (deploy-guard run; nonce fix in). Remaining: say "go" on #222 docs · portal 3-part eyeball smoke · one cron watch (= TTL first fire + CC-31 retro smoke + PIN self-clear) · preview-service delete via Cloud Console. |
-| ✅ | **CC-33** | Simplify & unify | **FULLY LANDED** — #223 + #224 + #225 docs merged, deploys green, D21/D22 EXECUTED, FORWARDED drain was 0 rows. Two-phone Transfer smoke folds into the §1 phone-smoke session. |
-| ▶ IN FLIGHT | **CC-34** | Maintenance speaks | Pasted WITH Rider C. Session 1 = PR-1+PR-2 (D29 appends at PR-1 close; watch the migration gate SCAN PR-1's migration); session 2 = PR-3 (stale-damage count SELECT before its merge). |
+- [ ] **Group-text baseline:** this week's volume by category — the adoption control arm, now purer than the original plan (coordination volume with AHITS absent)
+- [ ] **Clockify CSV export + daily tap count** (the CC-17/D19 baseline)
+- [ ] **Stewart: ADMIN account + the one-page admin-verbs guide (D20)** — he takes the daily 5-minute watch; you keep the Monday variance check
+- [ ] **Onboarding one-pager** ("Transfer" is the word · reload-after-deploy ritual · never reinstall) — attempt 1 ran without it; attempt 2 must not
+- [ ] **Checklist-template items** for Wintex (Can-Am) + Giddings (Bobcat) — pairs with the §1 schedules smoke
+- [ ] **Triage card:** the "someone gets hurt" line
+- [ ] **Pilot log:** create the charter §6 appendix; first entry = the attempt-1 record (dates, causes, VOID ruling per D33)
 
-**Incident CLOSED (evening):** #213 landed 3 root-cause fixes, dev went green, the full convoy merged. Residual items now live in §2b below.
+## 4 · Relaunch gate (v2 — replaces the old §5; all four boxes, then go)
 
-**§2b · Post-convoy residuals (yours):**
-- [ ] **Retroactive PR-1 smoke** (staging): one cron force-run watched in the bell (INV-5 no longer cries wolf on a normal end-of-deployment) + lock/reset a test PIN → PIN_LOCKED self-clears
-- [ ] **Delete the two preview services:** `gcloud run services delete ahits-web-app-preview-cc31-pr3 ahits-web-app-preview-cc31-pr2 --region us-central1`
-- [ ] **GitHub: "Include administrators" ON** — dev is green, nothing needs a direct push anymore; this seals the incident category permanently
-- [ ] Note: the expired-link smoke correctly freed one genuinely-stranded unit on staging (Manual Corer → AVAILABLE) — expected, recorded
-- [ ] Optional: ask any session to remove the `ahits-cc31-worktree` folder when convenient
+- [ ] §0–§3 fully ticked (§1 Part B green; Part A recorded with dates)
+- [ ] **Returning phones ritual:** each attempt-1 phone opens online → Outbox confirmed EMPTY (D26 clamps >3-day items to today or 409s — resolve deliberately, never reinstall)
+- [ ] Re-onboard the 2–3 attempt-1 operators FIRST (known phones), one-pager in hand, Stewart watching daily → then rolling per CUL005
+- [ ] First check lands in the viewer + `/admin/pilot` → **tick it that day — the fortnight clock starts, for real this time**
 
-**Parallel-run rules (unchanged):** first-started session owns STATUS/DECISIONS; both touch `daily-check/page.tsx` at one point (second-to-merge rebases); CC-31's index migration = the migration gate's first real-migration run (watch it pass).
+## 5 · Build queue (sessions resume here; RL-1 shelved per D34)
 
-## 5 · First-operator gate (the finish line of this page)
+1. [ ] **Order decision (Max):** UXP-3 Flow Closers before UXP-2 Sunlight & Touch? (Review recommendation: yes — the stall is loop/trust-shaped: 3a silent-loss, 3b honest lockout, 3c Fulfill-notify "ends the last flow that loses to texting", 3h drafts, 3j preselect. Pre-flight: answer the two photo YES/NOs — recommendation: **library-attach YES** = texting-a-photo parity.) If no: UXP-2 first, as written.
+2. [ ] **Draft UXP-6 — Admin Setup & Fleet Onboarding** (the un-audited gap behind "equipment creation feels clunky"; scope sketch in the ten-seat review, Seat 5 §4; acceptance: a full rig's equipment stood up in one phone sitting)
+3. [ ] The other of UXP-2/UXP-3 · ride-alongs: GAP-4's residual advisory-lock-branch test · GAP-10 bell deep-links · UXP-5 E3/E5 (install weight, poller consolidation)
+4. [ ] **P3-NOTIF push decision** rides with UXP-3 (loop closure without pocket-buzz reach still loses to SMS)
+5. [ ] **M-1 search opens** (post the retainer role — signed before CC-17 code-start is a hard gate)
 
-- [ ] All of §1 checked (CC-29 merged + smoked) — **the hard gate**
-- [ ] §2 merges done + backups/restore drill done — strongly recommended before day 1
-- [ ] Onboard operator #1 using the one-pager · watch their first check land in the viewer · fortnight clock starts
+## 6 · The horizon (pointers only — do not work ahead of the wave)
 
-**Parked / not on this page by decision:** CC-16-proper (D18) · secondary-operator packet (pre-CC-17) · CC-17 Clockify replacement (post-floor; measure taps first, D19) · CC-18 week board · shipment tracking (D23, post-CC-17) · weather stamps (CC-17 rider) · everything in DECISIONS' parked registry.
+**Wave 2 (post-relaunch, weeks 3–8):** correctness session (GAP-1 rate-limiter keying + GAP-2 spec) · GAP-3 secondary-operator packet · **GAP-7 full A6 matrix run EARLY + recorded** · GAP-9 pipeline proofs · M-1 signed + drilled · SEC-1 pack · GAP-8 adoption instrumentation (pass bars written BEFORE data) · day-60 readouts. **Wave 3 (off-season):** **CC-17 Timesheets** behind its all-green gates (M-1 ✓ · A6 matrix ✓ · Clockify taps ✓ · written fallback ✓ · D3 in the resolver · invoice wedge demoed · zero-manual-corrections acceptance) · SHIP-1 if D23's trigger fires · D1 cutover per D35's trigger. **Wave 4 (season 2):** CC-18 decision (no longer RL-1-absorbed — needs its own call) · n 20–40 scale proof · GAP-11 bake-off re-run. Parked with triggers, unchanged: CC-16-proper (D18) · weather stamps · native wrapper · primitives demand-pull only. **Shelved: RL-1 (D34 — revisit triggers in the decision).**
+
+---
+
+*Recently completed: CC-29→CC-34 + CC-16S (07-28/29) · UXP-1 #232/#233/#234 merged + verified (07-30) · bake-off ruling + Undisputed Program (07-30) · pilot attempt-1 run + recorded (07-30→08-20, VOID per D33) · GAP-4 confirmed fixed by #220 (verified 08-20) · ten-seat resume review (08-20).*
