@@ -30,7 +30,7 @@ jobs:
     name: Backward-compatible migrations
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - name: Check added migrations
@@ -58,7 +58,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.base_ref == 'production' || github.base_ref == 'development'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
