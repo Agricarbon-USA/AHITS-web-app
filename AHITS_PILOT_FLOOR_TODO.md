@@ -8,9 +8,9 @@
 
 ## Part 1 · At your computer — one sitting, ~2½ hours (items 3–6 fit inside item 2's and 5's waiting time)
 
-1. [ ] **Push the saved work to GitHub (2 min).** In Terminal:
+1. [x] **Push the saved work to GitHub — DONE 2026-08-21** (pipeline ran green end-to-end, all five jobs; app unchanged, docs-only). For future pushes:
    `cd ~/Downloads/"Agricarbon US Codebase" && git push origin development`
-   *(Three commits from our sessions are sitting on your machine only — this puts them safely on GitHub.)*
+   *(Nothing waiting right now.)*
 
 2. [ ] **Practice a database restore (~30 min) — the single most important item on this page.**
    Supabase dashboard → your project → **Database → Backups**:
@@ -76,4 +76,4 @@
 
 **Done recently (don't redo):** all stray docs committed (3 commits await your push) · decision log brought current (D30–D36; that old cron bug turned out to be already fixed) · July trial formally closed out with its data kept · Airtable reporting shelved with written revisit conditions · build order decided (session 1 above goes first) · photo policy decided (camera roll allowed; a missing camera never blocks).
 
-**Parked on purpose — safe to ignore for now:** full device test matrix · UK-parent security pack · adoption measuring dashboard additions · timesheets build (off-season, needs the backup developer signed) · production server standup (has a written trigger) · Airtable reporting (has written revisit conditions).
+**Parked on purpose — safe to ignore for now:** full device test matrix · UK-parent security pack · adoption measuring dashboard additions · timesheets build (off-season, needs the backup developer signed) · production server standup (has a written trigger) · Airtable reporting (has written revisit conditions) · two minor deploy-pipeline tools still on old Node (documented in PR #235 — bundle into any future workflow tweak).
