@@ -53,6 +53,35 @@ function captureLocation(): Promise<CheckCoords> {
   })
 }
 
+// UXP-3 (3a): GPS can never hold a check hostage. getCurrentPosition's `timeout`
+// bounds the FIX, not the permission UI — while the OS prompt sits unanswered (or a
+// PWA's prompt never renders at all) the callback simply never fires, and until CC-32
+// the submit awaited it indefinitely: nothing enqueued, "Submitting…" forever. This is
+// a hard ceiling measured from the Submit tap: past it the check goes out with no
+// coords, exactly as a denial does. A fix that lands after the ceiling is dropped for
+// this check (D2: location is optional). setTimeout + clearTimeout (not a bare
+// Promise.race leak) so the timer is deterministic under fake timers and never
+// outlives a settled promise.
+const GPS_CEILING_MS = 8_000
+
+function withCeiling<T>(p: Promise<T>, fallback: T, ms: number = GPS_CEILING_MS): Promise<T> {
+  return new Promise<T>((resolve) => {
+    let settled = false
+    const timer = setTimeout(() => {
+      if (settled) return
+      settled = true
+      resolve(fallback)
+    }, ms)
+    const settle = (value: T) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(value)
+    }
+    p.then(settle, () => settle(fallback))
+  })
+}
+
 interface RigVehicle {
   id: string
   vehicle: { id: string; name: string; type?: string }
@@ -302,8 +331,16 @@ export default function OperatorDailyCheckPage() {
     // usually already resolved, so Submit lands in ~1s instead of waiting out the 10s
     // timeout. Falls back to a submit-time capture if there is no warm fix, or if the
     // vehicle changed since it was warmed (the fix must match the vehicle being filed).
+    // UXP-3 (3a): BOTH branches sit under the same hard ceiling, measured from this tap.
+    // A prompt left unanswered (permission limbo) never fires either callback, so the
+    // 10s option above never bounds it — without the ceiling the check hung here
+    // forever with nothing enqueued. Granted / denied / offline resolve long before
+    // 8s and produce the exact body they always did; only limbo changes: {} at 8s.
     const warm = warmCoordsRef.current
-    const coords = warm && warm.vehicleId === vehicleId ? await warm.promise : await captureLocation()
+    const coords = await withCeiling(
+      warm && warm.vehicleId === vehicleId ? warm.promise : captureLocation(),
+      {},
+    )
     // UR-007: route through the durable offline queue (idempotency-keyed) instead
     // of a raw fetch + manual enqueue. Offline → queued exactly-once; online →
     // confirmed; a server-reached error is surfaced (the DB upsert on
