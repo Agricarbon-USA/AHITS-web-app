@@ -9,6 +9,18 @@ import * as React from 'react'
 // transient/offline failure. (On mobile the drawer only mounts while open, so the
 // always-mounted bottom bar is the primary poller; a brief overlap when the drawer is
 // open is harmless.)
+//
+// UXP-3 (F-06): a page that just changed the count (my-deployment's accept / decline /
+// cancel) fires this window event so every mounted badge recounts NOW instead of
+// waiting out the 45s poll — "the badge clears within 2s of the tap". Kept as a plain
+// DOM event (no context/provider) so the bottom bar, the drawer, and the page stay
+// decoupled; a page with no badge mounted just dispatches to nobody.
+export const INCOMING_PENDING_CHANGED = 'ahits:incoming-pending-changed'
+
+export function notifyIncomingPendingChanged(): void {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(INCOMING_PENDING_CHANGED))
+}
+
 export function useIncomingPendingCount(): number {
   const [pendingCount, setPendingCount] = React.useState(0)
 
@@ -36,7 +48,15 @@ export function useIncomingPendingCount(): number {
     const t = window.setInterval(load, 45_000)
     const onVis = () => { if (document.visibilityState === 'visible') load() }
     document.addEventListener('visibilitychange', onVis)
-    return () => { active = false; window.clearInterval(t); document.removeEventListener('visibilitychange', onVis) }
+    // UXP-3 (F-06): recount on demand when a page reports it changed the count.
+    const onChanged = () => { load() }
+    window.addEventListener(INCOMING_PENDING_CHANGED, onChanged)
+    return () => {
+      active = false
+      window.clearInterval(t)
+      document.removeEventListener('visibilitychange', onVis)
+      window.removeEventListener(INCOMING_PENDING_CHANGED, onChanged)
+    }
   }, [])
 
   return pendingCount
