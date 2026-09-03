@@ -2,12 +2,14 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ToastProvider } from '@/components/shared/useToast'
 
-// UXP-6 (6b): the vehicle form on EntityFormDialog.
+// UXP-6 (6b): the vehicle form on EntityFormDialog + the drawer's Setup block.
 //  - Create posts the scanned/typed `qrCodeId` (server accepted it since PRD §7.7; no UI
 //    sent it — T9); edit never sends it (PATCH is `.strict()` and excludes it by design).
 //  - A server field error lands on the field (aria-invalid + helper text), not a toast.
 //  - Duplicate opens create mode prefilled minus the uniques (name "(copy)", VIN/plate
 //    /QR/agreement cleared).
+//  - The Setup block deep-links the D24 chain: checklist editor (?checklist=<TYPE>),
+//    Add-scheduled-task (?sched=vehicle:<id>), and the QR label download.
 //  - "<name> added · Open" opens the new vehicle's drawer.
 //  - Fit: the drawer and the form never overlap (one armed history guard at a time).
 // Driven through the real page — the wiring IS the thing under test.
@@ -18,6 +20,8 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }))
 vi.mock('@/hooks/useHistoryGuard', () => ({ useHistoryGuard: () => {} }))
+const { downloadQrLabel } = vi.hoisted(() => ({ downloadQrLabel: vi.fn(async () => {}) }))
+vi.mock('@/lib/qr-label', () => ({ downloadQrLabel }))
 
 import AdminVehiclesPage from '@/app/(admin)/admin/vehicles/page'
 
@@ -80,6 +84,7 @@ beforeEach(() => {
   posts.length = 0
   patches.length = 0
   detailFetches.length = 0
+  downloadQrLabel.mockClear()
   postResponse = () => jsonRes({ data: { id: 'v-new' } }, 201)
   vi.stubGlobal('fetch', mockFetch())
 })
@@ -244,4 +249,28 @@ describe('UXP-6 (6b): the drawer and the form never overlap (one armed Back guar
     expect(await screen.findByText('Add vehicle')).toBeInTheDocument()
     expect(field(/^Name/).value).toBe('Truck 1 (copy)')
   })
+})
+
+// ── SETUP BLOCK (6b, second commit) ──────────────────────────────────────────
+describe('UXP-6 (6b): vehicle drawer Setup block', () => {
+  it('names the active checklist, counts service schedules, and deep-links both', async () => {
+    await renderPage()
+    fireEvent.click(screen.getByText('Truck 1'))
+    await screen.findByText('Setup')
+    // The ACTIVE Truck template (the inactive one is ignored), with its item count.
+    expect(screen.getByText('Truck daily (2 items)')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Edit' })).toHaveAttribute('href', '/admin/settings?checklist=TRUCK')
+    // One recurring schedule; the damage report is not a schedule.
+    expect(screen.getByText('Service schedules (1)')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Add' })).toHaveAttribute('href', '/admin/maintenance?sched=vehicle:v1')
+  })
+
+  it('QR label → Download renders the vehicle\'s own qrCodeId via the shared helper', async () => {
+    await renderPage()
+    fireEvent.click(screen.getByText('Truck 1'))
+    await screen.findByText('Setup')
+    fireEvent.click(screen.getByRole('button', { name: 'Download' }))
+    expect(downloadQrLabel).toHaveBeenCalledWith('qr-truck-1-code', 'Truck 1')
+  })
+
 })

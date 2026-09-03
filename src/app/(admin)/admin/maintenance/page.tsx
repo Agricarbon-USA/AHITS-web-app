@@ -274,6 +274,16 @@ export default function AdminMaintenancePage() {
     if (t) { openTask(t); autoOpenedRef.current = true }
   }, [tasks])
 
+  // UXP-6 (6b): `?sched=vehicle:<id>` (the vehicle drawer's Setup block → "Service
+  // schedules · Add") opens the Add-scheduled-task dialog prefilled with that vehicle —
+  // the same URL grammar as ?task= / ?check= (D12-transitive), read once on mount.
+  // `item:<id>` is accepted too so an inventory drawer can use the same door later.
+  React.useEffect(() => {
+    const sched = new URLSearchParams(window.location.search).get('sched')
+    const m = sched ? /^(vehicle|item):(.+)$/.exec(sched) : null
+    if (m) void openSched({ subject: m[1] as 'vehicle' | 'item', id: m[2] })
+  }, [])
+
   const counts = React.useMemo(() => ({
     damage: tasks.filter((t) => t.isDamageReport && t.status !== 'COMPLETED').length,
     overdue: tasks.filter((t) => t.status === 'OVERDUE').length,
@@ -479,11 +489,12 @@ export default function AdminMaintenancePage() {
   }
 
   // CC-34 (3a): open the Add-scheduled-task dialog. Reuses /api/vehicles + /api/inventory
-  // for the subject picker (SearchableSelect).
-  async function openSched() {
-    setSchedSubject('vehicle')
-    setSchedVehicleId('')
-    setSchedItemId('')
+  // for the subject picker (SearchableSelect). `prefill` (UXP-6 6b, from ?sched=) selects
+  // the subject up front; the picker shows its name once the list lands.
+  async function openSched(prefill?: { subject: 'vehicle' | 'item'; id: string }) {
+    setSchedSubject(prefill?.subject ?? 'vehicle')
+    setSchedVehicleId(prefill?.subject === 'vehicle' ? prefill.id : '')
+    setSchedItemId(prefill?.subject === 'item' ? prefill.id : '')
     setSchedTaskName('')
     setSchedIntervalType('DAYS')
     setSchedIntervalValue('')
@@ -549,7 +560,7 @@ export default function AdminMaintenancePage() {
           {!canEdit && <Chip size="small" label="View only" variant="outlined" />}
         </Stack>
         <Stack direction="row" spacing={1}>
-          <MutationButton size="small" variant="outlined" onClick={openSched}>Add scheduled task</MutationButton>
+          <MutationButton size="small" variant="outlined" onClick={() => openSched()}>Add scheduled task</MutationButton>
           <MutationButton size="small" variant="outlined" onClick={openFieldFix}>Log field fix</MutationButton>
         </Stack>
       </Stack>
