@@ -1,23 +1,34 @@
 'use client'
 
 import * as React from 'react'
+import NextLink from 'next/link'
 import {
-  Box, Typography, Paper, Stack, Button, IconButton, CircularProgress, Chip, Divider,
+  Box, Typography, Paper, Stack, Button, CircularProgress, Chip, Divider, Link,
   Table, TableHead, TableBody, TableRow, TableCell, TableContainer, TableSortLabel,
-  Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem, Tooltip,
+  Dialog, DialogTitle, DialogContent, DialogActions, TextField, MenuItem,
   Switch, FormControlLabel,
 } from '@mui/material'
 import { DetailDrawer } from '@/components/ui/DetailDrawer'
+import { EntityFormDialog, RequiredLegend } from '@/components/ui/EntityFormDialog'
 import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
+import ContentCopyIcon from '@mui/icons-material/ContentCopy'
+import ChecklistIcon from '@mui/icons-material/Checklist'
+import QrCode2Icon from '@mui/icons-material/QrCode2'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { useToast } from '@/components/shared/useToast'
 import { useCanEdit, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
+import { SearchableSelect } from '@/components/shared/SearchableSelect'
+import { QrScanField } from '@/components/shared/QrScanField'
+import { useDirtyState } from '@/hooks/useDirtyState'
+import { parseApiError } from '@/lib/api-error-shape'
+import { downloadQrLabel } from '@/lib/qr-label'
 import { groupBy, formatDate } from '@/lib/utils'
 import { uploadDocument } from '@/lib/photoStore'
 import { VEHICLE_TYPES, vehicleTypeLabel } from '@/lib/vehicle-types'
+import { DEFAULT_DAILY_CHECKLIST } from '@/types'
 import { DailyCheckViewer } from '@/components/admin/DailyCheckViewer'
 
 const RENTAL_PERIODS: { value: 'DAY' | 'WEEK' | 'MONTH' | 'FLAT'; label: string }[] = [
@@ -55,6 +66,9 @@ interface VehicleRow {
   rentalCostAmount: string | null
   rentalCostPeriod: 'DAY' | 'WEEK' | 'MONTH' | 'FLAT' | null
   rentalOneWay: boolean
+  // Minted server-side on create (or registered from an existing sticker via the
+  // create form's "Existing QR label"); read here for the drawer's label download.
+  qrCodeId: string
   _count?: { dailyChecks: number; maintenanceTasks: number }
 }
 
@@ -63,8 +77,67 @@ type SortKey = 'name' | 'type' | 'status' | 'hub' | 'operator' | 'odometer'
 
 interface VehicleDetail extends VehicleRow {
   dailyChecks: { id: string; date: string; operator: { name: string } | null; passFail?: boolean }[]
-  maintenanceTasks: { id: string; taskName: string; status: string; nextDue: string | null; actualCost: string | null }[]
+  maintenanceTasks: {
+    id: string; taskName: string; status: string; nextDue: string | null; actualCost: string | null
+    // Full MaintenanceTask rows come back; these three tell a service SCHEDULE
+    // (recurring, D24/D29) apart from a damage report or a logged field fix.
+    isDamageReport?: boolean; intervalValue?: number; deletedAt?: string | null
+  }[]
   photos: { id: string; url: string }[]
+}
+
+// UXP-6 (6b): the admin checklist list (GET /api/checklist-templates), read once so the
+// drawer's Setup block and the per-type group headers can name the checklist a vehicle
+// type actually runs. Mirrors lib/checklist-templates resolveChecklistItems: the active
+// type-specific template wins (the list is ordered updatedAt DESC within a type — T7's
+// "newest edited wins"), else the active general one, else the built-in default.
+interface ChecklistTemplateSummary {
+  id: string
+  name: string
+  vehicleType: string | null
+  items: { label: string }[]
+  isActive: boolean
+}
+
+function resolveChecklist(type: string, templates: ChecklistTemplateSummary[]): { name: string; count: number; custom: boolean } {
+  const active = templates.filter((t) => t.isActive && t.items.length > 0)
+  const specific = active.find((t) => t.vehicleType === type)
+  if (specific) return { name: specific.name, count: specific.items.length, custom: true }
+  const general = active.find((t) => t.vehicleType === null)
+  if (general) return { name: general.name, count: general.items.length, custom: true }
+  return { name: 'Built-in default', count: DEFAULT_DAILY_CHECKLIST.length, custom: false }
+}
+
+/** A service schedule = a recurring task on the vehicle (not a damage report / field fix). */
+function isServiceSchedule(t: VehicleDetail['maintenanceTasks'][number]): boolean {
+  return !t.isDamageReport && (t.intervalValue ?? 0) >= 1 && !t.deletedAt
+}
+
+// UXP-6 (6b) fit problem: DetailDrawer and EntityFormDialog each arm useHistoryGuard,
+// which is built for ONE guarded overlay at a time — two armed guards both answer a
+// single hardware Back (both listen to the same popstate), so Back would close the
+// form AND the drawer behind it. The page therefore never has both open: a form
+// opened from the drawer closes the drawer first and re-opens it when the form closes.
+//
+// A guard releases its history sentinel asynchronously (`history.back()` in its
+// cleanup), so the NEXT overlay must arm only once that pop has landed — otherwise
+// the pending pop swallows the new overlay's freshly pushed sentinel and closes it on
+// arrival. `__ahitsHistoryGuard` is the sentinel flag useHistoryGuard merges into
+// `history.state`: absent → nothing is pending, run now; present → run on the popstate
+// the release fires (jsdom never fires it, hence the short fallback timer).
+function afterHistoryGuardReleased(fn: () => void) {
+  const state = window.history.state as Record<string, unknown> | null
+  if (!state?.__ahitsHistoryGuard) { fn(); return }
+  let done = false
+  const run = () => {
+    if (done) return
+    done = true
+    window.removeEventListener('popstate', run)
+    window.clearTimeout(timer)
+    fn()
+  }
+  const timer = window.setTimeout(run, 400)
+  window.addEventListener('popstate', run)
 }
 
 function expiryMeta(iso: string | null): { label: string; color: 'default' | 'warning' | 'error' } {
@@ -90,8 +163,15 @@ export default function AdminVehiclesPage() {
   // CC-26: the read-only daily-check viewer. Opened by a check-history row click or by a
   // failed-check alert deep-link (/admin/vehicles?check=<id>, read on mount below).
   const [viewerCheckId, setViewerCheckId] = React.useState<string | null>(null)
-  const [formOpen, setFormOpen] = React.useState(false)
-  const [editing, setEditing] = React.useState<VehicleRow | null>(null)
+  // UXP-6 (6b): one form, three ways in — Add (blank), Edit (`vehicle`), Duplicate
+  // (`duplicateOf`: create mode prefilled minus the uniques). Mounted only while set,
+  // so every open starts from fresh field state (and a fresh dirty snapshot).
+  const [formState, setFormState] = React.useState<{ vehicle: VehicleRow | null; duplicateOf: VehicleRow | null } | null>(null)
+  // The drawer the form was opened from, to re-open once the form closes (see
+  // afterHistoryGuardReleased — the drawer and the form never overlap).
+  const [formReturnTo, setFormReturnTo] = React.useState<string | null>(null)
+  // null = not known (fetch failed / not admin) → the Setup block shows "—", never a guess.
+  const [templates, setTemplates] = React.useState<ChecklistTemplateSummary[] | null>(null)
   const [confirmDelete, setConfirmDelete] = React.useState<VehicleRow | null>(null)
   // CC-10: field-fix dialog
   const [fieldFixOpen, setFieldFixOpen] = React.useState(false)
@@ -138,7 +218,16 @@ export default function AdminVehiclesPage() {
     } catch { /* non-fatal: form falls back to no-hub */ }
   }, [])
 
-  React.useEffect(() => { load(); loadHubs() }, [load, loadHubs])
+  const loadTemplates = React.useCallback(async () => {
+    try {
+      const res = await fetch('/api/checklist-templates')
+      if (!res.ok) return
+      const d = await res.json()
+      setTemplates(Array.isArray(d?.data) ? d.data : [])
+    } catch { /* fail soft: the Setup block shows "—" for the checklist */ }
+  }, [])
+
+  React.useEffect(() => { load(); loadHubs(); loadTemplates() }, [load, loadHubs, loadTemplates])
 
   React.useEffect(() => {
     fetch('/api/projects').then((r) => r.json()).then((d) => setProjects(d.data ?? d ?? [])).catch(() => {})
@@ -208,6 +297,43 @@ export default function AdminVehiclesPage() {
     if (vehicle) void openDetail(vehicle)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // UXP-6 (6b): every way into the form. From the drawer, the drawer closes first and
+  // the form arms once the drawer's history sentinel has popped (fit problem, above).
+  const openForm = (next: { vehicle?: VehicleRow | null; duplicateOf?: VehicleRow | null }) => {
+    const state = { vehicle: next.vehicle ?? null, duplicateOf: next.duplicateOf ?? null }
+    if (detail) {
+      setFormReturnTo(detail.id)
+      setDetail(null)
+      afterHistoryGuardReleased(() => setFormState(state))
+    } else {
+      setFormState(state)
+    }
+  }
+  const closeForm = () => {
+    setFormState(null)
+    const back = formReturnTo
+    setFormReturnTo(null)
+    if (back) afterHistoryGuardReleased(() => { void openDetail(back) })
+  }
+  const handleFormSaved = (saved: { id: string; name: string; isEdit: boolean }) => {
+    setFormState(null)
+    const back = formReturnTo
+    setFormReturnTo(null)
+    load()
+    if (saved.isEdit) {
+      showToast({ message: `${saved.name} updated`, severity: 'success' })
+      // Edited from the drawer → bring the (refreshed) drawer back.
+      if (back) afterHistoryGuardReleased(() => { void openDetail(back) })
+    } else {
+      // Added (or duplicated): the toast's Open lands on the NEW vehicle's drawer.
+      showToast({
+        message: `${saved.name} added`,
+        severity: 'success',
+        action: { label: 'Open', onClick: () => { void openDetail(saved.id) } },
+      })
+    }
+  }
 
   const doDelete = async () => {
     if (!confirmDelete) return
@@ -288,9 +414,17 @@ export default function AdminVehiclesPage() {
           <Typography variant="h5">Vehicles</Typography>
           {!canEdit && <Chip size="small" label="View only" variant="outlined" />}
         </Stack>
-        <MutationButton variant="contained" startIcon={<AddIcon />} onClick={() => { setEditing(null); setFormOpen(true) }}>
-          Add Vehicle
-        </MutationButton>
+        <Stack direction="row" spacing={1} alignItems="center">
+          {/* UXP-6 (6e): checklists are set up FROM the fleet — this is where an admin
+              is when they wonder what a Truck's daily check asks. Bare `?checklist=`
+              lands on the Settings card; the drawer's Edit link carries the type. */}
+          <Button variant="outlined" startIcon={<ChecklistIcon />} component={NextLink} href="/admin/settings?checklist=">
+            Checklists
+          </Button>
+          <MutationButton variant="contained" startIcon={<AddIcon />} onClick={() => openForm({})}>
+            Add Vehicle
+          </MutationButton>
+        </Stack>
       </Stack>
       {expiringCount > 0 && (
         <Paper variant="outlined" sx={{ p: 1.5, mb: 2, display: 'flex', alignItems: 'center', gap: 1, borderColor: 'warning.main' }}>
@@ -388,6 +522,19 @@ export default function AdminVehiclesPage() {
                           <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1.6 }}>
                             {vehicleTypeLabel(group)} ({gv.length})
                           </Typography>
+                          {/* UXP-6 (6e): which daily checklist this type runs (D24: mounted-unit
+                              items ride the carrier type's checklist), linked to its editor. */}
+                          {templates && (() => {
+                            const c = resolveChecklist(group, templates)
+                            return (
+                              <Typography variant="caption" color="text.secondary" sx={{ ml: 1.5 }}>
+                                Using:{' '}
+                                <Link component={NextLink} href={`/admin/settings?checklist=${group}`} color="inherit">
+                                  {c.name} ({c.count})
+                                </Link>
+                              </Typography>
+                            )
+                          })()}
                         </TableCell>
                       </TableRow>,
                       ...gv.map((v) => {
@@ -420,7 +567,8 @@ export default function AdminVehiclesPage() {
                             <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{v._count?.dailyChecks ?? 0}</TableCell>
                             <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{v._count?.maintenanceTasks ?? 0}</TableCell>
                             <TableCell align="right" onClick={(e) => e.stopPropagation()}>
-                              <MutationIconButton tooltip="Edit" size="small" onClick={() => { setEditing(v); setFormOpen(true) }}><EditIcon fontSize="small" /></MutationIconButton>
+                              <MutationIconButton tooltip="Edit" size="small" onClick={() => openForm({ vehicle: v })}><EditIcon fontSize="small" /></MutationIconButton>
+                              <MutationIconButton tooltip="Duplicate" size="small" onClick={() => openForm({ duplicateOf: v })}><ContentCopyIcon fontSize="small" /></MutationIconButton>
                               <MutationIconButton tooltip="Delete" size="small" onClick={() => setConfirmDelete(v)}><DeleteIcon fontSize="small" /></MutationIconButton>
                             </TableCell>
                           </TableRow>
@@ -453,7 +601,8 @@ export default function AdminVehiclesPage() {
                           <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{v._count?.dailyChecks ?? 0}</TableCell>
                           <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{v._count?.maintenanceTasks ?? 0}</TableCell>
                           <TableCell align="right" onClick={(e) => e.stopPropagation()}>
-                            <MutationIconButton tooltip="Edit" size="small" onClick={() => { setEditing(v); setFormOpen(true) }}><EditIcon fontSize="small" /></MutationIconButton>
+                            <MutationIconButton tooltip="Edit" size="small" onClick={() => openForm({ vehicle: v })}><EditIcon fontSize="small" /></MutationIconButton>
+                            <MutationIconButton tooltip="Duplicate" size="small" onClick={() => openForm({ duplicateOf: v })}><ContentCopyIcon fontSize="small" /></MutationIconButton>
                             <MutationIconButton tooltip="Delete" size="small" onClick={() => setConfirmDelete(v)}><DeleteIcon fontSize="small" /></MutationIconButton>
                           </TableCell>
                         </TableRow>
@@ -539,6 +688,47 @@ export default function AdminVehiclesPage() {
               <Box><Typography variant="subtitle2" gutterBottom>Notes</Typography><Typography variant="body2" color="text.secondary">{detail.notes}</Typography></Box>
             )}
 
+            {/* UXP-6 (6b): Setup — the D24 chain in one place. A vehicle is "set up" when
+                its type's daily checklist is right, its service schedules exist and its
+                QR label is on the windshield; each row deep-links to where that is done
+                (?checklist= / ?sched= readers on Settings / Maintenance, D12-transitive). */}
+            <Divider />
+            <Box>
+              <Typography variant="subtitle2" gutterBottom>Setup</Typography>
+              <Stack spacing={0.75}>
+                {(() => {
+                  const c = templates ? resolveChecklist(detail.type, templates) : null
+                  return (
+                    <SetupRow
+                      label="Daily checklist"
+                      value={c ? `${c.name} (${c.count} items)` : '—'}
+                      action={{ label: 'Edit', href: `/admin/settings?checklist=${detail.type}` }}
+                    />
+                  )
+                })()}
+                <SetupRow
+                  label={`Service schedules (${detail.maintenanceTasks.filter(isServiceSchedule).length})`}
+                  value=""
+                  action={{ label: 'Add', href: `/admin/maintenance?sched=vehicle:${detail.id}` }}
+                />
+                <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={2}>
+                  <Typography variant="body2" color="text.secondary">QR label</Typography>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<QrCode2Icon />}
+                    disabled={!detail.qrCodeId}
+                    onClick={() => {
+                      downloadQrLabel(detail.qrCodeId, detail.name)
+                        .catch(() => showToast({ message: 'Could not render the QR label.', severity: 'error' }))
+                    }}
+                  >
+                    Download
+                  </Button>
+                </Stack>
+              </Stack>
+            </Box>
+
             <Divider />
             <Box>
               <Typography variant="subtitle2" gutterBottom>Maintenance ({detail.maintenanceTasks.length})</Typography>
@@ -596,7 +786,8 @@ export default function AdminVehiclesPage() {
             </Box>
 
             <Stack direction="row" spacing={1} pt={1} flexWrap="wrap" useFlexGap>
-              <MutationButton variant="outlined" startIcon={<EditIcon />} onClick={() => { setEditing(detail); setFormOpen(true) }}>Edit</MutationButton>
+              <MutationButton variant="outlined" startIcon={<EditIcon />} onClick={() => openForm({ vehicle: detail })}>Edit</MutationButton>
+              <MutationButton variant="outlined" startIcon={<ContentCopyIcon />} onClick={() => openForm({ duplicateOf: detail })}>Duplicate</MutationButton>
               <MutationButton variant="outlined" color="error" startIcon={<DeleteIcon />} onClick={() => setConfirmDelete(detail)}>Delete</MutationButton>
             </Stack>
             <Divider />
@@ -704,12 +895,13 @@ export default function AdminVehiclesPage() {
         </DialogActions>
       </Dialog>
 
-      {formOpen && (
+      {formState && (
         <VehicleFormDialog
-          vehicle={editing}
+          vehicle={formState.vehicle}
+          duplicateOf={formState.duplicateOf}
           hubs={hubs}
-          onClose={() => setFormOpen(false)}
-          onSaved={() => { setFormOpen(false); load(); if (detail) openDetail(detail.id) }}
+          onClose={closeForm}
+          onSaved={handleFormSaved}
           showToast={showToast}
         />
       )}
@@ -737,52 +929,137 @@ function Detail({ label, value, color }: { label: string; value: string; color?:
   )
 }
 
+/** A Setup row: label · value · one deep-link action ("Edit" / "Add"). */
+function SetupRow({ label, value, action }: { label: string; value: string; action: { label: string; href: string } }) {
+  return (
+    <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={2}>
+      <Typography variant="body2" color="text.secondary" sx={{ flexShrink: 0 }}>{label}</Typography>
+      <Stack direction="row" alignItems="center" spacing={1.5} sx={{ minWidth: 0 }}>
+        {value && <Typography variant="body2" fontWeight={500} textAlign="right">{value}</Typography>}
+        <Link component={NextLink} href={action.href} variant="body2" fontWeight={600} sx={{ flexShrink: 0 }}>
+          {action.label}
+        </Link>
+      </Stack>
+    </Stack>
+  )
+}
+
 type ShowToast = (t: { message: string; severity?: 'success' | 'error' | 'warning' | 'info' }) => void
 
-function VehicleFormDialog({ vehicle, hubs, onClose, onSaved, showToast }: {
+// ── Add / Edit / Duplicate form (UXP-6 6b, on EntityFormDialog) ───────────────
+//
+// Every field, default and payload rule of the pre-UXP-6 form is preserved (plan §1
+// is the contract): 25 fields; type defaults TRUCK; status is edit-only (create →
+// server default ACTIVE); hub None; POST omits empties, PATCH sends null for cleared
+// fields; the rental block is nulled when the toggle is off. New: required legend +
+// marking, inline field errors from `parseApiError` (no more "Save failed" toast),
+// hub as `SearchableSelect` (`name · city, state`), dirty guard + hardware Back,
+// full-screen on xs, the create-only "Existing QR label" (→ `qrCodeId`, which PATCH
+// deliberately excludes), and Duplicate (create mode minus the uniques).
+
+interface VehicleFormValues {
+  name: string
+  type: string
+  status: string
+  makeModel: string
+  year: string
+  vin: string
+  licensePlate: string
+  odometer: string
+  hubId: string
+  location: string
+  insuranceExpires: string
+  registrationExpires: string
+  notes: string
+  isRental: boolean
+  rentalCompany: string
+  rentalAgreementNumber: string
+  rentalAgreementUrl: string
+  rentalStartDate: string
+  rentalEndDate: string
+  rentalLocation: string
+  rentalReturnLocation: string
+  rentalCostAmount: string
+  rentalCostPeriod: string
+  rentalOneWay: boolean
+  qrCodeId: string
+}
+
+/**
+ * Field state for the three ways in. `duplicate` copies the spec of the vehicle
+ * (type, make/model, year, hub, dates, rental terms) and clears what is unique to
+ * one physical unit: name ("<name> (copy)"), VIN, plate, odometer reading, QR label,
+ * rental agreement number + file.
+ */
+function vehicleFormValues(source: VehicleRow | null, duplicate: boolean): VehicleFormValues {
+  const own = (v: string | null | undefined) => (duplicate ? '' : (v ?? ''))
+  return {
+    name: source ? (duplicate ? `${source.name} (copy)` : source.name) : '',
+    type: source?.type ?? 'TRUCK',
+    status: duplicate ? 'ACTIVE' : (source?.status ?? 'ACTIVE'),
+    makeModel: source?.makeModel ?? '',
+    year: source?.year != null ? String(source.year) : '',
+    vin: own(source?.vin),
+    licensePlate: own(source?.licensePlate),
+    odometer: !duplicate && source?.odometer != null ? String(source.odometer) : '',
+    hubId: source?.hubId ?? '',
+    location: source?.location ?? '',
+    insuranceExpires: dateInput(source?.insuranceExpires),
+    registrationExpires: dateInput(source?.registrationExpires),
+    notes: source?.notes ?? '',
+    isRental: source?.isRental ?? false,
+    rentalCompany: source?.rentalCompany ?? '',
+    rentalAgreementNumber: own(source?.rentalAgreementNumber),
+    rentalAgreementUrl: own(source?.rentalAgreementUrl),
+    rentalStartDate: dateInput(source?.rentalStartDate),
+    rentalEndDate: dateInput(source?.rentalEndDate),
+    rentalLocation: source?.rentalLocation ?? '',
+    rentalReturnLocation: source?.rentalReturnLocation ?? '',
+    rentalCostAmount: source?.rentalCostAmount != null ? String(source.rentalCostAmount) : '',
+    rentalCostPeriod: source?.rentalCostPeriod ?? '',
+    rentalOneWay: source?.rentalOneWay ?? false,
+    qrCodeId: '',
+  }
+}
+
+// POST's 409 is a plain string naming the unique that clashed (route.ts: "A vehicle
+// with the same name already exists."); land it on the field instead of a banner so
+// the fix is one tap away. The QR-label clash and PATCH's 404 (T11) stay form-level
+// (QrScanField owns its own error slot for scan failures).
+const UNIQUE_HINTS: [RegExp, keyof VehicleFormValues][] = [
+  [/same name/i, 'name'],
+  [/same vin\b/i, 'vin'],
+]
+
+function VehicleFormDialog({ vehicle, duplicateOf, hubs, onClose, onSaved, showToast }: {
   vehicle: VehicleRow | null
+  duplicateOf: VehicleRow | null
   hubs: HubOption[]
   onClose: () => void
-  onSaved: () => void
+  onSaved: (saved: { id: string; name: string; isEdit: boolean }) => void
   showToast: ShowToast
 }) {
   const isEdit = !!vehicle
-  const [name, setName] = React.useState(vehicle?.name ?? '')
-  const [type, setType] = React.useState(vehicle?.type ?? 'TRUCK')
-  const [status, setStatus] = React.useState(vehicle?.status ?? 'ACTIVE')
-  const [makeModel, setMakeModel] = React.useState(vehicle?.makeModel ?? '')
-  const [year, setYear] = React.useState(vehicle?.year != null ? String(vehicle.year) : '')
-  const [vin, setVin] = React.useState(vehicle?.vin ?? '')
-  const [licensePlate, setLicensePlate] = React.useState(vehicle?.licensePlate ?? '')
-  const [odometer, setOdometer] = React.useState(vehicle?.odometer != null ? String(vehicle.odometer) : '')
-  const [hubId, setHubId] = React.useState(vehicle?.hubId ?? '')
-  const [location, setLocation] = React.useState(vehicle?.location ?? '')
-  const [insuranceExpires, setInsuranceExpires] = React.useState(dateInput(vehicle?.insuranceExpires))
-  const [registrationExpires, setRegistrationExpires] = React.useState(dateInput(vehicle?.registrationExpires))
-  const [notes, setNotes] = React.useState(vehicle?.notes ?? '')
+  const [v, setV] = React.useState<VehicleFormValues>(() => vehicleFormValues(vehicle ?? duplicateOf, !vehicle && !!duplicateOf))
+  const [fieldErrors, setFieldErrors] = React.useState<Partial<Record<keyof VehicleFormValues, string>>>({})
+  const [formError, setFormError] = React.useState<string | null>(null)
   const [saving, setSaving] = React.useState(false)
-
-  // NEW-5: rental metadata (lets an admin edit a rental — incl. attaching a
-  // late agreement to clear the "Agreement needed" flag).
-  const [isRental, setIsRental] = React.useState(vehicle?.isRental ?? false)
-  const [rentalCompany, setRentalCompany] = React.useState(vehicle?.rentalCompany ?? '')
-  const [rentalAgreementNumber, setRentalAgreementNumber] = React.useState(vehicle?.rentalAgreementNumber ?? '')
-  const [rentalAgreementUrl, setRentalAgreementUrl] = React.useState(vehicle?.rentalAgreementUrl ?? '')
-  const [rentalStartDate, setRentalStartDate] = React.useState(dateInput(vehicle?.rentalStartDate))
-  const [rentalEndDate, setRentalEndDate] = React.useState(dateInput(vehicle?.rentalEndDate))
-  const [rentalLocation, setRentalLocation] = React.useState(vehicle?.rentalLocation ?? '')
-  const [rentalReturnLocation, setRentalReturnLocation] = React.useState(vehicle?.rentalReturnLocation ?? '')
-  const [rentalCostAmount, setRentalCostAmount] = React.useState(vehicle?.rentalCostAmount != null ? String(vehicle.rentalCostAmount) : '')
-  const [rentalCostPeriod, setRentalCostPeriod] = React.useState<string>(vehicle?.rentalCostPeriod ?? '')
-  const [rentalOneWay, setRentalOneWay] = React.useState(vehicle?.rentalOneWay ?? false)
   const [agreementUploading, setAgreementUploading] = React.useState(false)
+  // Mounted only while open (values initialised above), so the snapshot is this render's.
+  const dirty = useDirtyState(true, v)
+
+  const set = <K extends keyof VehicleFormValues>(key: K, value: VehicleFormValues[K]) => {
+    setV((prev) => ({ ...prev, [key]: value }))
+    if (fieldErrors[key]) setFieldErrors((prev) => { const next = { ...prev }; delete next[key]; return next })
+  }
+  const err = (key: keyof VehicleFormValues) => fieldErrors[key]
 
   const uploadAgreement = async (file: File | undefined) => {
     if (!file) return
     setAgreementUploading(true)
     try {
       const url = await uploadDocument(file)
-      setRentalAgreementUrl(url)
+      set('rentalAgreementUrl', url)
     } catch (e) {
       showToast({ message: e instanceof Error ? e.message : 'Upload failed', severity: 'error' })
     } finally {
@@ -793,184 +1070,250 @@ function VehicleFormDialog({ vehicle, hubs, onClose, onSaved, showToast }: {
   const toIso = (d: string) => (d ? new Date(d).toISOString() : null)
   const numOrNull = (s: string) => (s.trim() === '' ? null : parseInt(s, 10))
 
-  const save = async () => {
-    if (!name.trim()) { showToast({ message: 'Name is required', severity: 'error' }); return }
+  const patchBody = () => {
+    const insIso = toIso(v.insuranceExpires)
+    const regIso = toIso(v.registrationExpires)
+    return {
+      name: v.name, type: v.type, status: v.status,
+      makeModel: v.makeModel || null,
+      year: numOrNull(v.year),
+      vin: v.vin || null,
+      licensePlate: v.licensePlate || null,
+      odometer: numOrNull(v.odometer),
+      location: v.location || null,
+      hubId: v.hubId || null,
+      insuranceExpires: insIso,
+      registrationExpires: regIso,
+      notes: v.notes || null,
+      // NEW-5 rental block (PATCH schema is nullable).
+      isRental: v.isRental,
+      rentalCompany: v.isRental ? (v.rentalCompany || null) : null,
+      rentalAgreementNumber: v.isRental ? (v.rentalAgreementNumber || null) : null,
+      rentalAgreementUrl: v.isRental ? (v.rentalAgreementUrl || null) : null,
+      rentalStartDate: v.isRental && v.rentalStartDate ? v.rentalStartDate : null,
+      rentalEndDate: v.isRental && v.rentalEndDate ? v.rentalEndDate : null,
+      rentalLocation: v.isRental ? (v.rentalLocation || null) : null,
+      rentalReturnLocation: v.isRental && v.rentalOneWay ? (v.rentalReturnLocation || null) : null,
+      rentalCostAmount: v.isRental && v.rentalCostAmount.trim() !== '' && !Number.isNaN(Number(v.rentalCostAmount)) ? Number(v.rentalCostAmount) : null,
+      rentalCostPeriod: v.isRental && v.rentalCostPeriod ? v.rentalCostPeriod : null,
+      rentalOneWay: v.isRental ? v.rentalOneWay : false,
+      // qrCodeId is create-only by contract — PATCH is `.strict()` and excludes it.
+    }
+  }
+
+  const postBody = () => {
+    const insIso = toIso(v.insuranceExpires)
+    const regIso = toIso(v.registrationExpires)
+    const qr = v.qrCodeId.trim()
+    return {
+      name: v.name, type: v.type,
+      ...(v.makeModel ? { makeModel: v.makeModel } : {}),
+      ...(v.year.trim() ? { year: parseInt(v.year, 10) } : {}),
+      ...(v.vin ? { vin: v.vin } : {}),
+      ...(v.licensePlate ? { licensePlate: v.licensePlate } : {}),
+      ...(v.odometer.trim() ? { odometer: parseInt(v.odometer, 10) } : {}),
+      ...(v.location ? { location: v.location } : {}),
+      ...(v.hubId ? { hubId: v.hubId } : {}),
+      ...(insIso ? { insuranceExpires: insIso } : {}),
+      ...(regIso ? { registrationExpires: regIso } : {}),
+      ...(v.notes ? { notes: v.notes } : {}),
+      // PRD §7.7: register the existing sticker's code; omit → the server mints one.
+      ...(qr ? { qrCodeId: qr } : {}),
+      // NEW-5 rental block (POST schema is optional — omit empties, don't send null).
+      ...(v.isRental ? {
+        isRental: true,
+        rentalOneWay: v.rentalOneWay,
+        ...(v.rentalCompany ? { rentalCompany: v.rentalCompany } : {}),
+        ...(v.rentalAgreementNumber ? { rentalAgreementNumber: v.rentalAgreementNumber } : {}),
+        ...(v.rentalAgreementUrl ? { rentalAgreementUrl: v.rentalAgreementUrl } : {}),
+        ...(v.rentalStartDate ? { rentalStartDate: v.rentalStartDate } : {}),
+        ...(v.rentalEndDate ? { rentalEndDate: v.rentalEndDate } : {}),
+        ...(v.rentalLocation ? { rentalLocation: v.rentalLocation } : {}),
+        ...(v.rentalOneWay && v.rentalReturnLocation ? { rentalReturnLocation: v.rentalReturnLocation } : {}),
+        ...(v.rentalCostAmount.trim() !== '' && !Number.isNaN(Number(v.rentalCostAmount)) ? { rentalCostAmount: Number(v.rentalCostAmount) } : {}),
+        ...(v.rentalCostPeriod ? { rentalCostPeriod: v.rentalCostPeriod } : {}),
+      } : {}),
+    }
+  }
+
+  const submit = async () => {
+    if (!v.name.trim()) {
+      setFieldErrors({ name: 'Name is required' })
+      return false
+    }
+    setFormError(null)
     setSaving(true)
     try {
-      const insIso = toIso(insuranceExpires)
-      const regIso = toIso(registrationExpires)
-      let res: Response
-      if (isEdit) {
-        res = await fetch(`/api/vehicles/${vehicle!.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name, type, status,
-            makeModel: makeModel || null,
-            year: numOrNull(year),
-            vin: vin || null,
-            licensePlate: licensePlate || null,
-            odometer: numOrNull(odometer),
-            location: location || null,
-            hubId: hubId || null,
-            insuranceExpires: insIso,
-            registrationExpires: regIso,
-            notes: notes || null,
-            // NEW-5 rental block (PATCH schema is nullable).
-            isRental,
-            rentalCompany: isRental ? (rentalCompany || null) : null,
-            rentalAgreementNumber: isRental ? (rentalAgreementNumber || null) : null,
-            rentalAgreementUrl: isRental ? (rentalAgreementUrl || null) : null,
-            rentalStartDate: isRental && rentalStartDate ? rentalStartDate : null,
-            rentalEndDate: isRental && rentalEndDate ? rentalEndDate : null,
-            rentalLocation: isRental ? (rentalLocation || null) : null,
-            rentalReturnLocation: isRental && rentalOneWay ? (rentalReturnLocation || null) : null,
-            rentalCostAmount: isRental && rentalCostAmount.trim() !== '' && !Number.isNaN(Number(rentalCostAmount)) ? Number(rentalCostAmount) : null,
-            rentalCostPeriod: isRental && rentalCostPeriod ? rentalCostPeriod : null,
-            rentalOneWay: isRental ? rentalOneWay : false,
-          }),
-        })
-      } else {
-        res = await fetch('/api/vehicles', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name, type,
-            ...(makeModel ? { makeModel } : {}),
-            ...(year.trim() ? { year: parseInt(year, 10) } : {}),
-            ...(vin ? { vin } : {}),
-            ...(licensePlate ? { licensePlate } : {}),
-            ...(odometer.trim() ? { odometer: parseInt(odometer, 10) } : {}),
-            ...(location ? { location } : {}),
-            ...(hubId ? { hubId } : {}),
-            ...(insIso ? { insuranceExpires: insIso } : {}),
-            ...(regIso ? { registrationExpires: regIso } : {}),
-            ...(notes ? { notes } : {}),
-            // NEW-5 rental block (POST schema is optional — omit empties, don't send null).
-            ...(isRental ? {
-              isRental: true,
-              rentalOneWay,
-              ...(rentalCompany ? { rentalCompany } : {}),
-              ...(rentalAgreementNumber ? { rentalAgreementNumber } : {}),
-              ...(rentalAgreementUrl ? { rentalAgreementUrl } : {}),
-              ...(rentalStartDate ? { rentalStartDate } : {}),
-              ...(rentalEndDate ? { rentalEndDate } : {}),
-              ...(rentalLocation ? { rentalLocation } : {}),
-              ...(rentalOneWay && rentalReturnLocation ? { rentalReturnLocation } : {}),
-              ...(rentalCostAmount.trim() !== '' && !Number.isNaN(Number(rentalCostAmount)) ? { rentalCostAmount: Number(rentalCostAmount) } : {}),
-              ...(rentalCostPeriod ? { rentalCostPeriod } : {}),
-            } : {}),
-          }),
-        })
-      }
+      const res = isEdit
+        ? await fetch(`/api/vehicles/${vehicle!.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patchBody()) })
+        : await fetch('/api/vehicles', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(postBody()) })
       if (!res.ok) {
-        const d = await res.json().catch(() => ({}))
-        showToast({ message: typeof d.error === 'string' ? d.error : 'Save failed', severity: 'error' })
-        return
+        const body: unknown = await res.json().catch(() => null)
+        const parsed = parseApiError(body, 'Save failed')
+        const fields: Partial<Record<keyof VehicleFormValues, string>> = { ...parsed.fieldErrors }
+        let form = parsed.formError
+        if (form && !isEdit) {
+          const hit = UNIQUE_HINTS.find(([re]) => re.test(form!))
+          if (hit) { fields[hit[1]] = form; form = null }
+        }
+        setFieldErrors(fields)
+        setFormError(form)
+        return false
       }
-      showToast({ message: isEdit ? 'Vehicle updated' : 'Vehicle added', severity: 'success' })
-      onSaved()
+      const d = await res.json().catch(() => ({}))
+      onSaved({ id: d?.data?.id ?? vehicle?.id ?? '', name: v.name.trim(), isEdit })
     } catch {
-      showToast({ message: 'Save failed', severity: 'error' })
+      setFormError('Save failed — check your connection and try again.')
+      return false
     } finally {
       setSaving(false)
     }
   }
 
-  return (
-    <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>{isEdit ? `Edit ${vehicle!.name}` : 'Add Vehicle'}</DialogTitle>
-      <DialogContent>
-        <Stack spacing={2} mt={1}>
-          <TextField label="Name" value={name} onChange={(e) => setName(e.target.value)} fullWidth required />
-          <Stack direction="row" spacing={2}>
-            <TextField select label="Type" value={type} onChange={(e) => setType(e.target.value)} fullWidth>
-              {VEHICLE_TYPES.map((t) => <MenuItem key={t} value={t}>{vehicleTypeLabel(t)}</MenuItem>)}
-            </TextField>
-            {isEdit && (
-              <TextField select label="Status" value={status} onChange={(e) => setStatus(e.target.value)} fullWidth>
-                {VEHICLE_STATUSES.map((s) => <MenuItem key={s} value={s}>{s.replace(/_/g, ' ')}</MenuItem>)}
-              </TextField>
-            )}
-          </Stack>
-          <Stack direction="row" spacing={2}>
-            <TextField label="Make / Model" value={makeModel} onChange={(e) => setMakeModel(e.target.value)} fullWidth />
-            <TextField label="Year" type="number" value={year} onChange={(e) => setYear(e.target.value)} sx={{ width: 120 }} />
-          </Stack>
-          <Stack direction="row" spacing={2}>
-            <TextField label="VIN" value={vin} onChange={(e) => setVin(e.target.value)} fullWidth />
-            <TextField label="License plate" value={licensePlate} onChange={(e) => setLicensePlate(e.target.value)} fullWidth />
-          </Stack>
-          <Stack direction="row" spacing={2}>
-            <TextField label="Odometer" type="number" value={odometer} onChange={(e) => setOdometer(e.target.value)} fullWidth />
-            <TextField select label="Home hub" value={hubId} onChange={(e) => setHubId(e.target.value)} fullWidth
-              helperText={hubs.length === 0 ? 'No hubs yet — add one under Hubs' : 'Where this vehicle is based'}>
-              <MenuItem value=""><em>None</em></MenuItem>
-              {hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.name}{h.city ? ` · ${h.city}${h.state ? `, ${h.state}` : ''}` : ''}</MenuItem>)}
-            </TextField>
-          </Stack>
-          <TextField label="Location notes (optional)" value={location} onChange={(e) => setLocation(e.target.value)} fullWidth
-            helperText="Free-text detail, e.g. a bay or lot. The home hub above is the primary location." />
-          <Stack direction="row" spacing={2}>
-            <TextField label="Insurance expires" type="date" value={insuranceExpires} onChange={(e) => setInsuranceExpires(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} />
-            <TextField label="Registration expires" type="date" value={registrationExpires} onChange={(e) => setRegistrationExpires(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} />
-          </Stack>
-          <TextField label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} fullWidth multiline rows={2} />
+  const hubOptions = React.useMemo(
+    () => hubs.map((h) => ({ value: h.id, label: `${h.name}${h.city ? ` · ${h.city}${h.state ? `, ${h.state}` : ''}` : ''}` })),
+    [hubs],
+  )
 
-          <Divider />
-          <FormControlLabel
-            control={<Switch checked={isRental} onChange={(e) => setIsRental(e.target.checked)} />}
-            label="This is a rental vehicle"
-          />
-          {isRental && (
-            <Stack spacing={2}>
-              <TextField label="Rental company" value={rentalCompany} onChange={(e) => setRentalCompany(e.target.value)} fullWidth
-                helperText="e.g. Enterprise, United Rentals" />
-              <Stack direction="row" spacing={2}>
-                <TextField label="Rental start" type="date" value={rentalStartDate} onChange={(e) => setRentalStartDate(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} />
-                <TextField label="Rental end" type="date" value={rentalEndDate} onChange={(e) => setRentalEndDate(e.target.value)} fullWidth InputLabelProps={{ shrink: true }} />
-              </Stack>
-              <TextField label="Pickup location" value={rentalLocation} onChange={(e) => setRentalLocation(e.target.value)} fullWidth />
-              <FormControlLabel
-                control={<Switch checked={rentalOneWay} onChange={(e) => setRentalOneWay(e.target.checked)} />}
-                label="One-way rental"
-              />
-              {rentalOneWay && (
-                <TextField label="Return location" value={rentalReturnLocation} onChange={(e) => setRentalReturnLocation(e.target.value)} fullWidth />
-              )}
-              <Stack direction="row" spacing={2}>
-                <TextField label="Cost" value={rentalCostAmount} onChange={(e) => setRentalCostAmount(e.target.value)} sx={{ flex: 1 }} inputProps={{ inputMode: 'decimal' }} />
-                <TextField select label="Per" value={rentalCostPeriod} onChange={(e) => setRentalCostPeriod(e.target.value)} sx={{ width: 130 }}>
-                  {RENTAL_PERIODS.map((p) => <MenuItem key={p.value} value={p.value}>{p.label}</MenuItem>)}
-                </TextField>
-              </Stack>
-              <TextField label="Agreement number" value={rentalAgreementNumber} onChange={(e) => setRentalAgreementNumber(e.target.value)} fullWidth />
-              <Box>
-                <input id="admin-rental-agreement" type="file" accept="image/*,application/pdf" hidden
-                  onChange={(e) => uploadAgreement(e.target.files?.[0])} />
-                {rentalAgreementUrl ? (
-                  <Stack direction="row" spacing={1} alignItems="center">
-                    <Button size="small" variant="outlined" component="a" href={rentalAgreementUrl} target="_blank" rel="noopener">View agreement</Button>
-                    <Button size="small" color="error" onClick={() => setRentalAgreementUrl('')}>Remove</Button>
-                  </Stack>
-                ) : (
-                  <Stack spacing={0.5}>
-                    <Button size="small" variant="outlined" disabled={agreementUploading}
-                      onClick={() => document.getElementById('admin-rental-agreement')?.click()}>
-                      {agreementUploading ? 'Uploading…' : 'Upload agreement (PDF or image)'}
-                    </Button>
-                    <Typography variant="caption" color="warning.main">No agreement attached — the rental will be flagged until one is uploaded.</Typography>
-                  </Stack>
-                )}
-              </Box>
-            </Stack>
+  return (
+    <EntityFormDialog
+      open
+      title={isEdit ? 'Edit vehicle' : 'Add vehicle'}
+      onClose={onClose}
+      onSubmit={submit}
+      saving={saving}
+      submitLabel={isEdit ? 'Save' : 'Add'}
+      dirty={dirty}
+      formError={formError}
+      legend={<RequiredLegend />}
+      fullScreenXs
+      maxWidth="sm"
+    >
+      <Stack spacing={2} mt={1}>
+        <TextField label="Name" value={v.name} onChange={(e) => set('name', e.target.value)} fullWidth required
+          error={!!err('name')} helperText={err('name')} />
+        <Stack direction="row" spacing={2}>
+          <TextField select label="Type" value={v.type} onChange={(e) => set('type', e.target.value)} fullWidth
+            error={!!err('type')} helperText={err('type')}>
+            {VEHICLE_TYPES.map((t) => <MenuItem key={t} value={t}>{vehicleTypeLabel(t)}</MenuItem>)}
+          </TextField>
+          {isEdit && (
+            <TextField select label="Status" value={v.status} onChange={(e) => set('status', e.target.value)} fullWidth
+              error={!!err('status')} helperText={err('status')}>
+              {VEHICLE_STATUSES.map((s) => <MenuItem key={s} value={s}>{s.replace(/_/g, ' ')}</MenuItem>)}
+            </TextField>
           )}
         </Stack>
-      </DialogContent>
-      <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button onClick={onClose} disabled={saving}>Cancel</Button>
-        <Button variant="contained" onClick={save} disabled={saving}>{saving ? 'Saving…' : isEdit ? 'Save' : 'Add'}</Button>
-      </DialogActions>
-    </Dialog>
+        <Stack direction="row" spacing={2}>
+          <TextField label="Make / Model" value={v.makeModel} onChange={(e) => set('makeModel', e.target.value)} fullWidth
+            error={!!err('makeModel')} helperText={err('makeModel')} />
+          <TextField label="Year" type="number" value={v.year} onChange={(e) => set('year', e.target.value)} sx={{ width: 120 }}
+            error={!!err('year')} helperText={err('year')} />
+        </Stack>
+        <Stack direction="row" spacing={2}>
+          <TextField label="VIN" value={v.vin} onChange={(e) => set('vin', e.target.value)} fullWidth
+            error={!!err('vin')} helperText={err('vin')} />
+          <TextField label="License plate" value={v.licensePlate} onChange={(e) => set('licensePlate', e.target.value)} fullWidth
+            error={!!err('licensePlate')} helperText={err('licensePlate')} />
+        </Stack>
+        <Stack direction="row" spacing={2}>
+          <TextField label="Odometer" type="number" value={v.odometer} onChange={(e) => set('odometer', e.target.value)} fullWidth
+            error={!!err('odometer')} helperText={err('odometer')} />
+          <Box sx={{ width: '100%' }}>
+            <SearchableSelect
+              label="Home hub"
+              value={v.hubId}
+              onChange={(id) => set('hubId', id)}
+              options={hubOptions}
+              placeholder="None"
+              error={!!err('hubId')}
+              helperText={err('hubId') ?? (hubs.length === 0 ? 'No hubs yet — add one under Hubs' : 'Where this vehicle is based')}
+            />
+            {hubs.length === 0 && (
+              <Link component={NextLink} href="/admin/hubs" variant="caption" sx={{ ml: 1.75 }}>Add a hub</Link>
+            )}
+          </Box>
+        </Stack>
+        <TextField label="Location notes" value={v.location} onChange={(e) => set('location', e.target.value)} fullWidth
+          error={!!err('location')}
+          helperText={err('location') ?? 'Free-text detail, e.g. a bay or lot. The home hub above is the primary location.'} />
+        <Stack direction="row" spacing={2}>
+          <TextField label="Insurance expires" type="date" value={v.insuranceExpires} onChange={(e) => set('insuranceExpires', e.target.value)} fullWidth InputLabelProps={{ shrink: true }}
+            error={!!err('insuranceExpires')} helperText={err('insuranceExpires')} />
+          <TextField label="Registration expires" type="date" value={v.registrationExpires} onChange={(e) => set('registrationExpires', e.target.value)} fullWidth InputLabelProps={{ shrink: true }}
+            error={!!err('registrationExpires')} helperText={err('registrationExpires')} />
+        </Stack>
+        <TextField label="Notes" value={v.notes} onChange={(e) => set('notes', e.target.value)} fullWidth multiline rows={2}
+          error={!!err('notes')} helperText={err('notes')} />
+
+        {!isEdit && (
+          // PRD §7.7 / T9: the sticker is already on the windshield — register it now.
+          // Create-only: PATCH excludes qrCodeId by design (re-association is an owner call).
+          <QrScanField
+            label="Existing QR label"
+            value={v.qrCodeId}
+            onChange={(code) => set('qrCodeId', code)}
+            size="medium"
+            helperText={err('qrCodeId') ?? 'Leave blank to have a code generated — download the label from the vehicle drawer.'}
+          />
+        )}
+
+        <Divider />
+        <FormControlLabel
+          control={<Switch checked={v.isRental} onChange={(e) => set('isRental', e.target.checked)} />}
+          label="This is a rental vehicle"
+        />
+        {v.isRental && (
+          <Stack spacing={2}>
+            <TextField label="Rental company" value={v.rentalCompany} onChange={(e) => set('rentalCompany', e.target.value)} fullWidth
+              error={!!err('rentalCompany')} helperText={err('rentalCompany') ?? 'e.g. Enterprise, United Rentals'} />
+            <Stack direction="row" spacing={2}>
+              <TextField label="Rental start" type="date" value={v.rentalStartDate} onChange={(e) => set('rentalStartDate', e.target.value)} fullWidth InputLabelProps={{ shrink: true }}
+                error={!!err('rentalStartDate')} helperText={err('rentalStartDate')} />
+              <TextField label="Rental end" type="date" value={v.rentalEndDate} onChange={(e) => set('rentalEndDate', e.target.value)} fullWidth InputLabelProps={{ shrink: true }}
+                error={!!err('rentalEndDate')} helperText={err('rentalEndDate')} />
+            </Stack>
+            <TextField label="Pickup location" value={v.rentalLocation} onChange={(e) => set('rentalLocation', e.target.value)} fullWidth
+              error={!!err('rentalLocation')} helperText={err('rentalLocation')} />
+            <FormControlLabel
+              control={<Switch checked={v.rentalOneWay} onChange={(e) => set('rentalOneWay', e.target.checked)} />}
+              label="One-way rental"
+            />
+            {v.rentalOneWay && (
+              <TextField label="Return location" value={v.rentalReturnLocation} onChange={(e) => set('rentalReturnLocation', e.target.value)} fullWidth
+                error={!!err('rentalReturnLocation')} helperText={err('rentalReturnLocation')} />
+            )}
+            <Stack direction="row" spacing={2}>
+              <TextField label="Cost" value={v.rentalCostAmount} onChange={(e) => set('rentalCostAmount', e.target.value)} sx={{ flex: 1 }} inputProps={{ inputMode: 'decimal' }}
+                error={!!err('rentalCostAmount')} helperText={err('rentalCostAmount')} />
+              <TextField select label="Per" value={v.rentalCostPeriod} onChange={(e) => set('rentalCostPeriod', e.target.value)} sx={{ width: 130 }}
+                error={!!err('rentalCostPeriod')} helperText={err('rentalCostPeriod')}>
+                {RENTAL_PERIODS.map((p) => <MenuItem key={p.value} value={p.value}>{p.label}</MenuItem>)}
+              </TextField>
+            </Stack>
+            <TextField label="Agreement number" value={v.rentalAgreementNumber} onChange={(e) => set('rentalAgreementNumber', e.target.value)} fullWidth
+              error={!!err('rentalAgreementNumber')} helperText={err('rentalAgreementNumber')} />
+            <Box>
+              <input id="admin-rental-agreement" type="file" accept="image/*,application/pdf" hidden
+                onChange={(e) => uploadAgreement(e.target.files?.[0])} />
+              {v.rentalAgreementUrl ? (
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <Button size="small" variant="outlined" component="a" href={v.rentalAgreementUrl} target="_blank" rel="noopener">View agreement</Button>
+                  <Button size="small" color="error" onClick={() => set('rentalAgreementUrl', '')}>Remove</Button>
+                </Stack>
+              ) : (
+                <Stack spacing={0.5}>
+                  <Button size="small" variant="outlined" disabled={agreementUploading}
+                    onClick={() => document.getElementById('admin-rental-agreement')?.click()}>
+                    {agreementUploading ? 'Uploading…' : 'Upload agreement (PDF or image)'}
+                  </Button>
+                  <Typography variant="caption" color="warning.main">No agreement attached — the rental will be flagged until one is uploaded.</Typography>
+                </Stack>
+              )}
+            </Box>
+          </Stack>
+        )}
+      </Stack>
+    </EntityFormDialog>
   )
 }
