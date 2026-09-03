@@ -5,9 +5,16 @@ import { Stack, Box, Typography, Checkbox, TextField } from '@mui/material'
 import { StatusChip } from '@/components/shared/StatusChip'
 
 // Canonical entry type for the admin deployment/add-items kit builders.
+// UXP-6 (6d): entries carry `itemName` so a 409 recovery can say WHICH pick was
+// dropped ("Unit 3 of Corer was taken") and the review step can list the picks.
 export type AdminKitEntry =
-  | { inventoryItemId: string; itemType: 'CONSUMABLE'; quantity: number }
-  | { inventoryItemId: string; itemType: 'SERIALIZED'; inventoryUnitId: string; unitLabel: string }
+  | { inventoryItemId: string; itemType: 'CONSUMABLE'; quantity: number; itemName: string }
+  | { inventoryItemId: string; itemType: 'SERIALIZED'; inventoryUnitId: string; unitLabel: string; itemName: string }
+
+/** The label a unit shows everywhere in the admin builders: its serial, else the API's position. */
+export function unitLabel(u: { serialNumber: string | null; position: number }): string {
+  return u.serialNumber ?? `Unit ${u.position}`
+}
 
 export interface SelectableItem {
   id: string
@@ -50,19 +57,21 @@ export function KitItemSelectRow({
           </Box>
         </Stack>
         <Stack spacing={0} pl={1}>
+          {/* T8: `position` is the API's own (position among ALL of the item's units), so
+              "Unit 3" here is the same "Unit 3" the inventory drawer shows. */}
           {item.availableUnits.map((u) => (
             <Stack key={u.id} direction="row" alignItems="center" spacing={1}>
               <Checkbox size="small" checked={selected.has(u.id)}
                 onChange={(e) => {
                   const m = new Map(selected)
                   if (e.target.checked) {
-                    m.set(u.id, { inventoryItemId: item.id, itemType: 'SERIALIZED', inventoryUnitId: u.id, unitLabel: u.serialNumber ?? `Unit ${u.position}` })
+                    m.set(u.id, { inventoryItemId: item.id, itemType: 'SERIALIZED', inventoryUnitId: u.id, unitLabel: unitLabel(u), itemName: item.name })
                   } else {
                     m.delete(u.id)
                   }
                   onChange(m)
                 }} />
-              <Typography variant="body2">{u.serialNumber ?? `Unit ${u.position}`}</Typography>
+              <Typography variant="body2">{unitLabel(u)}</Typography>
             </Stack>
           ))}
         </Stack>
@@ -78,7 +87,7 @@ export function KitItemSelectRow({
         onChange={(e) => {
           const m = new Map(selected)
           if (e.target.checked) {
-            m.set(item.id, { inventoryItemId: item.id, itemType: 'CONSUMABLE', quantity: 1 })
+            m.set(item.id, { inventoryItemId: item.id, itemType: 'CONSUMABLE', quantity: 1, itemName: item.name })
           } else {
             m.delete(item.id)
           }
@@ -94,7 +103,7 @@ export function KitItemSelectRow({
         <TextField type="number" size="small" value={(entry as { quantity: number }).quantity}
           onChange={(e) => {
             const m = new Map(selected)
-            m.set(item.id, { inventoryItemId: item.id, itemType: 'CONSUMABLE', quantity: parseInt(e.target.value) || 1 })
+            m.set(item.id, { inventoryItemId: item.id, itemType: 'CONSUMABLE', quantity: parseInt(e.target.value) || 1, itemName: item.name })
             onChange(m)
           }}
           inputProps={{ min: 1, style: { MozAppearance: 'textfield', width: 60 } }}

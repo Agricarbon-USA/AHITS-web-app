@@ -26,13 +26,18 @@ import CloseIcon from '@mui/icons-material/Close'
 import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline'
 import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
 import { TransferDialog } from '@/components/shared/TransferDialog'
-import { KitItemSelectRow } from '@/components/admin/KitItemSelectRow'
-import { NewDeploymentDialog, type VehicleOption, type InventoryOption } from '@/components/admin/NewDeploymentDialog'
+import { KitItemSelectRow, type AdminKitEntry } from '@/components/admin/KitItemSelectRow'
+import {
+  NewDeploymentDialog, hubLabel, isPickableItem, dropUnavailablePicks, droppedPicksMessage,
+  type VehicleOption, type InventoryOption, type PickerData, type StartedDeployment,
+} from '@/components/admin/NewDeploymentDialog'
 import { DispositionDialog } from '@/components/shared/DispositionDialog'
 import type { HubOption, UserOption } from '@/components/shared/DispositionDialog'
+import { SearchableSelect } from '@/components/shared/SearchableSelect'
 import { useCanEdit, EditGuard, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 import { ConditionSelect } from '@/components/shared/ConditionSelect'
 import { useToast } from '@/components/shared/useToast'
+import { apiErrorMessage } from '@/lib/api-error-shape'
 import { useUrlFilters } from '@/hooks/useUrlFilters'
 import {
   RentalVehicleForm, rentalFieldsToVehiclePayload, isRentalFormValid,
@@ -103,10 +108,11 @@ interface Rig {
 
 // UXP-3 (3d): VehicleOption / InventoryOption moved with the builder to
 // components/admin/NewDeploymentDialog.tsx and are imported back above (the drawer uses them too).
+// UXP-6 (6d): AdminKitEntry is the one from KitItemSelectRow (the local twin is gone).
 
-type AdminKitEntry =
-  | { inventoryItemId: string; itemType: 'CONSUMABLE'; quantity: number }
-  | { inventoryItemId: string; itemType: 'SERIALIZED'; inventoryUnitId: string; unitLabel: string }
+// /api/users also carries each user's home hub — the drawer's Add Items defaults its
+// consumable source hub to the rig's primary operator's home hub (as the operator side does).
+type OperatorRow = UserOption & { homeHubId?: string | null }
 
 interface TransferRow {
   id: string
@@ -143,15 +149,17 @@ function relativeDate(iso: string) {
 // ── Deployment Detail Drawer ──────────────────────────────────────
 
 function DeploymentDrawer({
-  rig: initialRig, operators, vehicles, inventoryItems, hubs, onClose, onUpdated, showToast, initialAction = null,
+  rig: initialRig, operators, vehicles, inventoryItems, hubs, onClose, onUpdated, onRefetchPickers, showToast, initialAction = null,
 }: {
   rig: Rig
-  operators: UserOption[]
+  operators: OperatorRow[]
   vehicles: VehicleOption[]
   inventoryItems: InventoryOption[]
   hubs: HubOption[]
   onClose: () => void
   onUpdated: () => void
+  /** UXP-6 (6d, T1/T2): re-read vehicles + inventory; null when the read failed. */
+  onRefetchPickers?: () => Promise<PickerData | null>
   showToast: (msg: string, severity?: 'success' | 'error') => void
   initialAction?: 'transfer' | 'end' | null
 }) {
@@ -174,6 +182,11 @@ function DeploymentDrawer({
   const [rentalError, setRentalError] = React.useState('')
   const [addItemOpen, setAddItemOpen] = React.useState(false)
   const [pendingItems, setPendingItems] = React.useState<Map<string, AdminKitEntry>>(new Map())
+  // UXP-6 (6d, T3): the items POST requires `sourceHubId` for a consumable. The rig
+  // records no source hub (the draw hub lives on each kit item, not exposed by the
+  // detail read), so the pick defaults to the primary operator's home hub.
+  const [addItemHubId, setAddItemHubId] = React.useState('')
+  const [addItemError, setAddItemError] = React.useState<string | null>(null)
   const [noteDialog, setNoteDialog] = React.useState<null | 'addVehicles' | 'removeVehicles' | 'addItems' | 'removeItems' | 'end'>(null)
   const [vehicleDispositions, setVehicleDispositions] = React.useState<Map<string, { dispositionType: string; toOperatorId?: string }>>(new Map())
   const [vehicleRemoveNote, setVehicleRemoveNote] = React.useState('')
@@ -242,10 +255,22 @@ function DeploymentDrawer({
   const outgoingTransfers = pendingTransfers.filter((t) => t.fromRig.id === rig.id)
   const kitItems = rig.kits.flatMap((k) => k.items)
   const unassignedVehicles = vehicles.filter((v) => !v.assignedOperatorId || v.assignedOperatorId === rig.operator.id)
-  const availableItems = inventoryItems.filter((i) =>
-    i.itemType === 'SERIALIZED' ? i.unitCounts.available > 0 : i.quantity > 0
-  )
+  const availableItems = inventoryItems.filter(isPickableItem)
   const isActive = !rig.endedAt
+  const pendingHasConsumable = Array.from(pendingItems.values()).some((e) => e.itemType === 'CONSUMABLE')
+  const addItemsUnresolved = pendingHasConsumable && !addItemHubId
+
+  const openAddItems = () => {
+    const homeHubId = operators.find((o) => o.id === rig.operator.id)?.homeHubId
+    setAddItemHubId(homeHubId && hubs.some((h) => h.id === homeHubId) ? homeHubId : '')
+    setAddItemError(null)
+    setAddItemOpen(true)
+  }
+  const closeAddItems = () => {
+    setAddItemOpen(false)
+    setPendingItems(new Map())
+    setAddItemError(null)
+  }
 
   const refresh = async () => {
     const res = await fetch(`/api/deployments/${rig.id}`)
@@ -449,37 +474,60 @@ function DeploymentDrawer({
     await refresh()
   }
 
+  // UXP-6 (6d, T3): the POST's zod union needs `itemType: 'CONSUMABLE'` (+ `sourceHubId`)
+  // for a consumable — the old body omitted both, so every consumable add was a 400 that
+  // the client treated as success (closed, cleared the picks, no toast). Now every
+  // non-OK reopens the picker with the picks intact and the message inline.
   const handleAddItems = async (note: string, photoUrls: string[]) => {
     setActionLoading(true)
-    const res = await fetch(`/api/deployments/${rig.id}/items`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        items: Array.from(pendingItems.values()).map((entry) =>
-          entry.itemType === 'SERIALIZED'
-            ? { inventoryItemId: entry.inventoryItemId, inventoryUnitId: entry.inventoryUnitId, itemType: 'SERIALIZED' }
-            : { inventoryItemId: entry.inventoryItemId, quantity: entry.quantity }
-        ),
-        note,
-        photoUrls,
-      }),
-    })
-    setActionLoading(false)
-    if (res.status === 409) {
-      const err = await res.json()
-      const m = new Map(pendingItems)
-      for (const [key, entry] of m) { if (entry.itemType === 'SERIALIZED') m.delete(key) }
-      setPendingItems(m)
+    const entries = Array.from(pendingItems.values())
+    const hasConsumable = entries.some((e) => e.itemType === 'CONSUMABLE')
+    let res: Response
+    try {
+      res = await fetch(`/api/deployments/${rig.id}/items`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: entries.map((entry) =>
+            entry.itemType === 'CONSUMABLE'
+              ? { itemType: 'CONSUMABLE', inventoryItemId: entry.inventoryItemId, quantity: entry.quantity }
+              : { itemType: 'SERIALIZED', inventoryItemId: entry.inventoryItemId, inventoryUnitId: entry.inventoryUnitId }
+          ),
+          ...(hasConsumable && addItemHubId ? { sourceHubId: addItemHubId } : {}),
+          note,
+          photoUrls,
+        }),
+      })
+    } catch {
+      setActionLoading(false)
       setNoteDialog(null)
+      setAddItemError('Network error. Please try again.')
       setAddItemOpen(true)
-      await refresh()
-      showToast(err.error ?? 'A unit was just taken. Please reselect.', 'error')
       return
     }
+    if (res.ok) {
+      setActionLoading(false)
+      setNoteDialog(null)
+      closeAddItems()
+      await refresh()
+      return
+    }
+    const body: unknown = await res.json().catch(() => null)
+    const fallback = 'Could not add the items. Please try again.'
+    let message = apiErrorMessage(body, fallback)
+    if (res.status === 409 && onRefetchPickers) {
+      // T1: drop only the units that are gone; keep consumables and unaffected units.
+      const fresh = await onRefetchPickers()
+      if (fresh) {
+        const next = dropUnavailablePicks({ kitItems: pendingItems, vehicleIds: new Set() }, fresh)
+        const dropped = droppedPicksMessage(next.dropped)
+        if (dropped) { setPendingItems(next.kitItems); message = dropped }
+      }
+    }
+    setActionLoading(false)
     setNoteDialog(null)
-    setAddItemOpen(false)
-    setPendingItems(new Map())
-    await refresh()
+    setAddItemError(message)
+    setAddItemOpen(true)
   }
 
   const handleRemoveItem = async () => {
@@ -657,7 +705,7 @@ function DeploymentDrawer({
               <Typography variant="subtitle2" fontWeight={600}>Kit</Typography>
               {isActive && (
                 <Stack direction="row" spacing={1}>
-                  <MutationButton size="small" variant="outlined" onClick={() => setAddItemOpen(true)}>Add Items</MutationButton>
+                  <MutationButton size="small" variant="outlined" onClick={openAddItems}>Add Items</MutationButton>
                   {kitItems.length > 0 && !removingItems && (
                     <MutationButton size="small" variant="outlined" color="error" onClick={() => setRemovingItems(true)}>Remove</MutationButton>
                   )}
@@ -863,14 +911,31 @@ function DeploymentDrawer({
         </DialogActions>
       </Dialog>
 
-      {/* Add Items picker */}
-      <Dialog open={addItemOpen} onClose={() => { setAddItemOpen(false); setPendingItems(new Map()) }} maxWidth="sm" fullWidth>
+      {/* Add Items picker. Stays a plain Dialog (not EntityFormDialog): it opens INSIDE
+          the DetailDrawer, whose own history guard already answers hardware Back — a
+          second armed guard here would make one Back press close both. */}
+      <Dialog open={addItemOpen} onClose={closeAddItems} maxWidth="sm" fullWidth>
         <DialogTitle>Add Items</DialogTitle>
         <DialogContent>
+          {addItemError && <Alert severity="error" sx={{ mb: 2 }}>{addItemError}</Alert>}
+          <Box sx={{ mt: 1, mb: 2 }}>
+            <SearchableSelect
+              label="Source hub for consumables"
+              value={addItemHubId}
+              onChange={setAddItemHubId}
+              options={hubs.map((h) => ({ value: h.id, label: hubLabel(h) }))}
+              size="small"
+              required={pendingHasConsumable}
+              error={addItemsUnresolved}
+              helperText={pendingHasConsumable
+                ? 'Consumables are drawn from this hub.'
+                : 'Required only when adding a consumable.'}
+            />
+          </Box>
           {availableItems.length === 0 ? (
             <Typography variant="body2" color="text.secondary">No available items.</Typography>
           ) : (
-            <Stack spacing={1} mt={1}>
+            <Stack spacing={1}>
               {availableItems.map((item) => (
                 <KitItemSelectRow key={item.id} item={item} selected={pendingItems} onChange={setPendingItems} showCategoryChip />
               ))}
@@ -878,10 +943,10 @@ function DeploymentDrawer({
           )}
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={() => { setAddItemOpen(false); setPendingItems(new Map()) }}>Cancel</Button>
+          <Button onClick={closeAddItems}>Cancel</Button>
           <Button variant="contained"
-            disabled={pendingItems.size === 0}
-            onClick={() => { setAddItemOpen(false); setNoteDialog('addItems') }}>Continue</Button>
+            disabled={pendingItems.size === 0 || addItemsUnresolved}
+            onClick={() => { setAddItemError(null); setAddItemOpen(false); setNoteDialog('addItems') }}>Continue</Button>
         </DialogActions>
       </Dialog>
 
@@ -975,7 +1040,8 @@ function DeploymentDrawer({
         title="Add items to kit"
         presets={NOTE_PRESETS}
         loading={actionLoading}
-        onClose={() => setNoteDialog(null)}
+        // Backing out of the note returns to the picker with the picks intact.
+        onClose={() => { setNoteDialog(null); setAddItemOpen(true) }}
         onConfirm={handleAddItems}
         confirmLabel="Add Items"
       />
@@ -1111,6 +1177,55 @@ function DeploymentDrawer({
 // back-button correct). Module scope so the useUrlFilters setter stays referentially stable.
 const DEPLOYMENT_FILTER_DEFAULTS = { ended: '', operatorId: '', projectId: '' }
 
+type RawUnit = { id: string; serialNumber: string | null; status?: string; position?: number }
+
+/**
+ * UXP-6 (6d, T8): the pickers' unit labels come from the API's own `availableUnits`
+ * (position among ALL of the item's units — the number the inventory drawer shows).
+ * The old client recount over AVAILABLE units alone relabelled "Unit 3" as "Unit 1"
+ * whenever Units 1–2 were out. `units` is only a fallback for a response without it.
+ */
+function toInventoryOptions(body: unknown): InventoryOption[] {
+  const rows = (body as { data?: unknown[] } | null)?.data
+  if (!Array.isArray(rows)) return []
+  return rows.map((raw) => {
+    const item = raw as InventoryOption & { units?: RawUnit[]; availableUnits?: RawUnit[] }
+    const available = Array.isArray(item.availableUnits)
+      ? item.availableUnits
+      : (item.units ?? []).filter((u) => u.status === 'AVAILABLE')
+    return {
+      ...item,
+      availableUnits: available.map((u, idx) => ({
+        id: u.id,
+        serialNumber: u.serialNumber ?? null,
+        position: typeof u.position === 'number' ? u.position : idx + 1,
+      })),
+    }
+  })
+}
+
+function toVehicleOptions(body: unknown): VehicleOption[] {
+  const rows = (body as { data?: unknown } | null)?.data ?? body
+  return Array.isArray(rows) ? (rows as VehicleOption[]) : []
+}
+
+/** The list-row shape the drawer needs, from what POST /api/deployments returned. */
+function toRig(started: StartedDeployment): Rig | null {
+  const r = started.rig
+  if (!r) return null
+  return {
+    id: r.id,
+    label: r.label ?? null,
+    startedAt: r.startedAt ?? new Date().toISOString(),
+    endedAt: r.endedAt ?? null,
+    operator: r.operator ?? { id: started.operatorId, name: started.operatorName },
+    project: r.project ?? null,
+    vehicles: (r.vehicles ?? []) as Rig['vehicles'],
+    kits: (r.kits ?? []) as Rig['kits'],
+    secondaryOperators: (r.secondaryOperators ?? []) as Rig['secondaryOperators'],
+  }
+}
+
 export default function AdminDeploymentsPage() {
   return (
     <React.Suspense>
@@ -1129,7 +1244,7 @@ function AdminDeploymentsContent() {
   const showEnded = filters.ended === 'true'
   const filterOperator = filters.operatorId
   const filterProject = filters.projectId
-  const [operators, setOperators] = React.useState<UserOption[]>([])
+  const [operators, setOperators] = React.useState<OperatorRow[]>([])
   const [projects, setProjects] = React.useState<{ id: string; name: string }[]>([])
   const [vehicles, setVehicles] = React.useState<VehicleOption[]>([])
   const [inventoryItems, setInventoryItems] = React.useState<InventoryOption[]>([])
@@ -1178,19 +1293,35 @@ function AdminDeploymentsContent() {
     if (match) { setDrawerAction(null); setDrawerRig(match) }
   }, [rigs])
 
+  // UXP-6 (6d, T2): the two pickers' data is ONE refetchable read. It runs on mount,
+  // after every successful create, after every 409 (the builder diffs its picks against
+  // what comes back) and after every drawer mutation — so a second deployment in one
+  // sitting never offers a unit or vehicle the first one just took. Returns the fresh
+  // lists (null when either read failed) because the 409 recovery needs them
+  // synchronously, not on a later render.
+  const refetchPickers = React.useCallback(async (): Promise<PickerData | null> => {
+    try {
+      const [vRes, iRes] = await Promise.all([fetch('/api/vehicles'), fetch('/api/inventory?pageSize=200')])
+      if (!vRes.ok || !iRes.ok) return null
+      const fresh: PickerData = {
+        vehicles: toVehicleOptions(await vRes.json()),
+        inventoryItems: toInventoryOptions(await iRes.json()),
+      }
+      setVehicles(fresh.vehicles)
+      setInventoryItems(fresh.inventoryItems)
+      return fresh
+    } catch {
+      return null
+    }
+  }, [])
+
   React.useEffect(() => {
     fetch('/api/users').then((r) => r.json()).then((d) => setOperators(d.data ?? [])).catch(() => {})
     fetch('/api/projects').then((r) => r.json()).then((d) => setProjects(d.data ?? d ?? [])).catch(() => {})
-    fetch('/api/vehicles').then((r) => r.json()).then((d) => setVehicles(d.data ?? d ?? [])).catch(() => {})
-    fetch('/api/inventory?pageSize=200').then((r) => r.json()).then((d) => {
-      const items = (d.data ?? []).map((item: InventoryOption & { units?: { id: string; serialNumber: string | null; status: string }[] }) => ({
-        ...item,
-        availableUnits: (item.units ?? [])
-          .filter((u) => u.status === 'AVAILABLE')
-          .map((u, idx) => ({ id: u.id, serialNumber: u.serialNumber, position: idx + 1 })),
-      }))
-      setInventoryItems(items)
-    }).catch(() => {})
+    // Same normalisers as refetchPickers (T8 positions from the API) — kept as
+    // `.then` chains here so the mount read is not a synchronous setState-in-effect.
+    fetch('/api/vehicles').then((r) => r.json()).then((d) => setVehicles(toVehicleOptions(d))).catch(() => {})
+    fetch('/api/inventory?pageSize=200').then((r) => r.json()).then((d) => setInventoryItems(toInventoryOptions(d))).catch(() => {})
     fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(Array.isArray(d) ? d : (d?.data ?? []))).catch(() => {})
   }, [])
 
@@ -1238,8 +1369,9 @@ function AdminDeploymentsContent() {
           </Stack>
           <Typography variant="body2" color="text.secondary">{activeCount} active</Typography>
         </Box>
+        {/* D11: ONE creating verb app-wide — the operator page's empty state says the same. */}
         <MutationButton variant="contained" startIcon={<AddIcon />} onClick={() => setNewOpen(true)}>
-          New Deployment
+          Start Deployment
         </MutationButton>
       </Stack>
 
@@ -1387,7 +1519,7 @@ function AdminDeploymentsContent() {
             {!loading && rigs.length === 0 && (
               <TableRow>
                 <TableCell colSpan={6} align="center" sx={{ py: 6, color: 'text.secondary' }}>
-                  {showEnded ? 'No ended deployments.' : 'No active deployments. Click "New Deployment" to start one.'}
+                  {showEnded ? 'No ended deployments.' : 'No active deployments. Tap "Start Deployment" to begin one.'}
                 </TableCell>
               </TableRow>
             )}
@@ -1404,7 +1536,10 @@ function AdminDeploymentsContent() {
           hubs={hubs}
           initialAction={drawerAction}
           onClose={() => { setDrawerRig(null); setDrawerAction(null) }}
-          onUpdated={load}
+          // T2: a drawer mutation (add/return items, add/remove vehicles) changes what
+          // the pickers may offer — refresh them along with the list.
+          onUpdated={() => { void load(); void refetchPickers() }}
+          onRefetchPickers={refetchPickers}
           showToast={showToast}
         />
       )}
@@ -1417,7 +1552,17 @@ function AdminDeploymentsContent() {
           hubs={hubs}
           projects={projects} // UXP-3 (3d): fetched above for the filter, now offered in the builder
           onClose={() => setNewOpen(false)}
-          onSuccess={() => { showToast('Deployment created'); load() }}
+          onRefetchPickers={refetchPickers}
+          onSuccess={(started) => {
+            // D11 verb in the toast too ("Deployment created" contradicted the button);
+            // Open lands in the new rig's drawer, the same one a row tap opens.
+            const rig = toRig(started)
+            toast({
+              message: `Deployment started for ${started.operatorName}`,
+              action: rig ? { label: 'Open', onClick: () => { setDrawerAction(null); setDrawerRig(rig) } } : undefined,
+            })
+            void load()
+          }}
         />
       )}
 
