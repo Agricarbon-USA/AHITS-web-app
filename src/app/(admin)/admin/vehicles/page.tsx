@@ -14,6 +14,7 @@ import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
 import ContentCopyIcon from '@mui/icons-material/ContentCopy'
+import QrCode2Icon from '@mui/icons-material/QrCode2'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { useToast } from '@/components/shared/useToast'
@@ -22,9 +23,11 @@ import { SearchableSelect } from '@/components/shared/SearchableSelect'
 import { QrScanField } from '@/components/shared/QrScanField'
 import { useDirtyState } from '@/hooks/useDirtyState'
 import { parseApiError } from '@/lib/api-error-shape'
+import { downloadQrLabel } from '@/lib/qr-label'
 import { groupBy, formatDate } from '@/lib/utils'
 import { uploadDocument } from '@/lib/photoStore'
 import { VEHICLE_TYPES, vehicleTypeLabel } from '@/lib/vehicle-types'
+import { DEFAULT_DAILY_CHECKLIST } from '@/types'
 import { DailyCheckViewer } from '@/components/admin/DailyCheckViewer'
 
 const RENTAL_PERIODS: { value: 'DAY' | 'WEEK' | 'MONTH' | 'FLAT'; label: string }[] = [
@@ -73,8 +76,40 @@ type SortKey = 'name' | 'type' | 'status' | 'hub' | 'operator' | 'odometer'
 
 interface VehicleDetail extends VehicleRow {
   dailyChecks: { id: string; date: string; operator: { name: string } | null; passFail?: boolean }[]
-  maintenanceTasks: { id: string; taskName: string; status: string; nextDue: string | null; actualCost: string | null }[]
+  maintenanceTasks: {
+    id: string; taskName: string; status: string; nextDue: string | null; actualCost: string | null
+    // Full MaintenanceTask rows come back; these three tell a service SCHEDULE
+    // (recurring, D24/D29) apart from a damage report or a logged field fix.
+    isDamageReport?: boolean; intervalValue?: number; deletedAt?: string | null
+  }[]
   photos: { id: string; url: string }[]
+}
+
+// UXP-6 (6b): the admin checklist list (GET /api/checklist-templates), read once so the
+// drawer's Setup block and the per-type group headers can name the checklist a vehicle
+// type actually runs. Mirrors lib/checklist-templates resolveChecklistItems: the active
+// type-specific template wins (the list is ordered updatedAt DESC within a type — T7's
+// "newest edited wins"), else the active general one, else the built-in default.
+interface ChecklistTemplateSummary {
+  id: string
+  name: string
+  vehicleType: string | null
+  items: { label: string }[]
+  isActive: boolean
+}
+
+function resolveChecklist(type: string, templates: ChecklistTemplateSummary[]): { name: string; count: number; custom: boolean } {
+  const active = templates.filter((t) => t.isActive && t.items.length > 0)
+  const specific = active.find((t) => t.vehicleType === type)
+  if (specific) return { name: specific.name, count: specific.items.length, custom: true }
+  const general = active.find((t) => t.vehicleType === null)
+  if (general) return { name: general.name, count: general.items.length, custom: true }
+  return { name: 'Built-in default', count: DEFAULT_DAILY_CHECKLIST.length, custom: false }
+}
+
+/** A service schedule = a recurring task on the vehicle (not a damage report / field fix). */
+function isServiceSchedule(t: VehicleDetail['maintenanceTasks'][number]): boolean {
+  return !t.isDamageReport && (t.intervalValue ?? 0) >= 1 && !t.deletedAt
 }
 
 // UXP-6 (6b) fit problem: DetailDrawer and EntityFormDialog each arm useHistoryGuard,
@@ -134,6 +169,8 @@ export default function AdminVehiclesPage() {
   // The drawer the form was opened from, to re-open once the form closes (see
   // afterHistoryGuardReleased — the drawer and the form never overlap).
   const [formReturnTo, setFormReturnTo] = React.useState<string | null>(null)
+  // null = not known (fetch failed / not admin) → the Setup block shows "—", never a guess.
+  const [templates, setTemplates] = React.useState<ChecklistTemplateSummary[] | null>(null)
   const [confirmDelete, setConfirmDelete] = React.useState<VehicleRow | null>(null)
   // CC-10: field-fix dialog
   const [fieldFixOpen, setFieldFixOpen] = React.useState(false)
@@ -180,7 +217,16 @@ export default function AdminVehiclesPage() {
     } catch { /* non-fatal: form falls back to no-hub */ }
   }, [])
 
-  React.useEffect(() => { load(); loadHubs() }, [load, loadHubs])
+  const loadTemplates = React.useCallback(async () => {
+    try {
+      const res = await fetch('/api/checklist-templates')
+      if (!res.ok) return
+      const d = await res.json()
+      setTemplates(Array.isArray(d?.data) ? d.data : [])
+    } catch { /* fail soft: the Setup block shows "—" for the checklist */ }
+  }, [])
+
+  React.useEffect(() => { load(); loadHubs(); loadTemplates() }, [load, loadHubs, loadTemplates])
 
   React.useEffect(() => {
     fetch('/api/projects').then((r) => r.json()).then((d) => setProjects(d.data ?? d ?? [])).catch(() => {})
@@ -620,6 +666,47 @@ export default function AdminVehiclesPage() {
               <Box><Typography variant="subtitle2" gutterBottom>Notes</Typography><Typography variant="body2" color="text.secondary">{detail.notes}</Typography></Box>
             )}
 
+            {/* UXP-6 (6b): Setup — the D24 chain in one place. A vehicle is "set up" when
+                its type's daily checklist is right, its service schedules exist and its
+                QR label is on the windshield; each row deep-links to where that is done
+                (?checklist= / ?sched= readers on Settings / Maintenance, D12-transitive). */}
+            <Divider />
+            <Box>
+              <Typography variant="subtitle2" gutterBottom>Setup</Typography>
+              <Stack spacing={0.75}>
+                {(() => {
+                  const c = templates ? resolveChecklist(detail.type, templates) : null
+                  return (
+                    <SetupRow
+                      label="Daily checklist"
+                      value={c ? `${c.name} (${c.count} items)` : '—'}
+                      action={{ label: 'Edit', href: `/admin/settings?checklist=${detail.type}` }}
+                    />
+                  )
+                })()}
+                <SetupRow
+                  label={`Service schedules (${detail.maintenanceTasks.filter(isServiceSchedule).length})`}
+                  value=""
+                  action={{ label: 'Add', href: `/admin/maintenance?sched=vehicle:${detail.id}` }}
+                />
+                <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={2}>
+                  <Typography variant="body2" color="text.secondary">QR label</Typography>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<QrCode2Icon />}
+                    disabled={!detail.qrCodeId}
+                    onClick={() => {
+                      downloadQrLabel(detail.qrCodeId, detail.name)
+                        .catch(() => showToast({ message: 'Could not render the QR label.', severity: 'error' }))
+                    }}
+                  >
+                    Download
+                  </Button>
+                </Stack>
+              </Stack>
+            </Box>
+
             <Divider />
             <Box>
               <Typography variant="subtitle2" gutterBottom>Maintenance ({detail.maintenanceTasks.length})</Typography>
@@ -816,6 +903,21 @@ function Detail({ label, value, color }: { label: string; value: string; color?:
     <Stack direction="row" justifyContent="space-between" spacing={2}>
       <Typography variant="body2" color="text.secondary">{label}</Typography>
       <Typography variant="body2" fontWeight={500} color={color === 'error' ? 'error.main' : color === 'warning' ? 'warning.main' : 'text.primary'} textAlign="right">{value}</Typography>
+    </Stack>
+  )
+}
+
+/** A Setup row: label · value · one deep-link action ("Edit" / "Add"). */
+function SetupRow({ label, value, action }: { label: string; value: string; action: { label: string; href: string } }) {
+  return (
+    <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={2}>
+      <Typography variant="body2" color="text.secondary" sx={{ flexShrink: 0 }}>{label}</Typography>
+      <Stack direction="row" alignItems="center" spacing={1.5} sx={{ minWidth: 0 }}>
+        {value && <Typography variant="body2" fontWeight={500} textAlign="right">{value}</Typography>}
+        <Link component={NextLink} href={action.href} variant="body2" fontWeight={600} sx={{ flexShrink: 0 }}>
+          {action.label}
+        </Link>
+      </Stack>
     </Stack>
   )
 }
