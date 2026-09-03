@@ -54,6 +54,22 @@ interface RequestRow {
 
 const TERMINAL = new Set(['FULFILLED', 'CANCELLED', 'DENIED'])
 
+type RequestsTab = 'ACTIVE' | 'CLOSED'
+
+// UXP-3 (3c rider): the "handled" notification deep-links to /operator/requests?tab=closed,
+// because a handled request lives on the Closed tab — the bell tap used to land on a list
+// that no longer contained it. Read AFTER hydration via useSyncExternalStore: the server
+// snapshot is always ACTIVE (matches the server HTML, no #418), and React re-renders with
+// the real URL once hydrated. No effect, no synchronous setState. window.location (not
+// useSearchParams) so this stays outside the Suspense requirement — same call as
+// my-deployment's ?fromRequestId read.
+const subscribeToNothing = () => () => {}
+function readUrlTab(): RequestsTab {
+  const tab = new URLSearchParams(window.location.search).get('tab')
+  return tab?.toLowerCase() === 'closed' ? 'CLOSED' : 'ACTIVE'
+}
+const serverTab = (): RequestsTab => 'ACTIVE'
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function RequestsPage() {
@@ -67,7 +83,10 @@ export default function RequestsPage() {
   const [cancellingId, setCancellingId] = React.useState<string | null>(null)
   // CC-14: confirm before cancelling a request (was a one-tap irreversible action).
   const [confirmCancelId, setConfirmCancelId] = React.useState<string | null>(null)
-  const [activeTab, setActiveTab] = React.useState<'ACTIVE' | 'CLOSED'>('ACTIVE')
+  // UXP-3 (3c rider): the URL's ?tab seeds the tab; an explicit toggle wins after that.
+  const urlTab = React.useSyncExternalStore(subscribeToNothing, readUrlTab, serverTab)
+  const [pickedTab, setActiveTab] = React.useState<RequestsTab | null>(null)
+  const activeTab: RequestsTab = pickedTab ?? urlTab
   const showToast = useToast()
   const { mutate, isOffline } = useOfflineQueue()
   const { user } = useAuth()
@@ -169,7 +188,7 @@ export default function RequestsPage() {
           <ToggleButtonGroup
             value={activeTab}
             exclusive
-            onChange={(_e, v) => { if (v) setActiveTab(v as 'ACTIVE' | 'CLOSED') }}
+            onChange={(_e, v) => { if (v) setActiveTab(v as RequestsTab) }}
             size="small"
             sx={{ mb: 2 }}
           >
