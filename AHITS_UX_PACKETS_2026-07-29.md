@@ -1,6 +1,6 @@
 # AHITS — UX Packets (UXP-1…5) · build specs from the 2026-07-29 six-seat UX review
 
-> STATUS: current (build queue) · UPDATED: 2026-07-29
+> STATUS: current (build queue) · UPDATED: 2026-09-03 — **UXP-3 BUILT** (branch `feature/20260903/Agricarbon-USA-uxp3-flow-closers`, PR pending) with the 2026-08-20 rider; order became UXP-1 → **UXP-3** → UXP-2 by owner call 2026-08-20. **UXP-6 added below** (2026-09-03 admin-setup audit) and its Tier 1 BUILT (stacked branch `…-uxp6-admin-setup`). Handoff: `AHITS_SESSION_HANDOFF_2026-09-03_UXP3-UXP6.md`.
 > READ-WITH: `AHITS_UX_SIX_SEAT_REVIEW_2026-07-29.md` (evidence + finding IDs cited below) · `DECISIONS.md` · `CLAUDE.md` (deploy flow)
 > ORDER (Max ruled 2026-07-29): **UXP-1 → UXP-2 → UXP-3**, then UXP-4/UXP-5 paced/demand-pull. One packet per session, PR-per-item-cluster, evening merges only (D16 discipline). Every packet: strings/UI only unless an item says otherwise; NO schema changes anywhere in this queue; each PR carries its component tests (`npm run test:ui`) and the smoke rows listed.
 > House rules for the build sessions: read the finding's evidence in the review doc before coding; re-verify the cited file:line against HEAD (the tree moves fast); explicit-path staging, never `git add -A`; if an item's fix collides with a Dn, stop and flag — do not improvise around a decision.
@@ -99,6 +99,21 @@ Shape: (i) `DialogShell` wrapper codifying the majority pattern (title, actions 
 ## UXP-5 · WATTMETER (paced; independent, each item its own PR)
 
 Findings: E3 (Serwist exclude for the mapbox chunk — also shortens UXP-1d's hydration window; ship early if trivial), E4 (Sentry lazy-init when DSN present), E5 (merge the two 45s pollers into one badges aggregate — small API addition), E6 (defer My-Deployment's four dialog-feeding fetches to first tap), E7 (hoist useOfflineQueue to one provider — sequence AFTER the D10 my-deployment split per parking-lot note), E8 (dynamic-import qrcode), E9 (field-reads SW timeout 5s→3s). Acceptance: re-run the Wattmeter measurement script set; precache <2.5MB; idle-phone request rate halved; no behavior change in the offline harness (`tests/offline` must stay green — it is the pilot's safety net).
+
+---
+
+## UXP-6 · ADMIN SETUP & FLEET ONBOARDING (one create/edit grammar; nothing lost) — added 2026-09-03
+
+Goal: an admin stands up a full rig's equipment in one phone sitting — vehicle (labelled, checklist-bound, schedulable) · items with units and hub stock · a deployment with a project, reviewed before start — through ONE form shape. Owner ask (2026-09-03): "a similar (and simpler) connected logic and user experience throughout the app — not losing any information along the way." Findings: the 2026-09-03 audit's T1–T11 (409 kit-pick wipe · stale pickers · drawer Add-Items silent failure · serialized "initial quantity" creating zero units · consumable stock lost without a hub · edits unable to clear fields · two active templates silently racing · wrong unit labels · no vehicle QR path · blind launch · PATCH errors reading as "not found") + C7 · C5-adjacent · §3.4/§3.5 · §7 · B-7/B-8. UI layer only; zero schema; every field and behaviour preserved by contract (request bodies unchanged or a superset); each PR carries `test:ui` specs; evening merges (D16); D11 verb held ("Start Deployment"); D21 line-count rule on my-deployment. Grammar recorded as **D38**.
+
+- **6a · EntityFormDialog (NOT droppable) — BUILT.** `src/components/ui/EntityFormDialog.tsx` + `src/lib/api-error-shape.ts` + `src/hooks/useDirtyState.ts` + toast `action` + `SearchableSelect` `error`. Pinned Save/Cancel (Paper is the form, Enter submits), required legend, inline field errors + scroll-to-first-invalid, "Discard changes?" dirty guard, Back-to-close (nest-aware `useHistoryGuard`), `Save & add another` slot, `historyGuard` opt-out.
+- **6b · Vehicle — BUILT.** Form on the grammar (fullScreen at xs, hub SearchableSelect, no "(optional)" labels); create-only "Existing QR label" scan → `qrCodeId`; drawer Setup block: daily checklist (→ `/admin/settings?checklist=<TYPE>`), service schedules (→ `/admin/maintenance?sched=vehicle:<id>`), QR label download (`src/lib/qr-label.ts`); Duplicate (minus uniques). Toast "<name> added · Open".
+- **6c · Item (NOT droppable) — BUILT.** Form on the grammar; serialized "Units to create" + serials → bulk `POST /units` with the item (T4); consumable qty>0 ⇒ hub required (T5); edits null cleared nullable fields (T6); Move stock / Add stock / Invite / Manage account pinned (C7). `Save & add another` keeps type/category/hub.
+- **6d · Admin builder (NOT droppable) — BUILT.** Wizard on the grammar (Enter = Next; "Start Deployment"; Back as secondary; dirty guard); operator/project/hub SearchableSelects; pickers refetch after every create/409 (T2); scoped 409 keeps everything but the taken unit/vehicle, named (T1); drawer Add Items sends `itemType`+`sourceHubId` and surfaces errors (T3); unit labels from the API (T8); toast "Deployment started for <name> · Open". 4 steps kept.
+- **6e · Checklist — BUILT.** Editor on the grammar; Vehicles entry (toolbar "Checklists" + per-type "Using: <template>"); `?checklist=` deep-link; duplicate-active warning (T7); Duplicate. EmptyState ×4 deferred.
+- **6f · Operator builder parity (droppable) — DEFERRED** (D21 budget). **Tier 2 (server/zod) — DEFERRED:** 409 bodies carrying `code`+ids · nullable hub/category on PATCH · vehicle P2002 → 409 · transactional item+units · one-active-template enforcement · bulk QR sheet · per-vehicle checklist override (schema — out).
+
+Smoke (staging, admin phone, ~12 min): see the handoff §5 "After PR-2". Rollback: UI-only; roll traffic back per `PILOT_ROLLBACK.md`, zero data implications. Measure before/after with the audit's Stopwatch counts (vehicle 8→7 taps, serialized item 24→≈11, admin deployment 13+→≈10, checklist 7→6).
 
 ---
 
