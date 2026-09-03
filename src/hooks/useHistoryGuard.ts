@@ -27,8 +27,10 @@ import * as React from 'react'
  *  R2 BACK     A user Back pops exactly one sentinel and is answered by the TOP guard
  *              only: it leaves the stack and runs `onBack`. If `active` is still true
  *              afterwards (a wizard stepping 2 → 1) the effect re-runs and re-arms with a
- *              fresh sentinel. (A multi-entry jump from the history menu pops every guard
- *              whose sentinel it removed, top-down.)
+ *              fresh sentinel. Sentinels sit in history in arming (seq) order, so a
+ *              traversal that lands lower — a history-menu jump, or a landing on a
+ *              sentinel the stack does not know (see R5) — answers every live guard
+ *              armed above the landing, top-down.
  *  R3 RELEASE  A programmatic close (button / submit / unmount) of the TOP guard pops its
  *              sentinel with `history.back()`. That traversal is ASYNCHRONOUS in real
  *              browsers, so the release is "pending" until its popstate lands (or a
@@ -46,12 +48,16 @@ import * as React from 'react'
  *              under an inner dialog), or whose sentinel is not the current entry (a
  *              forward navigation sits on top), must not back() — that would pop the
  *              inner dialog's sentinel (or the navigation). It leaves the sentinel in
- *              place and marks the stack entry ownerless. An ownerless sentinel is popped
- *              (R3) as soon as it becomes the current entry — after the guards above it
- *              are gone, or when a Back resurfaces it — so the stack never desyncs from
- *              history and the user never spends a dead Back press on it. While anything
- *              is armed, the same sweep pops a sentinel that resurfaces with an id nobody
- *              owns (left behind before a full reload).
+ *              place and marks the stack entry ownerless. Ownerless entries stay on the
+ *              stack (which keeps the listener attached) until their sentinel becomes the
+ *              current entry — after the guards above it are gone, or when a Back
+ *              resurfaces one buried under a forward navigation — and are then popped
+ *              (R3), so the stack does not desync from history and such a sentinel costs
+ *              no dead Back press. A sentinel the stack does not know at all (from before
+ *              a full reload; a sentinel popped earlier and reached again by Forward; the
+ *              target of a release that landed after the fallback) is swept the same way
+ *              while anything is armed — otherwise nothing is listening and it costs one
+ *              dead Back, as with the old hook.
  *  R6 NEVER    A sentinel is only ever popped when `history.state` carries THIS guard's
  *     BOUNCE   id, i.e. it is verifiably the current entry. Anything else on top (Next's
  *              entry for a forward navigation) is left alone — a cleanup back() would
@@ -76,11 +82,16 @@ import * as React from 'react'
 const GUARD_FLAG = '__ahitsHistoryGuard'
 const GUARD_ID = '__ahitsHistoryGuardId'
 
-/** How long a programmatic release (R3) may take to land before we stop waiting for it. */
-export const HISTORY_GUARD_RELEASE_FALLBACK_MS = 400
+/**
+ * How long a programmatic release (R3) may take to land before we stop waiting for it.
+ * Real browsers always deliver the popstate, usually within a frame; this only bounds
+ * the wait on a starved main thread (and lets jsdom-based tests that never land a
+ * back() move on).
+ */
+export const HISTORY_GUARD_RELEASE_FALLBACK_MS = 1000
 
 interface GuardEntry {
-  /** Stamped onto the sentinel's `history.state`; unique for the life of the page. */
+  /** Stamped onto the sentinel's `history.state`: `<session>-<seq>`, unique for the life of the page. */
   id: string
   /** Answers a user Back (R2). `null` once the owner closed while not top (R5: ownerless). */
   onPop: (() => void) | null
@@ -90,6 +101,15 @@ interface GuardEntry {
 // otherwise be able to collide with a fresh guard's id).
 const SESSION = Math.random().toString(36).slice(2, 8)
 let seq = 0
+
+/**
+ * Where a sentinel sits relative to ours: sentinels are pushed in seq order, so a
+ * higher seq is higher in history. One from another session (before a full reload)
+ * can only be below everything we armed.
+ */
+function seqOf(id: string): number {
+  return id.startsWith(`${SESSION}-`) ? Number(id.slice(SESSION.length + 1)) : -Infinity
+}
 
 // ── Module state: the stack, the one listener, the one pending release ──────────
 const stack: GuardEntry[] = []
@@ -177,6 +197,24 @@ function popTop() {
   entry?.onPop?.()
 }
 
+/**
+ * R2 for a traversal that landed below some of our sentinels: every LIVE guard armed
+ * above the landing (a stack suffix, since seqs are monotonic) was popped by it — take
+ * each off and let it answer, top-down. Ownerless entries stay: their sentinel may be
+ * buried under a forward navigation rather than gone, and R5 sweeps it when it
+ * resurfaces (a leftover whose sentinel really is gone is inert on the stack).
+ */
+function answerLiveAbove(landedSeq: number) {
+  for (let i = stack.length - 1; i >= 0; i -= 1) {
+    const entry = stack[i]
+    if (!entry || seqOf(entry.id) <= landedSeq) break
+    if (entry.onPop) {
+      stack.splice(i, 1)
+      entry.onPop()
+    }
+  }
+}
+
 function onPopState() {
   if (releasePending) {
     // R3: the first popstate after our back() is that pop landing, never a user Back.
@@ -185,14 +223,19 @@ function onPopState() {
   }
   const landed = sentinelIdOf(window.history.state)
   if (landed === null) {
-    // Below every sentinel we own: everything armed was popped (a history-menu jump
-    // lands here too) — answer top-down.
-    while (stack.length > 0) popTop()
+    // Not one of our sentinels: the page's base entry, or a Next entry that buries some
+    // of ours. Every live guard was above it (a history-menu jump lands here too).
+    answerLiveAbove(-Infinity)
   } else {
     const idx = stack.findIndex((e) => e.id === landed)
     if (idx === -1) {
-      // R5: a sentinel nobody owns resurfaced (left behind under a forward navigation,
-      // possibly before a full reload) — pop it so the next Back does real work.
+      // A sentinel the stack does not know: from before a full reload (seq -Infinity —
+      // everything we armed sits above it), one popped earlier and reached again by
+      // Forward (a higher seq — nothing of ours above it), or the target of a release
+      // that landed after the fallback (a lower seq — the guard armed above it lost its
+      // sentinel). Answer the live guards it popped, then pop it (R5) so the next Back
+      // does real work instead of leaving an unguarded overlay behind.
+      answerLiveAbove(seqOf(landed))
       beginRelease()
       return
     }
