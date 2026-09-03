@@ -31,6 +31,7 @@ import { RentalVehicleForm, RentalVehicleFields, rentalFieldsToVehiclePayload, i
 import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 import { useHistoryGuard } from '@/hooks/useHistoryGuard' // UXP-1e: Back closes the respond dialogs
+import { notifyIncomingPendingChanged } from '@/hooks/useIncomingPendingCount' // UXP-3 (F-06): badges recount now
 import { useAuth } from '@/hooks/useAuth'
 import { groupBy, formatDate } from '@/lib/utils'
 import { NOTE_PRESETS, HANDOFF_NOTE_PRESETS } from '@/lib/note-presets'
@@ -217,7 +218,6 @@ export default function MyRigPage() {
   const [noteDialog, setNoteDialog] = React.useState<NoteAction | null>(null)
   const [actionLoading, setActionLoading] = React.useState(false)
 
-
   const loadTransfers = React.useCallback(async () => {
     const [inRes, outRes, inHRes, outHRes] = await Promise.all([
       fetch('/api/transfers?status=PENDING&direction=incoming'),
@@ -229,6 +229,7 @@ export default function MyRigPage() {
     if (outRes.ok) setOutgoingTransfers(await outRes.json())
     if (inHRes.ok) setIncomingHandoffs(await inHRes.json())
     if (outHRes.ok) setOutgoingHandoffs(await outHRes.json())
+    notifyIncomingPendingChanged() // UXP-3 (F-06): every accept/decline/cancel path ends here → badges recount now
   }, [])
 
   const load = React.useCallback(async () => {
@@ -269,9 +270,7 @@ export default function MyRigPage() {
     fetch('/api/inventory?pageSize=200').then((r) => r.json()).then((d) => setInventoryItems(d.data ?? [])).catch(() => {})
     // Operator-readable roster (the full /api/users is admin-only → 403 for
     // operators, which left the transfer destination dropdown empty).
-    fetch('/api/operators').then((r) => r.json()).then((d) => {
-      setOperators(d.data ?? [])
-    }).catch(() => {})
+    fetch('/api/operators').then((r) => r.json()).then((d) => setOperators(d.data ?? [])).catch(() => {})
     fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(Array.isArray(d) ? d : (d?.data ?? []))).catch(() => {})
   }, [load])
 
