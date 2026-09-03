@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
-import { hashPin, verifyPin } from '../src/lib/auth/pin'
+import { hashPin, verifyPin, verifyPinDetailed } from '../src/lib/auth/pin'
 import { createSession, getSession, getSessionClaims } from '../src/lib/auth/session'
 import { prisma } from '../src/lib/prisma'
 import { createOperator } from './helpers/fixtures'
@@ -71,6 +71,68 @@ describe('PIN auth — verifyPin lockout', () => {
   it('returns false for a user with no PIN set', async () => {
     const op = await createOperator()
     expect(await verifyPin(op.id, '123456')).toBe(false)
+  })
+})
+
+// UXP-3 (3b): lockout tells the truth. verifyPinDetailed distinguishes a lock from a
+// wrong PIN (verifyPin above stays the boolean view, so the cases above are unchanged).
+describe('PIN auth — verifyPinDetailed (UXP-3 3b)', () => {
+  const LOCK_MS = 15 * 60 * 1000
+
+  async function operatorWithPin(pin = '123456') {
+    const op = await createOperator()
+    await prisma.user.update({ where: { id: op.id }, data: { pinHash: await hashPin(pin) } })
+    return op
+  }
+
+  it('answers "wrong" for a wrong PIN below the threshold', async () => {
+    const op = await operatorWithPin('123456')
+    expect(await verifyPinDetailed(op.id, '000000')).toEqual({ ok: false, reason: 'wrong' })
+  })
+
+  it('answers "no-pin" for a user with no PIN set', async () => {
+    const op = await createOperator()
+    expect(await verifyPinDetailed(op.id, '123456')).toEqual({ ok: false, reason: 'no-pin' })
+  })
+
+  it('the 5th wrong attempt — the one that TRIPS the lock — already answers "locked" (+15 min)', async () => {
+    const op = await operatorWithPin('123456')
+    for (let i = 0; i < 4; i++) {
+      expect(await verifyPinDetailed(op.id, '000000')).toEqual({ ok: false, reason: 'wrong' })
+    }
+    const before = Date.now()
+    const fifth = await verifyPinDetailed(op.id, '000000')
+    expect(fifth.ok).toBe(false)
+    if (fifth.ok || fifth.reason !== 'locked') throw new Error(`expected locked, got ${JSON.stringify(fifth)}`)
+    // lockedUntil ≈ now + 15 min (bounded by the wall-clock drift of the call itself).
+    expect(fifth.lockedUntil.getTime()).toBeGreaterThanOrEqual(before + LOCK_MS)
+    expect(fifth.lockedUntil.getTime()).toBeLessThanOrEqual(Date.now() + LOCK_MS)
+    const locked = await prisma.user.findUnique({ where: { id: op.id } })
+    expect(locked?.pinLockedAt).not.toBeNull()
+  })
+
+  it('answers "locked" with lockedUntil = pinLockedAt + 15 min even for the CORRECT PIN', async () => {
+    const op = await operatorWithPin('123456')
+    const lockedAt = new Date(Date.now() - 5 * 60 * 1000) // locked 5 minutes ago
+    await prisma.user.update({
+      where: { id: op.id },
+      data: { failedPinAttempts: 5, pinLockedAt: lockedAt },
+    })
+    expect(await verifyPinDetailed(op.id, '123456')).toEqual({
+      ok: false, reason: 'locked', lockedUntil: new Date(lockedAt.getTime() + LOCK_MS),
+    })
+    // Still locked — the correct PIN must not have reset anything.
+    const after = await prisma.user.findUnique({ where: { id: op.id } })
+    expect(after?.pinLockedAt?.getTime()).toBe(lockedAt.getTime())
+  })
+
+  it('answers ok:true once the lock window has elapsed (auto-unlock path unchanged)', async () => {
+    const op = await operatorWithPin('123456')
+    await prisma.user.update({
+      where: { id: op.id },
+      data: { failedPinAttempts: 5, pinLockedAt: new Date(Date.now() - 16 * 60 * 1000) },
+    })
+    expect(await verifyPinDetailed(op.id, '123456')).toEqual({ ok: true })
   })
 })
 
