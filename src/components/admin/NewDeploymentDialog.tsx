@@ -33,6 +33,13 @@ import type { HubOption, UserOption } from '@/components/shared/DispositionDialo
 //    "Discard changes?" instead of throwing four steps of picks away.
 //  - operator · project · source hub are SearchableSelects (a long roster is unusable
 //    as a flat menu); hubs read `name · city, state` everywhere.
+//  - T1: a 409 no longer wipes every serialized pick. The page refetches availability
+//    (`onRefetchPickers`) and only the picks whose unit/vehicle is gone are dropped —
+//    named in the form error; consumables and unaffected units stay. The operator-has-
+//    active-rig / insufficient-stock 409s drop nothing (everything is still available)
+//    and just show the server's message.
+//  - T2: the same refetch runs after every successful create, so a second deployment
+//    in one sitting never offers a just-assigned unit or vehicle.
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -52,6 +59,12 @@ export interface InventoryOption {
   unitCounts: { available: number; checkedOut: number; inMaintenance: number; inoperable: number; retired: number; totalUnits: number }
   availableUnits: { id: string; serialNumber: string | null; position: number }[]
   category: { id: string; name: string }
+}
+
+/** What the two pickers select from; the page refetches these after every create / 409. */
+export interface PickerData {
+  vehicles: VehicleOption[]
+  inventoryItems: InventoryOption[]
 }
 
 /** The created rig as POST /api/deployments returns it (only the parts the page reads). */
@@ -92,11 +105,74 @@ export function isPickableItem(i: InventoryOption): boolean {
   return i.itemType === 'SERIALIZED' ? i.unitCounts.available > 0 : i.quantity > 0
 }
 
+/** The "Unit 3 of Corer" / "GPS-007 of GPS unit" name of a serialized pick. */
+export function unitPickLabel(entry: Extract<AdminKitEntry, { itemType: 'SERIALIZED' }>): string {
+  return `${entry.unitLabel} of ${entry.itemName}`
+}
+
 /** One review line per pick: "Sample bags ×2", "GPS unit · GPS-007". */
 export function kitEntryLine(entry: AdminKitEntry): string {
   return entry.itemType === 'CONSUMABLE'
     ? `${entry.itemName} ×${entry.quantity}`
     : `${entry.itemName} · ${entry.unitLabel}`
+}
+
+export interface DroppedPicks {
+  /** Serialized picks whose unit is no longer available, as "Unit 3 of Corer". */
+  units: string[]
+  /** Vehicle picks no longer free, by name. */
+  vehicles: string[]
+}
+
+/**
+ * T1 — scoped 409 recovery. Given the picks and FRESH availability, keep every pick
+ * that is still available and drop only the ones that are not: a serialized unit no
+ * longer in its item's `availableUnits`, a vehicle now assigned/retired/gone.
+ * Consumables are never dropped (an insufficient-stock 409 is a quantity problem the
+ * admin fixes by hand, not a lost pick). Pure; the caller decides what to show.
+ */
+export function dropUnavailablePicks(
+  picks: { kitItems: Map<string, AdminKitEntry>; vehicleIds: Set<string> },
+  fresh: PickerData,
+  previousVehicles: VehicleOption[] = [],
+): { kitItems: Map<string, AdminKitEntry>; vehicleIds: Set<string>; dropped: DroppedPicks } {
+  const availableUnitIds = new Set<string>()
+  for (const item of fresh.inventoryItems) for (const u of item.availableUnits) availableUnitIds.add(u.id)
+
+  const kitItems = new Map<string, AdminKitEntry>()
+  const dropped: DroppedPicks = { units: [], vehicles: [] }
+  for (const [key, entry] of picks.kitItems) {
+    if (entry.itemType === 'SERIALIZED' && !availableUnitIds.has(entry.inventoryUnitId)) {
+      dropped.units.push(unitPickLabel(entry))
+      continue
+    }
+    kitItems.set(key, entry)
+  }
+
+  const vehicleIds = new Set<string>()
+  for (const id of picks.vehicleIds) {
+    const now = fresh.vehicles.find((v) => v.id === id)
+    if (now && isPickableVehicle(now)) { vehicleIds.add(id); continue }
+    dropped.vehicles.push(now?.name ?? previousVehicles.find((v) => v.id === id)?.name ?? id)
+  }
+  return { kitItems, vehicleIds, dropped }
+}
+
+function joinNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? ''
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+}
+
+/** The form-level message naming what a 409 recovery dropped, or null when nothing was. */
+export function droppedPicksMessage(dropped: DroppedPicks): string | null {
+  const parts: string[] = []
+  if (dropped.units.length > 0) {
+    parts.push(`${joinNames(dropped.units)} ${dropped.units.length === 1 ? 'was' : 'were'} taken — removed from your kit.`)
+  }
+  if (dropped.vehicles.length > 0) {
+    parts.push(`${joinNames(dropped.vehicles)} ${dropped.vehicles.length === 1 ? 'is' : 'are'} now on another deployment — removed from your rig.`)
+  }
+  return parts.length > 0 ? parts.join(' ') : null
 }
 
 /** The wire shape POST /api/deployments (and the drawer's items POST) expect. */
@@ -113,7 +189,7 @@ const START_FALLBACK = 'Could not start the deployment. Please try again.'
 // ── New Deployment Dialog ─────────────────────────────────────────
 
 export function NewDeploymentDialog({
-  operators, vehicles, inventoryItems, hubs, projects = [], onClose, onSuccess,
+  operators, vehicles, inventoryItems, hubs, projects = [], onClose, onSuccess, onRefetchPickers,
 }: {
   operators: UserOption[]
   vehicles: VehicleOption[]
@@ -123,6 +199,12 @@ export function NewDeploymentDialog({
   projects?: ProjectSelectOption[]
   onClose: () => void
   onSuccess: (started: StartedDeployment) => void
+  /**
+   * UXP-6 (6d, T1/T2): re-read vehicles + inventory and return the fresh lists (null on
+   * failure). Called after every 409 (to keep only still-available picks) and after
+   * every successful create (so the next deployment never offers a taken unit).
+   */
+  onRefetchPickers?: () => Promise<PickerData | null>
 }) {
   const theme = useTheme()
   // B-14: at xs the four horizontal labels clipped "Start"; stacked labels fit.
@@ -189,16 +271,29 @@ export function NewDeploymentDialog({
     const body: unknown = await res.json().catch(() => null)
     if (res.ok) {
       setLoading(false)
+      // T2: the next builder must not offer what this one just took.
+      void onRefetchPickers?.()
       const rig = body && typeof body === 'object' && typeof (body as CreatedRig).id === 'string' ? (body as CreatedRig) : null
       onSuccess({ rig, operatorId, operatorName: operatorName ?? 'the operator' })
       onClose()
       return
     }
-    if (res.status === 409) {
-      // Remove all serialized entries so user can reselect
-      const m = new Map(kitItems)
-      for (const [key, entry] of m) { if (entry.itemType === 'SERIALIZED') m.delete(key) }
-      setKitItems(m)
+    if (res.status === 409 && onRefetchPickers) {
+      // T1: keep every pick that is still available; drop only the ones that are not.
+      const fresh = await onRefetchPickers()
+      if (fresh) {
+        const next = dropUnavailablePicks({ kitItems, vehicleIds: selVehicles }, fresh, vehicles)
+        const msg = droppedPicksMessage(next.dropped)
+        if (msg) {
+          setKitItems(next.kitItems)
+          setSelVehicles(next.vehicleIds)
+          setError(msg)
+          setLoading(false)
+          return
+        }
+      }
+      // Nothing of ours went away (operator already deployed, hub stock short, …):
+      // every pick stays and the server's message speaks for itself.
     }
     setFieldErrors(parseApiError(body, START_FALLBACK).fieldErrors)
     setError(apiErrorMessage(body, START_FALLBACK))

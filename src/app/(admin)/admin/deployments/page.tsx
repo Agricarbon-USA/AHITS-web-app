@@ -28,7 +28,7 @@ import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
 import { TransferDialog } from '@/components/shared/TransferDialog'
 import { KitItemSelectRow, type AdminKitEntry } from '@/components/admin/KitItemSelectRow'
 import {
-  NewDeploymentDialog, type VehicleOption, type InventoryOption, type StartedDeployment,
+  NewDeploymentDialog, type VehicleOption, type InventoryOption, type PickerData, type StartedDeployment,
 } from '@/components/admin/NewDeploymentDialog'
 import { DispositionDialog } from '@/components/shared/DispositionDialog'
 import type { HubOption, UserOption } from '@/components/shared/DispositionDialog'
@@ -1110,6 +1110,28 @@ function DeploymentDrawer({
 // back-button correct). Module scope so the useUrlFilters setter stays referentially stable.
 const DEPLOYMENT_FILTER_DEFAULTS = { ended: '', operatorId: '', projectId: '' }
 
+type RawUnit = { id: string; serialNumber: string | null; status?: string }
+
+/** The picker rows the builder and the drawer select from, from GET /api/inventory. */
+function toInventoryOptions(body: unknown): InventoryOption[] {
+  const rows = (body as { data?: unknown[] } | null)?.data
+  if (!Array.isArray(rows)) return []
+  return rows.map((raw) => {
+    const item = raw as InventoryOption & { units?: RawUnit[] }
+    return {
+      ...item,
+      availableUnits: (item.units ?? [])
+        .filter((u) => u.status === 'AVAILABLE')
+        .map((u, idx) => ({ id: u.id, serialNumber: u.serialNumber ?? null, position: idx + 1 })),
+    }
+  })
+}
+
+function toVehicleOptions(body: unknown): VehicleOption[] {
+  const rows = (body as { data?: unknown } | null)?.data ?? body
+  return Array.isArray(rows) ? (rows as VehicleOption[]) : []
+}
+
 /** The list-row shape the drawer needs, from what POST /api/deployments returned. */
 function toRig(started: StartedDeployment): Rig | null {
   const r = started.rig
@@ -1194,19 +1216,35 @@ function AdminDeploymentsContent() {
     if (match) { setDrawerAction(null); setDrawerRig(match) }
   }, [rigs])
 
+  // UXP-6 (6d, T2): the two pickers' data is ONE refetchable read. It runs on mount,
+  // after every successful create, after every 409 (the builder diffs its picks against
+  // what comes back) and after every drawer mutation — so a second deployment in one
+  // sitting never offers a unit or vehicle the first one just took. Returns the fresh
+  // lists (null when either read failed) because the 409 recovery needs them
+  // synchronously, not on a later render.
+  const refetchPickers = React.useCallback(async (): Promise<PickerData | null> => {
+    try {
+      const [vRes, iRes] = await Promise.all([fetch('/api/vehicles'), fetch('/api/inventory?pageSize=200')])
+      if (!vRes.ok || !iRes.ok) return null
+      const fresh: PickerData = {
+        vehicles: toVehicleOptions(await vRes.json()),
+        inventoryItems: toInventoryOptions(await iRes.json()),
+      }
+      setVehicles(fresh.vehicles)
+      setInventoryItems(fresh.inventoryItems)
+      return fresh
+    } catch {
+      return null
+    }
+  }, [])
+
   React.useEffect(() => {
     fetch('/api/users').then((r) => r.json()).then((d) => setOperators(d.data ?? [])).catch(() => {})
     fetch('/api/projects').then((r) => r.json()).then((d) => setProjects(d.data ?? d ?? [])).catch(() => {})
-    fetch('/api/vehicles').then((r) => r.json()).then((d) => setVehicles(d.data ?? d ?? [])).catch(() => {})
-    fetch('/api/inventory?pageSize=200').then((r) => r.json()).then((d) => {
-      const items = (d.data ?? []).map((item: InventoryOption & { units?: { id: string; serialNumber: string | null; status: string }[] }) => ({
-        ...item,
-        availableUnits: (item.units ?? [])
-          .filter((u) => u.status === 'AVAILABLE')
-          .map((u, idx) => ({ id: u.id, serialNumber: u.serialNumber, position: idx + 1 })),
-      }))
-      setInventoryItems(items)
-    }).catch(() => {})
+    // Same normalisers as refetchPickers — kept as `.then` chains here so the mount
+    // read is not a synchronous setState-in-effect.
+    fetch('/api/vehicles').then((r) => r.json()).then((d) => setVehicles(toVehicleOptions(d))).catch(() => {})
+    fetch('/api/inventory?pageSize=200').then((r) => r.json()).then((d) => setInventoryItems(toInventoryOptions(d))).catch(() => {})
     fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(Array.isArray(d) ? d : (d?.data ?? []))).catch(() => {})
   }, [])
 
@@ -1421,7 +1459,9 @@ function AdminDeploymentsContent() {
           hubs={hubs}
           initialAction={drawerAction}
           onClose={() => { setDrawerRig(null); setDrawerAction(null) }}
-          onUpdated={load}
+          // T2: a drawer mutation (add/return items, add/remove vehicles) changes what
+          // the pickers may offer — refresh them along with the list.
+          onUpdated={() => { void load(); void refetchPickers() }}
           showToast={showToast}
         />
       )}
@@ -1434,6 +1474,7 @@ function AdminDeploymentsContent() {
           hubs={hubs}
           projects={projects} // UXP-3 (3d): fetched above for the filter, now offered in the builder
           onClose={() => setNewOpen(false)}
+          onRefetchPickers={refetchPickers}
           onSuccess={(started) => {
             // D11 verb in the toast too ("Deployment created" contradicted the button);
             // Open lands in the new rig's drawer, the same one a row tap opens.

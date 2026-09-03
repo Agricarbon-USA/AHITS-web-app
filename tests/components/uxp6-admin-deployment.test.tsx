@@ -2,10 +2,15 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ToastProvider } from '@/components/shared/useToast'
 
-// UXP-6 (6d): the admin deployment builder on the one create/edit grammar:
+// UXP-6 (6d): the admin deployment builder on the one create/edit grammar, and the
+// three data-loss traps around it (plan §1.2):
 //  - EntityFormDialog: Enter = Next, "Start Deployment" (D11) on the last step, Back as
 //    the secondary action, "* required" legend, no "(optional)" labels, dirty wizard →
 //    "Discard changes?" on backdrop / Esc / hardware Back.
+//  - T1: a 409 drops ONLY the picks whose unit/vehicle is gone after a refetch — named
+//    in the form error; consumables and unaffected units stay. An operator-has-active-
+//    rig 409 drops nothing.
+//  - T2: pickers refetch after every 409 and every successful create.
 //  - Success: "Deployment started for <operator>" with an Open action into the drawer.
 
 // Same spy-mock as EntityFormDialog.test.tsx: the guard's callback IS the hardware Back.
@@ -20,7 +25,7 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }))
 
-import { NewDeploymentDialog } from '@/components/admin/NewDeploymentDialog'
+import { NewDeploymentDialog, dropUnavailablePicks, droppedPicksMessage, hubLabel, type PickerData } from '@/components/admin/NewDeploymentDialog'
 import AdminDeploymentsPage from '@/app/(admin)/admin/deployments/page'
 
 // ── Fixtures ──────────────────────────────────────────────────────
@@ -56,10 +61,18 @@ const INVENTORY = [
     availableUnits: [{ id: 'unit-c3', serialNumber: null, position: 3 }], category: { id: 'c2', name: 'Instruments' },
   },
 ]
+/** Fresh availability after someone else took Corer Unit 3. */
+const INVENTORY_WITHOUT_CORER = INVENTORY.map((i) =>
+  i.id === 'i-corer' ? { ...i, unitCounts: { ...i.unitCounts, available: 0, checkedOut: 3 }, availableUnits: [] } : i,
+)
 const CREATED_RIG = {
   id: 'rig-2', label: null, startedAt: '2026-09-03T10:00:00Z', endedAt: null,
   operator: { id: 'u2', name: 'Op Two' }, project: null, vehicles: [], kits: [{ id: 'k2', items: [] }], secondaryOperators: [],
 }
+
+const UNIT_409 = 'A selected unit was just checked out by someone else. Please select a different unit and try again.'
+const OPERATOR_409 = 'This operator already has an active deployment. End it before starting a new one.'
+const VEHICLE_409 = 'One or more vehicles are already assigned to another active deployment. Remove them there first.'
 
 const scrollSpy = vi.fn()
 beforeEach(() => {
@@ -277,7 +290,110 @@ describe('UXP-6 (6d): a half-built rig asks "Discard changes?"', () => {
   })
 })
 
-// ── Page level: success toast + Open ──────────────────────────────
+// ── T1 / T2: scoped 409 recovery + refetch ────────────────────────
+
+describe('UXP-6 (6d, T1/T2): a 409 keeps your picks; pickers refetch', () => {
+  it('unit 409: drops ONLY the taken unit (named), keeps the consumable and the other unit, refetches, and resubmits without it', async () => {
+    const posts = stubCreate([{ status: 409, body: { error: UNIT_409 } }, { status: 201, body: CREATED_RIG }])
+    const onRefetchPickers = vi.fn(async (): Promise<PickerData> => ({ vehicles: VEHICLES, inventoryItems: INVENTORY_WITHOUT_CORER }))
+    const { onSuccess } = renderDialog({ onRefetchPickers })
+    await walkToStart()
+
+    startDeployment()
+    expect(await within(dialog()).findByRole('alert')).toHaveTextContent('Unit 3 of Corer was taken — removed from your kit.')
+    expect(onRefetchPickers).toHaveBeenCalledTimes(1)
+    expect(within(summary()).getByText('1 consumable · 1 serialized · from Toledo Hub')).toBeInTheDocument()
+    expect(kitLines()).toEqual(['Sample bags ×1', 'GPS unit · GPS-007'])
+    expect(within(summary()).getByText('Truck 1')).toBeInTheDocument()
+    expect(onSuccess).not.toHaveBeenCalled()
+    // The server's generic wording is NOT shown — the scoped message replaces it.
+    expect(screen.queryByText(UNIT_409)).toBeNull()
+
+    // Straight back to Start: the second POST carries what is left, nothing else.
+    startDeployment()
+    await waitFor(() => expect(posts).toHaveLength(2))
+    expect(posts[1]!.kitItems).toEqual(expect.arrayContaining([
+      { inventoryItemId: 'i-bags', quantity: 1 },
+      { inventoryItemId: 'i-gps', inventoryUnitId: 'unit-7', itemType: 'SERIALIZED' },
+    ]))
+    expect(posts[1]!.kitItems).toHaveLength(2)
+    await waitFor(() => expect(onSuccess).toHaveBeenCalledTimes(1))
+    // T2: refetched after the 409 AND after the successful create.
+    expect(onRefetchPickers).toHaveBeenCalledTimes(2)
+  })
+
+  it('operator-has-active-rig 409: nothing of ours went away → every pick stays and the server message shows', async () => {
+    const posts = stubCreate([{ status: 409, body: { error: OPERATOR_409 } }])
+    const onRefetchPickers = vi.fn(async (): Promise<PickerData> => ({ vehicles: VEHICLES, inventoryItems: INVENTORY }))
+    renderDialog({ onRefetchPickers })
+    await walkToStart()
+
+    startDeployment()
+    expect(await within(dialog()).findByRole('alert')).toHaveTextContent(OPERATOR_409)
+    expect(onRefetchPickers).toHaveBeenCalledTimes(1)
+    expect(within(summary()).getByText('1 consumable · 2 serialized · from Toledo Hub')).toBeInTheDocument()
+    expect(kitLines()).toEqual(['Sample bags ×1', 'GPS unit · GPS-007', 'Corer · Unit 3'])
+
+    startDeployment()
+    await waitFor(() => expect(posts).toHaveLength(2))
+    expect(posts[1]!.kitItems).toHaveLength(3)
+    expect(posts[1]!.vehicleIds).toEqual(['v1'])
+  })
+
+  it('vehicle 409: the vehicle now on another rig is dropped by name; the kit is untouched', async () => {
+    stubCreate([{ status: 409, body: { error: VEHICLE_409 } }])
+    const taken = VEHICLES.map((v) => (v.id === 'v1' ? { ...v, assignedOperatorId: 'u9' } : v))
+    const onRefetchPickers = vi.fn(async (): Promise<PickerData> => ({ vehicles: taken, inventoryItems: INVENTORY }))
+    renderDialog({ onRefetchPickers })
+    await walkToStart()
+
+    startDeployment()
+    expect(await within(dialog()).findByRole('alert')).toHaveTextContent('Truck 1 is now on another deployment — removed from your rig.')
+    expect(within(summary()).queryByText('Truck 1')).toBeNull()
+    expect(kitLines()).toHaveLength(3)
+  })
+
+  it('when the refetch itself fails, nothing is dropped and the server message shows', async () => {
+    stubCreate([{ status: 409, body: { error: UNIT_409 } }])
+    const onRefetchPickers = vi.fn(async () => null)
+    renderDialog({ onRefetchPickers })
+    await walkToStart()
+    startDeployment()
+    expect(await within(dialog()).findByRole('alert')).toHaveTextContent(UNIT_409)
+    expect(kitLines()).toHaveLength(3)
+  })
+
+  it('a 400 reads through parseApiError (zod shape) rather than a generic "failed"', async () => {
+    stubCreate([{ status: 400, body: { error: { fieldErrors: {}, formErrors: ['A source hub is required when checking out consumable items.'] } } }])
+    renderDialog()
+    await walkToStart()
+    startDeployment()
+    expect(await within(dialog()).findByRole('alert')).toHaveTextContent('A source hub is required when checking out consumable items.')
+  })
+
+  it('dropUnavailablePicks / droppedPicksMessage: pure, scoped, and never drops a consumable', () => {
+    const kit = new Map([
+      ['i-bags', { inventoryItemId: 'i-bags', itemType: 'CONSUMABLE' as const, quantity: 3, itemName: 'Sample bags' }],
+      ['unit-7', { inventoryItemId: 'i-gps', itemType: 'SERIALIZED' as const, inventoryUnitId: 'unit-7', unitLabel: 'GPS-007', itemName: 'GPS unit' }],
+      ['unit-c3', { inventoryItemId: 'i-corer', itemType: 'SERIALIZED' as const, inventoryUnitId: 'unit-c3', unitLabel: 'Unit 3', itemName: 'Corer' }],
+    ])
+    const out = dropUnavailablePicks({ kitItems: kit, vehicleIds: new Set(['v1', 'v2']) }, {
+      vehicles: [{ ...VEHICLES[0]!, status: 'RETIRED' }], // v1 retired, v2 gone entirely
+      inventoryItems: INVENTORY_WITHOUT_CORER,
+    }, VEHICLES)
+    expect(Array.from(out.kitItems.keys())).toEqual(['i-bags', 'unit-7'])
+    expect(out.vehicleIds.size).toBe(0)
+    expect(out.dropped).toEqual({ units: ['Unit 3 of Corer'], vehicles: ['Truck 1', 'ATV 2'] })
+    expect(droppedPicksMessage(out.dropped)).toBe(
+      'Unit 3 of Corer was taken — removed from your kit. Truck 1 and ATV 2 are now on another deployment — removed from your rig.',
+    )
+    expect(droppedPicksMessage({ units: [], vehicles: [] })).toBeNull()
+    expect(hubLabel({ name: 'Toledo Hub', city: 'Toledo', state: 'OH' })).toBe('Toledo Hub · Toledo, OH')
+    expect(hubLabel({ name: 'Yard', city: null, state: null })).toBe('Yard')
+  })
+})
+
+// ── Page level: success toast + Open, refetch after success ───────
 
 const RIG_ONE = {
   id: 'rig-1', label: null, startedAt: '2026-09-01T10:00:00Z', endedAt: null,
@@ -314,10 +430,11 @@ async function renderPage() {
   await screen.findByText('Op One')
 }
 
-describe('UXP-6 (6d): page — success toast with Open', () => {
-  it('toasts "Deployment started for <operator>" with an Open action that lands in the new rig\'s drawer', async () => {
+describe('UXP-6 (6d): page — success toast with Open, refetch after success', () => {
+  it('toasts "Deployment started for <operator>" with an Open action that lands in the new rig\'s drawer; pickers refetch after success', async () => {
     const { calls, createPosts } = stubPage()
     await renderPage()
+    await waitFor(() => expect(calls.filter((u) => u === '/api/vehicles')).toHaveLength(1))
 
     fireEvent.click(screen.getByRole('button', { name: 'Start Deployment' })) // toolbar (D11 verb)
     const form = await screen.findByRole('dialog', { name: 'Start Deployment' })
@@ -329,6 +446,9 @@ describe('UXP-6 (6d): page — success toast with Open', () => {
 
     expect(await screen.findByText('Deployment started for Op Two')).toBeInTheDocument()
     expect(screen.queryByText('Deployment created')).toBeNull()
+    // T2: vehicles + inventory re-read after the create.
+    await waitFor(() => expect(calls.filter((u) => u === '/api/vehicles')).toHaveLength(2))
+    expect(calls.filter((u) => u.startsWith('/api/inventory'))).toHaveLength(2)
 
     fireEvent.click(screen.getByRole('button', { name: 'Open' }))
     // The drawer for rig-2 (Op Two, empty kit) — the same drawer a row tap opens.
