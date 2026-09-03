@@ -99,6 +99,21 @@ export default function RequestsPage() {
   const requests = reqData?.data ?? null
   const load = React.useCallback(async () => { await refreshRequests() }, [refreshRequests])
 
+  // UXP-3 (3f / F-09): the composer's common case. An operator with an ACTIVE rig is
+  // almost always asking for materials, not reserving a rig — probe once on mount (the same
+  // read my-deployment makes) so the answer is settled before the dialog can open; opening
+  // is never delayed by it. Offline / error → null → the RESERVATION fallback. A remembered
+  // last-used mode (stored by the composer) beats this heuristic.
+  const [hasActiveRig, setHasActiveRig] = React.useState<boolean | null>(null)
+  React.useEffect(() => {
+    let cancelled = false
+    fetch('/api/deployments?active=true')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!cancelled && d !== null) setHasActiveRig(Array.isArray(d) && d.length > 0) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
+
   const openDialog = async () => {
     setDialogOpen(true)
     if (!dialogDataLoaded) {
@@ -290,6 +305,7 @@ export default function RequestsPage() {
           categories={categories}
           defaultHubId={user?.homeHubId}
           offline={isOffline}
+          initialMode={hasActiveRig ? 'MATERIAL' : 'RESERVATION'} // UXP-3 (3f)
           onClose={() => setDialogOpen(false)}
           onSubmit={async (body) => {
             const r = await mutate({

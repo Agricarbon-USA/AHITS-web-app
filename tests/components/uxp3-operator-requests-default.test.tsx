@@ -1,9 +1,11 @@
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // UXP-3: the operator Requests page, driven through the real page.
 //  - 3c rider: the "handled" notification deep-links to ?tab=closed; the page seeds its
 //    Active/Closed toggle from the URL after hydration (server snapshot stays ACTIVE).
+//  - 3f (F-09): the composer opens in MATERIAL when the operator has an ACTIVE rig
+//    (probed once on mount), else RESERVATION; a remembered last-used mode wins over both.
 
 const { mutate, freshList } = vi.hoisted(() => ({
   mutate: vi.fn(),
@@ -36,11 +38,23 @@ const REQUESTS = [
 
 const jsonRes = (body: unknown) => Promise.resolve({ ok: true, json: async () => body } as Response)
 
+/** The composer's data reads + the 3f rig probe. `activeRigs` is what ?active=true returns. */
+function mockFetch(activeRigs: unknown = []) {
+  return vi.fn((input: RequestInfo | URL) => {
+    const url = String(input)
+    if (url.startsWith('/api/deployments?active=true')) return jsonRes(activeRigs)
+    if (url.startsWith('/api/hubs')) return jsonRes({ data: [{ id: 'h1', name: 'Toledo Hub', city: 'Toledo', state: 'OH' }] })
+    if (url.startsWith('/api/categories')) return jsonRes([])
+    return jsonRes({ data: [] })
+  })
+}
+
 beforeEach(() => {
   mutate.mockReset().mockResolvedValue({ ok: true, queued: false, data: {} })
   freshList.data = { data: REQUESTS }
+  window.localStorage.clear()
   window.history.replaceState(null, '', '/operator/requests')
-  vi.stubGlobal('fetch', vi.fn(() => jsonRes({ data: [] })))
+  vi.stubGlobal('fetch', mockFetch())
 })
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -75,5 +89,49 @@ describe('UXP-3 (3c rider): ?tab=closed lands on the Closed list', () => {
     window.history.replaceState(null, '', '/operator/requests?tab=bogus')
     render(<RequestsPage />)
     expect(await screen.findByRole('button', { name: 'Active' })).toHaveAttribute('aria-pressed', 'true')
+  })
+})
+
+const ACTIVE_RIG = [{ id: 'rig-1', label: null, startedAt: '2026-09-01T00:00:00Z', vehicles: [], kits: [] }]
+
+async function openComposer() {
+  fireEvent.click((await screen.findAllByRole('button', { name: 'New Request' }))[0])
+  await screen.findByRole('heading', { name: 'New Request' })
+}
+
+describe('UXP-3 (3f): the composer opens in the common case', () => {
+  it('opens in MATERIAL when the operator has an active rig', async () => {
+    vi.stubGlobal('fetch', mockFetch(ACTIVE_RIG))
+    render(<RequestsPage />)
+    // The probe settles on mount, before the tap.
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/deployments?active=true'))
+    await openComposer()
+    expect(screen.getByRole('button', { name: 'Request materials' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByLabelText('Notes (optional)')).toBeInTheDocument()
+  })
+
+  it('opens in RESERVATION when there is no active rig', async () => {
+    render(<RequestsPage />)
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/deployments?active=true'))
+    await openComposer()
+    expect(screen.getByRole('button', { name: 'Reserve a rig' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('falls back to RESERVATION when the probe fails (offline)', async () => {
+    const base = mockFetch()
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) =>
+      String(input).startsWith('/api/deployments?active=true') ? Promise.reject(new Error('offline')) : base(input)))
+    render(<RequestsPage />)
+    await openComposer()
+    expect(screen.getByRole('button', { name: 'Reserve a rig' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('a remembered last-used RESERVATION beats the active-rig heuristic', async () => {
+    window.localStorage.setItem('ahits_request_mode', 'RESERVATION')
+    vi.stubGlobal('fetch', mockFetch(ACTIVE_RIG))
+    render(<RequestsPage />)
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/deployments?active=true'))
+    await openComposer()
+    expect(screen.getByRole('button', { name: 'Reserve a rig' })).toHaveAttribute('aria-pressed', 'true')
   })
 })
