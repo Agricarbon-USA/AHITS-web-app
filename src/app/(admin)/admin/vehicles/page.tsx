@@ -113,33 +113,6 @@ function isServiceSchedule(t: VehicleDetail['maintenanceTasks'][number]): boolea
   return !t.isDamageReport && (t.intervalValue ?? 0) >= 1 && !t.deletedAt
 }
 
-// UXP-6 (6b) fit problem: DetailDrawer and EntityFormDialog each arm useHistoryGuard,
-// which is built for ONE guarded overlay at a time — two armed guards both answer a
-// single hardware Back (both listen to the same popstate), so Back would close the
-// form AND the drawer behind it. The page therefore never has both open: a form
-// opened from the drawer closes the drawer first and re-opens it when the form closes.
-//
-// A guard releases its history sentinel asynchronously (`history.back()` in its
-// cleanup), so the NEXT overlay must arm only once that pop has landed — otherwise
-// the pending pop swallows the new overlay's freshly pushed sentinel and closes it on
-// arrival. `__ahitsHistoryGuard` is the sentinel flag useHistoryGuard merges into
-// `history.state`: absent → nothing is pending, run now; present → run on the popstate
-// the release fires (jsdom never fires it, hence the short fallback timer).
-function afterHistoryGuardReleased(fn: () => void) {
-  const state = window.history.state as Record<string, unknown> | null
-  if (!state?.__ahitsHistoryGuard) { fn(); return }
-  let done = false
-  const run = () => {
-    if (done) return
-    done = true
-    window.removeEventListener('popstate', run)
-    window.clearTimeout(timer)
-    fn()
-  }
-  const timer = window.setTimeout(run, 400)
-  window.addEventListener('popstate', run)
-}
-
 function expiryMeta(iso: string | null): { label: string; color: 'default' | 'warning' | 'error' } {
   if (!iso) return { label: '—', color: 'default' }
   const d = new Date(iso)
@@ -167,8 +140,8 @@ export default function AdminVehiclesPage() {
   // (`duplicateOf`: create mode prefilled minus the uniques). Mounted only while set,
   // so every open starts from fresh field state (and a fresh dirty snapshot).
   const [formState, setFormState] = React.useState<{ vehicle: VehicleRow | null; duplicateOf: VehicleRow | null } | null>(null)
-  // The drawer the form was opened from, to re-open once the form closes (see
-  // afterHistoryGuardReleased — the drawer and the form never overlap).
+  // The drawer the form was opened from, to re-open once the form closes (the drawer
+  // and the form never overlap — see openForm).
   const [formReturnTo, setFormReturnTo] = React.useState<string | null>(null)
   // null = not known (fetch failed / not admin) → the Setup block shows "—", never a guess.
   const [templates, setTemplates] = React.useState<ChecklistTemplateSummary[] | null>(null)
@@ -299,22 +272,24 @@ export default function AdminVehiclesPage() {
   }, [])
 
   // UXP-6 (6b): every way into the form. From the drawer, the drawer closes first and
-  // the form arms once the drawer's history sentinel has popped (fit problem, above).
+  // the form takes its place (and the drawer comes back when the form closes): the form
+  // is a full-height edit surface, so stacking it over the drawer would only leave the
+  // drawer to re-render behind it. Closing one guarded overlay and opening the next in
+  // the same commit is safe — useHistoryGuard defers the new guard's arming until the
+  // old sentinel's pop has landed (its R3/R4).
   const openForm = (next: { vehicle?: VehicleRow | null; duplicateOf?: VehicleRow | null }) => {
     const state = { vehicle: next.vehicle ?? null, duplicateOf: next.duplicateOf ?? null }
     if (detail) {
       setFormReturnTo(detail.id)
       setDetail(null)
-      afterHistoryGuardReleased(() => setFormState(state))
-    } else {
-      setFormState(state)
     }
+    setFormState(state)
   }
   const closeForm = () => {
     setFormState(null)
     const back = formReturnTo
     setFormReturnTo(null)
-    if (back) afterHistoryGuardReleased(() => { void openDetail(back) })
+    if (back) void openDetail(back)
   }
   const handleFormSaved = (saved: { id: string; name: string; isEdit: boolean }) => {
     setFormState(null)
@@ -324,7 +299,7 @@ export default function AdminVehiclesPage() {
     if (saved.isEdit) {
       showToast({ message: `${saved.name} updated`, severity: 'success' })
       // Edited from the drawer → bring the (refreshed) drawer back.
-      if (back) afterHistoryGuardReleased(() => { void openDetail(back) })
+      if (back) void openDetail(back)
     } else {
       // Added (or duplicated): the toast's Open lands on the NEW vehicle's drawer.
       showToast({

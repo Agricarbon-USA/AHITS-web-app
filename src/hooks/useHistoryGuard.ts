@@ -8,39 +8,224 @@ import * as React from 'react'
  * destroying in-progress work (an Android operator's reflexive back-swipe on
  * daily-check step 3 used to throw away the whole check).
  *
- * How it works: while `active` is true, exactly ONE sentinel entry is kept on the
- * history stack at the CURRENT url. A Back press pops that sentinel, fires `popstate`,
- * and we run `onBack` (close the overlay / step the wizard back) instead of letting
- * the browser leave. When `active` goes false any other way (a Cancel button, submit,
- * or unmount), the sentinel is popped programmatically so the stack stays balanced.
+ * How it works: while `active` is true, exactly ONE sentinel entry per guard is kept on
+ * the history stack at the CURRENT url. A Back press pops that sentinel, fires
+ * `popstate`, and we run `onBack` (close the overlay / step the wizard back) instead of
+ * letting the browser leave. When `active` goes false any other way (a Cancel button,
+ * submit, or unmount), the sentinel is popped programmatically so the stack stays
+ * balanced.
+ *
+ * UXP-6 (antagonist #1/#3) made the hook nest-aware and release-aware, because the
+ * admin pages stack a DetailDrawer under an EntityFormDialog and hand off from one
+ * guarded overlay to the next in a single React commit. THE RULES (one module-level
+ * stack of armed guards, bottom → top, mirroring the sentinel entries in history; one
+ * module-level `popstate` listener; no per-guard listeners):
+ *
+ *  R1 ARM      Arming pushes a sentinel stamped with the guard's id and pushes the guard
+ *              on the stack. Guards nest in arming order (a dialog opened from an open
+ *              drawer sits above it).
+ *  R2 BACK     A user Back pops exactly one sentinel and is answered by the TOP guard
+ *              only: it leaves the stack and runs `onBack`. If `active` is still true
+ *              afterwards (a wizard stepping 2 → 1) the effect re-runs and re-arms with a
+ *              fresh sentinel. (A multi-entry jump from the history menu pops every guard
+ *              whose sentinel it removed, top-down.)
+ *  R3 RELEASE  A programmatic close (button / submit / unmount) of the TOP guard pops its
+ *              sentinel with `history.back()`. That traversal is ASYNCHRONOUS in real
+ *              browsers, so the release is "pending" until its popstate lands (or a
+ *              {@link HISTORY_GUARD_RELEASE_FALLBACK_MS} fallback fires — jsdom cancels a
+ *              queued traversal when anything pushes first). A pending release's popstate
+ *              is consumed by the release and is never treated as a user Back.
+ *  R4 DEFER    A guard that wants to arm while a release is pending waits for it, then
+ *              pushes its sentinel. Without this, "close drawer + open dialog" in one
+ *              commit pushed the dialog's sentinel BEFORE the drawer's queued back()
+ *              landed, so the back() popped the dialog's sentinel → popstate → the dialog
+ *              closed on arrival (jsdom hides this by cancelling the traversal). A guard
+ *              that deactivates or unmounts before its deferred arm runs simply cancels
+ *              it — no push, no back().
+ *  R5 ORPHAN   A programmatic close of a guard that is NOT top (an outer drawer closed
+ *              under an inner dialog), or whose sentinel is not the current entry (a
+ *              forward navigation sits on top), must not back() — that would pop the
+ *              inner dialog's sentinel (or the navigation). It leaves the sentinel in
+ *              place and marks the stack entry ownerless. An ownerless sentinel is popped
+ *              (R3) as soon as it becomes the current entry — after the guards above it
+ *              are gone, or when a Back resurfaces it — so the stack never desyncs from
+ *              history and the user never spends a dead Back press on it. While anything
+ *              is armed, the same sweep pops a sentinel that resurfaces with an id nobody
+ *              owns (left behind before a full reload).
+ *  R6 NEVER    A sentinel is only ever popped when `history.state` carries THIS guard's
+ *     BOUNCE   id, i.e. it is verifiably the current entry. Anything else on top (Next's
+ *              entry for a forward navigation) is left alone — a cleanup back() would
+ *              otherwise pop the destination and bounce the user back into the overlay.
  *
  * Two Next-App-Router-specific correctnesses that a non-Next test harness cannot see:
  *  - We MERGE our flag into the existing `history.state` rather than replacing it, so
  *    Next's own routing markers survive on the sentinel entry. Replacing them makes
  *    Next treat the Back as a full route navigation, which REMOUNTS the page and wipes
  *    the wizard's `useState` answers — the exact regression this feature must avoid.
- *  - The cleanup only pops the sentinel when it is still the TOP entry (our flag is on
- *    `history.state`). Otherwise a forward navigation while armed (e.g. tapping the Home
- *    tab mid-wizard pushes Next's own entry on top) would have our cleanup `back()` pop
- *    the destination and bounce the user right back into the wizard.
+ *  - R6 above: the cleanup only pops the sentinel when it is still the TOP entry.
  *
- * Scope note: designed for ONE guarded overlay armed at a time. The app's scoped
- * surfaces — the daily-check wizard, a DetailDrawer, a respond dialog, the
- * RequestComposer — are mutually exclusive in practice, so two simultaneously-armed
- * guards (which would both answer one Back) do not arise. This is deliberately NOT a
- * global router patch.
+ * Known limit: guards that mount in the SAME commit nest in React's effect order
+ * (children before parents), so a parent+child pair that opens together would be
+ * answered parent-first. The app's overlays open in separate commits (drawer, then a
+ * dialog from a button inside it), which is the order R1 needs. This is deliberately
+ * still NOT a global router patch: nothing listens while nothing is armed.
  *
  * @param active arm the guard (overlay open, or wizard past step 0 and not submitted)
  * @param onBack run when Back is pressed while armed — close the overlay, or step back one
  */
 const GUARD_FLAG = '__ahitsHistoryGuard'
+const GUARD_ID = '__ahitsHistoryGuardId'
+
+/** How long a programmatic release (R3) may take to land before we stop waiting for it. */
+export const HISTORY_GUARD_RELEASE_FALLBACK_MS = 400
+
+interface GuardEntry {
+  /** Stamped onto the sentinel's `history.state`; unique for the life of the page. */
+  id: string
+  /** Answers a user Back (R2). `null` once the owner closed while not top (R5: ownerless). */
+  onPop: (() => void) | null
+}
+
+// Ids stay unique across a full reload (a leaked sentinel from before it would
+// otherwise be able to collide with a fresh guard's id).
+const SESSION = Math.random().toString(36).slice(2, 8)
+let seq = 0
+
+// ── Module state: the stack, the one listener, the one pending release ──────────
+const stack: GuardEntry[] = []
+/** Arms deferred by R4, in the order they asked. */
+const waitingArms: Array<() => void> = []
+let releasePending = false
+let releaseTimer: number | undefined
+let listening = false
+
+function sentinelIdOf(state: unknown): string | null {
+  const s = state as Record<string, unknown> | null | undefined
+  if (!s || s[GUARD_FLAG] !== true) return null
+  return typeof s[GUARD_ID] === 'string' ? s[GUARD_ID] : null
+}
+
+/** R6: is this guard's sentinel verifiably the current history entry? */
+function isCurrent(entry: GuardEntry): boolean {
+  return sentinelIdOf(window.history.state) === entry.id
+}
+
+function ensureListening() {
+  if (listening) return
+  window.addEventListener('popstate', onPopState)
+  listening = true
+}
+
+/** Nothing armed, nothing pending, nothing waiting → stop listening (not a router patch). */
+function settleListener() {
+  if (!listening || stack.length > 0 || releasePending || waitingArms.length > 0) return
+  window.removeEventListener('popstate', onPopState)
+  listening = false
+}
+
+/** R3: pop the current entry (one of our sentinels) and wait for the pop to land. */
+function beginRelease() {
+  releasePending = true
+  ensureListening()
+  releaseTimer = window.setTimeout(finishRelease, HISTORY_GUARD_RELEASE_FALLBACK_MS)
+  window.history.back()
+}
+
+/** The release landed (its popstate, or the fallback): sweep, then run the deferred arms. */
+function finishRelease() {
+  if (!releasePending) return
+  releasePending = false
+  window.clearTimeout(releaseTimer)
+  releaseTimer = undefined
+  sweepOrphans()
+  if (!releasePending) {
+    // R4: arm in the order the guards asked. Each arm pushes above a settled stack.
+    const arms = waitingArms.splice(0)
+    for (const arm of arms) arm()
+  }
+  settleListener()
+}
+
+/** R5: an ownerless sentinel that has become the current entry is popped right away. */
+function sweepOrphans() {
+  if (releasePending) return
+  const top = stack[stack.length - 1]
+  if (top && top.onPop === null && isCurrent(top)) {
+    stack.pop()
+    beginRelease()
+  }
+}
+
+/** Programmatic close (button / submit / unmount): R3 when top and current, else R5. */
+function closeGuard(entry: GuardEntry) {
+  const i = stack.indexOf(entry)
+  if (i === -1) return
+  if (i === stack.length - 1 && isCurrent(entry)) {
+    stack.pop()
+    beginRelease()
+    return
+  }
+  // An inner guard still sits above us, or a forward navigation sits on top of history:
+  // leave the sentinel where it is; it is swept once it resurfaces as the current entry.
+  entry.onPop = null
+  sweepOrphans()
+}
+
+/** R2: the top guard's sentinel was popped by the user — take it off and let it answer. */
+function popTop() {
+  const entry = stack.pop()
+  entry?.onPop?.()
+}
+
+function onPopState() {
+  if (releasePending) {
+    // R3: the first popstate after our back() is that pop landing, never a user Back.
+    finishRelease()
+    return
+  }
+  const landed = sentinelIdOf(window.history.state)
+  if (landed === null) {
+    // Below every sentinel we own: everything armed was popped (a history-menu jump
+    // lands here too) — answer top-down.
+    while (stack.length > 0) popTop()
+  } else {
+    const idx = stack.findIndex((e) => e.id === landed)
+    if (idx === -1) {
+      // R5: a sentinel nobody owns resurfaced (left behind under a forward navigation,
+      // possibly before a full reload) — pop it so the next Back does real work.
+      beginRelease()
+      return
+    }
+    const top = stack.length - 1
+    let popped = top - idx
+    // Landing ON the live top sentinel cannot happen in a browser (a popstate always
+    // lands somewhere else); it is how jsdom-based tests emulate a Back without moving
+    // the index — treat it as the one pop it stands for.
+    if (popped === 0 && stack[top]?.onPop) popped = 1
+    for (let n = 0; n < popped; n += 1) popTop()
+    sweepOrphans()
+  }
+  settleListener()
+}
+
+/**
+ * Test-only: forget every armed guard, pending release and deferred arm, and detach the
+ * listener. Component tests share this module across cases; call it between them.
+ */
+export function __resetHistoryGuardForTests() {
+  stack.splice(0)
+  waitingArms.splice(0)
+  releasePending = false
+  if (releaseTimer !== undefined) window.clearTimeout(releaseTimer)
+  releaseTimer = undefined
+  if (listening) window.removeEventListener('popstate', onPopState)
+  listening = false
+}
 
 export function useHistoryGuard(active: boolean, onBack: () => void) {
   const onBackRef = React.useRef(onBack)
   // Keep the latest callback without re-arming the guard on every render.
   React.useEffect(() => { onBackRef.current = onBack })
-  // Whether OUR sentinel entry is currently the top of the stack.
-  const armedRef = React.useRef(false)
   // Bumped on each Back so the effect re-runs and re-arms when `active` is still true
   // between renders — the multi-step wizard case, where `active` (step > 0) does not
   // change as the operator steps back from 2 to 1.
@@ -49,36 +234,47 @@ export function useHistoryGuard(active: boolean, onBack: () => void) {
   React.useEffect(() => {
     if (typeof window === 'undefined' || !active) return
 
-    if (!armedRef.current) {
+    // Whether OUR sentinel is on the stack (this effect run owns it).
+    let armed = false
+    let cancelled = false
+    const entry: GuardEntry = {
+      id: `${SESSION}-${++seq}`,
+      onPop: () => {
+        // R2: the browser already popped our sentinel and the dispatcher took us off the
+        // stack. Answer, then force the effect to re-run; if `active` is still true it
+        // re-arms (wizard).
+        armed = false
+        onBackRef.current()
+        setRearm((n) => n + 1)
+      },
+    }
+    const arm = () => {
+      if (cancelled) return // R4: closed before the deferred arm ran — nothing to do.
+      ensureListening()
       // Merge, don't replace: keep Next's routing markers so a same-url Back does not
       // remount the page (which would wipe wizard answers).
       window.history.pushState(
-        { ...(window.history.state ?? {}), [GUARD_FLAG]: true },
+        { ...(window.history.state ?? {}), [GUARD_FLAG]: true, [GUARD_ID]: entry.id },
         '',
         window.location.href,
       )
-      armedRef.current = true
+      stack.push(entry)
+      armed = true
     }
-
-    const handlePop = () => {
-      // The browser already popped our sentinel.
-      armedRef.current = false
-      onBackRef.current()
-      // Force the effect to re-run; if `active` is still true it re-arms (wizard).
-      setRearm((n) => n + 1)
-    }
-    window.addEventListener('popstate', handlePop)
+    if (releasePending) waitingArms.push(arm) // R4
+    else arm() // R1
 
     return () => {
-      window.removeEventListener('popstate', handlePop)
-      // Closed by a button/submit/unmount (not by Back) while our sentinel is still the
-      // top entry — pop it to keep the stack balanced. The `armedRef` gate skips the
-      // Back-close path (ref is already false); the state-flag gate skips forward-nav
-      // (a Next entry now sits on top), so we never bounce a real navigation.
-      if (armedRef.current && (window.history.state as Record<string, unknown> | null)?.[GUARD_FLAG]) {
-        armedRef.current = false
-        window.history.back()
+      cancelled = true
+      const w = waitingArms.indexOf(arm)
+      if (w !== -1) waitingArms.splice(w, 1)
+      if (armed) {
+        // Closed by a button/submit/unmount (not by Back) — R3 or R5. The Back-close
+        // path already cleared `armed` in onPop, so it never double-pops.
+        armed = false
+        closeGuard(entry)
       }
+      settleListener()
     }
   }, [active, rearm])
 }
