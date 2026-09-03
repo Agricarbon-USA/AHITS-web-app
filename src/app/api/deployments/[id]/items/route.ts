@@ -85,10 +85,9 @@ const dispositionSchema = z.object({
   if (v.type === 'HUB' && !v.hubId) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'A return hub is required', path: ['hubId'] })
   }
-  // §11.10 / Phase-2: a damage report requires at least one photo.
-  if (v.type === 'INOPERABLE' && v.photoUrls.length === 0) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'At least one damage photo is required', path: ['photoUrls'] })
-  }
+  // UXP-3 (3g) / D36: an INOPERABLE disposition no longer requires a damage photo — a
+  // denied/missing camera must never block a submit. (photoUrlsField still 422s an
+  // unresolved localphoto: ref.)
 })
 
 const removeSchema = z.object({

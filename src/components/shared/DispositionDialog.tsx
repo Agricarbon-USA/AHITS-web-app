@@ -115,8 +115,9 @@ export function DispositionDialog({
   }
 
   const missingHub = Array.from(dispositions.values()).some((d) => d.type === 'HUB' && !d.hubId)
-  // §11.10 / Phase-2: a damage (INOPERABLE) disposition REQUIRES at least one photo.
-  const missingDamagePhoto = Array.from(dispositions.values()).some((d) => d.type === 'INOPERABLE' && d.photoUrls.length === 0)
+  // UXP-3 (3g) / D36: an INOPERABLE disposition used to REQUIRE ≥1 damage photo (§11.10,
+  // client + server). A denied/missing camera must never block a submit, so the photo is
+  // now a nudge — the server-side clauses in /items and /end are gone too.
 
   function setDisp(kitItemId: string, patch: Partial<ItemDisposition>) {
     setDispositions((prev) => {
@@ -291,8 +292,8 @@ export function DispositionDialog({
                       multiline
                       rows={2}
                     />
-                    <Typography variant="caption" color={disp.photoUrls.length === 0 ? 'error.main' : 'text.secondary'}>
-                      Damage photos (required) — at least one
+                    <Typography variant="caption" color="text.secondary">
+                      Damage photos — add at least one if you can
                     </Typography>
                     <PhotoCapture
                       value={disp.photoUrls}
@@ -320,10 +321,10 @@ export function DispositionDialog({
           variant="contained"
           color={mode === 'end-deployment' ? 'error' : 'primary'}
           onClick={handleSubmit}
-          disabled={loading || missingHub || missingDamagePhoto}
+          disabled={loading || missingHub}
           startIcon={loading ? <CircularProgress size={16} /> : undefined}
         >
-          {loading ? 'Working…' : missingHub ? 'Choose a return hub' : missingDamagePhoto ? 'Add a damage photo' : mode === 'end-deployment' ? 'End Deployment' : 'Return Items'}
+          {loading ? 'Working…' : missingHub ? 'Choose a return hub' : mode === 'end-deployment' ? 'End Deployment' : 'Return Items'}
         </Button>
       </DialogActions>
     </Dialog>
