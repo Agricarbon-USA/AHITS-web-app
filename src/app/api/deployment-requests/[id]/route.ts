@@ -90,7 +90,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (extra.fulfillerHubId) {
       await issueForwardHubLink(id, extra.fulfillerHubId, session.userId, result.request.label).catch(() => {})
     }
-  } else if (action === 'complete') {
+  } else if (action === 'complete' || (action === 'fulfill' && result.request.requestType === 'MATERIAL')) {
+    // UXP-3 (3c / F-04): a MATERIAL `fulfill` (admin "Mark Handled" on a REQUESTED request)
+    // used to fall through this chain and notify nobody — the requester only learned by
+    // texting. Both admin closes of a material request now write the SAME row. Single-fire
+    // is guaranteed by the status-guarded UPDATE upstream (a replay is STATE_MISMATCH → 409
+    // before this arm), so no withIdempotency wrapper here — wrapping would change the
+    // 409-on-replay contract for every action on this route.
     await prisma.notification.create({
       data: {
         userId: result.requestedById,
@@ -100,7 +106,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         body: result.request.label
           ? `"${result.request.label}" has been marked handled.`
           : 'Your material request has been marked handled.',
-        link: '/operator/requests',
+        // UXP-3 (3c rider): a handled request lives on the operator's Closed tab, so the
+        // bell tap lands on the list that actually contains it (the page reads ?tab).
+        link: '/operator/requests?tab=closed',
       },
     }).catch(() => {})
   }
