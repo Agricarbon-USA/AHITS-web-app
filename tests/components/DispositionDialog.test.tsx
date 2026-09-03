@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // CC-24: the single-item remove now routes through DispositionDialog (was a
@@ -65,5 +65,26 @@ describe('DispositionDialog — merged single-item remove (CC-24)', () => {
     fireEvent.click(screen.getByRole('button', { name: /Return Items/i }))
     await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1))
     expect(mutate.mock.calls[0][0].body.note).toBe('End of day return')
+  })
+
+  // UXP-3 (3g) / D36: an INOPERABLE disposition used to freeze the confirm button as
+  // "Add a damage photo" until a photo existed. A denied/missing camera must never block
+  // a submit, so the photo is now a nudge and the item still goes through photo-less.
+  it('INOPERABLE with 0 photos still submits (D36: the damage photo is a nudge, not a gate)', async () => {
+    renderDialog()
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: /Disposition/i }))
+    fireEvent.click(within(screen.getByRole('listbox')).getByText('Mark Inoperable / Damaged'))
+
+    expect(screen.getByText('Damage photos — add at least one if you can')).toBeInTheDocument()
+    expect(screen.queryByText(/required/i)).not.toBeInTheDocument()
+    const confirm = screen.getByRole('button', { name: /Return Items/i })
+    expect(confirm).toBeEnabled()
+    expect(screen.queryByRole('button', { name: /Add a damage photo/i })).not.toBeInTheDocument()
+
+    fireEvent.click(confirm)
+    await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1))
+    const disp = mutate.mock.calls[0][0].body.itemDispositions[0] as { type: string; photoUrls: string[] }
+    expect(disp.type).toBe('INOPERABLE')
+    expect(disp.photoUrls).toEqual([])
   })
 })

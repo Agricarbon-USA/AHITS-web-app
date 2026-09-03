@@ -20,11 +20,17 @@ interface PhotoCaptureProps {
 }
 
 /**
- * Camera capture + thumbnail strip. Each photo is compressed, then uploaded
+ * Photo picker + thumbnail strip. Each photo is compressed, then uploaded
  * immediately when online (the ref becomes a real URL) or stashed in IndexedDB
  * when offline (the ref becomes a `localphoto:` key that the offline queue
  * uploads on reconnect). Either way the parent only ever handles an array of
  * string refs and passes them straight into the request body.
+ *
+ * UXP-3 (3g) / D36: the input deliberately carries NO `capture` attribute, so the
+ * OS offers camera OR library (iOS: Take Photo / Photo Library; Android: Camera /
+ * Files). A photo the operator already took is a first-class input — "texting the
+ * photo" parity. Re-adding `capture="environment"` fails
+ * tests/components/PhotoCapture.test.tsx loudly; re-open D36 before doing so.
  */
 export function PhotoCapture({
   value, onChange, disabled, max = 5, label = 'Add photo',
@@ -33,6 +39,9 @@ export function PhotoCapture({
   const [previews, setPreviews] = React.useState<Record<string, string>>({})
   const [busy, setBusy] = React.useState(false)
   const [photoError, setPhotoError] = React.useState<string | null>(null)
+  // UXP-3 (3g, critic G-5): the max-N cap and non-image skips used to be SILENT
+  // drops — the operator picked 7, saw 5, and never learned why. Surfaced here.
+  const [notice, setNotice] = React.useState<string | null>(null)
   // Track object URLs we create so we can revoke them on unmount.
   const objectUrls = React.useRef<string[]>([])
 
@@ -64,11 +73,23 @@ export function PhotoCapture({
     if (!files || files.length === 0) return
     setBusy(true)
     setPhotoError(null)
+    setNotice(null)
     try {
+      const picked = Array.from(files)
+      const images = picked.filter((f) => f.type.startsWith('image/'))
+      const room = Math.max(0, max - value.length)
+      const toAdd = images.slice(0, room)
+      const notices: string[] = []
+      if (images.length > room) {
+        notices.push(room === 0
+          ? `Photo limit reached (${max}).`
+          : `Only ${max} photos per report — the first ${room} were added.`)
+      }
+      if (images.length < picked.length) notices.push('Only image files can be attached.')
+      if (notices.length) setNotice(notices.join(' '))
+
       const added: string[] = []
-      for (const file of Array.from(files)) {
-        if (value.length + added.length >= max) break
-        if (!file.type.startsWith('image/')) continue
+      for (const file of toAdd) {
         const blob = await compressImage(file)
         let ref: string
         if (typeof navigator !== 'undefined' && navigator.onLine) {
@@ -102,6 +123,7 @@ export function PhotoCapture({
   }
 
   async function remove(ref: string) {
+    setNotice(null)
     if (isLocalPhotoRef(ref)) await deleteLocalPhoto(ref)
     const url = previews[ref]
     if (url && url.startsWith('blob:')) {
@@ -120,11 +142,12 @@ export function PhotoCapture({
 
   return (
     <Box>
+      {/* D36: no `capture` attribute — camera OR library, the OS decides (see the
+          component doc comment). `accept` + `multiple` stay. */}
       <input
         ref={inputRef}
         type="file"
         accept="image/*"
-        capture="environment"
         multiple
         hidden
         onChange={(e) => handleFiles(e.target.files)}
@@ -159,7 +182,7 @@ export function PhotoCapture({
             </IconButton>
           </Box>
         ))}
-        {value.length < max && (
+        {value.length < max ? (
           <Button
             variant="outlined"
             onClick={() => inputRef.current?.click()}
@@ -169,8 +192,18 @@ export function PhotoCapture({
           >
             {busy ? '…' : label}
           </Button>
+        ) : (
+          // 3g (G-5): the Add button used to just vanish at the cap; say why.
+          <Typography variant="caption" color="text.secondary" sx={{ alignSelf: 'center' }}>
+            Maximum {max} photos
+          </Typography>
         )}
       </Stack>
+      {notice && (
+        <Typography role="status" variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+          {notice}
+        </Typography>
+      )}
       {hasLocal && (
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
           Saved on device — photos upload automatically when you reconnect.

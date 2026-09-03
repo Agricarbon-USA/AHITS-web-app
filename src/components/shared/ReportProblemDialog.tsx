@@ -47,10 +47,12 @@ export function ReportProblemDialog({
 
   if (!subject) return null
   const isUnit = subject.kind === 'unit'
-  // §11.10 damage-photo rule: units require ≥1 photo. Vehicles keep it OPTIONAL — the old
-  // vehicle path was photo-less, so a hard requirement there is added friction (RIDER C 2a-f).
-  const photoRequired = isUnit
-  const canSubmit = !!notes.trim() && (!photoRequired || photoUrls.length > 0) && !saving
+  // UXP-3 (3g) / D36: a photo is NEVER required to submit — a denied/missing camera must
+  // not block a report. Units used to hard-require ≥1 photo (§11.10, client AND server);
+  // now the photo is a strong nudge and a photo-less unit report is labelled as such on
+  // the button, so the operator sends it knowingly (one tap, no confirm — gloves).
+  const canSubmit = !!notes.trim() && !saving
+  const withoutPhoto = isUnit && photoUrls.length === 0
 
   async function submit() {
     if (!subject) return
@@ -98,8 +100,10 @@ export function ReportProblemDialog({
           />
 
           <PhotoCapture value={photoUrls} onChange={setPhotoUrls} label="Add photo" />
-          <Typography variant="caption" color={photoRequired && photoUrls.length === 0 ? 'error.main' : 'text.secondary'}>
-            {photoRequired ? 'At least one photo is required.' : 'Add a photo if you can.'}
+          <Typography variant="caption" color="text.secondary">
+            {isUnit
+              ? 'Add at least one photo if you can — it helps the admin triage.'
+              : 'Add a photo if you can.'}
           </Typography>
 
           <ToggleButtonGroup
@@ -126,7 +130,7 @@ export function ReportProblemDialog({
       <DialogActions>
         <Button onClick={onClose} disabled={saving} sx={TOUCH_SX}>Cancel</Button>
         <Button variant="contained" onClick={submit} disabled={!canSubmit} sx={TOUCH_SX}>
-          {saving ? 'Reporting…' : 'Report'}
+          {saving ? 'Reporting…' : withoutPhoto ? 'Report without photo' : 'Report'}
         </Button>
       </DialogActions>
     </Dialog>
