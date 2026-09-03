@@ -1298,10 +1298,13 @@ function AdminDeploymentsContent() {
   // what comes back) and after every drawer mutation — so a second deployment in one
   // sitting never offers a unit or vehicle the first one just took. Returns the fresh
   // lists (null when either read failed) because the 409 recovery needs them
-  // synchronously, not on a later render.
+  // synchronously, not on a later render. `pageSize=100` is the server's clamp
+  // (parsePagination maxSize) — asking for more only pretends to cover a catalog
+  // this read cannot see, and the 409 diff would then report an item beyond #100
+  // as "taken".
   const refetchPickers = React.useCallback(async (): Promise<PickerData | null> => {
     try {
-      const [vRes, iRes] = await Promise.all([fetch('/api/vehicles'), fetch('/api/inventory?pageSize=200')])
+      const [vRes, iRes] = await Promise.all([fetch('/api/vehicles'), fetch('/api/inventory?pageSize=100')])
       if (!vRes.ok || !iRes.ok) return null
       const fresh: PickerData = {
         vehicles: toVehicleOptions(await vRes.json()),
@@ -1321,7 +1324,7 @@ function AdminDeploymentsContent() {
     // Same normalisers as refetchPickers (T8 positions from the API) — kept as
     // `.then` chains here so the mount read is not a synchronous setState-in-effect.
     fetch('/api/vehicles').then((r) => r.json()).then((d) => setVehicles(toVehicleOptions(d))).catch(() => {})
-    fetch('/api/inventory?pageSize=200').then((r) => r.json()).then((d) => setInventoryItems(toInventoryOptions(d))).catch(() => {})
+    fetch('/api/inventory?pageSize=100').then((r) => r.json()).then((d) => setInventoryItems(toInventoryOptions(d))).catch(() => {})
     fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(Array.isArray(d) ? d : (d?.data ?? []))).catch(() => {})
   }, [])
 
