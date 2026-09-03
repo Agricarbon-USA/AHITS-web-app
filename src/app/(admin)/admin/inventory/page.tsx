@@ -3,8 +3,7 @@
 import * as React from 'react'
 import { useUrlFilters } from '@/hooks/useUrlFilters'
 import {
-  Box, Typography, Button, Dialog, DialogTitle, DialogContent,
-  DialogActions, TextField, MenuItem, Stack, Alert,
+  Box, Typography, Button, TextField, MenuItem, Stack, Alert,
   Chip, IconButton, Tooltip, CircularProgress,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Paper, Skeleton, Switch, FormControlLabel, Accordion, AccordionSummary,
@@ -495,77 +494,94 @@ function MoveStockDialog({
   onClose: () => void
   onSuccess: () => void
 }) {
+  // UXP-6 (6c / C7): on EntityFormDialog — pinned Cancel/Move, Enter submits, dirty
+  // guard, errors on the field they belong to. The request and its rules are unchanged.
   const [fromHubId, setFromHubId] = React.useState('')
   const [toHubId, setToHubId] = React.useState('')
   const [qty, setQty] = React.useState(1)
-  const [loading, setLoading] = React.useState(false)
-  const [error, setError] = React.useState('')
+  const [saving, setSaving] = React.useState(false)
+  const [formError, setFormError] = React.useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({})
+  const dirty = useDirtyState(true, { fromHubId, toHubId, qty })
 
   const hubsWithStock = stock.filter((s) => s.quantity > 0)
   const fromAvailable = stock.find((s) => s.hubId === fromHubId)?.available ?? 0
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError('')
-    if (!fromHubId || !toHubId) { setError('Select both hubs'); return }
-    if (fromHubId === toHubId) { setError('Source and destination must differ'); return }
-    if (qty < 1) { setError('Quantity must be at least 1'); return }
-    setLoading(true)
+  const handleSubmit = async () => {
+    setFormError(null)
+    const errs: Record<string, string> = {}
+    if (!fromHubId) errs.fromHubId = 'Select the source hub'
+    if (!toHubId) errs.toHubId = 'Select the destination hub'
+    if (fromHubId && toHubId && fromHubId === toHubId) errs.toHubId = 'Source and destination must differ'
+    if (qty < 1) errs.qty = 'Quantity must be at least 1'
+    if (Object.keys(errs).length > 0) { setFieldErrors(errs); return false }
+    setFieldErrors({})
+    setSaving(true)
     try {
       const res = await fetch(`/api/inventory/${itemId}/stock`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fromHubId, toHubId, qty }),
       })
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        setError(res.status === 409 ? `Not enough stock at source hub (only ${fromAvailable} available)` : (typeof data.error === 'string' ? data.error : 'Move failed'))
-        return
+        if (res.status === 409) {
+          setFormError(`Not enough stock at source hub (only ${fromAvailable} available)`)
+        } else {
+          const parsed = parseApiError(data, 'Move failed')
+          setFieldErrors(parsed.fieldErrors)
+          setFormError(parsed.formError)
+        }
+        return false
       }
       onSuccess()
-    } catch { setError('Network error') }
-    finally { setLoading(false) }
+    } catch { setFormError('Network error'); return false }
+    finally { setSaving(false) }
   }
 
   return (
-    <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>Move Stock</DialogTitle>
-      <Box component="form" onSubmit={handleSubmit}>
-        <DialogContent>
-          <Stack spacing={2.5} pt={0.5}>
-            {error && <Alert severity="error">{error}</Alert>}
-            <TextField select label="From hub" value={fromHubId} onChange={(e) => setFromHubId(e.target.value)} fullWidth required>
-              {hubsWithStock.length === 0
-                ? <MenuItem value="" disabled>No hubs with stock</MenuItem>
-                : hubsWithStock.map((s) => (
-                    <MenuItem key={s.hubId} value={s.hubId}>
-                      {s.hubName ?? s.hubId} ({s.available} available)
-                    </MenuItem>
-                  ))}
-            </TextField>
-            <TextField select label="To hub" value={toHubId} onChange={(e) => setToHubId(e.target.value)} fullWidth required>
-              {hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.name}</MenuItem>)}
-            </TextField>
-            <TextField
-              label="Quantity"
-              type="number"
-              value={qty}
-              onChange={(e) => setQty(Math.max(1, parseInt(e.target.value) || 1))}
-              inputProps={{ min: 1, max: fromAvailable || undefined }}
-              fullWidth
-              required
-              helperText={fromHubId ? `${fromAvailable} available at source` : undefined}
-            />
-          </Stack>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={onClose} disabled={loading}>Cancel</Button>
-          <MutationButton type="submit" variant="contained" disabled={loading} startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <SwapHorizIcon />}>
-            {loading ? 'Moving…' : 'Move'}
-          </MutationButton>
-        </DialogActions>
-      </Box>
-    </Dialog>
+    <EntityFormDialog
+      open
+      title="Move stock"
+      onClose={onClose}
+      onSubmit={handleSubmit}
+      saving={saving}
+      dirty={dirty}
+      formError={formError}
+      legend={<RequiredLegend />}
+      submitLabel="Move"
+      savingLabel="Moving…"
+      submitIcon={<SwapHorizIcon />}
+      maxWidth="xs"
+    >
+      <Stack spacing={2.5} pt={0.5}>
+        <TextField select label="From hub" value={fromHubId} onChange={(e) => { setFromHubId(e.target.value); setFieldErrors({}) }} fullWidth required
+          error={!!fieldErrors.fromHubId} helperText={fieldErrors.fromHubId}>
+          {hubsWithStock.length === 0
+            ? <MenuItem value="" disabled>No hubs with stock</MenuItem>
+            : hubsWithStock.map((s) => (
+                <MenuItem key={s.hubId} value={s.hubId}>
+                  {s.hubName ?? s.hubId} ({s.available} available)
+                </MenuItem>
+              ))}
+        </TextField>
+        <TextField select label="To hub" value={toHubId} onChange={(e) => { setToHubId(e.target.value); setFieldErrors({}) }} fullWidth required
+          error={!!fieldErrors.toHubId} helperText={fieldErrors.toHubId}>
+          {hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.name}</MenuItem>)}
+        </TextField>
+        <TextField
+          label="Quantity"
+          type="number"
+          value={qty}
+          onChange={(e) => { setQty(Math.max(1, parseInt(e.target.value) || 1)); setFieldErrors({}) }}
+          inputProps={{ min: 1, max: fromAvailable || undefined }}
+          fullWidth
+          required
+          error={!!fieldErrors.qty}
+          helperText={fieldErrors.qty ?? (fromHubId ? `${fromAvailable} available at source` : undefined)}
+        />
+      </Stack>
+    </EntityFormDialog>
   )
 }
 
@@ -585,17 +601,22 @@ function AddStockDialog({
   // first row via the same { hubId, quantity } set-API the row editor uses.
   const stockedHubIds = new Set(stock.map((s) => s.hubId))
   const availableHubs = hubs.filter((h) => !stockedHubIds.has(h.id))
+  // UXP-6 (6c / C7): on EntityFormDialog — pinned actions, Enter submits, dirty guard.
   const [hubId, setHubId] = React.useState('')
   const [qty, setQty] = React.useState(1)
-  const [loading, setLoading] = React.useState(false)
-  const [error, setError] = React.useState('')
+  const [saving, setSaving] = React.useState(false)
+  const [formError, setFormError] = React.useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({})
+  const dirty = useDirtyState(true, { hubId, qty })
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError('')
-    if (!hubId) { setError('Select a hub'); return }
-    if (qty < 1) { setError('Quantity must be at least 1'); return }
-    setLoading(true)
+  const handleSubmit = async () => {
+    setFormError(null)
+    const errs: Record<string, string> = {}
+    if (!hubId) errs.hubId = 'Select a hub'
+    if (qty < 1) errs.qty = 'Quantity must be at least 1'
+    if (Object.keys(errs).length > 0) { setFieldErrors(errs); return false }
+    setFieldErrors({})
+    setSaving(true)
     try {
       const res = await fetch(`/api/inventory/${itemId}/stock`, {
         method: 'POST',
@@ -604,33 +625,45 @@ function AddStockDialog({
         body: JSON.stringify({ hubId, addQty: qty }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) { setError(typeof data.error === 'string' ? data.error : 'Could not add stock'); return }
+      if (!res.ok) {
+        const parsed = parseApiError(data, 'Could not add stock')
+        // The route's field for the amount is `addQty`; show it on the Quantity field.
+        const { addQty, ...rest } = parsed.fieldErrors
+        setFieldErrors(addQty ? { ...rest, qty: addQty } : rest)
+        setFormError(parsed.formError)
+        return false
+      }
       onSuccess()
-    } catch { setError('Network error') }
-    finally { setLoading(false) }
+    } catch { setFormError('Network error'); return false }
+    finally { setSaving(false) }
   }
 
   return (
-    <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
-      <DialogTitle>Add Stock at a Hub</DialogTitle>
-      <Box component="form" onSubmit={handleSubmit}>
-        <DialogContent>
-          <Stack spacing={2.5} pt={0.5}>
-            {error && <Alert severity="error">{error}</Alert>}
-            <TextField select label="Hub" value={hubId} onChange={(e) => setHubId(e.target.value)} fullWidth required>
-              {availableHubs.length === 0
-                ? <MenuItem value="" disabled>Every hub already has a stock row — edit it in the table instead</MenuItem>
-                : availableHubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.name ?? h.id}</MenuItem>)}
-            </TextField>
-            <TextField label="Quantity" type="number" value={qty} onChange={(e) => setQty(parseInt(e.target.value) || 0)} inputProps={{ min: 1 }} fullWidth required />
-          </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={onClose} disabled={loading}>Cancel</Button>
-          <Button type="submit" variant="contained" disabled={loading || !hubId}>{loading ? <CircularProgress size={16} /> : 'Add Stock'}</Button>
-        </DialogActions>
-      </Box>
-    </Dialog>
+    <EntityFormDialog
+      open
+      title="Add stock at a hub"
+      onClose={onClose}
+      onSubmit={handleSubmit}
+      saving={saving}
+      dirty={dirty}
+      formError={formError}
+      legend={<RequiredLegend />}
+      submitLabel="Add Stock"
+      savingLabel="Adding…"
+      submitDisabled={!hubId}
+      maxWidth="xs"
+    >
+      <Stack spacing={2.5} pt={0.5}>
+        <TextField select label="Hub" value={hubId} onChange={(e) => { setHubId(e.target.value); setFieldErrors({}) }} fullWidth required
+          error={!!fieldErrors.hubId} helperText={fieldErrors.hubId}>
+          {availableHubs.length === 0
+            ? <MenuItem value="" disabled>Every hub already has a stock row — edit it in the table instead</MenuItem>
+            : availableHubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.name ?? h.id}</MenuItem>)}
+        </TextField>
+        <TextField label="Quantity" type="number" value={qty} onChange={(e) => { setQty(parseInt(e.target.value) || 0); setFieldErrors({}) }}
+          inputProps={{ min: 1 }} fullWidth required error={!!fieldErrors.qty} helperText={fieldErrors.qty} />
+      </Stack>
+    </EntityFormDialog>
   )
 }
 
