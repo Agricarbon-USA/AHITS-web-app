@@ -39,9 +39,9 @@
 
 1. [ ] **Count this week's group texts (30–60 min).** Scroll the crew thread(s) and count messages by type: equipment requests · "did you check the truck" · problem reports · other. *(This is the "before" number that will prove the app earns its keep — and it vanishes the moment people start using the app again. Do this one first.)*
 
-2. [ ] **Export Clockify (20 min).** Reports → export full history as CSV → note roughly how many taps one person spends per day. *(The "before" number for the future timesheets feature.)*
+2. [ ] ~~Export Clockify~~ **SHELVED for a few weeks (your call, 2026-09-03).** Not a priority now. *Note for later: it's still the "before" number the timesheets feature needs — do the export before that build starts.*
 
-3. [ ] **Give Stewart admin access (30 min).** App → Team Management → invite with **copy-link** → admin role. The deal: he checks the app 5 minutes a day, you only do a Monday look.
+3. [x] **Stewart has admin access — DONE 2026-09-03.** The deal stands: he checks the app 5 minutes a day, you only do a Monday look.
 
 4. [ ] **Operator start-up sheet — I'll draft it, just say the word.** One page: how to install · "Transfer" is the word we use · reload the app after updates · never delete-and-reinstall. Print it or text it.
 
@@ -60,8 +60,8 @@
 
 ## Part 4 · Claude Code — the building queue, in order
 
-1. [ ] **Build session 1 — "stop losing to text messages."** Open Claude Code in the project folder and paste BOTH of these, together: the **UXP-3 section** of `AHITS_UX_PACKETS_2026-07-29.md` **and all of** `AHITS_UXP3_RIDER_2026-08-20.md`. In plain terms it builds: requests notify the person when they're handled · a submitted check can never silently vanish · a half-done check survives closing the app · photos can come from the camera roll · lockout messages tell the truth. You merge in the evening as usual.
-2. [ ] **Build session 2 — "make adding equipment fast."** Ask Claude Code (or me) to draft the admin-setup improvement plan first — the fix for "creating equipment feels clunky" — then build it the following session.
+1. [x] **Build session 1 — "stop losing to text messages" — BUILT 2026-09-03** (branch `feature/20260903/Agricarbon-USA-uxp3-flow-closers`). Requests notify the person when handled · a check can never silently vanish or hang on the location prompt · a half-done check survives closing the app · photos can come from the camera roll · lockout messages tell the truth · badges clear right away · "Done" shows you your own check. **[ ] Your part: push + open PR-1, merge it in the evening** — exact commands and the PR text to paste are in `AHITS_SESSION_HANDOFF_2026-09-03_UXP3-UXP6.md` §3–§4. One sign-off is asked inside PR-1's text (the lockout message reveals that an account exists — read the short paragraph and say OK).
+2. [x] **Build session 2 — "make adding equipment fast" — BUILT 2026-09-03** (branch `feature/20260903/Agricarbon-USA-uxp6-admin-setup`, stacked on PR-1). One consistent add/edit form everywhere (vehicles, gear, deployments, checklists, team), nothing lost: units get created with the item · stock can't vanish without a hub · a clash no longer wipes your whole kit · consumables can be added from the drawer · vehicles link straight to their checklist and service schedules · duplicate anything. **[ ] Your part: push + open PR-2, merge it the evening after PR-1.** Then run the phone checks in the handoff §5 (the ones about Back-button behaviour matter most — they can't be proven without a real phone).
 3. [ ] **Post the backup-developer ad (20 min — not a Code session).** The ad is already written: top section of `AHITS_M1_RETAINER_POSTING_2026-08-20.md`. Send it to your network or a contractor pool. *(A second person who can run the system — required before the big timesheets build, and your bandwidth insurance.)*
 4. [ ] **Later sessions:** visual polish for sunlight/gloved hands, then the bigger roadmap. Ignore until 1–3 are done.
 
