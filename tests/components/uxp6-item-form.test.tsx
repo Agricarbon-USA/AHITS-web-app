@@ -275,6 +275,20 @@ describe('UXP-6 (6c): T5 — consumable stock always lands at a hub', () => {
     expect(postsTo('/api/inventory')[0]!.body).toMatchObject({ quantity: 0 })
     expect(postsTo('/api/inventory')[0]!.body).not.toHaveProperty('hubId')
   })
+
+  it('a blank quantity means 0 (as before), not a validation error', async () => {
+    await renderPage()
+    await openAddItem()
+    setField(/^Name/, 'Sample bags')
+    await pick(/Category/, 'Sampling')
+    setField(/^Initial Quantity/, '')
+    expect(screen.getByRole('combobox', { name: /Hub Location/ })).not.toBeRequired()
+    fireEvent.click(within(dialog('Add item')).getByRole('button', { name: 'Add item' }))
+    await waitFor(() => expect(postsTo('/api/inventory')).toHaveLength(1))
+    expect(screen.queryByText('Enter 0 or more')).toBeNull()
+    expect(postsTo('/api/inventory')[0]!.body).toMatchObject({ quantity: 0 })
+    expect(postsTo('/api/inventory')[0]!.body).not.toHaveProperty('hubId')
+  })
 })
 
 describe('UXP-6 (6c): T6 — edit can clear a field', () => {
@@ -337,6 +351,25 @@ describe('UXP-6 (6c): Save & add another + the Open action', () => {
     fireEvent.click(within(dlg).getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add item' })).toBeNull())
     expect(screen.queryByText('Discard changes?')).toBeNull()
+  })
+
+  it('Enter (implicit submission, no submitter) takes the primary path: the dialog closes', async () => {
+    await renderPage()
+    const dlg = await openAddItem()
+    setField(/^Name/, 'Sample bags')
+    await pick(/Category/, 'Sampling')
+    await pick(/Hub Location/, 'Toledo Hub · Toledo, OH')
+    // The browser's implicit submission clicks the form's DEFAULT button — its first
+    // submit button in tree order. That must be "Add item", not the secondary: the
+    // secondary is a plain button that only submits when clicked.
+    const submitButtons = Array.from(dlg.querySelectorAll('button[type="submit"]')).map((b) => b.textContent)
+    expect(submitButtons).toEqual(['Add item'])
+    expect(within(dlg).getByRole('button', { name: 'Save & add another' })).toHaveAttribute('type', 'button')
+
+    fireEvent.submit(dlg) // a submit with no submitter, as Enter delivers it
+    await waitFor(() => expect(postsTo('/api/inventory')).toHaveLength(1))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add item' })).toBeNull())
+    expect(await screen.findByText('Sample bags added')).toBeInTheDocument()
   })
 
   it('the success toast has an Open action that opens the new item\'s drawer', async () => {

@@ -236,11 +236,17 @@ function ItemFormDialog({
   const [saving, setSaving] = React.useState(false)
   const [purchasingOpen, setPurchasingOpen] = React.useState(false)
   const nameRef = React.useRef<HTMLInputElement | null>(null)
+  // "Save & add another" flips this and submits the form; handleSubmit reads + resets
+  // it. The secondary is `type="button"` on purpose: as a submit button rendered before
+  // the primary it would be the form's DEFAULT button, so Enter in any field would
+  // trigger add-another instead of "Add item".
+  const intentRef = React.useRef<'add-another' | null>(null)
   const dirty = useDirtyState(true, values, initial)
 
   const isSerialized = values.itemType === 'SERIALIZED'
   const serials = React.useMemo(() => parseSerialLines(values.serialNumbers), [values.serialNumbers])
-  const qty = parseInt(values.quantity, 10)
+  // A blank quantity means 0 (as the old form's `parseInt(v) || 0` did) — not an error.
+  const qty = values.quantity.trim() === '' ? 0 : parseInt(values.quantity, 10)
 
   const setField = <K extends keyof ItemFormValues>(key: K, value: ItemFormValues[K]) => {
     setValues((v) => ({ ...v, [key]: value }))
@@ -337,9 +343,10 @@ function ItemFormDialog({
     nameRef.current?.focus()
   }
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null
-    const addAnother = !isEdit && submitter?.value === 'add-another'
+  const handleSubmit = async () => {
+    // Enter / the "Add item" button submit with no intent → the primary path.
+    const addAnother = !isEdit && intentRef.current === 'add-another'
+    intentRef.current = null
     setFormError(null)
     const errs = validate()
     if (Object.keys(errs).length > 0) { applyFieldErrors(errs); return false }
@@ -392,7 +399,13 @@ function ItemFormDialog({
       submitLabel={isEdit ? 'Save changes' : 'Add item'}
       fullScreenXs
       secondaryAction={!isEdit ? (
-        <Button type="submit" name="intent" value="add-another" disabled={saving}>Save &amp; add another</Button>
+        <Button
+          type="button"
+          disabled={saving}
+          onClick={(e) => { intentRef.current = 'add-another'; e.currentTarget.form?.requestSubmit() }}
+        >
+          Save &amp; add another
+        </Button>
       ) : undefined}
     >
       <Stack spacing={2.5} pt={0.5}>

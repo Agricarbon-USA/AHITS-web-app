@@ -97,4 +97,26 @@ describe('UXP-6: EntityFormDialog nested inside an open DetailDrawer', () => {
     expect(flag()).toBeNull()
     await waitFor(() => expect(screen.queryByText('DRAWER BODY')).toBeNull())
   })
+
+  it('historyGuard={false} leaves the dialog out of the stack: Back goes straight to the drawer', async () => {
+    function OptedOut() {
+      const [drawer, setDrawer] = React.useState(true)
+      return (
+        <DetailDrawer open={drawer} onClose={() => setDrawer(false)}>
+          <div>DRAWER BODY</div>
+          <EntityFormDialog open historyGuard={false} title="Move stock" onClose={() => {}} onSubmit={() => {}}>
+            <div>DIALOG BODY</div>
+          </EntityFormDialog>
+        </DetailDrawer>
+      )
+    }
+    const pushSpy = vi.spyOn(window.history, 'pushState')
+    render(<OptedOut />)
+    expect(await screen.findByRole('dialog', { name: 'Move stock' })).toBeInTheDocument()
+    expect(pushSpy).toHaveBeenCalledTimes(1) // the drawer's sentinel only
+    await pressBack()
+    expect(flag()).toBeNull()
+    await waitFor(() => expect(screen.queryByText('DRAWER BODY')).toBeNull())
+    pushSpy.mockRestore()
+  })
 })

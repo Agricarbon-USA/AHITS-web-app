@@ -37,6 +37,7 @@ function Harness({
   saving = false,
   formError,
   secondaryAction,
+  withAddAnother = false,
   submitLabel,
   initialName = '',
   throwOnInvalid = false,
@@ -47,6 +48,8 @@ function Harness({
   saving?: boolean
   formError?: string | null
   secondaryAction?: React.ReactNode
+  /** Render the recommended "Save & add another" secondary: type="button" + intent ref + requestSubmit(). */
+  withAddAnother?: boolean
   submitLabel?: string
   initialName?: string
   throwOnInvalid?: boolean
@@ -54,6 +57,7 @@ function Harness({
   const [name, setName] = React.useState(initialName)
   const [qty, setQty] = React.useState('1')
   const [nameError, setNameError] = React.useState<string | null>(null)
+  const intentRef = React.useRef<string | null>(null)
   const dirty = useDirtyState(open, { name, qty })
   return (
     <EntityFormDialog
@@ -64,17 +68,22 @@ function Harness({
       dirty={dirty}
       formError={formError}
       legend={<RequiredLegend />}
-      secondaryAction={secondaryAction}
+      secondaryAction={withAddAnother ? (
+        <Button type="button" onClick={(e) => { intentRef.current = 'add-another'; e.currentTarget.form?.requestSubmit() }}>
+          Save & add another
+        </Button>
+      ) : secondaryAction}
       submitLabel={submitLabel}
-      onSubmit={(e) => {
+      onSubmit={() => {
+        const intent = intentRef.current
+        intentRef.current = null
         if (!name.trim()) {
           setNameError('Name is required')
           if (throwOnInvalid) throw new FieldValidationError('Fix the highlighted field')
           return false
         }
         setNameError(null)
-        const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null
-        onSaved({ name, qty, submitter: submitter?.value || null })
+        onSaved({ name, qty, submitter: intent })
       }}
     >
       <Stack spacing={2}>
@@ -222,6 +231,16 @@ describe('EntityFormDialog — dirty guard', () => {
     render(<Harness open={false} />)
     expect(historyGuard.mock.calls.at(-1)![0]).toBe(false)
   })
+
+  it('historyGuard={false} opts an open dialog out of the Back guard (caller answers Back itself)', () => {
+    render(
+      <EntityFormDialog open historyGuard={false} title="Add vehicle" onClose={() => {}} onSubmit={() => {}}>
+        <div>fields</div>
+      </EntityFormDialog>,
+    )
+    expect(dialog()).toBeInTheDocument()
+    expect(historyGuard.mock.calls.at(-1)![0]).toBe(false)
+  })
 })
 
 describe('EntityFormDialog — busy state', () => {
@@ -262,24 +281,26 @@ describe('EntityFormDialog — read-only viewers', () => {
 })
 
 describe('EntityFormDialog — secondary action', () => {
-  it('renders the slot between Cancel and Save, and a submit-typed secondary goes through onSubmit with its submitter', async () => {
+  it('renders the slot between Cancel and Save; a type="button" secondary flips an intent and submits through onSubmit', async () => {
     const onSaved = vi.fn()
-    render(
-      <Harness
-        onSaved={onSaved}
-        initialName="Sample bags"
-        secondaryAction={<Button type="submit" name="intent" value="add-another">Save & add another</Button>}
-      />,
-    )
+    render(<Harness onSaved={onSaved} initialName="Sample bags" withAddAnother />)
     const buttons = within(dialog()).getAllByRole('button').map((b) => b.textContent)
     expect(buttons).toEqual(['Cancel', 'Save & add another', 'Save'])
+    // The form's DEFAULT button (what Enter's implicit submission clicks) is the first
+    // submit button in tree order — so the secondary must not be one.
+    const submitButtons = Array.from(dialog().querySelectorAll('button[type="submit"]')).map((b) => b.textContent)
+    expect(submitButtons).toEqual(['Save'])
 
     fireEvent.click(screen.getByRole('button', { name: 'Save & add another' }))
     await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1))
     expect(onSaved.mock.calls[0]![0]).toMatchObject({ name: 'Sample bags', submitter: 'add-another' })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    // Enter (a submit with no submitter) and the Save button both take the primary path.
+    ;(dialog() as HTMLFormElement).requestSubmit()
     await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(2))
     expect(onSaved.mock.calls[1]![0]).toMatchObject({ submitter: null })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(3))
+    expect(onSaved.mock.calls[2]![0]).toMatchObject({ submitter: null })
   })
 })

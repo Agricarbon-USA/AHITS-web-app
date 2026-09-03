@@ -119,7 +119,7 @@ function InviteDialog({ open, onClose, onSuccess, onLink }: {
       dirty={dirty}
       formError={formError}
       legend={<RequiredLegend />}
-      submitLabel={isLink ? 'Create link' : 'Send Invite'}
+      submitLabel={isLink ? 'Create link' : 'Send invite'}
       savingLabel={isLink ? 'Creating…' : 'Sending…'}
       submitIcon={isLink ? <LinkIcon /> : <SendIcon />}
       maxWidth="xs"
@@ -297,7 +297,7 @@ function AccountDialog({
       dirty={dirty}
       formError={formError}
       legend={<RequiredLegend />}
-      submitLabel="Save Changes"
+      submitLabel="Save changes"
       maxWidth="sm"
     >
       <Stack spacing={2.5} pt={0.5}>

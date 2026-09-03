@@ -58,12 +58,12 @@ describe('UXP-6 (6c): Invite team member on EntityFormDialog', () => {
     return await screen.findByRole('dialog', { name: 'Invite team member' })
   }
 
-  it('the dialog Paper is the form with Cancel / Send Invite pinned, and Enter submits the same body as before', async () => {
+  it('the dialog Paper is the form with Cancel / Send invite pinned, and Enter submits the same body as before', async () => {
     await renderPage()
     const dlg = await openInvite()
     expect(dlg.tagName).toBe('FORM')
-    expect(actionButtons(dlg)).toEqual(['Cancel', 'Send Invite'])
-    expect(within(dlg).getByRole('button', { name: 'Send Invite' })).toHaveAttribute('type', 'submit')
+    expect(actionButtons(dlg)).toEqual(['Cancel', 'Send invite'])
+    expect(within(dlg).getByRole('button', { name: 'Send invite' })).toHaveAttribute('type', 'submit')
     expect(within(dlg).getByText('required', { exact: false })).toBeInTheDocument()
     expect(screen.getByLabelText(/^Full Name/)).toBeRequired()
 
@@ -128,11 +128,11 @@ describe('UXP-6 (6c): Manage account on EntityFormDialog', () => {
     return await screen.findByRole('dialog', { name: 'Manage Sam K.' })
   }
 
-  it('the dialog Paper is the form with Cancel / Save Changes pinned, and Enter sends the same PATCH as before', async () => {
+  it('the dialog Paper is the form with Cancel / Save changes pinned, and Enter sends the same PATCH as before', async () => {
     await renderPage()
     const dlg = await openManage()
     expect(dlg.tagName).toBe('FORM')
-    expect(actionButtons(dlg)).toEqual(['Cancel', 'Save Changes'])
+    expect(actionButtons(dlg)).toEqual(['Cancel', 'Save changes'])
     expect(screen.getByLabelText(/^Full Name/)).toHaveValue('Sam K.')
     expect(screen.getByLabelText(/^Email/)).toBeDisabled()
     // The in-form action button must not be a submit.
