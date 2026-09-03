@@ -29,10 +29,15 @@ import { MutationButton } from '@/components/shared/ReadOnly'
 //    all blocked, double-submit ignored.
 //  - `dirty` (from `useDirtyState`) → any close attempt (backdrop, Esc, Cancel,
 //    hardware Back via `useHistoryGuard`) asks "Discard changes?" first.
+//    `historyGuard={false}` opts a dialog out of the Back guard (a caller that
+//    already answers Back itself); the guard nests correctly under an open
+//    DetailDrawer (the hook is nest-aware — Back closes the dialog first).
 //  - `secondaryAction` sits between Cancel and Save ("Save & add another").
-//    Give it `type="submit"` + `name`/`value` and read
-//    `(event.nativeEvent as SubmitEvent).submitter` in `onSubmit`, or flip a ref
-//    in its onClick — either way it goes through the same submit pipeline.
+//    Make it `type="button"`: flip an intent ref in its onClick and call
+//    `e.currentTarget.form?.requestSubmit()`, then read + reset the ref in
+//    `onSubmit`. It must NOT be `type="submit"` — rendered before the primary it
+//    would be the form's DEFAULT button, so Enter in any field (implicit
+//    submission) would fire "Save & add another" instead of Save.
 //  - `fullScreenXs` for forms taller than a phone (vehicle, item, deployment).
 //
 // Native constraint validation is OFF by default (`noValidate`) so the browser's
@@ -83,6 +88,11 @@ export interface EntityFormDialogProps {
   submitIcon?: React.ReactNode
   /** From `useDirtyState`. When true a close attempt asks "Discard changes?". */
   dirty?: boolean
+  /**
+   * Arm `useHistoryGuard` while open so hardware/browser Back is a close attempt.
+   * Default true. Pass false only when the caller answers Back itself.
+   */
+  historyGuard?: boolean
   /** One form-level message rendered as an Alert above the fields. */
   formError?: string | null
   /** Caption slot under the title — pass `<RequiredLegend />` when any field is required. */
@@ -133,6 +143,7 @@ export function EntityFormDialog({
   submitDisabled = false,
   submitIcon,
   dirty = false,
+  historyGuard = true,
   formError,
   legend,
   secondaryAction,
@@ -173,8 +184,10 @@ export function EntityFormDialog({
     if (dirty) { setConfirmOpen(true); return }
     onClose()
   }
-  // UXP-1e: hardware/browser Back is a close attempt, not a page exit.
-  useHistoryGuard(open, requestClose)
+  // UXP-1e: hardware/browser Back is a close attempt, not a page exit. Opened from
+  // inside a DetailDrawer the guard nests above the drawer's, so Back closes this
+  // dialog first and the drawer only on the next press.
+  useHistoryGuard(open && historyGuard, requestClose)
 
   const discard = () => {
     setConfirmOpen(false)
