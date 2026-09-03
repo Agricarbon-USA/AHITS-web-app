@@ -11,6 +11,9 @@ import { ToastProvider } from '@/components/shared/useToast'
 //    in the form error; consumables and unaffected units stay. An operator-has-active-
 //    rig 409 drops nothing.
 //  - T2: pickers refetch after every 409 and every successful create.
+//  - T3: the drawer's Add Items sends `itemType` + `sourceHubId` and surfaces a 400
+//    instead of closing as if it worked.
+//  - T8: unit labels come from the API's `availableUnits.position`.
 //  - Success: "Deployment started for <operator>" with an Open action into the drawer.
 
 // Same spy-mock as EntityFormDialog.test.tsx: the guard's callback IS the hardware Back.
@@ -393,15 +396,26 @@ describe('UXP-6 (6d, T1/T2): a 409 keeps your picks; pickers refetch', () => {
   })
 })
 
-// ── Page level: success toast + Open, refetch after success ───────
+// ── Page level: success toast + Open, T3 drawer Add Items, T8 labels ──
 
 const RIG_ONE = {
   id: 'rig-1', label: null, startedAt: '2026-09-01T10:00:00Z', endedAt: null,
   operator: { id: 'u1', name: 'Op One' }, project: null, vehicles: [], kits: [{ id: 'k1', items: [] }], secondaryOperators: [],
 }
 
-function stubPage() {
+/** The inventory API row: `units` (with two out) AND the API's own `availableUnits`. */
+const INVENTORY_API = INVENTORY.map((i) => i.id === 'i-corer' ? {
+  ...i,
+  units: [
+    { id: 'unit-c1', serialNumber: null, status: 'CHECKED_OUT', position: 1 },
+    { id: 'unit-c2', serialNumber: null, status: 'CHECKED_OUT', position: 2 },
+    { id: 'unit-c3', serialNumber: null, status: 'AVAILABLE', position: 3 },
+  ],
+} : i)
+
+function stubPage(opts: { addItems?: { status: number; body: unknown } } = {}) {
   const calls: string[] = []
+  const itemPosts: Record<string, unknown>[] = []
   const createPosts: Record<string, unknown>[] = []
   vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
@@ -409,6 +423,11 @@ function stubPage() {
     if (url === '/api/deployments' && init?.method === 'POST') {
       createPosts.push(JSON.parse(String(init.body)))
       return jsonRes(CREATED_RIG, 201)
+    }
+    if (url === '/api/deployments/rig-1/items' && init?.method === 'POST') {
+      itemPosts.push(JSON.parse(String(init.body)))
+      const r = opts.addItems ?? { status: 200, body: RIG_ONE }
+      return jsonRes(r.body, r.status)
     }
     if (url === '/api/deployments/rig-1') return jsonRes({ ...RIG_ONE, openTasks: [] })
     if (url === '/api/deployments/rig-2') return jsonRes({ ...CREATED_RIG, openTasks: [] })
@@ -418,11 +437,11 @@ function stubPage() {
     if (url === '/api/users') return jsonRes({ data: OPERATORS })
     if (url === '/api/projects') return jsonRes({ data: PROJECTS })
     if (url === '/api/vehicles') return jsonRes({ data: VEHICLES })
-    if (url.startsWith('/api/inventory')) return jsonRes({ data: INVENTORY })
+    if (url.startsWith('/api/inventory')) return jsonRes({ data: INVENTORY_API })
     if (url === '/api/hubs') return jsonRes(HUBS)
     return jsonRes({ data: [] })
   }))
-  return { calls, createPosts }
+  return { calls, itemPosts, createPosts }
 }
 
 async function renderPage() {
@@ -430,7 +449,7 @@ async function renderPage() {
   await screen.findByText('Op One')
 }
 
-describe('UXP-6 (6d): page — success toast with Open, refetch after success', () => {
+describe('UXP-6 (6d): page — success toast with Open, refetch after success, T8 labels', () => {
   it('toasts "Deployment started for <operator>" with an Open action that lands in the new rig\'s drawer; pickers refetch after success', async () => {
     const { calls, createPosts } = stubPage()
     await renderPage()
@@ -454,5 +473,73 @@ describe('UXP-6 (6d): page — success toast with Open, refetch after success', 
     // The drawer for rig-2 (Op Two, empty kit) — the same drawer a row tap opens.
     expect(await screen.findByText('Empty kit.')).toBeInTheDocument()
     await waitFor(() => expect(calls).toContain('/api/deployments/rig-2'))
+  })
+
+  it('T8: the builder labels the free Corer unit "Unit 3" (the API position), not "Unit 1"', async () => {
+    stubPage()
+    await renderPage()
+    fireEvent.click(screen.getByRole('button', { name: 'Start Deployment' }))
+    await screen.findByRole('dialog', { name: 'Start Deployment' })
+    pick(/^Operator/, 'Op Two')
+    next(); next()
+    await screen.findByText('Select items to pack into this kit')
+    expect(within(rowFor('Unit 3')).getByRole('checkbox')).toBeInTheDocument()
+    expect(screen.queryByText('Unit 1')).toBeNull()
+  })
+})
+
+describe('UXP-6 (6d, T3): drawer Add Items sends itemType + sourceHubId and surfaces non-OK', () => {
+  async function openAddItemsFromDrawer() {
+    fireEvent.click(screen.getByText('Op One').closest('tr') as HTMLElement)
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Items' }))
+    return screen.findByRole('dialog', { name: 'Add Items' })
+  }
+
+  it('a consumable goes out as { itemType: "CONSUMABLE", quantity } with the hub (defaulting to the operator\'s home hub)', async () => {
+    const { itemPosts } = stubPage()
+    await renderPage()
+    const picker = await openAddItemsFromDrawer()
+    // Op One's home hub is Toledo → prefilled, labelled `name · city, state`.
+    expect(within(picker).getByLabelText(/^Source hub for consumables/)).toHaveValue('Toledo Hub · Toledo, OH')
+    fireEvent.click(within(within(picker).getByText('Sample bags').closest('.MuiStack-root') as HTMLElement).getByRole('checkbox'))
+    fireEvent.click(within(within(picker).getByText('GPS-007').closest('.MuiStack-root') as HTMLElement).getByRole('checkbox'))
+    fireEvent.click(within(picker).getByRole('button', { name: 'Continue' }))
+
+    const note = await screen.findByRole('dialog', { name: 'Add items to kit' })
+    fireEvent.click(within(note).getByRole('button', { name: 'Add Items' }))
+    await waitFor(() => expect(itemPosts).toHaveLength(1))
+    expect(itemPosts[0]).toMatchObject({ sourceHubId: 'h1' })
+    expect(itemPosts[0]!.items).toEqual(expect.arrayContaining([
+      { itemType: 'CONSUMABLE', inventoryItemId: 'i-bags', quantity: 1 },
+      { itemType: 'SERIALIZED', inventoryItemId: 'i-gps', inventoryUnitId: 'unit-7' },
+    ]))
+    // Success closes the picker.
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add Items' })).toBeNull())
+  })
+
+  it('Continue is blocked while a consumable has no hub', async () => {
+    stubPage()
+    await renderPage()
+    const picker = await openAddItemsFromDrawer()
+    fireEvent.click(within(picker).getByLabelText('Clear')) // drop the prefilled hub
+    fireEvent.click(within(within(picker).getByText('Sample bags').closest('.MuiStack-root') as HTMLElement).getByRole('checkbox'))
+    expect(within(picker).getByRole('button', { name: 'Continue' })).toBeDisabled()
+    expect(within(picker).getByLabelText(/^Source hub for consumables/)).toHaveAttribute('aria-invalid', 'true')
+  })
+
+  it('a 400 reopens the picker with the message inline and the picks intact (was: closed as if it worked)', async () => {
+    const { itemPosts } = stubPage({ addItems: { status: 400, body: { error: { fieldErrors: { items: ['Invalid input'] }, formErrors: [] } } } })
+    await renderPage()
+    const picker = await openAddItemsFromDrawer()
+    fireEvent.click(within(within(picker).getByText('Sample bags').closest('.MuiStack-root') as HTMLElement).getByRole('checkbox'))
+    fireEvent.click(within(picker).getByRole('button', { name: 'Continue' }))
+    const note = await screen.findByRole('dialog', { name: 'Add items to kit' })
+    fireEvent.click(within(note).getByRole('button', { name: 'Add Items' }))
+    await waitFor(() => expect(itemPosts).toHaveLength(1))
+
+    const reopened = await screen.findByRole('dialog', { name: 'Add Items' })
+    expect(within(reopened).getByRole('alert')).toHaveTextContent('Items: Invalid input')
+    const bagsRow = within(reopened).getByText('Sample bags').closest('.MuiStack-root') as HTMLElement
+    expect(within(bagsRow).getByRole('checkbox')).toBeChecked()
   })
 })
