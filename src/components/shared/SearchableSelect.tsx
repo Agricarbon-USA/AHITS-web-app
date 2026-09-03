@@ -23,10 +23,13 @@ interface Props {
   size?: 'small' | 'medium'
   placeholder?: string
   helperText?: string
+  /** UXP-6 6a: inline field error — sets `aria-invalid` on the input so
+   *  `scrollToFirstInvalid` (EntityFormDialog) can find and focus it. */
+  error?: boolean
 }
 
 export function SearchableSelect({
-  label, value, onChange, options, required, disabled, fullWidth = true, size, placeholder, helperText,
+  label, value, onChange, options, required, disabled, fullWidth = true, size, placeholder, helperText, error,
 }: Props) {
   const selected = options.find((o) => o.value === value) ?? null
 
@@ -47,6 +50,7 @@ export function SearchableSelect({
           required={required}
           placeholder={placeholder}
           helperText={helperText}
+          error={error}
         />
       )}
     />
