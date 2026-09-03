@@ -13,6 +13,10 @@ import {
 } from '@mui/material'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { DetailDrawer } from '@/components/ui/DetailDrawer'
+import { EntityFormDialog, RequiredLegend } from '@/components/ui/EntityFormDialog'
+import { SearchableSelect } from '@/components/shared/SearchableSelect'
+import { useDirtyState } from '@/hooks/useDirtyState'
+import { parseApiError, apiErrorMessage, humanizeField } from '@/lib/api-error-shape'
 import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
 import ArchiveIcon from '@mui/icons-material/Archive'
@@ -125,143 +129,358 @@ interface HubStockRow {
 
 // ── Item Form Dialog ──────────────────────────────────────────────
 
+// UXP-6 (6c): the item form on EntityFormDialog (plan §2 "Item → units → hub stock").
+//  - T4: a SERIALIZED create asks for "Units to create" (0–200) plus optional serial
+//    numbers and creates them with `POST /api/inventory/<id>/units` right after the
+//    201 (the old "Initial Quantity" created zero units). If that second call fails
+//    the item still exists, so the page opens its drawer on the Units tab with the
+//    error — and the serials typed — instead of losing anything.
+//  - T5: a CONSUMABLE with an initial quantity above 0 needs a hub (field error, no
+//    POST): the server seeds the per-hub stock row only when hub AND qty are set,
+//    and a hub-less count is later overwritten by the first stock resync.
+//  - T6: on edit, a cleared nullable field is sent as `null` (the PATCH schema is
+//    nullable); hub/category stay omitted because the server cannot un-set them.
+//  - Inline field errors via parseApiError (was a raw JSON.stringify Alert), the
+//    one required legend, SearchableSelect for category/hub (hub label
+//    `name · city, state`), dirty guard, "Save & add another" with sticky
+//    type/category/hub, and a "<name> added · Open" toast (wired by the page).
+
+interface ItemFormValues {
+  name: string
+  itemType: string
+  unitId: string
+  categoryId: string
+  hubId: string
+  /** Create only: initial stock (consumable) or units to create (serialized). */
+  quantity: string
+  /** Create only, serialized: one serial per line, applied positionally. */
+  serialNumbers: string
+  expectedQuantity: string
+  lowStockThreshold: string
+  unitCost: string
+  supplier: string
+  reorderUrl: string
+  notes: string
+}
+
+/** Mirrors the units route's zod (`count ≤ 200`). */
+const MAX_UNITS_PER_CREATE = 200
+
+const EMPTY_ITEM_FORM: ItemFormValues = {
+  name: '', itemType: 'CONSUMABLE', unitId: '', categoryId: '', hubId: '', quantity: '1', serialNumbers: '',
+  expectedQuantity: '', lowStockThreshold: '', unitCost: '', supplier: '', reorderUrl: '', notes: '',
+}
+
+function itemFormValues(item: InventoryItemRow | null): ItemFormValues {
+  if (!item) return EMPTY_ITEM_FORM
+  return {
+    name: item.name,
+    itemType: item.itemType,
+    unitId: item.unitId ?? '',
+    // Only a real CUID, not an enum fallback like 'SAMPLING_EQUIPMENT'
+    categoryId: /^[A-Z_]+$/.test(item.category.id) ? '' : item.category.id,
+    hubId: item.hub?.id ?? '',
+    quantity: String(item.quantity),
+    serialNumbers: '',
+    expectedQuantity: item.expectedQuantity != null ? String(item.expectedQuantity) : '',
+    lowStockThreshold: item.lowStockThreshold != null ? String(item.lowStockThreshold) : '',
+    unitCost: item.unitCost != null ? String(item.unitCost) : '',
+    supplier: item.supplier ?? '',
+    reorderUrl: item.reorderUrl ?? '',
+    notes: item.notes ?? '',
+  }
+}
+
+/** One hub label everywhere (plan §2): `name · city, state`. */
+function hubOptionLabel(h: HubOption): string {
+  return `${h.name} · ${h.city}, ${h.state}`
+}
+
+/** "Serial numbers (one per line)" → trimmed, non-empty lines, in order. */
+function parseSerialLines(text: string): string[] {
+  return text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+}
+
+/** What the page needs after a save: the item (for the toast's Open action) and how it went. */
+interface ItemSaved {
+  id: string
+  name: string
+}
+interface ItemSavedInfo {
+  isEdit: boolean
+  /** "Save & add another": the dialog stays open, the page only toasts + reloads. */
+  keepOpen: boolean
+  /** T4: the item exists but its units were not created — open the drawer on Units with this. */
+  unitsError: string | null
+}
+
+const PURCHASING_FIELDS = ['unitCost', 'supplier', 'reorderUrl'] as const
+const ITEM_FORM_FIELDS = new Set<string>([
+  'name', 'itemType', 'unitId', 'categoryId', 'hubId', 'quantity', 'serialNumbers',
+  'expectedQuantity', 'lowStockThreshold', ...PURCHASING_FIELDS, 'notes',
+])
+
 function ItemFormDialog({
-  item, categories, hubs, onClose, onSuccess,
+  item, categories, hubs, onClose, onSaved,
 }: {
   item: InventoryItemRow | null; categories: CategoryOption[]; hubs: HubOption[]
-  onClose: () => void; onSuccess: (msg: string) => void
+  onClose: () => void; onSaved: (saved: ItemSaved, info: ItemSavedInfo) => void
 }) {
   const isEdit = !!item
-  const [name, setName] = React.useState('')
-  const [itemType, setItemType] = React.useState('CONSUMABLE')
-  const [unitId, setUnitId] = React.useState('')
-  const [categoryId, setCategoryId] = React.useState('')
-  const [hubId, setHubId] = React.useState('')
-  const [quantity, setQuantity] = React.useState(1)
-  const [expectedQuantity, setExpectedQuantity] = React.useState('')
-  const [lowStockThreshold, setLowStockThreshold] = React.useState('')
-  const [unitCost, setUnitCost] = React.useState('')
-  const [supplier, setSupplier] = React.useState('')
-  const [reorderUrl, setReorderUrl] = React.useState('')
-  const [notes, setNotes] = React.useState('')
-  const [loading, setLoading] = React.useState(false)
-  const [error, setError] = React.useState('')
+  // The page mounts this dialog per open (and keys it by item), so the initial
+  // values come straight from the item — no reset effect, no stale first render.
+  const [values, setValues] = React.useState<ItemFormValues>(() => itemFormValues(item))
+  // Re-based after "Save & add another" so the sticky fields do not read as dirty.
+  const [initial, setInitial] = React.useState<ItemFormValues>(values)
+  const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({})
+  const [formError, setFormError] = React.useState<string | null>(null)
+  const [saving, setSaving] = React.useState(false)
+  const [purchasingOpen, setPurchasingOpen] = React.useState(false)
+  const nameRef = React.useRef<HTMLInputElement | null>(null)
+  const dirty = useDirtyState(true, values, initial)
 
-  React.useEffect(() => {
-    if (item) {
-      setName(item.name); setItemType(item.itemType); setUnitId(item.unitId ?? '')
-      // Only set categoryId if it's a real CUID, not an enum fallback like 'SAMPLING_EQUIPMENT'
-      setCategoryId(/^[A-Z_]+$/.test(item.category.id) ? '' : item.category.id)
-      setHubId(item.hub?.id ?? '')
-      setQuantity(item.quantity)
-      setExpectedQuantity(item.expectedQuantity != null ? String(item.expectedQuantity) : '')
-      setLowStockThreshold(item.lowStockThreshold != null ? String(item.lowStockThreshold) : '')
-      setUnitCost(item.unitCost != null ? String(item.unitCost) : '')
-      setSupplier(item.supplier ?? ''); setReorderUrl(item.reorderUrl ?? ''); setNotes(item.notes ?? '')
-    } else {
-      setName(''); setItemType('CONSUMABLE'); setUnitId(''); setCategoryId('')
-      setHubId(''); setQuantity(1)
-      setExpectedQuantity(''); setLowStockThreshold('')
-      setUnitCost(''); setSupplier(''); setReorderUrl(''); setNotes('')
-    }
-    setError('')
-  }, [item])
+  const isSerialized = values.itemType === 'SERIALIZED'
+  const serials = React.useMemo(() => parseSerialLines(values.serialNumbers), [values.serialNumbers])
+  const qty = parseInt(values.quantity, 10)
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault(); setError(''); setLoading(true)
-    try {
-      const body: Record<string, unknown> = { name, categoryId, itemType, ...(!isEdit && { quantity }) }
-      if (itemType === 'SERIALIZED' && unitId) body.unitId = unitId
-      if (hubId) body.hubId = hubId
-      if (expectedQuantity !== '') body.expectedQuantity = parseInt(expectedQuantity)
-      if (lowStockThreshold !== '') body.lowStockThreshold = parseInt(lowStockThreshold)
-      if (unitCost !== '') body.unitCost = parseFloat(unitCost)
-      if (supplier) body.supplier = supplier
-      if (reorderUrl) body.reorderUrl = reorderUrl
-      if (notes) body.notes = notes
-      const url = isEdit ? `/api/inventory/${item!.id}` : '/api/inventory'
-      const res = await fetch(url, { method: isEdit ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-      const data = await res.json()
-      if (!res.ok) { setError(typeof data.error === 'object' ? JSON.stringify(data.error) : (data.error ?? 'Failed to save')); return }
-      onSuccess(isEdit ? `${name} updated` : `${name} added`)
-      onClose()
-    } catch { setError('Network error. Please try again.') }
-    finally { setLoading(false) }
+  const setField = <K extends keyof ItemFormValues>(key: K, value: ItemFormValues[K]) => {
+    setValues((v) => ({ ...v, [key]: value }))
+    // Typing into a field clears its error; the next submit re-validates.
+    setFieldErrors((fe) => {
+      if (!fe[key]) return fe
+      const next = { ...fe }
+      delete next[key]
+      return next
+    })
   }
 
+  const applyFieldErrors = (errs: Record<string, string>) => {
+    setFieldErrors(errs)
+    if (PURCHASING_FIELDS.some((k) => errs[k])) setPurchasingOpen(true)
+  }
+
+  const validate = (): Record<string, string> => {
+    const errs: Record<string, string> = {}
+    if (!values.name.trim()) errs.name = 'Name is required'
+    if (!isEdit && !values.categoryId) errs.categoryId = 'Category is required'
+    if (!isEdit) {
+      if (isSerialized) {
+        if (!Number.isInteger(qty) || qty < 0 || qty > MAX_UNITS_PER_CREATE) {
+          errs.quantity = `Enter 0–${MAX_UNITS_PER_CREATE} units`
+        } else if (serials.length > qty) {
+          errs.serialNumbers = `${serials.length} serial numbers listed but only ${qty} unit${qty === 1 ? '' : 's'} to create — raise the count or remove a line`
+        }
+      } else if (!Number.isInteger(qty) || qty < 0) {
+        errs.quantity = 'Enter 0 or more'
+      } else if (qty > 0 && !values.hubId) {
+        // T5: without a hub the server stores the count on the item only; the first
+        // per-hub stock write then resyncs it away and pickers show 0 until then.
+        errs.hubId = 'Pick a hub — stock above 0 has to land at a hub'
+      }
+    }
+    return errs
+  }
+
+  const buildBody = (): Record<string, unknown> => {
+    const v = values
+    const body: Record<string, unknown> = { name: v.name.trim(), categoryId: v.categoryId, itemType: v.itemType }
+    // The PATCH whitelist deliberately excludes the legacy unitId helper (strict schema).
+    if (!isEdit && isSerialized && v.unitId) body.unitId = v.unitId
+    if (v.hubId) body.hubId = v.hubId
+    if (isEdit) {
+      // T6: nullable on PATCH — a cleared field is sent as null, not dropped.
+      body.expectedQuantity = v.expectedQuantity === '' ? null : parseInt(v.expectedQuantity, 10)
+      body.lowStockThreshold = v.lowStockThreshold === '' ? null : parseInt(v.lowStockThreshold, 10)
+      body.unitCost = v.unitCost === '' ? null : parseFloat(v.unitCost)
+      body.supplier = v.supplier || null
+      body.reorderUrl = v.reorderUrl || null
+      body.notes = v.notes || null
+    } else {
+      // Create schema is optional-not-nullable: omit blanks, as before.
+      body.quantity = qty
+      if (v.expectedQuantity !== '') body.expectedQuantity = parseInt(v.expectedQuantity, 10)
+      if (v.lowStockThreshold !== '') body.lowStockThreshold = parseInt(v.lowStockThreshold, 10)
+      if (v.unitCost !== '') body.unitCost = parseFloat(v.unitCost)
+      if (v.supplier) body.supplier = v.supplier
+      if (v.reorderUrl) body.reorderUrl = v.reorderUrl
+      if (v.notes) body.notes = v.notes
+    }
+    return body
+  }
+
+  /** T4 second call: create the units for a brand-new serialized item. Null = fine, else the notice. */
+  const createUnits = async (itemId: string): Promise<string | null> => {
+    const describe = (reason: string) =>
+      `The item was added, but its ${qty} unit${qty === 1 ? '' : 's'} could not be created (${reason}). ` +
+      `Add ${qty === 1 ? 'it' : 'them'} below${serials.length ? ` — serials: ${serials.join(', ')}` : ''}.`
+    try {
+      const res = await fetch(`/api/inventory/${itemId}/units`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ count: qty, ...(serials.length ? { serialNumbers: serials } : {}) }),
+      })
+      if (res.ok) return null
+      const d = await res.json().catch(() => ({}))
+      return describe(apiErrorMessage(d, 'the server rejected the request'))
+    } catch {
+      return describe('network error')
+    }
+  }
+
+  const resetForAnother = () => {
+    // Sticky: type, category, hub. Everything else starts over.
+    const next: ItemFormValues = { ...EMPTY_ITEM_FORM, itemType: values.itemType, categoryId: values.categoryId, hubId: values.hubId }
+    setValues(next)
+    setInitial(next)
+    setFieldErrors({})
+    setFormError(null)
+    setPurchasingOpen(false)
+    nameRef.current?.focus()
+  }
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    const submitter = (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null
+    const addAnother = !isEdit && submitter?.value === 'add-another'
+    setFormError(null)
+    const errs = validate()
+    if (Object.keys(errs).length > 0) { applyFieldErrors(errs); return false }
+    setFieldErrors({})
+    setSaving(true)
+    try {
+      const url = item ? `/api/inventory/${item.id}` : '/api/inventory'
+      const res = await fetch(url, {
+        method: isEdit ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildBody()),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        const parsed = parseApiError(data, 'Could not save the item')
+        applyFieldErrors(parsed.fieldErrors)
+        // A field error with no field on this form would otherwise be invisible.
+        const orphan = Object.entries(parsed.fieldErrors).find(([k]) => !ITEM_FORM_FIELDS.has(k))
+        setFormError(parsed.formError ?? (orphan ? `${humanizeField(orphan[0])}: ${orphan[1]}` : null))
+        return false
+      }
+      const row = (data as { data?: { id?: string; name?: string } }).data
+      const saved: ItemSaved = { id: row?.id ?? item?.id ?? '', name: row?.name ?? values.name.trim() }
+      const unitsError = !isEdit && isSerialized && qty > 0 && saved.id ? await createUnits(saved.id) : null
+      const keepOpen = addAnother && !unitsError
+      onSaved(saved, { isEdit, keepOpen, unitsError })
+      if (keepOpen) resetForAnother()
+      else onClose()
+    } catch {
+      setFormError('Network error. Please try again.')
+      return false
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const err = (key: keyof ItemFormValues) => fieldErrors[key]
+  const hubRequired = !isEdit && !isSerialized && Number.isInteger(qty) && qty > 0
+
   return (
-    <Dialog open={true} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>{isEdit ? `Edit ${item!.name}` : 'Add Item'}</DialogTitle>
-      <Box component="form" onSubmit={handleSubmit}>
-        <DialogContent>
-          <Stack spacing={2.5} pt={0.5}>
-            {error && <Alert severity="error">{error}</Alert>}
-            <TextField label="Name" value={name} onChange={(e) => setName(e.target.value)} required fullWidth autoFocus />
-            <FormControl>
-              <FormLabel>Item Type</FormLabel>
-              <RadioGroup row value={itemType} onChange={(e) => setItemType(e.target.value)}>
-                <FormControlLabel value="CONSUMABLE" control={<Radio />} label="Consumable" />
-                <FormControlLabel value="SERIALIZED" control={<Radio />} label="Serialized Item" />
-              </RadioGroup>
-            </FormControl>
-            {itemType === 'SERIALIZED' && (
-              <TextField label="Unit / Serial Number" value={unitId} onChange={(e) => setUnitId(e.target.value)} fullWidth
-                helperText="e.g. GPS-003, DRILL-01 — this will link to a QR sticker" />
-            )}
-            <TextField select label="Category" value={categoryId} onChange={(e) => setCategoryId(e.target.value)} fullWidth
-              required={!isEdit}
-              helperText={categories.length === 0 ? 'No categories set up yet — categories are created automatically when inventory is imported.' : undefined}>
-              {categories.length === 0
-                ? <MenuItem value="" disabled>No categories available</MenuItem>
-                : categories.map((c) => <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>)
-              }
-            </TextField>
-            <TextField select label="Hub Location" value={hubId} onChange={(e) => setHubId(e.target.value)} fullWidth>
-              <MenuItem value="">Unknown</MenuItem>
-              {hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.city}, {h.state}</MenuItem>)}
-            </TextField>
-            {isEdit ? (
-              <Box>
-                <Typography variant="caption" color="text.secondary">
-                  {itemType === 'CONSUMABLE' ? 'Total Stock' : 'Total Units'}
-                </Typography>
-                <Typography variant="body2">
-                  {itemType === 'CONSUMABLE'
-                    ? `${item?.quantity ?? 0} total (managed per hub — use Stock by Hub below)`
-                    : `${item?.unitCounts?.totalUnits ?? item?.quantity ?? 0} (managed in Units tab)`}
-                </Typography>
-              </Box>
-            ) : (
-              <TextField label="Initial Quantity" type="number" value={quantity} onChange={(e) => setQuantity(parseInt(e.target.value) || 0)} required fullWidth inputProps={{ min: 0 }} />
-            )}
-            <TextField label="Expected / Total Quantity" type="number" value={expectedQuantity} onChange={(e) => setExpectedQuantity(e.target.value)} fullWidth inputProps={{ min: 0 }}
-              helperText="How many of this item should exist in total? Used to spot shrinkage." />
-            <TextField label="Low Stock Alert Threshold" type="number" value={lowStockThreshold} onChange={(e) => setLowStockThreshold(e.target.value)} fullWidth inputProps={{ min: 0 }}
-              helperText="Show a warning when available unit count falls to or below this number." />
-            <Accordion>
-              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                <Typography variant="body2">Purchasing Info</Typography>
-              </AccordionSummary>
-              <AccordionDetails>
-                <Stack spacing={2}>
-                  <TextField label="Unit Cost ($)" type="number" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} fullWidth inputProps={{ min: 0, step: '0.01' }} />
-                  <TextField label="Supplier" value={supplier} onChange={(e) => setSupplier(e.target.value)} fullWidth />
-                  <TextField label="Reorder URL" value={reorderUrl} onChange={(e) => setReorderUrl(e.target.value)} fullWidth />
-                </Stack>
-              </AccordionDetails>
-            </Accordion>
-            <TextField label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} fullWidth multiline rows={3} />
-          </Stack>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={onClose} disabled={loading}>Cancel</Button>
-          <Button type="submit" variant="contained" disabled={loading}
-            startIcon={loading ? <CircularProgress size={16} color="inherit" /> : null}>
-            {loading ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Item'}
-          </Button>
-        </DialogActions>
-      </Box>
-    </Dialog>
+    <EntityFormDialog
+      open
+      title={isEdit ? 'Edit item' : 'Add item'}
+      onClose={onClose}
+      onSubmit={handleSubmit}
+      saving={saving}
+      dirty={dirty}
+      formError={formError}
+      legend={<RequiredLegend />}
+      submitLabel={isEdit ? 'Save changes' : 'Add item'}
+      fullScreenXs
+      secondaryAction={!isEdit ? (
+        <Button type="submit" name="intent" value="add-another" disabled={saving}>Save &amp; add another</Button>
+      ) : undefined}
+    >
+      <Stack spacing={2.5} pt={0.5}>
+        <TextField label="Name" value={values.name} onChange={(e) => setField('name', e.target.value)} required fullWidth autoFocus
+          inputRef={nameRef} error={!!err('name')} helperText={err('name')} />
+        <FormControl error={!!err('itemType')}>
+          <FormLabel>Item Type</FormLabel>
+          <RadioGroup row value={values.itemType} onChange={(e) => setField('itemType', e.target.value)}>
+            <FormControlLabel value="CONSUMABLE" control={<Radio />} label="Consumable" />
+            <FormControlLabel value="SERIALIZED" control={<Radio />} label="Serialized Item" />
+          </RadioGroup>
+        </FormControl>
+        {isSerialized && (
+          <TextField label="Unit / Serial Number" value={values.unitId} onChange={(e) => setField('unitId', e.target.value)} fullWidth
+            disabled={isEdit} error={!!err('unitId')}
+            helperText={err('unitId') ?? (isEdit ? 'Set when the item was created' : 'e.g. GPS-003, DRILL-01 — this will link to a QR sticker')} />
+        )}
+        <SearchableSelect
+          label="Category"
+          value={values.categoryId}
+          onChange={(v) => setField('categoryId', v)}
+          options={categories.map((c) => ({ value: c.id, label: c.name }))}
+          required={!isEdit}
+          error={!!err('categoryId')}
+          helperText={err('categoryId') ?? (categories.length === 0
+            ? 'No categories set up yet — categories are created automatically when inventory is imported.'
+            : undefined)}
+        />
+        <SearchableSelect
+          label="Hub Location"
+          value={values.hubId}
+          onChange={(v) => setField('hubId', v)}
+          options={hubs.map((h) => ({ value: h.id, label: hubOptionLabel(h) }))}
+          placeholder="Unknown"
+          required={hubRequired}
+          error={!!err('hubId')}
+          helperText={err('hubId') ?? (!isEdit && !isSerialized ? 'Where the initial stock lands. "Unknown" is fine only when the quantity is 0.' : undefined)}
+        />
+        {item ? (
+          <Box>
+            <Typography variant="caption" color="text.secondary">
+              {isSerialized ? 'Total Units' : 'Total Stock'}
+            </Typography>
+            <Typography variant="body2">
+              {isSerialized
+                ? `${item.unitCounts?.totalUnits ?? item.quantity ?? 0} (managed in Units tab)`
+                : `${item.quantity ?? 0} total (managed per hub — use Stock by Hub below)`}
+            </Typography>
+          </Box>
+        ) : isSerialized ? (
+          <>
+            <TextField label="Units to create" type="number" value={values.quantity} onChange={(e) => setField('quantity', e.target.value)}
+              required fullWidth inputProps={{ min: 0, max: MAX_UNITS_PER_CREATE }} error={!!err('quantity')}
+              helperText={err('quantity') ?? 'Each unit gets its own QR label. 0 = add units later from the Units tab.'} />
+            <TextField label="Serial numbers (one per line)" value={values.serialNumbers} onChange={(e) => setField('serialNumbers', e.target.value)}
+              fullWidth multiline minRows={2} error={!!err('serialNumbers')}
+              helperText={err('serialNumbers') ?? 'Applied to the new units in order; leave blank to add serials later.'} />
+          </>
+        ) : (
+          <TextField label="Initial Quantity" type="number" value={values.quantity} onChange={(e) => setField('quantity', e.target.value)}
+            required fullWidth inputProps={{ min: 0 }} error={!!err('quantity')} helperText={err('quantity')} />
+        )}
+        <TextField label="Expected / Total Quantity" type="number" value={values.expectedQuantity} onChange={(e) => setField('expectedQuantity', e.target.value)}
+          fullWidth inputProps={{ min: 0 }} error={!!err('expectedQuantity')}
+          helperText={err('expectedQuantity') ?? 'How many of this item should exist in total? Used to spot shrinkage.'} />
+        <TextField label="Low Stock Alert Threshold" type="number" value={values.lowStockThreshold} onChange={(e) => setField('lowStockThreshold', e.target.value)}
+          fullWidth inputProps={{ min: 0 }} error={!!err('lowStockThreshold')}
+          helperText={err('lowStockThreshold') ?? 'Show a warning when available unit count falls to or below this number.'} />
+        <Accordion expanded={purchasingOpen} onChange={(_, expanded) => setPurchasingOpen(expanded)}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography variant="body2">Purchasing Info</Typography>
+          </AccordionSummary>
+          <AccordionDetails>
+            <Stack spacing={2}>
+              <TextField label="Unit Cost ($)" type="number" value={values.unitCost} onChange={(e) => setField('unitCost', e.target.value)}
+                fullWidth inputProps={{ min: 0, step: '0.01' }} error={!!err('unitCost')} helperText={err('unitCost')} />
+              <TextField label="Supplier" value={values.supplier} onChange={(e) => setField('supplier', e.target.value)}
+                fullWidth error={!!err('supplier')} helperText={err('supplier')} />
+              <TextField label="Reorder URL" value={values.reorderUrl} onChange={(e) => setField('reorderUrl', e.target.value)}
+                fullWidth error={!!err('reorderUrl')} helperText={err('reorderUrl')} />
+            </Stack>
+          </AccordionDetails>
+        </Accordion>
+        <TextField label="Notes" value={values.notes} onChange={(e) => setField('notes', e.target.value)} fullWidth multiline rows={3}
+          error={!!err('notes')} helperText={err('notes')} />
+      </Stack>
+    </EntityFormDialog>
   )
 }
 
@@ -578,10 +797,19 @@ async function downloadUnitQR(unit: { qrCodeId: string; serialNumber: string | n
   link.click()
 }
 
+// UXP-6 (6c): what opens the drawer. A list row (with its current-status extras), or
+// just an id from the success toast's Open action — plus, after a create whose units
+// call failed (T4), the tab to land on and the notice to show there.
+type DrawerRow = Pick<InventoryItemRow, 'id'> &
+  Partial<Pick<InventoryItemRow, 'currentOperator' | 'currentProject' | 'activeProjects'>> & {
+    openOn?: 'units'
+    unitsError?: string | null
+  }
+
 function ItemDetailDrawer({
   row, hubs, onClose, onEdit, onRetire, onUpdated,
 }: {
-  row: InventoryItemRow | null
+  row: DrawerRow | null
   hubs: HubOption[]
   onClose: () => void
   onEdit: (item: InventoryItemRow) => void
@@ -593,6 +821,15 @@ function ItemDetailDrawer({
   const [detail, setDetail] = React.useState<ItemDetail | null>(null)
   const [loading, setLoading] = React.useState(false)
   const [activeTab, setActiveTab] = React.useState(0)
+  // Per-open intent (tab + Units notice), applied on the row transition with React's
+  // "information from previous renders" pattern rather than an effect.
+  const [seenRow, setSeenRow] = React.useState<DrawerRow | null>(null)
+  const [unitsNotice, setUnitsNotice] = React.useState<string | null>(null)
+  if (seenRow !== row) {
+    setSeenRow(row)
+    setUnitsNotice(row?.unitsError ?? null)
+    setActiveTab(row?.openOn === 'units' ? 1 : 0)
+  }
   const [serialEdits, setSerialEdits] = React.useState<Record<string, string>>({})
   const [addingUnit, setAddingUnit] = React.useState(false)
   const [newUnitQr, setNewUnitQr] = React.useState('')
@@ -613,7 +850,7 @@ function ItemDetailDrawer({
 
   React.useEffect(() => {
     setExpandedUnitId(null)
-    if (!row) { setDetail(null); setActiveTab(0); return }
+    if (!row) { setDetail(null); return }
     loadDetail(row.id)
   }, [row, loadDetail])
 
@@ -670,6 +907,7 @@ function ItemDetailDrawer({
     }
     setNewUnitQr('')
     setNewUnitSerial('')
+    setUnitsNotice(null)
     loadDetail(detail.id)
     onUpdated()
   }
@@ -830,6 +1068,10 @@ function ItemDetailDrawer({
             {/* ── Units Tab ── */}
             {activeTab === 1 && (
               <>
+                {/* T4 hand-off: the item was created but its units were not. */}
+                {unitsNotice && (
+                  <Alert severity="error" onClose={() => setUnitsNotice(null)} sx={{ mb: 2 }}>{unitsNotice}</Alert>
+                )}
                 <TableContainer component={Paper} variant="outlined" sx={{ mb: 2 }}>
                   <Table size="small">
                     <TableHead>
@@ -1084,7 +1326,7 @@ function AdminInventoryContent() {
   const [projects, setProjects] = React.useState<{ id: string; name: string }[]>([])
   const [formItem, setFormItem] = React.useState<InventoryItemRow | null>(null)
   const [formOpen, setFormOpen] = React.useState(false)
-  const [detailRow, setDetailRow] = React.useState<InventoryItemRow | null>(null)
+  const [detailRow, setDetailRow] = React.useState<DrawerRow | null>(null)
   const [retireItem, setRetireItem] = React.useState<InventoryItemRow | null>(null)
 
   const load = React.useCallback(async () => {
@@ -1124,6 +1366,21 @@ function AdminInventoryContent() {
     setRetireItem(null)
     if (res.ok) { showToast({ message: `${retireItem.name} retired`, severity: 'success' }); load() }
     else showToast({ message: 'Failed to retire item', severity: 'error' })
+  }
+
+  // UXP-6 (6c): "<name> added · Open" (the drawer), or — when a serialized item's
+  // units could not be created (T4) — straight to its Units tab with the error.
+  const handleItemSaved = (saved: ItemSaved, { isEdit, unitsError }: ItemSavedInfo) => {
+    load()
+    if (unitsError) {
+      setDetailRow({ id: saved.id, openOn: 'units', unitsError })
+      return
+    }
+    showToast({
+      message: `${saved.name} ${isEdit ? 'updated' : 'added'}`,
+      severity: 'success',
+      action: { label: 'Open', onClick: () => setDetailRow({ id: saved.id }) },
+    })
   }
 
   return (
@@ -1329,11 +1586,12 @@ function AdminInventoryContent() {
       {/* Add / Edit dialog */}
       {formOpen && (
         <ItemFormDialog
+          key={formItem?.id ?? 'new'}
           item={formItem}
           categories={categories}
           hubs={hubs}
           onClose={() => setFormOpen(false)}
-          onSuccess={(msg) => { showToast({ message: msg, severity: 'success' }); load() }}
+          onSaved={handleItemSaved}
         />
       )}
 
