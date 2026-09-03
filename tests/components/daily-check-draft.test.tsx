@@ -1,12 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   DRAFT_PREFIX, draftKey, draftUserId, saveDraft, loadDraft, loadLatestDraft, clearDraft, purgeDraftsNotOn,
+  purgeDraftsForUser,
   type DailyCheckDraftInput,
 } from '@/lib/daily-check-draft'
 
 // UXP-3 (3h): the daily-check draft store. Pure localStorage module; these pin the
-// key scheme (operator-scoped on a shared phone), the same-day-only restore, and the
-// non-negotiable "storage can never throw into the page".
+// key scheme (operator-scoped on a shared phone), the same-day-only restore, the
+// logout purge, and the non-negotiable "storage can never throw into the page".
+//
+// This file is .tsx on purpose: the node vitest config collects tests/**/*.test.ts,
+// and these touch window.localStorage — only the jsdom config may pick them up.
 
 const TODAY = '2026-09-03'
 const YESTERDAY = '2026-09-02'
@@ -140,6 +144,34 @@ describe('daily-check draft — latest / purge', () => {
     expect(keys).toEqual([`${DRAFT_PREFIX}op-1:v2:${TODAY}`])
     expect(window.localStorage.getItem('ahits_unrelated')).toBe('keep me')
   })
+
+  // Privacy (antagonist review): a sign-out takes the operator's drafts with it, so the
+  // next user of a shared phone never inherits them — every vehicle, every date, only
+  // that user (the trailing ':' in the prefix keeps op-1 away from op-10's keys).
+  it('purgeDraftsForUser drops exactly that user\'s drafts — any vehicle, any date — and nothing else', () => {
+    window.localStorage.setItem('ahits_identity', JSON.stringify({ userId: 'op-1' }))
+    saveDraft(draft({ vehicleId: 'v1', date: TODAY }))
+    saveDraft(draft({ vehicleId: 'v2', date: YESTERDAY }))
+    window.localStorage.setItem('ahits_identity', JSON.stringify({ userId: 'op-10' }))
+    saveDraft(draft({ vehicleId: 'v1', date: TODAY }))
+    window.localStorage.setItem('ahits_identity', JSON.stringify({ userId: 'op-2' }))
+    saveDraft(draft({ vehicleId: 'v1', date: TODAY }))
+    window.localStorage.setItem('ahits_identity', 'not the purged user any more') // corrupt / cleared — irrelevant to the purge
+    window.localStorage.setItem('ahits_unrelated', 'keep me')
+
+    purgeDraftsForUser('op-1')
+
+    const keys = Object.keys(window.localStorage).filter((k) => k.startsWith(DRAFT_PREFIX)).sort()
+    expect(keys).toEqual([`${DRAFT_PREFIX}op-10:v1:${TODAY}`, `${DRAFT_PREFIX}op-2:v1:${TODAY}`])
+    expect(window.localStorage.getItem('ahits_unrelated')).toBe('keep me')
+  })
+
+  it('purgeDraftsForUser with an empty id is a no-op (never a wildcard)', () => {
+    window.localStorage.setItem('ahits_identity', JSON.stringify({ userId: 'op-1' }))
+    saveDraft(draft({ vehicleId: 'v1' }))
+    purgeDraftsForUser('')
+    expect(loadDraft('v1', TODAY)).not.toBeNull()
+  })
 })
 
 describe('daily-check draft — storage that throws never throws into the page', () => {
@@ -155,6 +187,7 @@ describe('daily-check draft — storage that throws never throws into the page',
     expect(loadLatestDraft(TODAY)).toBeNull()
     expect(() => clearDraft('v1', TODAY)).not.toThrow()
     expect(() => purgeDraftsNotOn(TODAY)).not.toThrow()
+    expect(() => purgeDraftsForUser('op-1')).not.toThrow()
     expect(draftUserId()).toBe('anon')
   })
 
@@ -166,6 +199,7 @@ describe('daily-check draft — storage that throws never throws into the page',
       expect(loadDraft('v1', TODAY)).toBeNull()
       expect(loadLatestDraft(TODAY)).toBeNull()
       expect(() => purgeDraftsNotOn(TODAY)).not.toThrow()
+      expect(() => purgeDraftsForUser('op-1')).not.toThrow()
     } finally {
       // Restore the own descriptor, or drop the shadow so the prototype getter shows again.
       if (original) Object.defineProperty(window, 'localStorage', original)

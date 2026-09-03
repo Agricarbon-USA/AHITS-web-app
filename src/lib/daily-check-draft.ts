@@ -139,9 +139,9 @@ export function loadDraft(vehicleId: string, date: string): DailyCheckDraft | nu
   }
 }
 
-/** All of THIS user's draft keys (any vehicle, any date). */
-function ownKeys(store: Storage): string[] {
-  const prefix = `${DRAFT_PREFIX}${draftUserId()}:`
+/** All of ONE user's draft keys (any vehicle, any date) — the signed-in user by default. */
+function ownKeys(store: Storage, userId: string = draftUserId()): string[] {
+  const prefix = `${DRAFT_PREFIX}${userId}:`
   const keys: string[] = []
   for (let i = 0; i < store.length; i++) {
     const k = store.key(i)
@@ -194,6 +194,24 @@ export function purgeDraftsNotOn(date: string): void {
       if (!d || d.date !== date) stale.push(k) // unparseable drafts are stale too
     }
     for (const k of stale) store.removeItem(k)
+  } catch {
+    /* nothing to do */
+  }
+}
+
+/**
+ * Drop every draft of ONE user — any vehicle, any date. The sign-out hook (privacy):
+ * the key scoping keeps operator A's half-done check invisible to operator B on a
+ * shared phone; this removes it outright when A signs out. The caller passes the id
+ * it read from the identity cache BEFORE clearing that cache (the keys carry it).
+ * An empty id is a no-op — it must never widen into a wildcard.
+ */
+export function purgeDraftsForUser(userId: string): void {
+  if (!userId) return
+  const store = getStore()
+  if (!store) return
+  try {
+    for (const k of ownKeys(store, userId)) store.removeItem(k)
   } catch {
     /* nothing to do */
   }

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import useSWR, { useSWRConfig } from 'swr'
 import { useRouter } from 'next/navigation'
 import type { SessionUser } from '@/types'
+import { draftUserId, purgeDraftsForUser } from '@/lib/daily-check-draft'
 
 const IDENTITY_KEY = 'ahits_identity'
 
@@ -70,6 +71,19 @@ export function useAuth() {
 
   const logout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {})
+    // UXP-3 (3h) privacy: the operator's daily-check drafts leave with them — the next
+    // user of a shared phone must not inherit a half-done check. The draft keys carry
+    // the user id from the identity cache, so read it BEFORE that cache is cleared
+    // below — via draftUserId(), the same reader the keys were written with (drafts
+    // written with no cache sit under its 'anon' id and go too). Explicit sign-out
+    // only: a 401 bounce keeps the draft on purpose (G-3 — the same operator signs
+    // back in and picks the check up). Best-effort: storage that throws never blocks
+    // a sign-out.
+    try {
+      purgeDraftsForUser(draftUserId())
+    } catch {
+      /* storage unavailable — non-fatal */
+    }
     writeCachedIdentity(null)
     // UR-003: drop the cached identity so the next user on a shared device never
     // sees the previous user's name/role before SWR revalidates. Cleared without
