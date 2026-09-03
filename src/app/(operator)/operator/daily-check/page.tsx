@@ -12,6 +12,7 @@ import { useHistoryGuard } from '@/hooks/useHistoryGuard'
 import { businessDate } from '@/lib/business-date'
 import { DEFAULT_DAILY_CHECKLIST } from '@/types'
 import { OdometerField } from '@/components/operator/OdometerField'
+import { saveDraft, loadDraft, loadLatestDraft, clearDraft, purgeDraftsNotOn } from '@/lib/daily-check-draft'
 
 // The full ~16-item inspection (PRD §11.4) is the single source of truth, shared
 // with the rest of the app via @/types. Items 15–16 (trailer hitch / load) are
@@ -92,6 +93,33 @@ interface ActiveRig {
   vehicles: RigVehicle[]
 }
 
+// UXP-3 (3j): the wrong-vehicle autopilot guard. The preselect used to be "first in
+// the rig", so check #2 of the day landed on the vehicle that was just checked and a
+// hurried operator filed the same truck twice while the second one went unchecked.
+// Now: the first rig-order vehicle WITHOUT a check today; none left → no preselect
+// (the operator picks deliberately, and the already-checked notice tells them why).
+function pickPreselect(vehicles: RigVehicle[], checked: ReadonlySet<string>): string {
+  return vehicles.find((rv) => !checked.has(rv.vehicle.id))?.vehicle.id ?? ''
+}
+
+// Reads `{ data: [{ vehicleId }] }` from the daily-check list GET into the set of
+// vehicles this operator has already filed today. Any failure → empty set, which is
+// exactly today's first-in-list behaviour (the guard degrades to the old default).
+async function fetchCheckedToday(date: string): Promise<Set<string>> {
+  const res = await fetch(`/api/daily-check?date=${encodeURIComponent(date)}&pageSize=100`)
+  if (!res.ok) return new Set()
+  const json = (await res.json()) as { data?: Array<{ vehicleId?: unknown }> } | null
+  const ids = (Array.isArray(json?.data) ? json.data : [])
+    .map((c) => c?.vehicleId)
+    .filter((id): id is string => typeof id === 'string' && id.length > 0)
+  return new Set(ids)
+}
+
+// UXP-3 (F-05): the fields a validation reject can jump to. Keyed so one ref map and
+// one focus request serve both the per-item notes and the fail summary.
+const issuesFieldKey = 'issues'
+const noteFieldKey = (rowKey: string) => `note:${rowKey}`
+
 export default function OperatorDailyCheckPage() {
   const showToast = useToast()
   const { mutate, pending, isOffline } = useOfflineQueue()
@@ -161,6 +189,39 @@ export default function OperatorDailyCheckPage() {
   // CC-14: passive time-to-complete — form open → submit. Stamped in the mount effect
   // (Date.now() in render trips the impure-in-render rule); reset on "Start New Check".
   const startedAtRef = React.useRef<number>(0)
+  // UXP-3 (3j): vehicles this operator has already filed a check for today. Seeded
+  // from the daily-check list GET at mount (failure → empty), and grown locally after
+  // an ok/queued submit so "Start New Check" advances to the next unchecked vehicle
+  // without a refetch (a queued check is not on the server yet, but it IS filed).
+  const [checkedToday, setCheckedToday] = React.useState<ReadonlySet<string>>(() => new Set())
+  // UXP-3 (3h): a draft was restored at mount. The ref gates the 3j preselect (the
+  // restored vehicle wins over the "first unchecked" pick); the state drives the
+  // dismissible "Restored your in-progress check" notice.
+  const restoredRef = React.useRef(false)
+  const [restoredNotice, setRestoredNotice] = React.useState(false)
+  // UXP-3 (3h): the checklist keys the draft was restored with. A restored draft is
+  // never pristine (pastStep0 / rowsTouched), so the template resolve that follows
+  // would otherwise trip the CC-32 (2.5b) guard and raise a FALSE "A newer checklist…"
+  // notice for the very template the draft was filled on. Consumed on first compare;
+  // a template that genuinely changed since the draft still gets the notice.
+  const restoredKeysRef = React.useRef<string[] | null>(null)
+  // UXP-3 (F-05): validation reject → field-level errors + a jump to the field. The
+  // top Alert alone sat ~1300px above the failing row on a long inspection list.
+  //   showNoteErrors — reveal "Required — describe the issue" under every empty note
+  //                    of a row marked "No" (typing clears it); reset on a clean Next.
+  //   issuesError    — the fail-summary field's error state (typing clears it).
+  //   focusRequest   — {target, n}: the field to scroll into view + focus. The nonce
+  //                    re-fires the effect when the SAME field rejects twice.
+  //   fieldRefs      — filled via ref callbacks (react-hooks `refs` forbids writes in
+  //                    render); keyed by noteFieldKey(row) / issuesFieldKey.
+  const [showNoteErrors, setShowNoteErrors] = React.useState(false)
+  const [issuesError, setIssuesError] = React.useState(false)
+  const [focusRequest, setFocusRequest] = React.useState<{ target: string; n: number } | null>(null)
+  const fieldRefs = React.useRef<Map<string, HTMLElement>>(new Map())
+  const registerField = React.useCallback((target: string) => (el: HTMLElement | null) => {
+    if (el) fieldRefs.current.set(target, el)
+    else fieldRefs.current.delete(target)
+  }, [])
 
   // The selectable vehicles: the active-rig vehicles, plus a scanned vehicle that
   // isn't on the rig (so QR-scanning any vehicle opens a usable daily check).
@@ -173,18 +234,45 @@ export default function OperatorDailyCheckPage() {
   }, [rig, scannedVehicle])
 
   React.useEffect(() => {
-    startedAtRef.current = Date.now() // start the time-to-complete clock at mount
+    const today = businessDate()
     // A scan of a vehicle label routes here as ?vehicleId=<id> (PRD §7.7) —
     // preselect it when present.
     const preselect =
       typeof window !== 'undefined'
         ? new URLSearchParams(window.location.search).get('vehicleId')
         : null
-    if (preselect) {
-      setVehicleId(preselect)
-      // Fetch the scanned vehicle's details so it renders even if it's not on
-      // the operator's active rig (any-vehicle daily check, UR-033).
-      fetch(`/api/vehicles/${preselect}`)
+    // UXP-3 (3h): restore a same-day draft BEFORE any fetch — the restore must not
+    // wait on the network. Yesterday's drafts are stale by definition (a check is a
+    // per-day record) and are purged first. A scan/redo deep-link restores only that
+    // vehicle's draft; otherwise the most recently saved draft of today wins.
+    purgeDraftsNotOn(today)
+    const draft = preselect ? loadDraft(preselect, today) : loadLatestDraft(today)
+    if (draft) {
+      restoredRef.current = true
+      restoredKeysRef.current = draft.checklist.map((r) => r.key)
+      siteTouchedRef.current = draft.siteTouched
+      issuesPrefilledRef.current = draft.issuesPrefilled
+      rowsTouchedRef.current = draft.rowsTouched
+      pastStep0Ref.current = draft.step > 0
+      // CC-31 item 5 / CC-14: time-to-complete counts the operator's active form time
+      // only — rebase the clock so the interruption (kill, reload, re-login) is excluded.
+      startedAtRef.current = Date.now() - draft.elapsedMs
+      setVehicleId(draft.vehicleId)
+      setChecklist(draft.checklist)
+      setOdometer(draft.odometer)
+      setSite(draft.site)
+      setIssues(draft.issues)
+      setStep(draft.step)
+      setRestoredNotice(true)
+    } else {
+      startedAtRef.current = Date.now() // start the time-to-complete clock at mount
+      if (preselect) setVehicleId(preselect)
+    }
+    // Fetch the scanned (or draft-restored) vehicle's details so it renders even if
+    // it's not on the operator's active rig (any-vehicle daily check, UR-033).
+    const detailId = preselect ?? draft?.vehicleId ?? null
+    if (detailId) {
+      fetch(`/api/vehicles/${detailId}`)
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => {
           const v = d?.data
@@ -192,14 +280,24 @@ export default function OperatorDailyCheckPage() {
         })
         .catch(() => { /* offline / not found — fall back to rig vehicles */ })
     }
-    fetch('/api/deployments')
+    // UXP-3 (3j): the rig renders as soon as it lands (as before); the PRESELECT is
+    // decided once, when both the rig and today's checks have settled, so it never
+    // flips. Either failing keeps its old default (no rig / empty set).
+    const rigPromise = fetch('/api/deployments')
       .then((r) => r.json())
-      .then((json) => {
-        const active: ActiveRig | null = json[0] ?? null
+      .then((json): ActiveRig | null => {
+        const active: ActiveRig | null = json?.[0] ?? null
         setRig(active)
-        if (!preselect && active?.vehicles?.[0]) setVehicleId(active.vehicles[0].vehicle.id)
+        return active
       })
-      .catch(() => {})
+    Promise.allSettled([rigPromise, fetchCheckedToday(today)]).then(([rigResult, checkedResult]) => {
+      const checked = checkedResult.status === 'fulfilled' ? checkedResult.value : new Set<string>()
+      setCheckedToday(checked)
+      const active = rigResult.status === 'fulfilled' ? rigResult.value : null
+      if (!preselect && !restoredRef.current && active?.vehicles?.length) {
+        setVehicleId(pickPreselect(active.vehicles, checked))
+      }
+    })
   }, [])
 
   // Q3: the selected vehicle's TYPE as a stable string. The checklist effect below
@@ -229,6 +327,12 @@ export default function OperatorDailyCheckPage() {
         if (!active) return
         const items: { key: string; label: string }[] =
           Array.isArray(d?.items) && d.items.length ? d.items : DEFAULT_CHECKLIST
+        // UXP-3 (3h): a restored draft already runs on this template — same keys, same
+        // order — so there is nothing to apply and nothing "newer" to announce. One-shot:
+        // a later resolve (vehicle switch, reset nonce) is judged by the 2.5b rules below.
+        const restoredKeys = restoredKeysRef.current
+        restoredKeysRef.current = null
+        if (restoredKeys && restoredKeys.length === items.length && restoredKeys.every((k, i) => k === items[i].key)) return
         // CC-32 (2.5b): a LATE template response must never wipe work in progress (the
         // FND-35 family — the scan path's ?vehicleId= race is the reproducible case).
         // Pristine → apply silently, exactly as before. Touched → keep every answer and
@@ -281,6 +385,42 @@ export default function OperatorDailyCheckPage() {
     warmCoordsRef.current = { vehicleId, promise: captureLocation() }
   }, [step, vehicleId])
 
+  // UXP-3 (3h): persist the draft on every form change. A PRISTINE form (step 0,
+  // no row touched, no odometer, site untouched, no summary) clears its draft instead
+  // — that also covers the vehicle-switch reset, which lands the form pristine on the
+  // new vehicle. Skipped once submitted: the submit path clears the draft itself and
+  // the success screen must not re-save it. Refs are read here, not in render.
+  React.useEffect(() => {
+    if (!vehicleId || submitted) return
+    const today = businessDate()
+    const pristine = step === 0 && !rowsTouchedRef.current && odometer === '' && !siteTouchedRef.current && issues === ''
+    if (pristine) { clearDraft(vehicleId, today); return }
+    saveDraft({
+      vehicleId,
+      date: today,
+      step,
+      odometer,
+      site,
+      siteTouched: siteTouchedRef.current,
+      issues,
+      issuesPrefilled: issuesPrefilledRef.current,
+      rowsTouched: rowsTouchedRef.current,
+      checklist,
+      elapsedMs: startedAtRef.current ? Math.max(0, Date.now() - startedAtRef.current) : 0,
+    })
+  }, [vehicleId, odometer, site, checklist, issues, step, submitted])
+
+  // UXP-3 (F-05): bring the first failing field into view and focus it. Runs after
+  // the render that also switched steps, so the field's ref callback has already
+  // registered it. Both calls are optional-chained: jsdom has no scrollIntoView, and
+  // a field that unmounted between the request and the commit is simply skipped.
+  React.useEffect(() => {
+    if (!focusRequest) return
+    const el = fieldRefs.current.get(focusRequest.target)
+    el?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+    el?.focus?.()
+  }, [focusRequest])
+
   const passFail = checklist.every((item) => item.value !== 'no')
   const failingItems = checklist.filter((item) => item.value === 'no')
   // PRD §11.4 / §7.4: a reason is required on every failed item, not just an
@@ -313,10 +453,32 @@ export default function OperatorDailyCheckPage() {
     ...coords,
   })
 
+  // UXP-3 (F-05): a validation reject lands the operator ON the failing field, not on
+  // a top Alert a screen above it. Mirrors the server's superRefine exactly (a note per
+  // "No" row, then a summary for a failing check) so a 400 replays the same reveal.
+  // Returns whether anything was revealed — false means the client rules see no
+  // fault (a 400 for some other reason keeps the server's message alone).
+  const revealFirstInvalid = (): boolean => {
+    const firstMissing = checklist.find((row) => row.value === 'no' && !row.note.trim())
+    if (firstMissing) {
+      setShowNoteErrors(true)
+      setStep(1)
+      setFocusRequest((prev) => ({ target: noteFieldKey(firstMissing.key), n: (prev?.n ?? 0) + 1 }))
+      return true
+    }
+    if (!passFail && !issues.trim()) {
+      setIssuesError(true)
+      setStep(2)
+      setFocusRequest((prev) => ({ target: issuesFieldKey, n: (prev?.n ?? 0) + 1 }))
+      return true
+    }
+    return false
+  }
+
   const handleSubmit = async () => {
     if (!vehicleId) { setError('Select a vehicle'); return }
-    if (missingItemNote) { setError('Add a note for each item marked “No”.'); setStep(1); return }
-    if (!passFail && !issues.trim()) { setError('Describe the issue(s) that caused a fail'); return }
+    if (missingItemNote) { setError('Add a note for each item marked “No”.'); revealFirstInvalid(); return }
+    if (!passFail && !issues.trim()) { setError('Describe the issue(s) that caused a fail'); revealFirstInvalid(); return }
     setSubmitting(true)
     setError('')
     // CC-31 item 5: stamp the time-to-complete NOW, before the up-to-10s GPS wait below,
@@ -352,6 +514,13 @@ export default function OperatorDailyCheckPage() {
       label: 'Daily check',
     })
     setSubmitting(false)
+    if (result.ok) {
+      // UXP-3 (3h): the check is filed (server-confirmed or durably queued) — the
+      // draft has done its job. (3j): count this vehicle as checked today so "Start
+      // New Check" moves on to the next unchecked one, no refetch needed.
+      clearDraft(vehicleId, businessDate())
+      setCheckedToday((prev) => (prev.has(vehicleId) ? prev : new Set([...prev, vehicleId])))
+    }
     if (result.ok && result.queued) {
       setSubmitted(true)
       // CC-29 item 3: an ONLINE 401 (session lapsed mid-submit) parks the write like
@@ -367,16 +536,26 @@ export default function OperatorDailyCheckPage() {
       showToast({ message: `Daily check submitted — ${passFail ? 'Pass ✓' : 'Fail ✗ — admin notified'}`, severity: passFail ? 'success' : 'warning' })
     } else {
       setError(result.error)
+      // UXP-3 (F-05): a server 400 is the same rule set (superRefine mirrors the client
+      // checks) — land on the field, same as a client-side reject. The server's own
+      // message stays in the top Alert verbatim.
+      if (result.status === 400) revealFirstInvalid()
     }
   }
 
   const handleReset = () => {
+    // UXP-3 (3j): check #2 of the day goes to the next vehicle WITHOUT a check today
+    // (the one just filed is in checkedToday), not back to the one just checked. All
+    // checked → no preselect; the operator picks, and the notice says it replaces.
+    const nextVehicleId = pickPreselect(vehicles, checkedToday)
     setChecklist(DEFAULT_CHECKLIST.map((item) => ({ ...item, value: 'yes', note: '' })))
     setIssues('')
     setOdometer('')
     // CC-32 (2.2): re-seed the site for check #2 of the day from the same last-known
-    // value (the vehicle GET does not re-run when reset re-selects the same vehicle).
-    setSite(lastCheckSite ?? '')
+    // value when the reset re-selects the SAME vehicle (the vehicle GET does not re-run
+    // then). A different vehicle starts empty so the GET seeds ITS OWN last site — the
+    // previous vehicle's site must never ride along untyped (the 2.2 switch rule).
+    setSite(nextVehicleId === vehicleId ? (lastCheckSite ?? '') : '')
     siteTouchedRef.current = false
     issuesPrefilledRef.current = false
     setDate(businessDate())
@@ -394,7 +573,15 @@ export default function OperatorDailyCheckPage() {
     templateForceRef.current = true
     setStaleTemplate(false)
     setTemplateNonce((n) => n + 1)
-    if (rig?.vehicles?.[0]) setVehicleId(rig.vehicles[0].vehicle.id)
+    // UXP-3 (3h): the filed check's draft is gone (cleared at submit; belt-and-braces
+    // here), and the restore notice belongs to the check that was restored.
+    clearDraft(vehicleId, businessDate())
+    restoredKeysRef.current = null
+    setRestoredNotice(false)
+    // UXP-3 (F-05): a fresh form shows no stale field errors.
+    setShowNoteErrors(false)
+    setIssuesError(false)
+    setVehicleId(nextVehicleId)
   }
 
   if (submitted) {
@@ -453,11 +640,29 @@ export default function OperatorDailyCheckPage() {
 
       {error && <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError('')}>{error}</Alert>}
 
+      {/* UXP-3 (3h): a same-day draft came back — answers, odometer, site, and the
+          step they were on. One line, dismissible; the form itself is the proof. */}
+      {restoredNotice && (
+        <Alert severity="info" sx={{ mb: 2 }} onClose={() => setRestoredNotice(false)}>
+          Restored your in-progress check
+        </Alert>
+      )}
+
       {/* CC-32 (2.5b): a newer admin template arrived after answering began. Their
           answers stand; this just says which checklist this check is running on. */}
       {staleTemplate && (
         <Alert severity="info" sx={{ mb: 2 }} onClose={() => setStaleTemplate(false)}>
           A newer checklist for this vehicle exists — finish this check; the next one uses it.
+        </Alert>
+      )}
+
+      {/* UXP-3 (3j): the selected vehicle already has a check today — a scan/redo
+          deep-link, or a manual pick of the wrong truck. Same-day submit is an upsert
+          (F-08 "Redo" honesty), so say so where the pick and the submit happen; the
+          inspection list stays clear of banners. */}
+      {step !== 1 && vehicleId && checkedToday.has(vehicleId) && (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          You already filed a check for {selectedVehicleName || 'this vehicle'} today — submitting replaces it.
         </Alert>
       )}
 
@@ -473,6 +678,12 @@ export default function OperatorDailyCheckPage() {
                guard and carrying vehicle A's answers into vehicle B's check. This
                preserves the pre-CC-32 behaviour of switching vehicles. */
             onChange={(e) => {
+              // UXP-3 (3h): the answers being discarded belong to the OLD vehicle, and
+              // so does its draft — drop it, or the next visit restores a check the
+              // operator deliberately walked away from. The new vehicle's (pristine)
+              // draft is cleared by the save effect.
+              clearDraft(vehicleId, businessDate())
+              restoredKeysRef.current = null
               setVehicleId(e.target.value)
               setChecklist((prev) => prev.map((r) => ({ ...r, value: 'yes', note: '' })))
               setIssues('')
@@ -481,6 +692,8 @@ export default function OperatorDailyCheckPage() {
               rowsTouchedRef.current = false
               pastStep0Ref.current = false
               setStaleTemplate(false)
+              setShowNoteErrors(false)
+              setIssuesError(false)
               // CC-32 (2.2): an UNTYPED site is the previous vehicle's prefill, so it has
               // to be cleared here — the incoming fetch only seeds an EMPTY field, so
               // leaving it would file vehicle B's check under vehicle A's site with
@@ -587,6 +800,10 @@ export default function OperatorDailyCheckPage() {
                       }}
                       fullWidth
                       sx={{ mt: 0.75 }}
+                      /* UXP-3 (F-05): field-level error after a reject; typing clears it. */
+                      error={showNoteErrors && !row.note.trim()}
+                      helperText={showNoteErrors && !row.note.trim() ? 'Required — describe the issue' : undefined}
+                      inputRef={registerField(noteFieldKey(row.key))}
                     />
                   )}
                 </ListItem>
@@ -622,6 +839,10 @@ export default function OperatorDailyCheckPage() {
               fullWidth
               required
               placeholder="Describe overall issues / action taken…"
+              /* UXP-3 (F-05): field-level error after a reject; typing clears it. */
+              error={issuesError && !issues.trim()}
+              helperText={issuesError && !issues.trim() ? 'Describe the issue(s) that caused a fail' : undefined}
+              inputRef={registerField(issuesFieldKey)}
             />
           )}
           {checklist.filter((r) => r.value === 'no').length > 0 && (
@@ -656,7 +877,9 @@ export default function OperatorDailyCheckPage() {
             variant="contained"
             onClick={() => {
               if (step === 0 && !vehicleId) { setError('Select a vehicle'); return }
-              if (step === 1 && missingItemNote) { setError('Add a note for each item marked “No”.'); return }
+              // UXP-3 (F-05): the reject lands on the failing row, not just up top.
+              if (step === 1 && missingItemNote) { setError('Add a note for each item marked “No”.'); revealFirstInvalid(); return }
+              setShowNoteErrors(false)
               // CC-32 (2.5b): past step 0 the form is no longer pristine, even if every
               // row still reads "yes" — a late template must not restart their check.
               pastStep0Ref.current = true

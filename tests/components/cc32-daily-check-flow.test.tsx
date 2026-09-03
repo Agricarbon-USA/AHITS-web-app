@@ -75,6 +75,10 @@ beforeEach(() => {
   releaseTemplate = null
   templateFetchCount = 0
   Object.defineProperty(navigator, 'geolocation', { value: { getCurrentPosition }, configurable: true })
+  // UXP-3 (3h): the page persists a draft to localStorage on every change, and jsdom's
+  // localStorage lives for the whole file — clear it so one test's half-done check is
+  // never restored into the next test's mount.
+  window.localStorage.clear()
 })
 
 afterEach(() => { vi.unstubAllGlobals() })
@@ -102,9 +106,17 @@ describe('CC-32 (2.5a) reset-then-same-vehicle re-resolves the admin template', 
     // "Start New Check" on the SAME vehicle — the pre-CC-32 bug: vehicleId and the
     // vehicle type are both unchanged, so without the nonce the effect never re-fires
     // and the operator silently gets DEFAULT_DAILY_CHECKLIST for the rest of the day.
+    // UXP-3 (3j): the reset no longer auto-selects a vehicle that already has a check
+    // today — this one-truck rig lands with NO preselect and the operator re-picks
+    // Truck 1 deliberately (and is told the submit replaces today's). The invariant
+    // under test is unchanged: check #2 on the same vehicle runs the ADMIN TEMPLATE.
     const restart = await screen.findByRole('button', { name: 'Start New Check' })
     const fetchesBefore = templateFetchCount
     fireEvent.click(restart)
+
+    fireEvent.mouseDown(await screen.findByRole('combobox'))
+    fireEvent.click(await screen.findByRole('option', { name: 'Truck 1' }))
+    expect(await screen.findByText(/You already filed a check for Truck 1 today/)).toBeInTheDocument()
 
     await waitFor(() => expect(templateFetchCount).toBeGreaterThan(fetchesBefore))
     next() // → Inspection
