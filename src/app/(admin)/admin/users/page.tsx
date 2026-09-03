@@ -10,6 +10,9 @@ import {
 } from '@mui/material'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { useToast } from '@/components/shared/useToast'
+import { EntityFormDialog, RequiredLegend } from '@/components/ui/EntityFormDialog'
+import { useDirtyState } from '@/hooks/useDirtyState'
+import { parseApiError } from '@/lib/api-error-shape'
 import PersonAddIcon from '@mui/icons-material/PersonAdd'
 import EditIcon from '@mui/icons-material/Edit'
 import LockOpenIcon from '@mui/icons-material/LockOpen'
@@ -61,14 +64,22 @@ function InviteDialog({ open, onClose, onSuccess, onLink }: {
   // URL for email-independent onboarding (no email is sent).
   const [delivery, setDelivery] = React.useState<'EMAIL' | 'LINK'>('EMAIL')
   const [loading, setLoading] = React.useState(false)
-  const [error, setError] = React.useState('')
+  // UXP-6 (6c / C7): on EntityFormDialog — pinned Cancel/Send, Enter submits, dirty
+  // guard, and the invite route's zod field errors land on their fields.
+  const [formError, setFormError] = React.useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({})
+  const dirty = useDirtyState(open, { name, email, role, delivery })
 
-  const reset = () => { setName(''); setEmail(''); setRole('OPERATOR'); setDelivery('EMAIL'); setError('') }
+  const reset = () => { setName(''); setEmail(''); setRole('OPERATOR'); setDelivery('EMAIL'); setFormError(null); setFieldErrors({}) }
   const handleClose = () => { reset(); onClose() }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError('')
+  const handleSubmit = async () => {
+    setFormError(null)
+    const errs: Record<string, string> = {}
+    if (!name.trim()) errs.name = 'Name is required'
+    if (!email.trim()) errs.email = 'Email is required'
+    if (Object.keys(errs).length > 0) { setFieldErrors(errs); return false }
+    setFieldErrors({})
     setLoading(true)
     try {
       const res = await fetch('/api/users/invite', {
@@ -76,13 +87,12 @@ function InviteDialog({ open, onClose, onSuccess, onLink }: {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, email, role, delivery }),
       })
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        const msg = typeof data.error === 'object'
-          ? Object.values(data.error).flat().join(', ')
-          : (data.error ?? 'Failed to create invite')
-        setError(msg)
-        return
+        const parsed = parseApiError(data, 'Failed to create invite')
+        setFieldErrors(parsed.fieldErrors)
+        setFormError(parsed.formError)
+        return false
       }
       if (delivery === 'LINK') {
         onLink({ url: data.setupUrl, expiresAt: data.expiresAt })
@@ -91,7 +101,8 @@ function InviteDialog({ open, onClose, onSuccess, onLink }: {
       }
       handleClose()
     } catch {
-      setError('Network error. Please try again.')
+      setFormError('Network error. Please try again.')
+      return false
     } finally {
       setLoading(false)
     }
@@ -99,38 +110,42 @@ function InviteDialog({ open, onClose, onSuccess, onLink }: {
 
   const isLink = delivery === 'LINK'
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="xs" fullWidth>
-      <DialogTitle>Invite Team Member</DialogTitle>
-      <Box component="form" onSubmit={handleSubmit}>
-        <DialogContent>
-          <Stack spacing={2.5} pt={0.5}>
-            {error && <Alert severity="error">{error}</Alert>}
-            <TextField label="Full Name" value={name} onChange={(e) => setName(e.target.value)} required fullWidth autoFocus />
-            <TextField label="Email Address" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required fullWidth />
-            <TextField select label="Role" value={role} onChange={(e) => setRole(e.target.value as 'ADMIN' | 'OPERATOR')} fullWidth>
-              <MenuItem value="OPERATOR">Field Operator — logs in with a 6-digit PIN on their phone</MenuItem>
-              <MenuItem value="ADMIN">Admin — full access to the web dashboard</MenuItem>
-            </TextField>
-            <TextField select label="How to send" value={delivery} onChange={(e) => setDelivery(e.target.value as 'EMAIL' | 'LINK')} fullWidth>
-              <MenuItem value="EMAIL">Email the invite</MenuItem>
-              <MenuItem value="LINK">Create a link to copy (no email)</MenuItem>
-            </TextField>
-            {isLink && (
-              <Typography variant="caption" color="text.secondary">
-                We&apos;ll show a one-time setup link to copy and share. They set their own PIN when they open it — no email required.
-              </Typography>
-            )}
-          </Stack>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={handleClose} disabled={loading}>Cancel</Button>
-          <Button type="submit" variant="contained" disabled={loading}
-            startIcon={loading ? <CircularProgress size={16} color="inherit" /> : (isLink ? <LinkIcon /> : <SendIcon />)}>
-            {loading ? (isLink ? 'Creating…' : 'Sending…') : (isLink ? 'Create link' : 'Send Invite')}
-          </Button>
-        </DialogActions>
-      </Box>
-    </Dialog>
+    <EntityFormDialog
+      open={open}
+      title="Invite team member"
+      onClose={handleClose}
+      onSubmit={handleSubmit}
+      saving={loading}
+      dirty={dirty}
+      formError={formError}
+      legend={<RequiredLegend />}
+      submitLabel={isLink ? 'Create link' : 'Send Invite'}
+      savingLabel={isLink ? 'Creating…' : 'Sending…'}
+      submitIcon={isLink ? <LinkIcon /> : <SendIcon />}
+      maxWidth="xs"
+    >
+      <Stack spacing={2.5} pt={0.5}>
+        <TextField label="Full Name" value={name} onChange={(e) => { setName(e.target.value); setFieldErrors({}) }} required fullWidth autoFocus
+          error={!!fieldErrors.name} helperText={fieldErrors.name} />
+        <TextField label="Email Address" type="email" value={email} onChange={(e) => { setEmail(e.target.value); setFieldErrors({}) }} required fullWidth
+          error={!!fieldErrors.email} helperText={fieldErrors.email} />
+        <TextField select label="Role" value={role} onChange={(e) => setRole(e.target.value as 'ADMIN' | 'OPERATOR')} fullWidth
+          error={!!fieldErrors.role} helperText={fieldErrors.role}>
+          <MenuItem value="OPERATOR">Field Operator — logs in with a 6-digit PIN on their phone</MenuItem>
+          <MenuItem value="ADMIN">Admin — full access to the web dashboard</MenuItem>
+        </TextField>
+        <TextField select label="How to send" value={delivery} onChange={(e) => setDelivery(e.target.value as 'EMAIL' | 'LINK')} fullWidth
+          error={!!fieldErrors.delivery} helperText={fieldErrors.delivery}>
+          <MenuItem value="EMAIL">Email the invite</MenuItem>
+          <MenuItem value="LINK">Create a link to copy (no email)</MenuItem>
+        </TextField>
+        {isLink && (
+          <Typography variant="caption" color="text.secondary">
+            We&apos;ll show a one-time setup link to copy and share. They set their own PIN when they open it — no email required.
+          </Typography>
+        )}
+      </Stack>
+    </EntityFormDialog>
   )
 }
 
@@ -177,6 +192,18 @@ function InviteLinkDialog({ payload, onClose }: { payload: LinkPayload | null; o
 }
 
 // ── Account Dialog (manage a single user) ─────────────────────────
+
+/** The form's values for a user — the reset target and the dirty-guard baseline (same key order). */
+function accountFormValues(user: UserRow | null) {
+  return {
+    name: user?.name ?? '',
+    role: user?.role ?? 'OPERATOR',
+    homeHubId: user?.homeHubId ?? '',
+    hourlyRate: user?.hourlyRate != null ? String(user.hourlyRate) : '',
+    resetPin: '',
+  }
+}
+
 function AccountDialog({
   user, hubs, onClose, onSuccess,
 }: {
@@ -191,22 +218,30 @@ function AccountDialog({
   const [hourlyRate, setHourlyRate] = React.useState('')
   const [resetPin, setResetPin] = React.useState('')
   const [loading, setLoading] = React.useState(false)
-  const [error, setError] = React.useState('')
+  // UXP-6 (6c / C7): on EntityFormDialog — pinned Cancel/Save, Enter submits, dirty
+  // guard, and the route's zod field errors land on their fields. The fields are
+  // still reset in the effect below, so `dirty` compares against values derived
+  // from the user (robust to that timing) rather than a snapshot.
+  const [formError, setFormError] = React.useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = React.useState<Record<string, string>>({})
+  const dirty = useDirtyState(!!user, { name, role, homeHubId, hourlyRate, resetPin }, accountFormValues(user))
 
   React.useEffect(() => {
     if (user) {
-      setName(user.name)
-      setRole(user.role)
-      setHomeHubId(user.homeHubId ?? '')
-      setHourlyRate(user.hourlyRate != null ? String(user.hourlyRate) : '')
+      const v = accountFormValues(user)
+      setName(v.name)
+      setRole(v.role)
+      setHomeHubId(v.homeHubId)
+      setHourlyRate(v.hourlyRate)
       setResetPin('')
-      setError('')
+      setFormError(null)
+      setFieldErrors({})
     }
   }, [user])
 
   const patch = async (body: object, successMsg: string) => {
     if (!user) return
-    setError('')
+    setFormError(null)
     setLoading(true)
     try {
       const res = await fetch(`/api/users/${user.id}`, {
@@ -214,25 +249,32 @@ function AccountDialog({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        setError(typeof data.error === 'string' ? data.error : 'Update failed')
+        const parsed = parseApiError(data, 'Update failed')
+        // The route's field for the reset PIN is `pin`; show it on that field.
+        const { pin, ...rest } = parsed.fieldErrors
+        setFieldErrors(pin ? { ...rest, resetPin: pin } : rest)
+        setFormError(parsed.formError)
         return false
       }
       onSuccess(successMsg)
       return true
     } catch {
-      setError('Network error.')
+      setFormError('Network error.')
       return false
     } finally {
       setLoading(false)
     }
   }
 
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleSave = async () => {
     if (!user) return
-    if (resetPin && !/^\d{6}$/.test(resetPin)) { setError('A reset PIN must be exactly 6 digits.'); return }
+    const errs: Record<string, string> = {}
+    if (!name.trim()) errs.name = 'Name is required'
+    if (resetPin && !/^\d{6}$/.test(resetPin)) errs.resetPin = 'A reset PIN must be exactly 6 digits.'
+    if (Object.keys(errs).length > 0) { setFieldErrors(errs); return false }
+    setFieldErrors({})
     const body: Record<string, unknown> = {
       name,
       role,
@@ -242,52 +284,56 @@ function AccountDialog({
     if (resetPin) body.pin = resetPin
     const ok = await patch(body, `${name} updated`)
     if (ok) onClose()
+    else return false
   }
 
   return (
-    <Dialog open={!!user} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Manage {user?.name}</DialogTitle>
-      <Box component="form" onSubmit={handleSave}>
-        <DialogContent>
-          <Stack spacing={2.5} pt={0.5}>
-            {error && <Alert severity="error">{error}</Alert>}
-            <TextField label="Full Name" value={name} onChange={(e) => setName(e.target.value)} required fullWidth />
-            <TextField label="Email" value={user?.email ?? ''} disabled fullWidth helperText="Email cannot be changed" />
-            <TextField select label="Role" value={role} onChange={(e) => setRole(e.target.value as 'ADMIN' | 'OPERATOR')} fullWidth>
-              <MenuItem value="OPERATOR">Field Operator</MenuItem>
-              <MenuItem value="ADMIN">Admin</MenuItem>
-            </TextField>
-            <Stack direction="row" spacing={2}>
-              <TextField select label="Home Hub" value={homeHubId} onChange={(e) => setHomeHubId(e.target.value)} fullWidth>
-                <MenuItem value="">— None —</MenuItem>
-                {hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.name}</MenuItem>)}
-              </TextField>
-              <TextField label="Hourly Rate ($)" type="number" value={hourlyRate}
-                onChange={(e) => setHourlyRate(e.target.value)} fullWidth inputProps={{ min: 0, step: '0.01' }} />
-            </Stack>
+    <EntityFormDialog
+      open={!!user}
+      title={`Manage ${user?.name ?? ''}`}
+      onClose={onClose}
+      onSubmit={handleSave}
+      saving={loading}
+      dirty={dirty}
+      formError={formError}
+      legend={<RequiredLegend />}
+      submitLabel="Save Changes"
+      maxWidth="sm"
+    >
+      <Stack spacing={2.5} pt={0.5}>
+        <TextField label="Full Name" value={name} onChange={(e) => { setName(e.target.value); setFieldErrors({}) }} required fullWidth
+          error={!!fieldErrors.name} helperText={fieldErrors.name} />
+        <TextField label="Email" value={user?.email ?? ''} disabled fullWidth helperText="Email cannot be changed" />
+        <TextField select label="Role" value={role} onChange={(e) => setRole(e.target.value as 'ADMIN' | 'OPERATOR')} fullWidth
+          error={!!fieldErrors.role} helperText={fieldErrors.role}>
+          <MenuItem value="OPERATOR">Field Operator</MenuItem>
+          <MenuItem value="ADMIN">Admin</MenuItem>
+        </TextField>
+        <Stack direction="row" spacing={2}>
+          <TextField select label="Home Hub" value={homeHubId} onChange={(e) => setHomeHubId(e.target.value)} fullWidth
+            error={!!fieldErrors.homeHubId} helperText={fieldErrors.homeHubId}>
+            <MenuItem value="">— None —</MenuItem>
+            {hubs.map((h) => <MenuItem key={h.id} value={h.id}>{h.name}</MenuItem>)}
+          </TextField>
+          <TextField label="Hourly Rate ($)" type="number" value={hourlyRate}
+            onChange={(e) => { setHourlyRate(e.target.value); setFieldErrors({}) }} fullWidth inputProps={{ min: 0, step: '0.01' }}
+            error={!!fieldErrors.hourlyRate} helperText={fieldErrors.hourlyRate} />
+        </Stack>
 
-            <Divider />
-            <Typography variant="subtitle2" color="text.secondary">Security</Typography>
-            <TextField label="Reset PIN (optional)" value={resetPin}
-              onChange={(e) => setResetPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
-              fullWidth placeholder="Set a temporary 6-digit PIN"
-              helperText="Leave blank to keep the current PIN. The operator is asked to change it on next login."
-              inputProps={{ inputMode: 'numeric' }} />
-            <Button variant="outlined" color="warning" startIcon={<LogoutIcon />} disabled={loading}
-              onClick={() => patch({ forceLogout: true }, `${user?.name}'s sessions revoked`)}>
-              Log out of all devices
-            </Button>
-          </Stack>
-        </DialogContent>
-        <DialogActions sx={{ px: 3, pb: 2 }}>
-          <Button onClick={onClose} disabled={loading}>Cancel</Button>
-          <Button type="submit" variant="contained" disabled={loading}
-            startIcon={loading ? <CircularProgress size={16} color="inherit" /> : null}>
-            {loading ? 'Saving…' : 'Save Changes'}
-          </Button>
-        </DialogActions>
-      </Box>
-    </Dialog>
+        <Divider />
+        <Typography variant="subtitle2" color="text.secondary">Security</Typography>
+        <TextField label="Reset PIN (optional)" value={resetPin}
+          onChange={(e) => { setResetPin(e.target.value.replace(/\D/g, '').slice(0, 6)); setFieldErrors({}) }}
+          fullWidth placeholder="Set a temporary 6-digit PIN"
+          error={!!fieldErrors.resetPin}
+          helperText={fieldErrors.resetPin ?? 'Leave blank to keep the current PIN. The operator is asked to change it on next login.'}
+          inputProps={{ inputMode: 'numeric' }} />
+        <Button variant="outlined" color="warning" startIcon={<LogoutIcon />} disabled={loading}
+          onClick={() => patch({ forceLogout: true }, `${user?.name}'s sessions revoked`)}>
+          Log out of all devices
+        </Button>
+      </Stack>
+    </EntityFormDialog>
   )
 }
 
