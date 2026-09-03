@@ -12,6 +12,7 @@ import { EmptyState } from '@/components/ui/EmptyState'
 import { AwaitingPickupCard } from '@/components/shared/AwaitingPickupCard'
 import { DeploymentSummary } from '@/components/operator/today/DeploymentSummary'
 import { VehicleChecks } from '@/components/operator/today/VehicleChecks'
+import { TodayCheckSummary } from '@/components/operator/today/TodayCheckSummary' // UXP-3 (F-08)
 import { WaitingOnMe } from '@/components/operator/today/WaitingOnMe'
 import { MyRequestsSummary } from '@/components/operator/today/MyRequestsSummary'
 import { TodayPrimaryAction } from '@/components/operator/today/TodayPrimaryAction'
@@ -34,6 +35,8 @@ export default function OperatorTodayPage() {
   // resolved). Gate behind mounted so the shell is a stable placeholder (no React #418).
   const [mounted, setMounted] = React.useState(false)
   React.useEffect(() => { setMounted(true) }, [])
+  // UXP-3 (F-08): which checked vehicle's "Done" was tapped — opens today's check summary.
+  const [viewCheckVehicleId, setViewCheckVehicleId] = React.useState<string | null>(null)
 
   const { data, error, isValidating, isLoading, mutate, updatedAt } =
     useFreshList<{ data: TodayData }>('/api/operator/today')
@@ -118,9 +121,19 @@ export default function OperatorTodayPage() {
                 vehicles={vehicles}
                 checkedVehicleIds={checkedVehicleIds}
                 onCheck={(vehicleId) => router.push(`/operator/daily-check?vehicleId=${vehicleId}`)}
+                onViewCheck={setViewCheckVehicleId}
               />
             </>
           )}
+
+          {/* UXP-3 (F-08): today's check for a "Done" vehicle + Redo. The redo reuses the
+              existing ?vehicleId= deep-link; the same-day upsert replaces today's row. */}
+          <TodayCheckSummary
+            vehicleId={viewCheckVehicleId}
+            open={!!viewCheckVehicleId}
+            onClose={() => setViewCheckVehicleId(null)}
+            onRedo={(vehicleId) => router.push(`/operator/daily-check?vehicleId=${vehicleId}`)}
+          />
 
           <MyRequestsSummary requests={openRequests} onOpenRequests={() => router.push('/operator/requests')} />
 
