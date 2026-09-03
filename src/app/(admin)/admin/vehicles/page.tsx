@@ -14,6 +14,7 @@ import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
 import ContentCopyIcon from '@mui/icons-material/ContentCopy'
+import ChecklistIcon from '@mui/icons-material/Checklist'
 import QrCode2Icon from '@mui/icons-material/QrCode2'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import { StatusChip } from '@/components/shared/StatusChip'
@@ -413,9 +414,17 @@ export default function AdminVehiclesPage() {
           <Typography variant="h5">Vehicles</Typography>
           {!canEdit && <Chip size="small" label="View only" variant="outlined" />}
         </Stack>
-        <MutationButton variant="contained" startIcon={<AddIcon />} onClick={() => openForm({})}>
-          Add Vehicle
-        </MutationButton>
+        <Stack direction="row" spacing={1} alignItems="center">
+          {/* UXP-6 (6e): checklists are set up FROM the fleet — this is where an admin
+              is when they wonder what a Truck's daily check asks. Bare `?checklist=`
+              lands on the Settings card; the drawer's Edit link carries the type. */}
+          <Button variant="outlined" startIcon={<ChecklistIcon />} component={NextLink} href="/admin/settings?checklist=">
+            Checklists
+          </Button>
+          <MutationButton variant="contained" startIcon={<AddIcon />} onClick={() => openForm({})}>
+            Add Vehicle
+          </MutationButton>
+        </Stack>
       </Stack>
       {expiringCount > 0 && (
         <Paper variant="outlined" sx={{ p: 1.5, mb: 2, display: 'flex', alignItems: 'center', gap: 1, borderColor: 'warning.main' }}>
@@ -513,6 +522,19 @@ export default function AdminVehiclesPage() {
                           <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1.6 }}>
                             {vehicleTypeLabel(group)} ({gv.length})
                           </Typography>
+                          {/* UXP-6 (6e): which daily checklist this type runs (D24: mounted-unit
+                              items ride the carrier type's checklist), linked to its editor. */}
+                          {templates && (() => {
+                            const c = resolveChecklist(group, templates)
+                            return (
+                              <Typography variant="caption" color="text.secondary" sx={{ ml: 1.5 }}>
+                                Using:{' '}
+                                <Link component={NextLink} href={`/admin/settings?checklist=${group}`} color="inherit">
+                                  {c.name} ({c.count})
+                                </Link>
+                              </Typography>
+                            )
+                          })()}
                         </TableCell>
                       </TableRow>,
                       ...gv.map((v) => {
