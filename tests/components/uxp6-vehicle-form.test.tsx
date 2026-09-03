@@ -274,3 +274,15 @@ describe('UXP-6 (6b): vehicle drawer Setup block', () => {
   })
 
 })
+
+// ── CHECKLISTS ENTRY (6e, third commit) ──────────────────────────────────────
+describe('UXP-6 (6e): checklists are entered from the fleet', () => {
+  it('toolbar "Checklists" goes to the Settings card; grouped headers say which checklist each type runs', async () => {
+    await renderPage()
+    expect(screen.getByRole('link', { name: 'Checklists' })).toHaveAttribute('href', '/admin/settings?checklist=')
+    expect(screen.getAllByText('Using:')).toHaveLength(2) // one per type group (Truck, ATV)
+    expect(screen.getByRole('link', { name: 'Truck daily (2)' })).toHaveAttribute('href', '/admin/settings?checklist=TRUCK')
+    // ATV has no template → the built-in default (16).
+    expect(screen.getByRole('link', { name: 'Built-in default (16)' })).toHaveAttribute('href', '/admin/settings?checklist=ATV')
+  })
+})
