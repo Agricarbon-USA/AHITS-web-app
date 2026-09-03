@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import OperatorDailyCheckPage from '@/app/(operator)/operator/daily-check/page'
 import { businessDate } from '@/lib/business-date'
@@ -38,17 +38,24 @@ interface FetchOpts {
   checked?: string[]
   /** Make the daily-check list GET reject (offline / 500). */
   checksReject?: boolean
+  /** Hold the daily-check list GET until `releaseChecks()` — the late-GET race. */
+  deferChecks?: boolean
 }
 
 let templateFetchCount = 0
+let releaseChecks: (() => void) | null = null
 
-function mockFetch({ checked = [], checksReject = false }: FetchOpts = {}) {
+function mockFetch({ checked = [], checksReject = false, deferChecks = false }: FetchOpts = {}) {
   return vi.fn((input: RequestInfo | URL) => {
     const url = String(input)
     if (url.startsWith('/api/deployments')) return jsonRes([{ id: 'rig1', vehicles: VEHICLES }])
     if (url.startsWith('/api/daily-check?')) {
       if (checksReject) return Promise.reject(new Error('offline'))
-      return jsonRes({ data: checked.map((vehicleId) => ({ id: `c-${vehicleId}`, vehicleId })), total: checked.length, page: 1, pageSize: 100 })
+      const body = { data: checked.map((vehicleId) => ({ id: `c-${vehicleId}`, vehicleId })), total: checked.length, page: 1, pageSize: 100 }
+      if (!deferChecks) return jsonRes(body)
+      return new Promise<Response>((resolve) => {
+        releaseChecks = () => resolve({ ok: true, json: async () => body } as Response)
+      })
     }
     if (url.startsWith('/api/checklist-templates')) {
       templateFetchCount += 1
@@ -73,6 +80,7 @@ beforeEach(() => {
     success({ coords: { latitude: 41.68, longitude: -83.53, accuracy: 10 } } as GeolocationPosition))
   Object.defineProperty(navigator, 'geolocation', { value: { getCurrentPosition }, configurable: true })
   templateFetchCount = 0
+  releaseChecks = null
   window.localStorage.clear()
   window.history.replaceState({}, '', '/operator/daily-check')
   // jsdom has no scrollIntoView; the page optional-chains it, so stub to observe the call.
@@ -407,6 +415,82 @@ describe('UXP-3 (3h) drafts survive', () => {
     expect(loadDraft('v1', today())).toBeNull()
     expect(loadDraft('v2', today())).toBeNull()
   })
+
+  // Antagonist review: the save effect's pristine branch ran clearDraft(newVehicle) the
+  // moment a vehicle was selected with an untouched form — so switching (or a reset
+  // landing) onto a vehicle that had an EARLIER session's draft silently deleted it.
+  it('switching onto a vehicle with an earlier session\'s draft restores it — not deletes it', async () => {
+    vi.stubGlobal('fetch', mockFetch())
+    // A scan of Truck 1 restores only Truck 1's draft; Truck 2's (from an earlier
+    // session today) stays in storage, untouched, until the operator lands on Truck 2.
+    window.history.replaceState({}, '', '/operator/daily-check?vehicleId=v1')
+    saveDraft(draftFor({ vehicleId: 'v2' }))
+    render(<OperatorDailyCheckPage />)
+
+    await waitFor(() => expect(combobox()).toHaveTextContent('Truck 1'))
+    expect(screen.queryByText('Restored your in-progress check')).not.toBeInTheDocument()
+    expect(loadDraft('v2', today())).not.toBeNull()
+
+    await pickVehicle('Truck 2')
+
+    expect(await screen.findByText('Restored your in-progress check')).toBeInTheDocument()
+    // Picked up where it was left: the inspection step, the failed row and its note.
+    expect(screen.getByDisplayValue('Cracked lens')).toBeInTheDocument()
+    expect(screen.getByText('ADMIN TEMPLATE — Brakes')).toBeInTheDocument()
+    expect(loadDraft('v2', today())).toMatchObject({ vehicleId: 'v2', step: 1, odometer: '1200', site: 'North 40' })
+    // The template resolves for the keys the draft was filled on — no false notice.
+    await waitFor(() => expect(templateFetchCount).toBe(2))
+    await act(async () => {})
+    expect(screen.queryByText(/A newer checklist for this vehicle exists/i)).not.toBeInTheDocument()
+    expect(screen.getByDisplayValue('Cracked lens')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+    expect(await screen.findByLabelText('Odometer (mi)')).toHaveValue(1200)
+    expect(screen.getByLabelText('Site / location')).toHaveValue('North 40')
+    expect(combobox()).toHaveTextContent('Truck 2')
+  })
+
+  it('"Start New Check" landing on a vehicle with an earlier session\'s draft restores it', async () => {
+    vi.stubGlobal('fetch', mockFetch({ checked: [] }))
+    window.history.replaceState({}, '', '/operator/daily-check?vehicleId=v1')
+    saveDraft(draftFor({ vehicleId: 'v2' }))
+    render(<OperatorDailyCheckPage />)
+
+    await waitFor(() => expect(combobox()).toHaveTextContent('Truck 1'))
+    next()
+    next()
+    fireEvent.click(await screen.findByRole('button', { name: 'Submit Check' }))
+    await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1))
+    expect(mutate.mock.calls[0][0].body).toMatchObject({ vehicleId: 'v1' })
+    // The reset lands on Truck 2 (Truck 1 is checked today) — and Truck 2 has a draft.
+    fireEvent.click(await screen.findByRole('button', { name: 'Start New Check' }))
+
+    expect(await screen.findByText('Restored your in-progress check')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Cracked lens')).toBeInTheDocument()
+    expect(loadDraft('v2', today())).toMatchObject({ vehicleId: 'v2', step: 1 })
+    await waitFor(() => expect(templateFetchCount).toBe(2))
+    await act(async () => {})
+    expect(screen.queryByText(/A newer checklist for this vehicle exists/i)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+    expect(await screen.findByLabelText('Odometer (mi)')).toHaveValue(1200)
+    expect(combobox()).toHaveTextContent('Truck 2')
+    expect(screen.queryByText(/You already filed a check/)).not.toBeInTheDocument()
+  })
+
+  it('a pristine landing on a vehicle with NO draft still stores nothing, and emptying the form still drops this session\'s draft', async () => {
+    vi.stubGlobal('fetch', mockFetch())
+    render(<OperatorDailyCheckPage />)
+
+    await screen.findByText('Truck 1')
+    await pickVehicle('Truck 2')
+    expect(screen.queryByText('Restored your in-progress check')).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Odometer (mi)'), { target: { value: '500' } })
+    await waitFor(() => expect(loadDraft('v2', today())).toMatchObject({ odometer: '500' }))
+    expect(loadDraft('v1', today())).toBeNull()
+    fireEvent.change(screen.getByLabelText('Odometer (mi)'), { target: { value: '' } })
+    await waitFor(() => expect(loadDraft('v2', today())).toBeNull())
+  })
 })
 
 // ─── 3j ──────────────────────────────────────────────────────────────────────
@@ -491,5 +575,58 @@ describe('UXP-3 (3j) the wrong-vehicle autopilot guard', () => {
     await pickVehicle('Truck 2')
     await waitFor(() => expect(screen.queryByText(/You already filed a check/)).not.toBeInTheDocument())
     expect(within(combobox()).getByText('Truck 2')).toBeInTheDocument()
+  })
+
+  // Antagonist review: the rig renders (and the picker is live) as soon as it lands,
+  // but the checks GET can land seconds later — and its preselect used to overwrite a
+  // pick the operator had made in between, keeping the answers typed for the other truck.
+  it('a late checks GET never flips a deliberate pick: rig first, pick Truck 2, answer, THEN the GET lands', async () => {
+    vi.stubGlobal('fetch', mockFetch({ checked: [], deferChecks: true })) // on its own the preselect says Truck 1
+    render(<OperatorDailyCheckPage />)
+
+    // The rig is up and the picker is usable while the checks GET is still in flight.
+    fireEvent.mouseDown(await screen.findByRole('combobox'))
+    fireEvent.click(await screen.findByRole('option', { name: 'Truck 2' }))
+    expect(combobox()).toHaveTextContent('Truck 2')
+    // Let Truck 2's template land before moving on (the late-TEMPLATE race is CC-32 2.5b's, not this).
+    await waitFor(() => expect(templateFetchCount).toBe(1))
+    await act(async () => {})
+    next() // → Inspection
+    await screen.findByText('ADMIN TEMPLATE — Brakes')
+    fireEvent.click(screen.getAllByRole('button', { name: 'No' })[0])
+    fireEvent.change(await screen.findByPlaceholderText('Describe the issue…'), { target: { value: 'Soft pedal' } })
+    await waitFor(() => expect(loadDraft('v2', today())?.checklist[0].note).toBe('Soft pedal'))
+
+    // NOW today's checks land. Pre-fix: setVehicleId(pickPreselect(…)) → Truck 1, with
+    // Truck 2's answers still on the form.
+    await waitFor(() => expect(releaseChecks).not.toBeNull())
+    await act(async () => { releaseChecks!() })
+
+    expect(screen.getByDisplayValue('Soft pedal')).toBeInTheDocument()
+    // No vehicle change happened: no template re-resolve, no "newer checklist" notice.
+    expect(templateFetchCount).toBe(1)
+    expect(screen.queryByText(/A newer checklist for this vehicle exists/i)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+    expect(await screen.findByRole('combobox')).toHaveTextContent('Truck 2')
+    expect(loadDraft('v2', today())?.checklist[0].note).toBe('Soft pedal')
+    expect(loadDraft('v1', today())).toBeNull()
+    // The GET did land: its result is live (Truck 2 has no check today → no notice).
+    expect(screen.queryByText(/You already filed a check/)).not.toBeInTheDocument()
+  })
+
+  it('a late checks GET saying EVERY vehicle is checked never blanks an existing pick', async () => {
+    vi.stubGlobal('fetch', mockFetch({ checked: ['v1', 'v2'], deferChecks: true })) // on its own: no preselect
+    render(<OperatorDailyCheckPage />)
+
+    fireEvent.mouseDown(await screen.findByRole('combobox'))
+    fireEvent.click(await screen.findByRole('option', { name: 'Truck 2' }))
+    expect(combobox()).toHaveTextContent('Truck 2')
+
+    await waitFor(() => expect(releaseChecks).not.toBeNull())
+    await act(async () => { releaseChecks!() })
+
+    expect(combobox()).toHaveTextContent('Truck 2')
+    // …and the landed result is honoured: the pick is told the submit replaces today's.
+    expect(await screen.findByText('You already filed a check for Truck 2 today — submitting replaces it.')).toBeInTheDocument()
   })
 })

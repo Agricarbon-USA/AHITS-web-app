@@ -12,7 +12,7 @@ import { useHistoryGuard } from '@/hooks/useHistoryGuard'
 import { businessDate } from '@/lib/business-date'
 import { DEFAULT_DAILY_CHECKLIST } from '@/types'
 import { OdometerField } from '@/components/operator/OdometerField'
-import { saveDraft, loadDraft, loadLatestDraft, clearDraft, purgeDraftsNotOn } from '@/lib/daily-check-draft'
+import { saveDraft, loadDraft, loadLatestDraft, clearDraft, purgeDraftsNotOn, type DailyCheckDraft } from '@/lib/daily-check-draft'
 
 // The full ~16-item inspection (PRD §11.4) is the single source of truth, shared
 // with the rest of the app via @/types. Items 15–16 (trailer hitch / load) are
@@ -205,6 +205,12 @@ export default function OperatorDailyCheckPage() {
   // notice for the very template the draft was filled on. Consumed on first compare;
   // a template that genuinely changed since the draft still gets the notice.
   const restoredKeysRef = React.useRef<string[] | null>(null)
+  // UXP-3 (3h, antagonist): the vehicles whose draft THIS session wrote. The save
+  // effect's pristine branch clears a draft only for these — an untouched form landing
+  // on a vehicle (picker switch, "Start New Check") says nothing about a draft an
+  // EARLIER session left there, and used to delete it silently. That draft is restored
+  // instead (restoreStoredDraft, below).
+  const savedVehiclesRef = React.useRef<Set<string>>(new Set())
   // UXP-3 (F-05): validation reject → field-level errors + a jump to the field. The
   // top Alert alone sat ~1300px above the failing row on a long inspection list.
   //   showNoteErrors — reveal "Required — describe the issue" under every empty note
@@ -233,6 +239,34 @@ export default function OperatorDailyCheckPage() {
     return base
   }, [rig, scannedVehicle])
 
+  // UXP-3 (3h): put a stored draft back into the form — vehicle, answers, odometer,
+  // site, the step they were on — plus the refs the CC-32 guards read. Shared by the
+  // mount restore and the pristine-landing restores (picker switch / "Start New Check"
+  // onto a vehicle an earlier session left a draft on). Stable (refs + setters only),
+  // so the mount effect can list it and still run once.
+  const applyDraft = React.useCallback((draft: DailyCheckDraft) => {
+    restoredKeysRef.current = draft.checklist.map((r) => r.key)
+    siteTouchedRef.current = draft.siteTouched
+    issuesPrefilledRef.current = draft.issuesPrefilled
+    rowsTouchedRef.current = draft.rowsTouched
+    pastStep0Ref.current = draft.step > 0
+    // The restored check runs on the template it was filled on (restoredKeysRef); a
+    // reset's pending force must not let a genuinely newer template replace its rows
+    // silently — that case gets the same 2.5b notice the mount restore gets.
+    templateForceRef.current = false
+    // CC-31 item 5 / CC-14: time-to-complete counts the operator's active form time
+    // only — rebase the clock so the interruption (kill, reload, re-login, a detour
+    // to another truck) is excluded.
+    startedAtRef.current = Date.now() - draft.elapsedMs
+    setVehicleId(draft.vehicleId)
+    setChecklist(draft.checklist)
+    setOdometer(draft.odometer)
+    setSite(draft.site)
+    setIssues(draft.issues)
+    setStep(draft.step)
+    setRestoredNotice(true)
+  }, [])
+
   React.useEffect(() => {
     const today = businessDate()
     // A scan of a vehicle label routes here as ?vehicleId=<id> (PRD §7.7) —
@@ -249,21 +283,7 @@ export default function OperatorDailyCheckPage() {
     const draft = preselect ? loadDraft(preselect, today) : loadLatestDraft(today)
     if (draft) {
       restoredRef.current = true
-      restoredKeysRef.current = draft.checklist.map((r) => r.key)
-      siteTouchedRef.current = draft.siteTouched
-      issuesPrefilledRef.current = draft.issuesPrefilled
-      rowsTouchedRef.current = draft.rowsTouched
-      pastStep0Ref.current = draft.step > 0
-      // CC-31 item 5 / CC-14: time-to-complete counts the operator's active form time
-      // only — rebase the clock so the interruption (kill, reload, re-login) is excluded.
-      startedAtRef.current = Date.now() - draft.elapsedMs
-      setVehicleId(draft.vehicleId)
-      setChecklist(draft.checklist)
-      setOdometer(draft.odometer)
-      setSite(draft.site)
-      setIssues(draft.issues)
-      setStep(draft.step)
-      setRestoredNotice(true)
+      applyDraft(draft)
     } else {
       startedAtRef.current = Date.now() // start the time-to-complete clock at mount
       if (preselect) setVehicleId(preselect)
@@ -281,8 +301,8 @@ export default function OperatorDailyCheckPage() {
         .catch(() => { /* offline / not found — fall back to rig vehicles */ })
     }
     // UXP-3 (3j): the rig renders as soon as it lands (as before); the PRESELECT is
-    // decided once, when both the rig and today's checks have settled, so it never
-    // flips. Either failing keeps its old default (no rig / empty set).
+    // decided once, when both the rig and today's checks have settled. Either failing
+    // keeps its old default (no rig / empty set).
     const rigPromise = fetch('/api/deployments')
       .then((r) => r.json())
       .then((json): ActiveRig | null => {
@@ -294,11 +314,18 @@ export default function OperatorDailyCheckPage() {
       const checked = checkedResult.status === 'fulfilled' ? checkedResult.value : new Set<string>()
       setCheckedToday(checked)
       const active = rigResult.status === 'fulfilled' ? rigResult.value : null
+      // UXP-3 (3j, antagonist): the picker is live the moment the rig lands, and the
+      // checks GET can land seconds later — by then the operator may have picked a
+      // truck deliberately and answered rows for it. A preselect only ever fills an
+      // EMPTY selection; it never overrides a pick, and the all-checked case
+      // (pickPreselect → '') never blanks one. Functional update: the pick lives in
+      // state this callback never saw.
       if (!preselect && !restoredRef.current && active?.vehicles?.length) {
-        setVehicleId(pickPreselect(active.vehicles, checked))
+        setVehicleId((prev) => prev || pickPreselect(active.vehicles, checked))
       }
     })
-  }, [])
+    // applyDraft is a stable useCallback — this is still the one-time mount effect.
+  }, [applyDraft])
 
   // Q3: the selected vehicle's TYPE as a stable string. The checklist effect below
   // keys off THIS, not the `vehicles` array ref — so it re-fetches the template only
@@ -387,14 +414,21 @@ export default function OperatorDailyCheckPage() {
 
   // UXP-3 (3h): persist the draft on every form change. A PRISTINE form (step 0,
   // no row touched, no odometer, site untouched, no summary) clears its draft instead
-  // — that also covers the vehicle-switch reset, which lands the form pristine on the
-  // new vehicle. Skipped once submitted: the submit path clears the draft itself and
-  // the success screen must not re-save it. Refs are read here, not in render.
+  // — but only a draft THIS session wrote (savedVehiclesRef): the operator emptied
+  // the form they were filling. A vehicle-switch or reset also lands the form
+  // pristine on the new vehicle, and an earlier session's draft there is not ours to
+  // drop — it is restored by restoreStoredDraft, never cleared here (antagonist 3h).
+  // Skipped once submitted: the submit path clears the draft itself and the success
+  // screen must not re-save it. Refs are read here, not in render.
   React.useEffect(() => {
     if (!vehicleId || submitted) return
     const today = businessDate()
     const pristine = step === 0 && !rowsTouchedRef.current && odometer === '' && !siteTouchedRef.current && issues === ''
-    if (pristine) { clearDraft(vehicleId, today); return }
+    if (pristine) {
+      if (savedVehiclesRef.current.has(vehicleId)) clearDraft(vehicleId, today)
+      return
+    }
+    savedVehiclesRef.current.add(vehicleId)
     saveDraft({
       vehicleId,
       date: today,
@@ -543,6 +577,17 @@ export default function OperatorDailyCheckPage() {
     }
   }
 
+  // UXP-3 (3h, antagonist): the form has just been reset to PRISTINE on `nextVehicleId`
+  // (picker switch / "Start New Check"). If an earlier session left today's draft for
+  // that vehicle, pick that check up where it was left — notice and all — instead of
+  // the save effect's pristine branch deleting it. Called AFTER the caller's own
+  // resets, so the draft's state and refs win. No draft → the pristine form stands.
+  const restoreStoredDraft = (nextVehicleId: string) => {
+    if (!nextVehicleId) return
+    const draft = loadDraft(nextVehicleId, businessDate())
+    if (draft) applyDraft(draft)
+  }
+
   const handleReset = () => {
     // UXP-3 (3j): check #2 of the day goes to the next vehicle WITHOUT a check today
     // (the one just filed is in checkedToday), not back to the one just checked. All
@@ -582,6 +627,10 @@ export default function OperatorDailyCheckPage() {
     setShowNoteErrors(false)
     setIssuesError(false)
     setVehicleId(nextVehicleId)
+    // UXP-3 (3h, antagonist): landing on a vehicle an earlier session left a draft on
+    // picks that check up (it used to be deleted by the pristine save). Last, so the
+    // draft's state and refs win over the fresh-form resets above.
+    restoreStoredDraft(nextVehicleId)
   }
 
   if (submitted) {
@@ -678,13 +727,16 @@ export default function OperatorDailyCheckPage() {
                guard and carrying vehicle A's answers into vehicle B's check. This
                preserves the pre-CC-32 behaviour of switching vehicles. */
             onChange={(e) => {
+              const nextVehicleId = e.target.value
               // UXP-3 (3h): the answers being discarded belong to the OLD vehicle, and
               // so does its draft — drop it, or the next visit restores a check the
-              // operator deliberately walked away from. The new vehicle's (pristine)
-              // draft is cleared by the save effect.
+              // operator deliberately walked away from. (So does a restore notice for
+              // it.) The NEW vehicle's draft, if an earlier session left one, is
+              // restored below — the pristine save never touches it.
               clearDraft(vehicleId, businessDate())
               restoredKeysRef.current = null
-              setVehicleId(e.target.value)
+              setRestoredNotice(false)
+              setVehicleId(nextVehicleId)
               setChecklist((prev) => prev.map((r) => ({ ...r, value: 'yes', note: '' })))
               setIssues('')
               issuesPrefilledRef.current = false
@@ -700,6 +752,8 @@ export default function OperatorDailyCheckPage() {
               // nobody having typed it. A site the operator typed is left alone: the
               // same site with a different vehicle is the normal case.
               if (!siteTouchedRef.current) setSite('')
+              // UXP-3 (3h, antagonist): last, so the draft's state and refs win.
+              restoreStoredDraft(nextVehicleId)
             }}
             required
             fullWidth
