@@ -7,6 +7,10 @@ import { NewDeploymentDialog } from '@/components/admin/NewDeploymentDialog'
 //  - a review summary (Operator · Project · Vehicles · Kit) at the top of the Start step,
 //  - B-14: `alternativeLabel` at xs so the fourth step label stops clipping.
 // The 4-step structure and the step labels are unchanged.
+// UXP-6 (6d): labels lost their "(optional)" suffix (optional fields are unmarked under
+// the EntityFormDialog grammar; required ones carry the asterisk + legend), the hub
+// reads `name · city, state`, and operator/project/hub are SearchableSelects — the
+// `pick()` helper below drives an Autocomplete exactly as SearchableSelect.test.tsx does.
 
 const OPERATORS = [{ id: 'u1', name: 'Op One', role: 'OPERATOR' }]
 const VEHICLES = [
@@ -64,13 +68,13 @@ const next = () => fireEvent.click(screen.getByRole('button', { name: 'Next' }))
 /** Fill every step: Op One + TX Soil → Truck 1 → one consumable + one serialized from Toledo Hub → Start step. */
 async function walkToStart() {
   pick(/^Operator/, 'Op One') // required → MUI labels it "Operator *"
-  pick('Project (optional)', 'TX Soil')
+  pick('Project', 'TX Soil')
   next()
   await screen.findByText('Select vehicles for this deployment')
   fireEvent.click(screen.getAllByRole('checkbox')[0]) // Truck 1 (sorted into the TRUCK group first)
   next()
   await screen.findByText('Select items to pack into this kit')
-  pick('Source hub for consumables', 'Toledo Hub — Toledo, OH')
+  pick('Source hub for consumables', 'Toledo Hub · Toledo, OH')
   const bagsRow = screen.getByText('Sample bags').closest('.MuiStack-root') as HTMLElement
   fireEvent.click(within(bagsRow).getByRole('checkbox'))
   const gpsUnitRow = screen.getByText('GPS-007').closest('.MuiStack-root') as HTMLElement
@@ -92,13 +96,13 @@ describe('UXP-3 (3d): admin New Deployment builder', () => {
   it('offers the optional Project pick on step 0, under the label', () => {
     renderDialog()
     expect(screen.getByLabelText(/^Operator/)).toBeInTheDocument()
-    expect(screen.getByLabelText('Label (optional)')).toBeInTheDocument()
-    expect(screen.getByLabelText('Project (optional)')).toBeInTheDocument()
+    expect(screen.getByLabelText('Label')).toBeInTheDocument()
+    expect(screen.getByLabelText('Project')).toBeInTheDocument()
   })
 
   it('hides the Project pick when the page has no projects', () => {
     renderDialog({ projects: [] })
-    expect(screen.queryByLabelText('Project (optional)')).toBeNull()
+    expect(screen.queryByLabelText('Project')).toBeNull()
   })
 
   it('reads back operator · project · vehicles · kit counts on the Start step', async () => {
@@ -111,7 +115,7 @@ describe('UXP-3 (3d): admin New Deployment builder', () => {
     expect(within(summary).getByText('Truck 1')).toBeInTheDocument()
     expect(within(summary).getByText('1 consumable · 1 serialized · from Toledo Hub')).toBeInTheDocument()
     // The note presets still sit below the summary on the same step (CC-24).
-    expect(screen.getByLabelText('Deployment note (optional)')).toBeInTheDocument()
+    expect(screen.getByLabelText('Deployment note')).toBeInTheDocument()
   })
 
   it('says "None" / "Empty kit" when nothing was picked', async () => {

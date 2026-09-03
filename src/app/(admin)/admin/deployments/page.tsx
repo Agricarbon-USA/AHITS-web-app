@@ -26,8 +26,10 @@ import CloseIcon from '@mui/icons-material/Close'
 import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline'
 import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
 import { TransferDialog } from '@/components/shared/TransferDialog'
-import { KitItemSelectRow } from '@/components/admin/KitItemSelectRow'
-import { NewDeploymentDialog, type VehicleOption, type InventoryOption } from '@/components/admin/NewDeploymentDialog'
+import { KitItemSelectRow, type AdminKitEntry } from '@/components/admin/KitItemSelectRow'
+import {
+  NewDeploymentDialog, type VehicleOption, type InventoryOption, type StartedDeployment,
+} from '@/components/admin/NewDeploymentDialog'
 import { DispositionDialog } from '@/components/shared/DispositionDialog'
 import type { HubOption, UserOption } from '@/components/shared/DispositionDialog'
 import { useCanEdit, EditGuard, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
@@ -103,10 +105,7 @@ interface Rig {
 
 // UXP-3 (3d): VehicleOption / InventoryOption moved with the builder to
 // components/admin/NewDeploymentDialog.tsx and are imported back above (the drawer uses them too).
-
-type AdminKitEntry =
-  | { inventoryItemId: string; itemType: 'CONSUMABLE'; quantity: number }
-  | { inventoryItemId: string; itemType: 'SERIALIZED'; inventoryUnitId: string; unitLabel: string }
+// UXP-6 (6d): AdminKitEntry is the one from KitItemSelectRow (the local twin is gone).
 
 interface TransferRow {
   id: string
@@ -1111,6 +1110,23 @@ function DeploymentDrawer({
 // back-button correct). Module scope so the useUrlFilters setter stays referentially stable.
 const DEPLOYMENT_FILTER_DEFAULTS = { ended: '', operatorId: '', projectId: '' }
 
+/** The list-row shape the drawer needs, from what POST /api/deployments returned. */
+function toRig(started: StartedDeployment): Rig | null {
+  const r = started.rig
+  if (!r) return null
+  return {
+    id: r.id,
+    label: r.label ?? null,
+    startedAt: r.startedAt ?? new Date().toISOString(),
+    endedAt: r.endedAt ?? null,
+    operator: r.operator ?? { id: started.operatorId, name: started.operatorName },
+    project: r.project ?? null,
+    vehicles: (r.vehicles ?? []) as Rig['vehicles'],
+    kits: (r.kits ?? []) as Rig['kits'],
+    secondaryOperators: (r.secondaryOperators ?? []) as Rig['secondaryOperators'],
+  }
+}
+
 export default function AdminDeploymentsPage() {
   return (
     <React.Suspense>
@@ -1238,8 +1254,9 @@ function AdminDeploymentsContent() {
           </Stack>
           <Typography variant="body2" color="text.secondary">{activeCount} active</Typography>
         </Box>
+        {/* D11: ONE creating verb app-wide — the operator page's empty state says the same. */}
         <MutationButton variant="contained" startIcon={<AddIcon />} onClick={() => setNewOpen(true)}>
-          New Deployment
+          Start Deployment
         </MutationButton>
       </Stack>
 
@@ -1387,7 +1404,7 @@ function AdminDeploymentsContent() {
             {!loading && rigs.length === 0 && (
               <TableRow>
                 <TableCell colSpan={6} align="center" sx={{ py: 6, color: 'text.secondary' }}>
-                  {showEnded ? 'No ended deployments.' : 'No active deployments. Click "New Deployment" to start one.'}
+                  {showEnded ? 'No ended deployments.' : 'No active deployments. Tap "Start Deployment" to begin one.'}
                 </TableCell>
               </TableRow>
             )}
@@ -1417,7 +1434,16 @@ function AdminDeploymentsContent() {
           hubs={hubs}
           projects={projects} // UXP-3 (3d): fetched above for the filter, now offered in the builder
           onClose={() => setNewOpen(false)}
-          onSuccess={() => { showToast('Deployment created'); load() }}
+          onSuccess={(started) => {
+            // D11 verb in the toast too ("Deployment created" contradicted the button);
+            // Open lands in the new rig's drawer, the same one a row tap opens.
+            const rig = toRig(started)
+            toast({
+              message: `Deployment started for ${started.operatorName}`,
+              action: rig ? { label: 'Open', onClick: () => { setDrawerAction(null); setDrawerRig(rig) } } : undefined,
+            })
+            void load()
+          }}
         />
       )}
 
