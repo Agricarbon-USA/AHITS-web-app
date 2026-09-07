@@ -28,10 +28,23 @@ interface Category {
   sortOrder: number
 }
 
+// UXP-6 (6e): `?checklist=<TYPE>` (from the Vehicles page — its toolbar "Checklists"
+// button sends a bare `?checklist=`, the vehicle drawer's Setup block sends the type)
+// opens the checklist editor on that type's active template. Read AFTER hydration via
+// useSyncExternalStore, exactly like operator/requests' `?tab=` reader: the server
+// snapshot is always null (matches the server HTML — no hydration mismatch), and
+// React re-checks the client snapshot after mount / after a client-side navigation
+// commits the new URL. No effect, no synchronous setState, no Suspense requirement
+// (window.location, not useSearchParams — FND-48).
+const subscribeToNothing = () => () => {}
+const readChecklistParam = (): string | null => new URLSearchParams(window.location.search).get('checklist')
+const serverChecklistParam = (): string | null => null
+
 // ── Settings Page ─────────────────────────────────────────────────
 
 export default function SettingsPage() {
   const [categories, setCategories] = React.useState<Category[]>([])
+  const checklistDeepLink = React.useSyncExternalStore(subscribeToNothing, readChecklistParam, serverChecklistParam)
 
   // Category state
   const [editingCatId, setEditingCatId] = React.useState<string | null>(null)
@@ -218,8 +231,8 @@ export default function SettingsPage() {
       {/* CC-22: manual Sentry capture verification */}
       <SentryDiagnosticsSection />
 
-      {/* Daily-Check Checklists (M5-25) */}
-      <ChecklistTemplatesSection onToast={showToast} onError={showError} />
+      {/* Daily-Check Checklists (M5-25); UXP-6 (6e) deep-link from Vehicles */}
+      <ChecklistTemplatesSection onToast={showToast} onError={showError} deepLinkType={checklistDeepLink} />
 
       {/* Equipment Categories */}
       <Card sx={{ mb: 3 }}>
