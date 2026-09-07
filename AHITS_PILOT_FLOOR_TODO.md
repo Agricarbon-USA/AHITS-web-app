@@ -33,7 +33,7 @@
 
 6. [ ] **Delete two leftover test copies of the app (5 min).** Google Cloud Console → Cloud Run → delete `ahits-web-app-preview-cc31-pr3` and `ahits-web-app-preview-cc31-pr2`.
 
-7. [ ] **July-trial leftovers — say the word and I'll do it.** Old alerts and never-closed deployments from July will clutter the screens on restart; I can clean them up for you in one short session.
+7. [ ] **July-trial leftovers — packet READY (2026-09-07):** `AHITS_JULY_TRIAL_CLEANUP_2026-09-07.md`. Step 1 is read-only: paste its Phase A blocks into Supabase → SQL Editor and send me the rows (or fill Phase B yourself). Ending deployments happens in the app; the SQL only marks old alerts/bell items as handled, tagged so it can be undone.
 
 ## Part 2 · This week, before anyone uses the app again — ~2 hours, phone + paper
 
@@ -43,7 +43,7 @@
 
 3. [x] **Stewart has admin access — DONE 2026-09-03.** The deal stands: he checks the app 5 minutes a day, you only do a Monday look.
 
-4. [ ] **Operator start-up sheet — I'll draft it, just say the word.** One page: how to install · "Transfer" is the word we use · reload the app after updates · never delete-and-reinstall. Print it or text it.
+4. [x] **Operator start-up sheet — DRAFTED 2026-09-07:** `AHITS_Operator_Start_Sheet.pdf` (print/text) + `AHITS_OPERATOR_START_SHEET.md`. Contact line = Max. Read it once for tone; edit anything you'd say differently.
 
 ## Part 3 · Test on your phone — 1 hour + one overnight (after Part 1)
 
