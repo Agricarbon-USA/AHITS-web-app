@@ -49,9 +49,26 @@ git checkout development && git pull
 git push -u origin feature/20260903/Agricarbon-USA-uxp3-flow-closers
 git push -u origin feature/20260903/Agricarbon-USA-uxp6-admin-setup
 ```
-Then open two PRs on GitHub (bodies in §4): **PR-1 base `development`**; **PR-2 base = PR-1's branch** (change the base to `development` after PR-1 merges — GitHub retargets automatically when the base branch is deleted on merge). Merge PR-1 first, evening, watch the five deploy jobs; merge PR-2 the next evening after its own smoke.
+Then open two PRs on GitHub (bodies in §4): **PR-1 base `development`**; **PR-2 base = PR-1's branch**. Merge PR-1 first, evening, watch the five deploy jobs; merge PR-2 the next evening after its own smoke.
+
+> **CORRECTION (2026-09-07, learned the hard way).** GitHub does **not** retarget a stacked PR when its base branch is deleted on merge — it **closes** it, and a PR closed that way is **unrecoverable**: you cannot change the base of a closed PR, and reopen is refused *even after you recreate the base branch*. That is what happened to PR-2 (#237); it had to be re-proposed as a new PR (#238). Two further traps: `ci.yml` is `pull_request: branches: [production, development]`, which matches on the **base**, so a stacked PR gets **no CI at all** while its base is a feature branch; and `verify.yml` is `workflow_call:`-only, so there is nothing to dispatch by hand.
+>
+> **What actually works — do this BEFORE merging PR-1 with `--delete-branch`,** while PR-2's base branch still exists:
+> - **Preferred — rebase PR-2 onto `development` and force-push.** After PR-1 merges, its content is on `development`, so PR-2 no longer needs to carry it:
+>   ```bash
+>   git branch backup/<topic>-prerebase <pr2-branch>            # keep a handle on the pre-rebase history
+>   git rebase --onto development <pr1-tip-sha> <pr2-branch>    # merge commits are dropped; that is fine
+>   git rev-parse '<pr2-branch>^{tree}'                         # MUST equal the pre-rebase tree
+>   git push --force-with-lease origin <pr2-branch>
+>   ```
+>   Compare **trees**, not file counts — a rebase can complete and still lose a hunk. The force-push fires `synchronize`, which starts CI once the base is `development`.
+> - **Or `gh pr close <n> && gh pr reopen <n>`** to kick CI — but this only works **while the base branch still exists**. Once PR-1 is merged with `--delete-branch`, it is too late and the only path left is opening a fresh PR.
+>
+> If you have already merged PR-1 and lost PR-2: rebase the branch as above, `gh pr create` a replacement with the same title/body from §4, and comment the new number on the dead PR.
 
 ## 4 · PR bodies (paste)
+
+**PR-1 = #236 — ✅ MERGED 2026-09-07** (squash `aff2fac`, deploy green, revision `ahits-web-app-staging-00419-tpw`). 3b threat-model signed off by Max in the merge.
 
 **PR-1 title:** `UXP-3 Flow Closers — 3a–3j + rider (GAP-4 residual test)`
 > Builds the UXP-3 packet (AHITS_UX_PACKETS_2026-07-29.md §UXP-3) with the 2026-08-20 rider. UI-layer except the three named server touches: 3b lockout flag on login/change-pin (strings + one boolean), 3c the MATERIAL fulfill notification (mirrors the `complete` arm behind the status-guarded UPDATE; replay = 409, no double fire), 3g photo policy per D36 (report-problem / INOPERABLE no longer require a photo; `localphoto:` 422 guard kept). No schema, no deps, no sw.ts/offline-queue changes. F-03 done here (CC-24 had renamed only the FORWARDED button). my-deployment/page.tsx 1,939 → 1,476 (D21).
@@ -61,6 +78,8 @@ Then open two PRs on GitHub (bodies in §4): **PR-1 base `development`**; **PR-2
 > 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 >
 > https://claude.ai/code/session_012ccD9iLZcBJs5PwqjTmPkL
+
+**PR-2 = #238 — ✅ MERGED 2026-09-07** (squash `f701f92`, deploy green, revision `ahits-web-app-staging-00420-4s5`). **Not #237** — #237 was the original stacked PR and was auto-**closed** when its base branch was deleted on the merge of #236; GitHub did **not** retarget it, and it could not be reopened (see the CORRECTION in §3). The branch was rebased onto `development` (tree verified identical) and re-proposed as **#238**, which carries this same title and body. UXP-3's granular pre-squash history is preserved server-side at **`archive/uxp3-uxp6-prerebase`** (`d46b910`).
 
 **PR-2 title:** `UXP-6 Admin Setup & Fleet Onboarding — one create/edit grammar (6a–6e) + nest-aware history guard`
 > Stacked on PR-1. Implements the UXP-6 packet (Tier 1) from the 2026-09-03 audit: EntityFormDialog + error normaliser + dirty guard (D38), and the five admin flows on it — closing the audit's data-loss traps T1–T8 (409 kit-pick wipe, stale pickers, drawer Add-Items silent failure, units never created with a serialized item, consumable stock lost without a hub, edits unable to clear fields, duplicate-active checklists, wrong unit labels). "Nothing lost" verified field-by-field: every request body is unchanged or a superset (qrCodeId create-only; PATCH nulls only for schema-nullable keys; `unitId` no longer sent on item PATCH because the strict schema always rejected it). useHistoryGuard rewritten nest-aware (rules R1–R6 in the header) — required because a form opened from a drawer closed itself on arrival in real browsers; jsdom cannot see this, so the phone smoke matters. UI layer only; no schema, no deps.
