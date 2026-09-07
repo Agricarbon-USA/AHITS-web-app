@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
-import { verifyPin } from '@/lib/auth/pin'
+import { verifyPinDetailed, PIN_LOCKED_ERROR, type PinVerifyResult } from '@/lib/auth/pin'
 import { createSession, setSessionCookie } from '@/lib/auth/session'
 import { rateLimit, clientIp } from '@/lib/rate-limit'
 import { pinSchema } from '@/lib/validation'
@@ -39,21 +39,35 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
     }
 
-    let valid = false
+    let result: PinVerifyResult
 
     if (input.mode === 'pin') {
       if (user.role !== 'OPERATOR') return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
-      valid = await verifyPin(user.id, input.pin)
+      result = await verifyPinDetailed(user.id, input.pin)
     } else {
       if (user.role !== 'ADMIN') return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
       if (!user.pinHash) return NextResponse.json({ error: 'No password set' }, { status: 401 })
       // Admin passwords are stored in the same hashed column as operator PINs,
       // so verifyPin gives the admin path the identical lockout protection
       // (previously the admin password had no lockout at all).
-      valid = await verifyPin(user.id, input.password)
+      result = await verifyPinDetailed(user.id, input.password)
     }
 
-    if (!valid) return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
+    if (!result.ok) {
+      // UXP-3 (3b): an active lock says so. Only reachable AFTER the unknown /
+      // inactive / role gates above, so a guess against a non-existent (or
+      // wrong-role) email still gets the byte-identical generic 401 — the lock
+      // state is revealed only for an account the caller could sign into.
+      // Threat-model note lives in the PR body; the IP limiter above is untouched
+      // and its 429 never carries `locked`.
+      if (result.reason === 'locked') {
+        return NextResponse.json(
+          { error: PIN_LOCKED_ERROR, locked: true, lockedUntil: result.lockedUntil.toISOString() },
+          { status: 401 },
+        )
+      }
+      return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
+    }
 
     // Record last login (best-effort) for the account audit surface.
     await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } }).catch(() => {})

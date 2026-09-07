@@ -77,14 +77,20 @@ describe('CC-34 (2a) one report verb', () => {
     expect(after?.status).toBe('IN_MAINTENANCE')
   })
 
-  it('unit report with no photo is rejected (400, §11.10)', async () => {
+  // UXP-3 (3g) / D36: was "rejected (400, §11.10)". A denied/missing camera must never block
+  // a report, so a photo-less unit report is now an honest 201 with a task and zero photo rows.
+  it('unit report with no photo is accepted (201, D36) — task created, zero photo rows', async () => {
     const item = await createInventoryItem(cat.id, { itemType: 'SERIALIZED', quantity: 0 })
     const unit = await createInventoryUnit(item.id, { status: 'CHECKED_OUT' })
     const res = await reportProblem(
       jsonReq(`http://localhost/api/inventory/units/${unit.id}/report-problem`, { notes: 'x', photoUrls: [] }),
       { params: Promise.resolve({ unitId: unit.id }) },
     )
-    expect(res.status).toBe(400)
+    expect(res.status).toBe(201)
+    const task = await prisma.maintenanceTask.findFirst({ where: { inventoryUnitId: unit.id } })
+    expect(task?.isDamageReport).toBe(true)
+    expect(task?.reportedById).toBe(op.id)
+    expect(await prisma.photo.count({ where: { maintenanceId: task!.id } })).toBe(0)
   })
 
   it('unit report carrying an unresolved localphoto ref is 422 (not a silent photo-less success)', async () => {

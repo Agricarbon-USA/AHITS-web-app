@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, createSession, setSessionCookie } from '@/lib/auth/session'
-import { verifyPin, hashPin } from '@/lib/auth/pin'
+import { verifyPinDetailed, hashPin, PIN_LOCKED_ERROR } from '@/lib/auth/pin'
 import { pinSchema, newPinSchema } from '@/lib/validation'
 
 // Operator self-service PIN change (N-PIN). Also the screen that satisfies a
@@ -27,10 +27,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'New PIN must be different from your current PIN.' }, { status: 400 })
   }
 
-  // verifyPin enforces the same per-account lockout as login, so brute-forcing
-  // the current PIN here is bounded too.
-  const ok = await verifyPin(session.userId, currentPin)
-  if (!ok) {
+  // verifyPinDetailed enforces the same per-account lockout as login, so
+  // brute-forcing the current PIN here is bounded too. UXP-3 (3b): an active
+  // lock says so instead of "incorrect" — the caller is already authenticated,
+  // so there is nothing to hide here.
+  const result = await verifyPinDetailed(session.userId, currentPin)
+  if (!result.ok) {
+    if (result.reason === 'locked') {
+      return NextResponse.json(
+        { error: PIN_LOCKED_ERROR, locked: true, lockedUntil: result.lockedUntil.toISOString() },
+        { status: 400 },
+      )
+    }
     return NextResponse.json({ error: 'Current PIN is incorrect.' }, { status: 400 })
   }
 

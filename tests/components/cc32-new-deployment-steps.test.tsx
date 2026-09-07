@@ -109,3 +109,39 @@ describe('CC-32 (2.4) the deployment builder is 2 steps, not 4', () => {
     expect(call.body).toMatchObject({ label: 'TX Summer Run', vehicleIds: ['v1'] })
   })
 })
+
+// UXP-3 (3d): the builder gained an optional Project pick at the top of Build Rig (projects
+// are fetched best-effort when the dialog opens — it only mounts on tap). The field is hidden
+// when there are no projects, which is what every case above sees through the fetch
+// fallback's `{ data: [] }`, so their assertions are untouched.
+describe('UXP-3 (3d): optional project on Build Rig', () => {
+  it('offers the project pick when projects exist and sends projectId with the create', async () => {
+    const base = mockFetch()
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      if (String(input).startsWith('/api/projects')) return jsonRes({ data: [{ id: 'p1', name: 'TX Soil' }] })
+      return base(input)
+    }))
+    await openBuilder()
+
+    fireEvent.mouseDown(await screen.findByLabelText('Project (optional)'))
+    fireEvent.click(screen.getByRole('option', { name: 'TX Soil' }))
+    fireEvent.click(screen.getAllByRole('checkbox')[0])            // pick Truck 1
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))  // → Build Kit
+    await screen.findByText('Pack your kit')
+    fireEvent.click(screen.getByRole('button', { name: 'Start Deployment' }))
+
+    await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1))
+    expect(mutate.mock.calls[0][0].body).toMatchObject({ projectId: 'p1', vehicleIds: ['v1'] })
+  })
+
+  it('hides the project pick — and omits projectId — when there are no projects', async () => {
+    await openBuilder()
+    expect(screen.queryByLabelText('Project (optional)')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await screen.findByText('Pack your kit')
+    fireEvent.click(screen.getByRole('button', { name: 'Start Deployment' }))
+    await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1))
+    expect(mutate.mock.calls[0][0].body).not.toHaveProperty('projectId')
+  })
+})

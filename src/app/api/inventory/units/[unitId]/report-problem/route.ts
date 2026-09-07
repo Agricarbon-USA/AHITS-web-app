@@ -11,16 +11,15 @@ import { getActiveRigForOperator } from '@/lib/deployment-assignments'
 // CC-34 (2a): the unit half of the one "Report a problem" verb. Annotation, NOT removal —
 // the kit item is never touched. Creates the damage task + bell; the self-triage toggle
 // decides whether the unit's status flips (Out of service) or stays put (Still usable).
+//
+// UXP-3 (3g) / D36: photos are OPTIONAL here now — the §11.10 "≥1 photo" backstop is gone
+// because a denied/missing camera must never block a report. photoUrlsField() still
+// rejects an unresolved localphoto: ref with 422 (CC-34's silent-loss guard): "no photo"
+// is an honest, labelled report; "a photo that never uploaded" is not.
 const schema = z.object({
   notes: z.string().min(1),
   photoUrls: photoUrlsField(), // rejects unresolved localphoto: refs (422)
   stillUsable: z.boolean().default(true),
-}).superRefine((v, ctx) => {
-  // §11.10 damage-photo rule: a unit problem report requires at least one photo (the
-  // dialog enforces this too; this is the server backstop).
-  if (v.photoUrls.length === 0) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'At least one photo is required', path: ['photoUrls'] })
-  }
 })
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ unitId: string }> }) {

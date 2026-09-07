@@ -98,6 +98,37 @@ function newKey() {
   return Math.random().toString(36).slice(2)
 }
 
+export type RequestMode = 'RESERVATION' | 'MATERIAL'
+
+// UXP-3 (3f / F-09): remember the last-used mode per device. Precedence when the
+// composer opens: last-used > the caller's `initialMode` (the operator page's active-rig
+// heuristic) > RESERVATION. Same try/catch idiom as useAuth's identity cache — storage
+// can be unavailable (private mode) and the value can be anything, so it is validated.
+export const REQUEST_MODE_KEY = 'ahits_request_mode'
+
+function isRequestMode(v: unknown): v is RequestMode {
+  return v === 'RESERVATION' || v === 'MATERIAL'
+}
+
+export function readStoredRequestMode(): RequestMode | undefined {
+  if (typeof window === 'undefined') return undefined
+  try {
+    const v = window.localStorage.getItem(REQUEST_MODE_KEY)
+    return isRequestMode(v) ? v : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function writeStoredRequestMode(mode: RequestMode) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(REQUEST_MODE_KEY, mode)
+  } catch {
+    /* storage unavailable — non-fatal */
+  }
+}
+
 export function emptyLine(lineType: DraftLine['lineType']): DraftLine {
   return {
     key: newKey(),
@@ -425,6 +456,9 @@ export interface RequestComposerProps {
   operators?: OperatorOption[]
   /** Operator flow passes its offline state to show the sync banner. */
   offline?: boolean
+  /** UXP-3 (3f): the mode to open in when nothing is remembered on this device
+   *  (the operator page passes MATERIAL when an active rig exists). */
+  initialMode?: RequestMode
   /** Submit the built body. Caller owns the transport (offline queue vs fetch),
    *  the success toast, and refreshing the list. Resolves ok/error. */
   onSubmit: (body: RequestComposerBody) => Promise<RequestSubmitResult>
@@ -440,10 +474,14 @@ export function RequestComposer({
   defaultHubId,
   operators,
   offline,
+  initialMode,
   onSubmit,
   onClose,
 }: RequestComposerProps) {
-  const [mode, setMode] = React.useState<'RESERVATION' | 'MATERIAL'>('RESERVATION')
+  // Lazy initializer is hydration-safe here: the composer only mounts once opened (client).
+  const [mode, setMode] = React.useState<RequestMode>(
+    () => readStoredRequestMode() ?? initialMode ?? 'RESERVATION',
+  )
   const [hubId, setHubId] = React.useState('')
   const [projectId, setProjectId] = React.useState('')
   const [forOperatorId, setForOperatorId] = React.useState('')
@@ -508,6 +546,7 @@ export function RequestComposer({
     const result = await onSubmit(body)
     setSubmitting(false)
     if (result.ok) {
+      writeStoredRequestMode(mode) // UXP-3 (3f): remember what actually got sent
       onClose()
     } else {
       setError(result.error ?? 'Failed to submit the request.')
@@ -536,7 +575,7 @@ export function RequestComposer({
           exclusive
           onChange={(_evt, val) => {
             if (!val) return
-            setMode(val as 'RESERVATION' | 'MATERIAL')
+            setMode(val as RequestMode)
             setLines([emptyLine('KIT_ITEM')])
             setHubId('')
             setProjectId('')

@@ -57,6 +57,26 @@ describe('VehicleChecks (CC-14)', () => {
     const { container } = render(<VehicleChecks vehicles={[]} checkedVehicleIds={[]} onCheck={vi.fn()} />)
     expect(container).toBeEmptyDOMElement()
   })
+
+  // UXP-3 (F-08): "Done" becomes a tappable 44px button ONLY when there is somewhere
+  // to go (onViewCheck) — the inert chip stays the default so nothing else changes.
+  it('keeps the inert Done chip when onViewCheck is not passed', () => {
+    render(<VehicleChecks vehicles={vehicles} checkedVehicleIds={['v1']} onCheck={vi.fn()} />)
+    expect(screen.getByText('Done')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /View today's check/ })).toBeNull()
+  })
+
+  it('renders Done as a 44px button with an aria-label when onViewCheck is passed, and fires with the id', () => {
+    const onViewCheck = vi.fn()
+    render(<VehicleChecks vehicles={vehicles} checkedVehicleIds={['v1']} onCheck={vi.fn()} onViewCheck={onViewCheck} />)
+    const done = screen.getByRole('button', { name: "View today's check for Truck-01" })
+    expect(done).toHaveTextContent('Done')
+    expect(done).toHaveStyle({ minHeight: '44px' })
+    fireEvent.click(done)
+    expect(onViewCheck).toHaveBeenCalledWith('v1')
+    // The due vehicle still gets its Check button; the two never collide.
+    expect(screen.getAllByRole('button', { name: 'Check' })).toHaveLength(1)
+  })
 })
 
 describe('WaitingOnMe (CC-14)', () => {

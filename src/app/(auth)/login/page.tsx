@@ -9,12 +9,35 @@ import AgricultureIcon from '@mui/icons-material/Agriculture'
 import { useRouter } from 'next/navigation'
 import { useSWRConfig } from 'swr'
 
+// UXP-3 (3b): who a locked-out operator should reach. A plain string on purpose —
+// no ops-lead config exists (no env var, no Cloud Run --set-env-vars entry), and the
+// owner names the person in a strings PR (D11). Promoting it to an env var needs a
+// Makefile edit → optional follow-up.
+const LOCKOUT_CONTACT = 'your ops lead'
+
+/**
+ * UXP-3 (3b): the honest lockout line. `lockedUntil` is the server's ISO stamp,
+ * rendered device-local as HH:MM (same pattern as FreshnessIndicator's "Data as
+ * of"); an unparsable/missing value falls back to the lock's fixed length.
+ */
+function lockoutMessage(lockedUntil: unknown): string {
+  const until = typeof lockedUntil === 'string' ? new Date(lockedUntil) : null
+  const when = until && !Number.isNaN(until.getTime())
+    ? `until ${until.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+    : 'for 15 minutes'
+  return `Too many attempts — locked ${when}. Contact ${LOCKOUT_CONTACT} if urgent.`
+}
+
 export default function LoginPage() {
   const router = useRouter()
   const { mutate } = useSWRConfig()
   const [tab, setTab] = React.useState(0) // 0 = Operator PIN, 1 = Admin
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState('')
+  // 3b: a lock is a WARNING with a time on it, not a red "Invalid credentials".
+  // The button stays enabled — auto-unlock is server-side, so a retry after HH:MM
+  // simply works.
+  const [lockout, setLockout] = React.useState<string | null>(null)
 
   // Operator state
   const [email, setEmail] = React.useState('')
@@ -43,6 +66,7 @@ export default function LoginPage() {
     e.preventDefault()
     setLoading(true)
     setError('')
+    setLockout(null)
     try {
       const body = tab === 0
         ? { mode: 'pin', email, pin }
@@ -54,7 +78,13 @@ export default function LoginPage() {
         body: JSON.stringify(body),
       })
       const data = await res.json()
-      if (!res.ok) { setError(data.error ?? 'Login failed'); return }
+      if (!res.ok) {
+        // 3b: the server flags an active per-account lock; the 429 IP limiter
+        // never carries `locked`, so its copy still renders through `error`.
+        if (data?.locked) { setLockout(lockoutMessage(data.lockedUntil)); return }
+        setError(data.error ?? 'Login failed')
+        return
+      }
       // UR-003: refresh the cached identity to the new user before navigating so
       // the dashboard never flashes the previous user's name on a shared device.
       await mutate('/api/auth/me')
@@ -92,6 +122,7 @@ export default function LoginPage() {
             <Tab label="Admin" />
           </Tabs>
 
+          {lockout && <Alert severity="warning" sx={{ mb: 2 }}>{lockout}</Alert>}
           {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
           <Box component="form" onSubmit={handleSubmit}>

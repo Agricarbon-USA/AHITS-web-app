@@ -8,6 +8,31 @@ import Link from 'next/link'
 
 const bannerSx = { mb: 0, borderRadius: 0 } as const
 
+// UXP-3 (3i / A9): the persistence notice used to come back on every launch — iOS never
+// grants navigator.storage.persist(), and the in-memory dismissal died with the tab. The
+// dismissal now lives in localStorage for 90 days. A storage wipe re-shows it, which is
+// exactly the condition it warns about. try/catch: storage can be unavailable (private mode).
+export const PERSISTENCE_DISMISS_KEY = 'ahits_persistence_notice_dismissed_at'
+export const PERSISTENCE_DISMISS_TTL_MS = 90 * 24 * 60 * 60 * 1000
+
+function persistenceNoticeDismissed(): boolean {
+  try {
+    const raw = window.localStorage.getItem(PERSISTENCE_DISMISS_KEY)
+    const at = raw ? Number(raw) : NaN
+    return Number.isFinite(at) && Date.now() - at < PERSISTENCE_DISMISS_TTL_MS
+  } catch {
+    return false
+  }
+}
+
+function rememberPersistenceDismissed() {
+  try {
+    window.localStorage.setItem(PERSISTENCE_DISMISS_KEY, String(Date.now()))
+  } catch {
+    /* storage unavailable — the in-memory dismissal still holds for this session */
+  }
+}
+
 export function OfflineBanner() {
   const {
     isOffline, pending, failed, syncing, sessionExpired,
@@ -20,7 +45,12 @@ export function OfflineBanner() {
   const [dismissedStale, setDismissedStale] = React.useState(false)
   const [dismissedQuota, setDismissedQuota] = React.useState(false)
   const [dismissedPersistence, setDismissedPersistence] = React.useState(false)
-  React.useEffect(() => setMounted(true), [])
+  React.useEffect(() => {
+    // Read the stored dismissal here, not in the initializer, so the first client render
+    // still matches the server (the hydration guard below stays the only gate).
+    setDismissedPersistence(persistenceNoticeDismissed())
+    setMounted(true)
+  }, [])
 
   // Server and initial client render must match — return null until mounted to
   // avoid #418 from the isOffline state initializer diverging when offline.
@@ -164,10 +194,12 @@ export function OfflineBanner() {
       id: 'persistence',
       priority: BANNER_PRIORITY.INFO,
       node: (
-        <Alert severity="info" sx={bannerSx}
-          action={<Button size="small" color="inherit" onClick={() => setDismissedPersistence(true)}>Dismiss</Button>}>
-          Offline storage is not guaranteed on this device — the OS may clear queued
-          actions under storage pressure.
+        // A9: one line, no icon, no vertical padding — the smallest banner in the stack.
+        <Alert severity="info" icon={false} sx={{ ...bannerSx, py: 0 }}
+          action={<Button size="small" color="inherit"
+            onClick={() => { rememberPersistenceDismissed(); setDismissedPersistence(true) }}
+            sx={{ minHeight: 44, fontSize: 16 }}>Dismiss</Button>}>
+          Offline saves aren&apos;t guaranteed on this device.
         </Alert>
       ),
     })

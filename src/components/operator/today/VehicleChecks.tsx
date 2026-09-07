@@ -11,13 +11,16 @@ import type { TodayVehicle } from './types'
 // "Access notes" for the day are the read-only Vehicle.location / .notes shown as
 // subtext (no such dedicated field exists; these are the operator's context). The
 // "Check" button deep-links the daily-check form to that vehicle (?vehicleId=).
+// UXP-3 (F-08): when `onViewCheck` is provided, the Done state is a tappable 44px
+// button that opens today's check (TodayCheckSummary) — the inert chip otherwise.
 interface Props {
   vehicles: TodayVehicle[]
   checkedVehicleIds: string[]
   onCheck: (vehicleId: string) => void
+  onViewCheck?: (vehicleId: string) => void
 }
 
-export function VehicleChecks({ vehicles, checkedVehicleIds, onCheck }: Props) {
+export function VehicleChecks({ vehicles, checkedVehicleIds, onCheck, onViewCheck }: Props) {
   if (vehicles.length === 0) return null
   const checked = new Set(checkedVehicleIds)
 
@@ -43,7 +46,23 @@ export function VehicleChecks({ vehicles, checkedVehicleIds, onCheck }: Props) {
                   )}
                 </Box>
                 {isDone ? (
-                  <StatusChip label="Done" color="success" />
+                  onViewCheck ? (
+                    /* UXP-3 (F-08): StatusChip's badge mode cannot be tapped, so the
+                       Done state becomes a 44px text button when there is somewhere
+                       to go — today's check summary + Redo. */
+                    <Button
+                      size="small"
+                      variant="text"
+                      color="success"
+                      onClick={() => onViewCheck(rv.vehicleId)}
+                      aria-label={`View today's check for ${rv.vehicle.name}`}
+                      sx={{ minHeight: 44, minWidth: 44, fontSize: 16, flexShrink: 0 }}
+                    >
+                      Done
+                    </Button>
+                  ) : (
+                    <StatusChip label="Done" color="success" />
+                  )
                 ) : (
                   /* CC-32 (3.2): 44px hit area per the CC-23 daily-check toggle
                      precedent. Visual density stays compact; the target does not. */

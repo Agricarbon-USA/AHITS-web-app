@@ -232,17 +232,22 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
     setExpanded((e) => !e)
   }
 
-  const action = async (act: string, extra?: Record<string, unknown>) => {
+  // UXP-3 (3c): callers may name the outcome; the generic 'Done.' stays for the rest.
+  const action = async (act: string, extra?: Record<string, unknown>, successMessage?: string) => {
     setBusy(act)
     const r = await patchRequest(req.id, { action: act, ...extra })
     setBusy(null)
     if (r.ok) {
-      showToast({ message: 'Done.', severity: 'success' })
+      showToast({ message: successMessage ?? 'Done.', severity: 'success' })
       onRefresh()
     } else {
       showToast({ message: r.error ?? 'Action failed.', severity: 'error' })
     }
   }
+
+  // UXP-3 (3c / F-04): both admin closes of a MATERIAL request (REQUESTED→fulfill,
+  // FORWARDED→complete) now notify the requester server-side — say so, by name.
+  const handledMessage = `Marked handled — ${req.requestedByName ?? 'requester'} notified`
 
   const resendLink = async () => {
     setBusy('resend')
@@ -379,9 +384,12 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
               <Stack direction="row" spacing={1} flexWrap="wrap">
                 {isMaterial && req.status === 'REQUESTED' && (
                   <>
+                    {/* UXP-3 (3c / F-03, D9): a MATERIAL request's close moves no stock —
+                        "Mark Handled", never "Fulfill" (reserved for the stock-moving
+                        reservation flow below). The API action key is unchanged. */}
                     <Button size="small" variant="contained" color="success"
-                      disabled={!!busy} onClick={() => void action('fulfill')}>
-                      {busy === 'fulfill' ? <CircularProgress size={14} color="inherit" /> : 'Fulfill'}
+                      disabled={!!busy} onClick={() => void action('fulfill', undefined, handledMessage)}>
+                      {busy === 'fulfill' ? <CircularProgress size={14} color="inherit" /> : 'Mark Handled'}
                     </Button>
                     <Button size="small" variant="outlined" disabled={!!busy} onClick={() => setDialog('hub')}>
                       Forward → Hub
@@ -397,7 +405,7 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
                   <>
                     {/* CC-24: MATERIAL complete moves no stock — "Mark Handled", not "Fulfilled". */}
                     <Button size="small" variant="contained" color="success"
-                      disabled={!!busy} onClick={() => void action('complete')}>
+                      disabled={!!busy} onClick={() => void action('complete', undefined, handledMessage)}>
                       {busy === 'complete' ? <CircularProgress size={14} color="inherit" /> : 'Mark Handled'}
                     </Button>
                     <Button size="small" variant="outlined" color="error" disabled={!!busy}
