@@ -202,9 +202,9 @@ describe('GET /api/dashboard/feeds — chips are server counts (PR-1b, L-6/C-3/C
 
   it('counts every long-running rig, not the 15 the feed lists', async () => {
     const operator = await createOperator()
-    const old = new Date(Date.now() - 60 * 86_400_000)
+    const startedAt = new Date(Date.now() - 60 * 86_400_000)
     for (let i = 0; i < 17; i++) {
-      await prisma.rig.create({ data: { label: `Rig ${i}`, startedAt: old, createdById: operator.id } as never })
+      await prisma.rig.create({ data: { label: `Rig ${i}`, startedAt, operatorId: operator.id } })
     }
     const body = await feedsGET().then((r) => r.json())
     expect(body.data.longRunning.length).toBe(15)
