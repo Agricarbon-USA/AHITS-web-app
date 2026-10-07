@@ -202,7 +202,7 @@ export default function MyRigPage() {
       const json = await res.json()
       const unit = json.unit
       if (unit?.inventoryItemId !== itemId) return { status: 'error', message: 'That unit belongs to a different item.' }
-      if (unit?.status !== 'AVAILABLE') return { status: 'error', message: 'That unit isn’t available — it’s already checked out.' }
+      if (!(unit?.pickable ?? unit?.status === 'AVAILABLE')) return { status: 'error', message: 'That unit isn’t available — it’s checked out or in repair.' }
       setPendingItems((prev) => {
         const m = new Map(prev)
         m.set(itemId, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: unit.id, unitLabel: unit.serialNumber ?? `Unit ${unit.position}` })
