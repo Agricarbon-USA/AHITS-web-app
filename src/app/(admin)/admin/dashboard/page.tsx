@@ -61,9 +61,6 @@ export default function AdminDashboardPage() {
   const showToast = useToast()
   const alertsRef = React.useRef<HTMLDivElement>(null)
 
-  // The one open-alert number on this page (see the banner comment below).
-  const openAlertCount = stats?.pendingAlertsCount ?? alerts.length
-
   const loadAlerts = React.useCallback(() => {
     setAlertsLoading(true)
     fetch('/api/admin/alerts')
@@ -106,13 +103,8 @@ export default function AdminDashboardPage() {
         {!canEdit && <Chip size="small" label="View only" variant="outlined" />}
       </Stack>
 
-      {/* Pinned red-alert banner — surfaces unresolved alerts above the fold.
-          PR-1b (L-6/C-3): the number is the SERVER's open-alert count, the same one
-          the "Open Alerts" card shows. It used to be `alerts.length` — the length of
-          a list `/api/admin/alerts` caps at 50 — so past 50 open alerts the banner
-          and the card sitting beside it disagreed, and the banner was the one lying.
-          `openAlertCount` falls back to the list length only until the stats land. */}
-      {!alertsLoading && openAlertCount > 0 && (
+      {/* Pinned red-alert banner — surfaces unresolved alerts above the fold. */}
+      {!alertsLoading && alerts.length > 0 && (
         <Alert
           severity="error"
           variant="filled"
@@ -123,7 +115,7 @@ export default function AdminDashboardPage() {
             </Button>
           }
         >
-          {openAlertCount} open alert{openAlertCount > 1 ? 's' : ''} need{openAlertCount > 1 ? '' : 's'} attention.
+          {alerts.length} open alert{alerts.length > 1 ? 's' : ''} need{alerts.length > 1 ? '' : 's'} attention.
         </Alert>
       )}
 

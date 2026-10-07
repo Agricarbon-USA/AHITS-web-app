@@ -23,7 +23,6 @@ import {
   type VehicleOption,
   type CategoryOption,
 } from '@/components/shared/RequestComposer'
-import { fetchPickerOptions } from '@/lib/inventory-options'
 import { VEHICLE_TYPE_LABELS, type VehicleTypeValue } from '@/lib/vehicle-types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -500,32 +499,6 @@ function AdminRequestsContent() {
   const [categories, setCategories] = React.useState<CategoryOption[]>([])
   const [composerOpen, setComposerOpen] = React.useState(false)
   const [composerDataLoaded, setComposerDataLoaded] = React.useState(false)
-
-  // PR-1b (L-2/L-10/L-16): the item picker is the COMPLETE pickable set, refetched
-  // on every composer open (availability changes while a tab sits open — a picker
-  // loaded once per session offers gear that has since been packed), with server
-  // search past the ceiling and a retry when the read fails.
-  const [inventoryTruncated, setInventoryTruncated] = React.useState(false)
-  const [inventoryFailed, setInventoryFailed] = React.useState(false)
-  const loadInventory = React.useCallback(async () => {
-    const pk = await fetchPickerOptions()
-    setInventoryFailed(pk.failed)
-    setInventoryTruncated(pk.truncated)
-    if (!pk.failed) setInventory(pk.options as unknown as InventoryOption[])
-  }, [])
-  const inventorySearch = React.useMemo(() => ({
-    truncated: inventoryTruncated,
-    failed: inventoryFailed,
-    onRetry: () => { void loadInventory() },
-    load: async (q: string) => {
-      const pk = await fetchPickerOptions({ q })
-      return pk.options.map((i) => ({
-        value: i.id,
-        label: `${i.name}${i.itemType === 'SERIALIZED' ? ' (serialized)' : ''} · ${i.category.name}`,
-      }))
-    },
-  }), [inventoryTruncated, inventoryFailed, loadInventory])
-
   // FND-48: dropdown/tab filters live in the URL (deep-linkable, reload-safe); the free-text
   // requester search stays local (per-keystroke URL churn isn't worth it — matches inventory).
   const { filters, setFilters } = useUrlFilters(REQUEST_FILTER_DEFAULTS)
@@ -564,16 +537,15 @@ function AdminRequestsContent() {
   // Lazy-load the data the composer needs (hubs/operators are already loaded above).
   const openComposer = async () => {
     setComposerOpen(true)
-    // L-10: the item picker is refetched EVERY open, ahead of the one-time guard
-    // below — projects/vehicles/categories are stable, availability is not.
-    void loadInventory()
     if (composerDataLoaded) return
-    const [projectsRes, vehiclesRes, categoriesRes] = await Promise.all([
+    const [projectsRes, inventoryRes, vehiclesRes, categoriesRes] = await Promise.all([
       fetch('/api/projects'),
+      fetch('/api/inventory?pageSize=200'),
       fetch('/api/vehicles'),
       fetch('/api/categories'),
     ])
     if (projectsRes.ok) { const d = await projectsRes.json(); setProjects((d.data as ProjectOption[]) ?? []) }
+    if (inventoryRes.ok) { const d = await inventoryRes.json(); setInventory((d.data as InventoryOption[]) ?? []) }
     if (vehiclesRes.ok) { const d = await vehiclesRes.json(); setVehicles((d.data as VehicleOption[]) ?? []) }
     if (categoriesRes.ok) setCategories((await categoriesRes.json()) as CategoryOption[])
     setComposerDataLoaded(true)
@@ -658,7 +630,6 @@ function AdminRequestsContent() {
           hubs={hubs}
           projects={projects}
           inventory={inventory}
-          inventorySearch={inventorySearch}
           vehicles={vehicles}
           categories={categories}
           operators={operators}
