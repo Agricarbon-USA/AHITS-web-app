@@ -26,56 +26,24 @@ function relTime(iso: string) {
   return `${Math.floor(h / 24)}d ago`
 }
 
-/**
- * Admin header bell: unread badge + dropdown, polls the notifications API.
- *
- * PR-1b (L-5): the badge counts every unread row; the list is paged 30 at a time.
- * Those two numbers disagreed silently — the badge said 38, the list showed 30,
- * and nothing explained the gap. Now the header says so in words and **Load more**
- * reaches the rest, so the bell is either complete or says how much it is not
- * showing (D-h).
- */
-const BELL_PAGE_SIZE = 30
-
+/** Admin header bell: unread badge + dropdown, polls the notifications API. */
 export function NotificationBell() {
   const router = useRouter()
   const [items, setItems] = React.useState<NotificationRow[]>([])
   const [unread, setUnread] = React.useState(0)
-  const [total, setTotal] = React.useState(0)
-  const [loadingMore, setLoadingMore] = React.useState(false)
   const [anchor, setAnchor] = React.useState<null | HTMLElement>(null)
 
-  /** `page` is 1-based, as the API takes it. Page 1 replaces; later pages append. */
-  const loadPage = React.useCallback(async (page: number) => {
+  const load = React.useCallback(async () => {
     try {
-      const res = await fetch(`/api/notifications?page=${page}&pageSize=${BELL_PAGE_SIZE}`)
+      const res = await fetch('/api/notifications')
       if (!res.ok) return
       const d = await res.json()
-      const rows: NotificationRow[] = d.data ?? []
-      setItems((prev) => {
-        if (page === 1) return rows
-        // De-dupe on id: a row can shift pages between reads if one is minted
-        // while the menu is open.
-        const seen = new Set(prev.map((r) => r.id))
-        return [...prev, ...rows.filter((r) => !seen.has(r.id))]
-      })
+      setItems(d.data ?? [])
       setUnread(d.unread ?? 0)
-      setTotal(typeof d.total === 'number' ? d.total : rows.length)
     } catch {
       /* offline / transient — keep last known counts */
     }
   }, [])
-
-  const load = React.useCallback(() => loadPage(1), [loadPage])
-
-  const loadMore = React.useCallback(async () => {
-    setLoadingMore(true)
-    try {
-      await loadPage(Math.floor(items.length / BELL_PAGE_SIZE) + 1)
-    } finally {
-      setLoadingMore(false)
-    }
-  }, [loadPage, items.length])
 
   React.useEffect(() => {
     load()
@@ -116,15 +84,7 @@ export function NotificationBell() {
         PaperProps={{ sx: { width: 360, maxHeight: 460 } }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 2, py: 1 }}>
-          <Box>
-            <Typography variant="subtitle2">Notifications</Typography>
-            {/* L-5: the badge counts every unread row — say what this list holds. */}
-            {items.length < total && (
-              <Typography variant="caption" color="text.secondary">
-                {unread} unread · showing {items.length} of {total}
-              </Typography>
-            )}
-          </Box>
+          <Typography variant="subtitle2">Notifications</Typography>
           {unread > 0 && <Button size="small" onClick={() => markRead(undefined, true)}>Mark all read</Button>}
         </Box>
         <Divider />
@@ -150,13 +110,6 @@ export function NotificationBell() {
             />
           </MenuItem>
         ))}
-        {items.length < total && (
-          <Box sx={{ px: 2, py: 1, textAlign: 'center' }}>
-            <Button size="small" onClick={loadMore} disabled={loadingMore}>
-              {loadingMore ? 'Loading…' : `Load more (${total - items.length} left)`}
-            </Button>
-          </Box>
-        )}
       </Menu>
     </>
   )

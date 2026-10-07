@@ -56,10 +56,7 @@ export interface InventoryOption {
   name: string
   itemType: 'CONSUMABLE' | 'SERIALIZED'
   quantity: number
-  // PR-1b: narrowed to what the pickers actually read. The server's picker mode
-  // returns the pickable set, so `available` is `availableUnits.length` by
-  // construction; the other counts were declared here and never rendered.
-  unitCounts: { available: number }
+  unitCounts: { available: number; checkedOut: number; inMaintenance: number; inoperable: number; retired: number; totalUnits: number }
   availableUnits: { id: string; serialNumber: string | null; position: number }[]
   category: { id: string; name: string }
 }

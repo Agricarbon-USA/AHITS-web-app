@@ -36,7 +36,6 @@ import { useAuth } from '@/hooks/useAuth'
 import { groupBy, formatDate } from '@/lib/utils'
 import { NOTE_PRESETS, HANDOFF_NOTE_PRESETS } from '@/lib/note-presets'
 import { stockAvailabilityLabel } from '@/lib/stock-format'
-import { fetchPickerOptions } from '@/lib/inventory-options'
 import { VEHICLE_TYPE_ORDER, vehicleTypeLabel } from '@/lib/vehicle-types'
 
 // ── Types ─────────────────────────────────────────────────────────
@@ -268,8 +267,9 @@ export default function MyRigPage() {
   React.useEffect(() => {
     load()
     fetch('/api/vehicles').then((r) => r.json()).then((d) => setVehicles(d.data ?? d ?? [])).catch(() => {})
-    fetchPickerOptions().then((pk) => setInventoryItems(pk.options as unknown as InventoryOption[])) // PR-1b (L-2): complete pickable set, not the first 100
-    // Operator-readable roster (/api/users is admin-only → 403, which emptied the transfer picker).
+    fetch('/api/inventory?pageSize=200').then((r) => r.json()).then((d) => setInventoryItems(d.data ?? [])).catch(() => {})
+    // Operator-readable roster (the full /api/users is admin-only → 403 for
+    // operators, which left the transfer destination dropdown empty).
     fetch('/api/operators').then((r) => r.json()).then((d) => setOperators(d.data ?? [])).catch(() => {})
     fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(Array.isArray(d) ? d : (d?.data ?? []))).catch(() => {})
   }, [load])

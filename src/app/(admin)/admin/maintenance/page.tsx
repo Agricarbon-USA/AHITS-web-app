@@ -11,7 +11,6 @@ import {
 import { DetailDrawer } from '@/components/ui/DetailDrawer'
 import { PagedTable } from '@/components/ui/PagedTable'
 import { useListQuery } from '@/hooks/useListQuery'
-import { fetchPickerOptions } from '@/lib/inventory-options'
 import BuildIcon from '@mui/icons-material/Build'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import { useToast } from '@/components/shared/useToast'
@@ -466,13 +465,11 @@ export default function AdminMaintenancePage() {
     setFieldFixNotes('')
     setFieldFixOpen(true)
     try {
-      // PR-1b (L-2): `?mode=options` — the whole catalog, not the first 100 by
-      // name. A field fix is most often logged against gear that is OUT, which is
-      // exactly the gear the alphabetical cap tended to hide.
-      const [vRes, picker] = await Promise.all([fetch('/api/vehicles'), fetchPickerOptions()])
+      const [vRes, iRes] = await Promise.all([fetch('/api/vehicles'), fetch('/api/inventory?pageSize=100')])
       const vd = await vRes.json()
+      const id = await iRes.json()
       setFieldFixVehicles((vd.data ?? []).map((v: { id: string; name: string }) => ({ id: v.id, name: v.name })))
-      setFieldFixItems(picker.options.map((i) => ({ id: i.id, name: i.name })))
+      setFieldFixItems((id.data ?? []).map((i: { id: string; name: string }) => ({ id: i.id, name: i.name })))
     } catch {
       setFieldFixVehicles([])
       setFieldFixItems([])
@@ -523,12 +520,11 @@ export default function AdminMaintenancePage() {
     setSchedNextOdometer('')
     setSchedOpen(true)
     try {
-      // PR-1b (L-2): the whole catalog — a service schedule may be added to any
-      // item, including one with nothing currently available.
-      const [vRes, picker] = await Promise.all([fetch('/api/vehicles'), fetchPickerOptions()])
+      const [vRes, iRes] = await Promise.all([fetch('/api/vehicles'), fetch('/api/inventory?pageSize=200')])
       const vd = await vRes.json()
+      const id = await iRes.json()
       setSchedVehicles((vd.data ?? []).map((v: { id: string; name: string }) => ({ id: v.id, name: v.name })))
-      setSchedItems(picker.options.map((i) => ({ id: i.id, name: i.name })))
+      setSchedItems((id.data ?? []).map((i: { id: string; name: string }) => ({ id: i.id, name: i.name })))
     } catch {
       setSchedVehicles([])
       setSchedItems([])
