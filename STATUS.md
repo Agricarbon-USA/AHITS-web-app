@@ -101,6 +101,7 @@ AHITS is at the pilot doorstep, running on **staging**. The hard architecture is
 ## 6. Do-not-touch / deferred (pointers only — these are NOT gates)
 - **Production cutover** → DEFERRED, see `DECISIONS.md` D1 + `AHITS_PROD_CUTOVER_DEFERRED.md`.
 - **W0-10 `4b′`/`4c` patches** → HELD, see `DECISIONS.md` D4 (they live in `held/`).
+- **PARKED (2026-10-07) — timing-dependent UI tests.** The jsdom suite (`npm run test:ui`) was load-sensitive: it passed under parallel files only on Node 24 and failed under load on Node 26. `vitest.config.ui.ts` now sets `fileParallelism: false` (matching `vitest.config.ts`) so the suite runs serially. To do: find the tests that depend on timing (fixed waits, short `waitFor` timeouts, debounce/timer races) and make them deterministic, then consider re-enabling parallel files. Not a gate.
 - **Real-time GPS tracking** → permanent anti-goal, see `DECISIONS.md` D2 (crew visibility is last-known only).
 
 ## 7. Map to the deep docs
