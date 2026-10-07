@@ -1,6 +1,7 @@
 # Session handoff · 2026-10-06 · fix-program **PR-1b — Lists tell the truth · pickers**
 
-> STATUS: PR-1b **built, pushed, PR #244 OPEN, CI GREEN on all four checks — NOT merged, nothing on staging from it** · WROTE: 2026-10-06
+> STATUS: PR-1b **MERGED and LIVE on staging** — PR #244 (`fcffe77`), needlessly reverted by #245, re-landed unchanged by #246 (`b678c4f`), revision `ahits-web-app-staging-00428-fv7`, smoked green · WROTE: 2026-10-06, updated 2026-10-07
+> ⚠️ **Read §5 before your next post-deploy smoke.** The revert in the middle of that sequence was my error, not a fault in the code, and the way I made it is repeatable.
 > READ-WITH: `AHITS_FIX_PROGRAM_2026-10-05_FIVE-PRS.md` (PR-1b is what this session executed; **§0's owner decisions D-a…D-n are final — apply them, don't re-ask them**), `AHITS_SCREENING_REPORT_2026-10-05_ROOT-CAUSES.md` (RC-2; every finding ID below has its file:line there), `AHITS_SESSION_HANDOFF_2026-10-06_PR1A-LISTS.md` (PR-1a, merged — `b34918c`), `DECISIONS.md` (**D39**, D10's 2026-10-06 note, D16, D21)
 > BRANCH: `feature/20261006/Agricarbon-USA-pr1b-pickers`, branched from `development` @ `425e278` (i.e. after #242 and #243)
 
@@ -112,3 +113,38 @@ The **phone-width pass** on Inventory and Maintenance. The build session's brows
 - **`AHITS_PILOT_FLOOR_TODO.md`** — 1b ticked as built, with Max's four smoke checks in plain English.
 - **`.gitignore`** — `Claude outputs/`. **`.nvmrc`** — `24` (new).
 - No `DECISIONS.md` entry: PR-1b implements **D39** (recorded with PR-1a) and **D-n**, which the program assigns to PR-3a's session. The D10 note from PR-1a is repeated above, per D-k.
+
+---
+
+## 5 · The revert that should not have happened (2026-10-07) — read this before your next post-deploy smoke
+
+**What landed, in order:** #244 merged (`fcffe77`, revision `00426-mh7`) → **#245**, a revert I opened and merged (`1da7bff`, `00427-78f`) → **#246**, the re-land, unchanged (`b678c4f`, `00428-fv7`). `git diff` between #244's tree and #246's is **empty**. Three deploys to reach the state the first one already had.
+
+**What I believed:** that admin pages hung on their loading state forever. I wrote it up in #245's body as an outage with a rollback command.
+
+**What was actually true:** nothing was wrong. A freshly-deployed Cloud Run revision is cold, and these pages take **up to 23 seconds** to settle — the inventory list alone is an 81 KB response that took 1.48 s on its own. I was screenshotting within *milliseconds* of `navigate()`.
+
+**How one mistake became a confident one — the part worth internalising:**
+
+1. **I read a tool's silence as evidence.** `read_network_requests` only begins tracking when first called; its "no requests found" was an artifact of when I called it, not a fact about the page. The Resource Timing API (`performance.getEntriesByType('resource')`) later showed every request present and **200** — `auth/me`, `inventory/hubs`, `users`, `projects`, the 81 KB list. **Absence of evidence from an un-armed instrument is not evidence of absence.**
+2. **I "reproduced" it** — second tab, service worker unregistered, 14 caches cleared — and each repetition raised my confidence. But I was reproducing my own timing error, not the fault. **Re-running a flawed measurement is not corroboration.**
+3. **I walked past the disconfirming fact.** The "broken" page was `/admin/inventory`, which **PR-1b does not touch**. I filed that under "mysterious shared cause" instead of treating it as what it was: strong evidence my hypothesis was wrong.
+4. **I never simply waited and looked again** before merging a revert.
+
+**The practice, now binding on every post-deploy smoke in this program:**
+
+- Wait for a **settled signal** — a rendered row, a caption like "Showing 1–51 of 51 items", a non-zero count — and only then treat a screenshot as meaning anything. Poll for it; do not sleep-and-hope.
+- Treat the **first** minute after a deploy as cold. 23 seconds was the real settle time here.
+- Arm `read_console_messages` / `read_network_requests` **before** the load you intend to measure, or use `performance.getEntriesByType('resource')`, which is retrospective and does not need arming.
+- Before reverting on a deploy-shaped suspicion, check whether the symptom appears on a surface the PR **did not touch**. If it does, suspect the measurement first.
+
+**What it cost:** two extra deploys and a wrong public write-up on #245 (left in history with a correction comment rather than force-pushed over, so the error stays legible). **What it did not cost:** any data — the smoke created nothing, and the Start-Deployment wizard was cancelled and discarded with 0 active deployments.
+
+### The smoke, once it was done properly (all four rows pass)
+
+| Row | Result on `00428-fv7` |
+|---|---|
+| Picker is complete | `?mode=options` → **51 of 51, `truncated: false`**; the Start-Deployment kit step lists the full alphabet through **"Wintex Core Tips"/"Wintex Cores"**, units carrying server positions |
+| No deactivated operators | Operator dropdown offers **13**, against the **15** `/api/users` returns; the 2 excluded are both `isActive: false` (one ADMIN, one OPERATOR), and no inactive person is offered |
+| Banner == card | **"3 open alerts need attention."** beside **Open Alerts: 3** |
+| Bell badge == list | **"36 unread · showing 30 of 73"** + **Load more (43 left)**; Load more appends 30 → 60 and the header follows |
