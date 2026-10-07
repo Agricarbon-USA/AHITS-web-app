@@ -6,7 +6,6 @@ import {
 } from '@mui/material'
 import AddIcon from '@mui/icons-material/Add'
 import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline'
-import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import LocalShippingIcon from '@mui/icons-material/LocalShipping'
 import TerrainIcon from '@mui/icons-material/Terrain'
 import AgricultureIcon from '@mui/icons-material/Agriculture'
@@ -38,7 +37,7 @@ export interface VehicleRow {
 export interface KitRow {
   id: string
   quantity: number
-  item: { id: string; name: string; itemType: string; lowStockThreshold?: number | null }
+  item: { id: string; name: string; itemType: string }
   inventoryUnit: { id: string; qrCodeId: string; serialNumber: string | null; status: string } | null
 }
 
@@ -160,7 +159,6 @@ export const DeploymentKitCard = React.memo(function DeploymentKitCard({
         ) : (
           <Stack spacing={0.5} mb={1}>
             {kitItems.map((ki) => {
-              const isLow = ki.item.lowStockThreshold != null && ki.quantity <= ki.item.lowStockThreshold
               const repair = ki.inventoryUnit ? repairByUnit?.[ki.inventoryUnit.id] : undefined
               return (
                 <Box key={ki.id}>
@@ -183,8 +181,7 @@ export const DeploymentKitCard = React.memo(function DeploymentKitCard({
                   </Box>
                   <StatusChip label={ki.item.itemType.charAt(0) + ki.item.itemType.slice(1).toLowerCase()} />
                   <Stack direction="row" alignItems="center" spacing={0.5}>
-                    {isLow && <WarningAmberIcon fontSize="small" color="warning" />}
-                    <Chip size="small" label={`×${ki.quantity}`} color={isLow ? 'warning' : 'default'} />
+                    <Chip size="small" label={`×${ki.quantity}`} color="default" />
                   </Stack>
                   {/* CC-34 (2a): report a problem on this unit — LEFT of the ⊖ so the two
                       icons aren't same-weight adjacent (RIDER C 2a-b). Units only. */}

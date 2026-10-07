@@ -709,9 +709,10 @@ export default function AdminVehiclesPage() {
 
             <Divider />
             <Box>
-              <Typography variant="subtitle2" gutterBottom>Maintenance ({detail.maintenanceTasks.length})</Typography>
+              {/* PR-2 (C-11): the detail read is open tasks only — the same count as the list's Maint. column. */}
+              <Typography variant="subtitle2" gutterBottom>Open maintenance ({detail.maintenanceTasks.length})</Typography>
               {detail.maintenanceTasks.length === 0 ? (
-                <Typography variant="body2" color="text.secondary">No maintenance tasks.</Typography>
+                <Typography variant="body2" color="text.secondary">No open maintenance tasks.</Typography>
               ) : (
                 <Stack spacing={0.75}>
                   {detail.maintenanceTasks.slice(0, 8).map((t) => (

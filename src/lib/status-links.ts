@@ -5,6 +5,7 @@ import { hubReturnEmail } from '@/lib/email/templates'
 import { applyRequestTransition } from '@/lib/deployment-requests'
 import { createAlert, resolveActiveAlert } from '@/lib/alerts'
 import type { Prisma, StatusLink, StatusLinkType } from '@prisma/client'
+import { ACTIVE_USER } from '@/lib/populations'
 
 /**
  * Wave F — tokenized status links (the outbound-delivery primitive).
@@ -207,7 +208,7 @@ async function notifyAdmins(
   tx: Prisma.TransactionClient,
   n: { type: string; title: string; body: string; link: string | null },
 ): Promise<void> {
-  const admins = await tx.user.findMany({ where: { role: 'ADMIN', isActive: true }, select: { id: true } })
+  const admins = await tx.user.findMany({ where: { role: 'ADMIN', ...ACTIVE_USER }, select: { id: true } })
   if (admins.length === 0) return
   await tx.notification.createMany({
     data: admins.map((a) => ({ userId: a.id, type: n.type, title: n.title, body: n.body, link: n.link })),

@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { withAuth, ok } from '@/lib/route-helpers'
+import { ACTIVE_USER } from '@/lib/populations'
 
 // GET /api/operators — minimal roster of active operators + admins (an admin may
 // hold a rig, D3), readable by ANY authenticated user (the operator Transfer/handoff
@@ -7,7 +8,7 @@ import { withAuth, ok } from '@/lib/route-helpers'
 // Non-sensitive fields only. W0-8 exemplar: uses the shared withAuth wrapper + ok() envelope.
 export const GET = withAuth(async () => {
   const data = await prisma.user.findMany({
-    where: { role: { in: ['OPERATOR', 'ADMIN'] }, isActive: true },
+    where: { role: { in: ['OPERATOR', 'ADMIN'] }, ...ACTIVE_USER },
     // PR-1b (L-7): `homeHubId` is here because the admin deployment pickers move
     // off `/api/users` (which offers DEACTIVATED people as operators) onto this
     // route. The deployment drawer prefills the return hub from the operator's

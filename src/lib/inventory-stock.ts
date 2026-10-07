@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { activeHubSql, liveItemSql, pickableUnitSql } from '@/lib/populations'
 
 // ─────────────────────────────────────────────────────────────────────────
 // Multi-hub inventory stock — data-access layer (workplan §2.2, EXPAND slice).
@@ -210,6 +211,11 @@ export interface HubStockScanRow {
  * All (item, hub) stock rows for consumable items that have a lowStockThreshold.
  * Returns both low AND healthy rows so the cron scan can raise AND clear alerts
  * in one pass.
+ *
+ * PR-2 (C-9, P-4): the population is a live item (not deleted, not retired) at an
+ * active hub — a deactivated hub's shelf or a retired item no longer raises.
+ * Clearing alerts that were raised before an item/hub left the population is
+ * PR-4's evaluator registry (P-3), not this scan.
  */
 export async function allHubStockForScan(db: RawClient = prisma): Promise<HubStockScanRow[]> {
   return db.$queryRaw<HubStockScanRow[]>`
@@ -217,12 +223,38 @@ export async function allHubStockForScan(db: RawClient = prisma): Promise<HubSto
            s."quantity", i."lowStockThreshold" AS "threshold"
     FROM "inventory_stock" s
     JOIN "inventory_items" i ON i."id" = s."itemId"
-    LEFT JOIN "hubs" h ON h."id" = s."hubId"
-    WHERE i."deletedAt" IS NULL
+    JOIN "hubs" h ON h."id" = s."hubId"
+    WHERE ${liveItemSql('i')}
+      AND ${activeHubSql('h')}
       AND i."lowStockThreshold" IS NOT NULL
       AND i."itemType" = 'CONSUMABLE'
     ORDER BY s."quantity" ASC
   `
+}
+
+export interface SerializedLowStockScanRow {
+  itemId: string
+  itemName: string | null
+  pickable: number
+  threshold: number
+}
+
+/**
+ * PR-2 (C-9): the serialized half of "low stock has one meaning" — pickable
+ * units across all hubs ≤ threshold. Every live serialized item with a threshold
+ * is returned, healthy ones included, so the scan can clear as well as raise.
+ */
+export async function serializedStockForScan(db: RawClient = prisma): Promise<SerializedLowStockScanRow[]> {
+  const rows = await db.$queryRaw<{ itemId: string; itemName: string | null; pickable: bigint | number; threshold: number }[]>`
+    SELECT i."id" AS "itemId", i."name" AS "itemName", i."lowStockThreshold" AS "threshold",
+           (SELECT COUNT(*) FROM "inventory_units" u
+             WHERE u."inventoryItemId" = i."id" AND ${pickableUnitSql('u')}) AS "pickable"
+    FROM "inventory_items" i
+    WHERE ${liveItemSql('i')}
+      AND i."lowStockThreshold" IS NOT NULL
+      AND i."itemType" = 'SERIALIZED'
+  `
+  return rows.map((r) => ({ itemId: r.itemId, itemName: r.itemName, pickable: Number(r.pickable), threshold: r.threshold }))
 }
 
 // CC-33 (A3): removed dead lowStockByHub + LowStockHubRow (superseded by allHubStockForScan,

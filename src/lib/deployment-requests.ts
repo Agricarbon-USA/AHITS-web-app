@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { reserveAtHub, releaseAtHub, drawReservedFromHub } from '@/lib/inventory-stock'
 import { resolveActiveAlert } from '@/lib/alerts'
+import { pickableUnitSql } from '@/lib/populations'
 
 // M6 / Addendum §F — Deployment Requests data layer. Raw SQL (no generated-client
 // coupling, same approach as lib/checklist-templates). R1 extends the original
@@ -431,7 +432,8 @@ export async function getLineChecklist(
     ORDER BY l."createdAt" ASC
   `
 
-  // Available serialized units for SERIALIZED lines
+  // Available serialized units for SERIALIZED lines. PR-2 (C-13): the pickable
+  // population, so a soft-deleted unit is never offered on the hub portal.
   const serialItemIds = baseLines
     .filter((l) => l.itemType === 'SERIALIZED' && l.specificInventoryItemId)
     .map((l) => l.specificInventoryItemId!)
@@ -442,7 +444,7 @@ export async function getLineChecklist(
       SELECT u."id", u."serialNumber", u."inventoryItemId" AS "itemId"
       FROM "inventory_units" u
       WHERE u."inventoryItemId" IN (${Prisma.join(serialItemIds)})
-        AND u."status" = 'AVAILABLE'
+        AND ${pickableUnitSql('u')}
       ORDER BY u."serialNumber" ASC NULLS LAST
     `
     for (const u of units) {

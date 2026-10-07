@@ -6,7 +6,8 @@ import { prisma } from '@/lib/prisma'
 import { getDeploymentRostersForDisplay } from '@/lib/deployment-assignments'
 import { createAlert, resolveActiveAlert, CRON_SILENT_SOURCE_TABLE, CRON_SILENT_SOURCE_ID } from '@/lib/alerts'
 import { dispatchPendingAlerts } from '@/lib/notifications'
-import { allHubStockForScan } from '@/lib/inventory-stock'
+import { allHubStockForScan, serializedStockForScan } from '@/lib/inventory-stock'
+import { LIVE_VEHICLE } from '@/lib/populations'
 import { releaseAllHeldForRequest } from '@/lib/deployment-requests'
 import { businessDateTime } from '@/lib/business-date'
 import { getNotificationConfig, recordCronHeartbeat } from '@/lib/notification-config'
@@ -169,13 +170,33 @@ async function run() {
     }
   }
 
+  // 3b) PR-2 (C-9): serialized low stock = pickable units across all hubs ≤ the
+  // item's threshold. Its own sourceId (`<itemId>:serialized`) so it never
+  // collides with a consumable's per-hub `<itemId>:<hubId>` key. Healthy rows
+  // come back too, so a restocked item clears here in the same pass.
+  const serializedRows = await serializedStockForScan()
+  for (const row of serializedRows) {
+    const sourceId = `${row.itemId}:serialized`
+    if (row.pickable <= row.threshold) {
+      await createAlert('LOW_INVENTORY', 'inventory_items', sourceId, {
+        itemName: row.itemName,
+        quantity: row.pickable,
+        threshold: row.threshold,
+      })
+      lowFlagged++
+    } else {
+      await resolveActiveAlert('LOW_INVENTORY', 'inventory_items', sourceId)
+    }
+  }
+
   // 4) Scan: vehicle insurance/registration expiring within 30 days (or already
   // expired) → raise/clear the matching alerts. Self-clears once the document is
   // renewed past the window (or the date is cleared / vehicle retired).
+  // PR-2 (S-9/P-4): LIVE_VEHICLE — a soft-deleted vehicle no longer raises.
   const EXPIRY_WINDOW_DAYS = 30
   const expiryCutoff = new Date(now.getTime() + EXPIRY_WINDOW_DAYS * 86_400_000)
   const vehicles = await prisma.vehicle.findMany({
-    where: { status: { not: 'RETIRED' } },
+    where: LIVE_VEHICLE,
     select: { id: true, name: true, insuranceExpires: true, registrationExpires: true },
   })
   let expiryFlagged = 0

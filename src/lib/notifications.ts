@@ -3,6 +3,7 @@ import { sendEmail } from '@/lib/email/resend'
 import { genericAlertEmail } from '@/lib/email/templates'
 import { ALERT_LABELS, alertLink } from '@/lib/alert-display'
 import { getNotificationConfig } from '@/lib/notification-config'
+import { ACTIVE_USER } from '@/lib/populations'
 
 type Meta = Record<string, unknown>
 const str = (v: unknown): string | null => (v == null ? null : String(v))
@@ -89,7 +90,7 @@ export async function dispatchPendingAlerts(): Promise<{ alerts: number; notific
   if (pending.length === 0) return { alerts: 0, notifications: 0, emailed: false }
 
   const admins = await prisma.user.findMany({
-    where: { role: 'ADMIN', isActive: true },
+    where: { role: 'ADMIN', ...ACTIVE_USER },
     select: { id: true, email: true },
   })
   if (admins.length === 0) return { alerts: 0, notifications: 0, emailed: false }

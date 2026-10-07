@@ -4,9 +4,9 @@ import { prisma } from '@/lib/prisma'
 import { getDeploymentRostersForDisplay } from '@/lib/deployment-assignments'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import type { EquipmentCategory, EquipmentStatus, ItemType } from '@prisma/client'
-import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions } from '@/lib/inventory'
+import { computeUnitCounts, itemCounts, isLiveKitLine, categoryDisplay, withPositions } from '@/lib/inventory'
 import { money, parsePagination, listResponse } from '@/lib/validation'
-import { PICKABLE_STATUSES } from '@/lib/populations'
+import { PICKABLE_STATUSES, PICKABLE_UNIT, LIVE_ITEM, LIVE_KIT_ITEM } from '@/lib/populations'
 import { setStockAtHub, resyncItemTotal, listStockForItems } from '@/lib/inventory-stock'
 import type { ItemStockRow } from '@/lib/inventory-stock'
 import { getActiveProjectsForItems } from '@/lib/project-associations'
@@ -47,10 +47,9 @@ async function optionsResponse(req: NextRequest) {
   const hubId = searchParams.get('hubId')
 
   const where = {
-    deletedAt: null,
     // D-a: a retired item is never pickable. (The paged list hides it behind
     // "Show retired"; a picker has no such door — it simply must not offer it.)
-    status: { not: 'RETIRED' as const },
+    ...LIVE_ITEM,
     ...(q && { name: { contains: q, mode: 'insensitive' as const } }),
   }
 
@@ -70,9 +69,14 @@ async function optionsResponse(req: NextRequest) {
       units: {
         // D-n: AVAILABLE only until PR-3a teaches the server to accept an
         // IN_TRANSIT pick. No picker may offer a unit the server would refuse.
-        where: { deletedAt: null, status: { in: [...PICKABLE_STATUSES] } },
+        where: PICKABLE_UNIT,
         select: { id: true, qrCodeId: true, serialNumber: true, status: true },
         orderBy: { createdAt: 'asc' },
+      },
+      // PR-2: live kit lines, for a consumable's `itemCounts.out`.
+      kitItems: {
+        where: LIVE_KIT_ITEM,
+        select: { quantity: true, drawnQuantity: true, drawnHubId: true },
       },
     },
   })
@@ -87,10 +91,16 @@ async function optionsResponse(req: NextRequest) {
   const allUnits = serializedIds.length
     ? await prisma.inventoryUnit.findMany({
         where: { inventoryItemId: { in: serializedIds }, deletedAt: null },
-        select: { id: true, inventoryItemId: true, createdAt: true },
+        select: { id: true, inventoryItemId: true, status: true, createdAt: true },
         orderBy: { createdAt: 'asc' },
       })
     : []
+  const unitsByItem = new Map<string, { status: string }[]>()
+  for (const u of allUnits) {
+    const list = unitsByItem.get(u.inventoryItemId) ?? []
+    list.push(u)
+    unitsByItem.set(u.inventoryItemId, list)
+  }
   const positionByUnitId = new Map<string, number>()
   const seenPerItem = new Map<string, number>()
   for (const u of allUnits) {
@@ -128,6 +138,15 @@ async function optionsResponse(req: NextRequest) {
       })),
       availableQuantity,
       availableByHub: stockRows,
+      // PR-2: item-wide numbers (not hub-scoped). Pickers keep gating on the
+      // source hub through `availableByHub`; these are for display.
+      itemCounts: itemCounts({
+        itemType: item.itemType,
+        quantity: item.quantity,
+        units: unitsByItem.get(item.id) ?? [],
+        stockRows,
+        liveKitLines: item.kitItems,
+      }),
     }
   })
 
@@ -233,6 +252,9 @@ export async function GET(req: NextRequest) {
         kitItems: {
           where: { removedAt: null },
           select: {
+            quantity: true,
+            drawnQuantity: true,
+            drawnHubId: true,
             kit: {
               select: {
                 rig: {
@@ -271,7 +293,6 @@ export async function GET(req: NextRequest) {
 
   const data = items.map((item) => {
     const unitCounts = computeUnitCounts(item.units)
-    const derived = deriveQuantities(item, unitCounts)
 
     // Find active rig assignment via kit items
     const activeKit = item.kitItems.find((ki) => ki.kit.rig !== null && ki.kit.rig.endedAt === null)
@@ -285,16 +306,17 @@ export async function GET(req: NextRequest) {
 
     const positionedUnits = withPositions(item.units)
 
-    // For consumables: use stock-table sums so picker, admin table, and checkout
-    // all read the same source. Fall back to legacy item.quantity when no stock
-    // rows exist yet (legacy items not yet backfilled).
+    // PR-2 (RC-3): the one set of numbers for this item. Every client renders
+    // these; none recounts. Consumables read stock rows (legacy fallback to the
+    // stored quantity when an item has none) and live kit lines for `out`.
     const stockRows = item.itemType === 'CONSUMABLE' ? (stockMap.get(item.id) ?? []) : []
-    const derivedQuantity = stockRows.length > 0
-      ? stockRows.reduce((s, r) => s + r.quantity, 0)
-      : derived.effectiveQuantity
-    const availableQuantity = stockRows.length > 0
-      ? stockRows.reduce((s, r) => s + r.available, 0)
-      : derived.availableQuantity
+    const counts = itemCounts({
+      itemType: item.itemType,
+      quantity: item.quantity,
+      units: item.units,
+      stockRows,
+      liveKitLines: item.kitItems.filter(isLiveKitLine),
+    })
 
     return {
       ...rest,
@@ -305,12 +327,15 @@ export async function GET(req: NextRequest) {
       // refactor dropped it, which left the pickers showing "Select a unit…"
       // with no options even when units were available.
       availableUnits: positionedUnits
-        .filter((u) => u.status === 'AVAILABLE')
+        .filter((u) => (PICKABLE_STATUSES as readonly string[]).includes(u.status))
         .map((u) => ({ id: u.id, serialNumber: u.serialNumber, qrCodeId: u.qrCodeId, position: u.position })),
       category: categoryDisplay(item),
       unitCounts,
-      derivedQuantity,
-      availableQuantity,
+      itemCounts: counts,
+      // Kept for existing readers, now read off `itemCounts` so they cannot disagree:
+      // serialized → active units; consumable → on hand (as before).
+      derivedQuantity: item.itemType === 'CONSUMABLE' ? counts.onHand : counts.owned,
+      availableQuantity: counts.available,
       // Per-hub stock rows for consumables — used by the operator picker to gate
       // quantity caps on the selected source hub rather than the cross-hub total.
       ...(item.itemType === 'CONSUMABLE' && { hubStock: stockRows }),

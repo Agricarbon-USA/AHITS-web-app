@@ -56,7 +56,6 @@ interface KitItemRow {
     id: string
     name: string
     itemType: string
-    lowStockThreshold?: number | null
     categoryRef: { name: string } | null
   }
   inventoryUnit: { id: string; qrCodeId: string; serialNumber: string | null; status: string } | null

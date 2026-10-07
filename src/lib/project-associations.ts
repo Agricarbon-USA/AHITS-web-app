@@ -48,6 +48,30 @@ export async function getActiveProjectsForOperators(
   return map
 }
 
+/**
+ * PR-2 (C-12): active deployments per project, through `deployment_projects`
+ * (a deployment can carry several projects), not the legacy `rigs.projectId`
+ * column, which counted ended rigs and only one project per rig.
+ */
+export async function countActiveDeploymentsForProjects(
+  projectIds: string[],
+): Promise<Map<string, number>> {
+  const map = new Map<string, number>()
+  if (projectIds.length === 0) return map
+  for (const id of projectIds) map.set(id, 0)
+
+  const rows = await prisma.$queryRaw<{ projectId: string; n: bigint | number }[]>`
+    SELECT dp."projectId", COUNT(DISTINCT r."id") AS "n"
+    FROM "deployment_projects" dp
+    JOIN "rigs" r ON r."id" = dp."rigId" AND r."endedAt" IS NULL
+    WHERE dp."projectId" IN (${Prisma.join(projectIds)})
+      AND dp."removedAt" IS NULL
+    GROUP BY dp."projectId"
+  `
+  for (const row of rows) map.set(row.projectId, Number(row.n))
+  return map
+}
+
 export async function getActiveProjectsForItems(
   itemIds: string[],
 ): Promise<Map<string, ProjectRef[]>> {

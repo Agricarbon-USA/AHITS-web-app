@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { businessDate } from '@/lib/business-date'
 import { requireAuth } from '@/lib/auth/session'
 import { getDeploymentRostersForDisplay } from '@/lib/deployment-assignments'
+import { OPEN_TASK } from '@/lib/populations'
 
 // Operational feeds for the dashboard (alert-response KPI): the things to act on
 // today, not just the headline counts. Read-only. Readable by any authenticated
@@ -37,9 +38,9 @@ export async function GET() {
   // as their rows, not `.length` of a `take: 15` array. A 15-capped array made
   // "16 due soon" render as "15" and stop moving — the chip quietly became a
   // display of the cap. `missedChecks` already counted a full read and keeps doing
-  // so. (The `deletedAt: null` these task reads still lack is PR-2's `OPEN_TASK`
-  // fragment, applied to rows AND count together so the two can never diverge.)
-  const dueTasksWhere = { status: { not: 'COMPLETED' as const }, nextDue: { not: null, lte: dueSoonCutoff } }
+  // so. PR-2 (C-4): `OPEN_TASK` drops soft-deleted tasks, applied to rows AND
+  // count together so the two can never diverge.
+  const dueTasksWhere = { ...OPEN_TASK, nextDue: { not: null, lte: dueSoonCutoff } }
   const longRigsWhere = { endedAt: null, startedAt: { lt: longRunningCutoff } }
 
   const [activeRigs, checksToday, dueTasks, dueTasksTotal, longRigs, longRigsTotal, recentLogs, recentSpend] = await Promise.all([
