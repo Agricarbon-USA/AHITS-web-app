@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
+import { listResponse } from '@/lib/validation'
 
 export async function GET() {
   const session = await requireAuth()
@@ -8,7 +9,7 @@ export async function GET() {
 
   const hubs = await prisma.hub.findMany({
     where: { isActive: true },
-    orderBy: { name: 'asc' },
+    orderBy: [{ name: 'asc' }, { id: 'asc' }], // L-13: stable tiebreaker
   })
   // Merge in columns newer than the generated client (email, address fields).
   // Best-effort so a pre-migration DB still returns hubs without these fields.
@@ -20,10 +21,12 @@ export async function GET() {
   } catch { /* columns missing pre-migration */ }
   // FND-33: return a { data } envelope so success and error (401/500 → { error })
   // are both objects. Every consumer is shape-tolerant (Array.isArray(d) ? d : d.data).
-  return NextResponse.json({ data: hubs.map((h) => {
+  const data = hubs.map((h) => {
     const extra = extraById.get(h.id)
     return { ...h, email: extra?.email ?? null, street1: extra?.street1 ?? null, street2: extra?.street2 ?? null, zip: extra?.zip ?? null, country: extra?.country ?? 'US' }
-  }) })
+  })
+  // Uncapped read — `total` is the row count, `truncated` false.
+  return NextResponse.json(listResponse(data, data.length, { page: 1, pageSize: data.length || 1 }))
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/

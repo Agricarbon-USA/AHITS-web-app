@@ -70,15 +70,60 @@ export const money = () =>
  * request `pageSize=1000000` and force a heavy, deep-include unbounded read
  * (DoS/latency). Use on EVERY paginated GET so the rule can't drift per route.
  * Returns a ready-to-spread `{ page, pageSize, skip }` for Prisma `skip`/`take`.
+ *
+ * PR-1a (RC-2 / D-h): `clamped` is true when the caller asked for MORE than
+ * `maxSize` and silently got less. It is the one fact the old signature threw
+ * away, and the reason a page could look complete while it was not — pass it to
+ * `listResponse` so the response says so.
  */
+export interface Pagination {
+  page: number
+  pageSize: number
+  skip: number
+  clamped: boolean
+}
+
 export function parsePagination(
   searchParams: URLSearchParams,
   opts: { defaultSize?: number; maxSize?: number } = {},
-): { page: number; pageSize: number; skip: number } {
+): Pagination {
   const { defaultSize = 25, maxSize = 100 } = opts
   const rawPage = Number.parseInt(searchParams.get('page') ?? '', 10)
   const rawSize = Number.parseInt(searchParams.get('pageSize') ?? '', 10)
   const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1
-  const pageSize = Number.isFinite(rawSize) && rawSize > 0 ? Math.min(rawSize, maxSize) : defaultSize
-  return { page, pageSize, skip: (page - 1) * pageSize }
+  const asked = Number.isFinite(rawSize) && rawSize > 0 ? rawSize : null
+  const pageSize = asked !== null ? Math.min(asked, maxSize) : defaultSize
+  return { page, pageSize, skip: (page - 1) * pageSize, clamped: asked !== null && asked > maxSize }
+}
+
+/**
+ * PR-1a (RC-2 / D-h): the ONE list envelope. A view shows everything that
+ * matches or says exactly how much it is not showing — so every list API returns
+ * the rows AND the true `total`, and `truncated` tells the client whether what it
+ * holds is the whole answer.
+ *
+ * `truncated` is true when either the request was clamped (the caller asked for a
+ * bigger page than `maxSize` allows) or this page does not reach the end of the
+ * result set. An UNPAGINATED list passes its real `count()` as `total` and
+ * `{ page: 1, pageSize: <its own hard cap> }`, so a hard-capped read (the bell's
+ * 30, admin alerts' 50, status links' 100) reports itself truncated instead of
+ * claiming `total = data.length` — which is how a capped list came to look
+ * complete in the first place (L-3/L-5/L-6/C-3).
+ */
+export interface ListEnvelope<T> {
+  data: T[]
+  total: number
+  page: number
+  pageSize: number
+  truncated: boolean
+}
+
+export function listResponse<T>(
+  data: T[],
+  total: number,
+  pagination: { page: number; pageSize: number; clamped?: boolean },
+): ListEnvelope<T> {
+  const { page, pageSize, clamped = false } = pagination
+  const skip = (page - 1) * pageSize
+  return { data, total, page, pageSize, truncated: clamped || skip + data.length < total }
 }

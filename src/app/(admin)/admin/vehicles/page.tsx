@@ -125,6 +125,9 @@ function expiryMeta(iso: string | null): { label: string; color: 'default' | 'wa
 
 const dateInput = (iso: string | null | undefined) => (iso ? iso.slice(0, 10) : '')
 
+// The `take: 10` in GET /api/vehicles/[id]. Named so the label can't drift from it.
+const VEHICLE_RECENT_CHECKS_CAP = 10
+
 export default function AdminVehiclesPage() {
   const showToast = useToast()
   const canEdit = useCanEdit()
@@ -727,7 +730,13 @@ export default function AdminVehiclesPage() {
 
             <Divider />
             <Box>
-              <Typography variant="subtitle2" gutterBottom>Recent daily checks ({detail.dailyChecks.length})</Typography>
+              {/* PR-1a (L-12): the read is capped at 10, so the honest label says
+                  so rather than printing a length that reads as the total. */}
+              <Typography variant="subtitle2" gutterBottom>
+                {detail.dailyChecks.length >= VEHICLE_RECENT_CHECKS_CAP
+                  ? `Recent daily checks (${VEHICLE_RECENT_CHECKS_CAP} most recent)`
+                  : `Recent daily checks (${detail.dailyChecks.length})`}
+              </Typography>
               {detail.dailyChecks.length === 0 ? (
                 <Typography variant="body2" color="text.secondary">No daily checks recorded.</Typography>
               ) : (

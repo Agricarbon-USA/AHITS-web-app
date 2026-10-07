@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { IntervalType, Priority, MaintenanceStatus, RepairType } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { requireAdmin } from '@/lib/auth/session'
+import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import { money } from '@/lib/validation'
 import { writeOr404 } from '@/lib/api-errors'
 
@@ -36,6 +36,54 @@ const maintenanceUpdateSchema = z
   })
   .partial()
   .strict()
+
+/**
+ * PR-1a (U-4/P-11): one task by id. Did not exist — which is why an alert's
+ * "View" link (`/admin/maintenance?task=<id>`) opened nothing: the page could only
+ * find the task if it happened to be in the page of rows it had fetched. With
+ * this, the deep-link opens the task whatever page it lives on, or the page can
+ * say honestly that the repair is closed or gone.
+ *
+ * Operator-readable (the same audience as the list), with the same admin-only
+ * cost stripping as `GET /api/maintenance`. Soft-deleted tasks are NOT returned —
+ * a deleted report's alert link must read as "no longer exists", not open a ghost.
+ */
+export async function GET(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const session = await requireAuth()
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const { id } = await params
+
+  const task = await prisma.maintenanceTask.findFirst({
+    where: { id, deletedAt: null },
+    include: {
+      vehicle: { select: { id: true, name: true } },
+      item: { select: { id: true, name: true } },
+      unit: { select: { id: true, qrCodeId: true, serialNumber: true, status: true } },
+      repairHub: { select: { id: true, name: true } },
+      hub: { select: { id: true, name: true } },
+      photos: { select: { id: true, url: true, takenAt: true }, orderBy: { takenAt: 'desc' } },
+    },
+  })
+  if (!task) return NextResponse.json({ error: 'Task not found' }, { status: 404 })
+
+  // CC-34 (1b) parity with the list route: rigId/reportedById are scalar FKs, so
+  // resolve their labels here too — the drawer renders the same fields.
+  const [rig, reportedBy] = await Promise.all([
+    task.rigId
+      ? prisma.rig.findUnique({ where: { id: task.rigId }, select: { id: true, label: true } })
+      : Promise.resolve(null),
+    task.reportedById
+      ? prisma.user.findUnique({ where: { id: task.reportedById }, select: { id: true, name: true } })
+      : Promise.resolve(null),
+  ])
+
+  const withRefs = { ...task, rig, reportedBy }
+  if (session.role === 'ADMIN') return NextResponse.json({ data: withRefs })
+  const { estimatedCost, actualCost, ...rest } = withRefs
+  void estimatedCost
+  void actualCost
+  return NextResponse.json({ data: rest })
+}
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAdmin()

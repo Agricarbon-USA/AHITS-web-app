@@ -7,11 +7,13 @@ import {
   Chip, IconButton, Tooltip, CircularProgress,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Paper, Skeleton, Switch, FormControlLabel, Accordion, AccordionSummary,
-  AccordionDetails, Divider, TablePagination,
+  AccordionDetails, Divider,
   FormControl, FormLabel, RadioGroup, Radio, Link, Tabs, Tab,
 } from '@mui/material'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { DetailDrawer } from '@/components/ui/DetailDrawer'
+import { PagedTable } from '@/components/ui/PagedTable'
+import { useListQuery } from '@/hooks/useListQuery'
 import { EntityFormDialog, RequiredLegend } from '@/components/ui/EntityFormDialog'
 import { SearchableSelect } from '@/components/shared/SearchableSelect'
 import { useDirtyState } from '@/hooks/useDirtyState'
@@ -37,7 +39,22 @@ import { groupBy, formatDate } from '@/lib/utils'
 
 // FND-48: URL-persisted filter keys for the inventory list (stable object so the
 // useUrlFilters setter callback stays referentially stable).
-const INVENTORY_FILTER_DEFAULTS = { categoryId: '', itemType: '', hubId: '', operatorId: '', projectId: '' }
+//
+// PR-1a: `page` joins them so a filter change can clear the page key in the SAME
+// single history-replace that sets the filter (useUrlFilters patches many keys at
+// once). Two concurrent replaces would race and one would win with a stale query.
+const INVENTORY_FILTER_DEFAULTS = { categoryId: '', itemType: '', hubId: '', operatorId: '', projectId: '', page: '' }
+
+/**
+ * PR-1a: retiring an ITEM is write-only today — it sets a flag nothing reads, so
+ * the item stays in the list, its units are untouched, and the confirmation ("All
+ * available units will be marked retired") describes something that never happens
+ * (B1/U-1/S-3). The real semantics — retire every unit on hand, release their QR
+ * labels, refuse while any unit is out — land in PR-3b with `asset-status.ts`.
+ * Until then the action is HIDDEN rather than left as a no-op with copy that lies;
+ * PR-3b flips this to `true` in the commit that makes it true.
+ */
+const ITEM_RETIRE_ENABLED: boolean = false
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -77,6 +94,8 @@ interface InventoryItemRow {
   notes: string | null
   lowStockThreshold: number | null
   itemType: string
+  // D-a (list half): carried so a row surfaced by "Show retired" says so.
+  status?: string
   unitId: string | null
   expectedQuantity: number | null
   createdAt: string
@@ -1293,7 +1312,7 @@ function ItemDetailDrawer({
           <Divider />
           <Stack direction="row" spacing={1} px={3} py={2} justifyContent="flex-end">
             <Button onClick={onClose}>Close</Button>
-            {detail.unitCounts.available > 0 && (
+            {ITEM_RETIRE_ENABLED && detail.unitCounts.available > 0 && (
               <MutationButton variant="outlined" color="error" startIcon={<ArchiveIcon />}
                 onClick={() => { onClose(); onRetire(detail) }}>
                 Retire
@@ -1348,10 +1367,6 @@ export default function AdminInventoryPage() {
 function AdminInventoryContent() {
   const canEdit = useCanEdit()
   const showToast = useToast()
-  const [items, setItems] = React.useState<InventoryItemRow[]>([])
-  const [total, setTotal] = React.useState(0)
-  const [page, setPage] = React.useState(0)
-  const [pageSize] = React.useState(25)
   const [search, setSearch] = React.useState('')
   const [debouncedSearch, setDebouncedSearch] = React.useState('')
   React.useEffect(() => {
@@ -1365,7 +1380,10 @@ function AdminInventoryContent() {
   const hubFilter = filters.hubId
   const operatorFilter = filters.operatorId
   const projectFilter = filters.projectId
-  const [loading, setLoading] = React.useState(true)
+  // D-a (list half): a RETIRED item is hidden behind this switch, not deleted.
+  // Component state, not the URL — the jsdom harness mocks `next/navigation`
+  // statically, so a URL-only switch would be untestable here.
+  const [includeRetired, setIncludeRetired] = React.useState(false)
   const [categories, setCategories] = React.useState<CategoryOption[]>([])
   const [hubs, setHubs] = React.useState<HubOption[]>([])
   const [operators, setOperators] = React.useState<UserOption[]>([])
@@ -1374,23 +1392,30 @@ function AdminInventoryContent() {
   const [formOpen, setFormOpen] = React.useState(false)
   const [detailRow, setDetailRow] = React.useState<DrawerRow | null>(null)
   const [retireItem, setRetireItem] = React.useState<InventoryItemRow | null>(null)
+  // The row just created, pinned above the list until the reader moves on.
+  const [justAdded, setJustAdded] = React.useState<InventoryItemRow | null>(null)
 
-  const load = React.useCallback(async () => {
-    setLoading(true)
-    const params = new URLSearchParams({ page: String(page + 1), pageSize: String(pageSize) })
-    if (debouncedSearch) params.set('q', debouncedSearch)
-    if (categoryFilter) params.set('categoryId', categoryFilter)
-    if (itemTypeFilter) params.set('itemType', itemTypeFilter)
-    if (hubFilter) params.set('hubId', hubFilter)
-    if (operatorFilter) params.set('operatorId', operatorFilter)
-    if (projectFilter) params.set('projectId', projectFilter)
-    const res = await fetch(`/api/inventory?${params}`).then((r) => r.json()).catch(() => ({ data: [], total: 0 }))
-    setItems(res.data ?? [])
-    setTotal(res.total ?? 0)
-    setLoading(false)
-  }, [page, pageSize, debouncedSearch, categoryFilter, itemTypeFilter, hubFilter, operatorFilter, projectFilter])
+  // PR-1a (B2/L-4): one paged read with the server's real `total`. The page used
+  // to fetch 25 rows, regroup them under category headers and show them with no
+  // count and no pager — so the whole inventory looked like 25 items, and a newly
+  // added item alphabetically past the cut simply did not appear.
+  const listParams = React.useMemo(() => ({
+    q: debouncedSearch || undefined,
+    categoryId: categoryFilter || undefined,
+    itemType: itemTypeFilter || undefined,
+    hubId: hubFilter || undefined,
+    operatorId: operatorFilter || undefined,
+    projectId: projectFilter || undefined,
+    includeRetired: includeRetired ? '1' : undefined,
+  }), [debouncedSearch, categoryFilter, itemTypeFilter, hubFilter, operatorFilter, projectFilter, includeRetired])
 
-  React.useEffect(() => { load() }, [load])
+  const q = useListQuery<InventoryItemRow>({ endpoint: '/api/inventory', params: listParams })
+  const total = q.total
+  const loading = q.loading
+  const reload = q.reload
+  const load = React.useCallback(() => { void reload({ bypassCache: true }) }, [reload])
+  const setPage = q.setPage
+  const page = q.page
 
   React.useEffect(() => {
     fetch('/api/inventory/categories').then((r) => r.json()).then((d) => setCategories(d.data ?? [])).catch(() => {})
@@ -1401,6 +1426,18 @@ function AdminInventoryContent() {
     }).catch(() => {})
     fetch('/api/projects').then((r) => r.json()).then((d) => setProjects(d.data ?? d ?? [])).catch(() => {})
   }, [])
+
+  // The pin is a one-shot: the moment the reader searches, filters or pages, it
+  // goes — it would otherwise sit at the top of a list it does not belong to.
+  const justAddedId = justAdded?.id ?? null
+  // Keyed on the list query only — React bails out when it is already null.
+  React.useEffect(() => { setJustAdded(null) }, [listParams, page])
+
+  // Shown once, under the pin — never twice.
+  const rows = React.useMemo(
+    () => (justAddedId ? q.rows.filter((i) => i.id !== justAddedId) : q.rows),
+    [q.rows, justAddedId],
+  )
 
   const handleRetire = async () => {
     if (!retireItem) return
@@ -1418,6 +1455,23 @@ function AdminInventoryContent() {
   // units could not be created (T4) — straight to its Units tab with the error.
   const handleItemSaved = (saved: ItemSaved, { isEdit, unitsError }: ItemSavedInfo) => {
     load()
+    // PR-1a (B2/U-12): the created row is pinned at the top under "Just added".
+    // A new item lands wherever its name sorts — past the page cut it was simply
+    // not there, which read as "the save did not work". The POST returns a raw row
+    // without counts (and a serialized item's units are created AFTER it), so the
+    // pinned row is re-read from `GET /api/inventory/<id>`.
+    if (!isEdit) {
+      void (async () => {
+        try {
+          const res = await fetch(`/api/inventory/${saved.id}`)
+          if (!res.ok) return
+          const json = await res.json()
+          if (json?.data) setJustAdded(json.data as InventoryItemRow)
+        } catch {
+          /* non-fatal — the row still arrives with the next list read */
+        }
+      })()
+    }
     if (unitsError) {
       setDetailRow({ id: saved.id, openOn: 'units', unitsError })
       return
@@ -1428,6 +1482,64 @@ function AdminInventoryContent() {
       action: { label: 'Open', onClick: () => setDetailRow({ id: saved.id }) },
     })
   }
+
+  // One row renderer for both the pinned "Just added" row and the list, so the
+  // two can never drift. `isNew` adds the chip that explains why it is at the top.
+  const itemRow = (item: InventoryItemRow, isNew: boolean) => (
+    <TableRow
+      key={isNew ? `__new__${item.id}` : item.id}
+      hover
+      sx={{ cursor: 'pointer', ...(isNew && { bgcolor: 'action.hover' }) }}
+      onClick={() => setDetailRow(item)}
+    >
+      <TableCell>
+        <Stack direction="row" spacing={1} alignItems="center">
+          <Typography variant="body2" fontWeight={500}>{item.name}</Typography>
+          {isNew && <Chip size="small" color="success" variant="outlined" label="New" />}
+          {item.itemType === 'SERIALIZED' && (
+            <StatusChip label="S" variant="outlined" color="primary" />
+          )}
+          {item.status === 'RETIRED' && <StatusChip status="RETIRED" kind="equipment" />}
+          {item.unitCounts?.inoperable > 0 && (
+            <Tooltip title={`${item.unitCounts.inoperable} inoperable`}>
+              <WarningAmberIcon fontSize="small" color="warning" />
+            </Tooltip>
+          )}
+        </Stack>
+      </TableCell>
+      <TableCell>
+        <Typography variant="body2" color="text.secondary">
+          {typeof item.category === 'object' ? item.category?.name : (item.category ?? '—')}
+        </Typography>
+      </TableCell>
+      <TableCell>
+        <Typography variant="body2" color="text.secondary">
+          {item.hub ? `${item.hub.city}, ${item.hub.state}` : '—'}
+        </Typography>
+      </TableCell>
+      <TableCell align="center">
+        <Chip size="small" label={item.itemType === 'CONSUMABLE' ? (item.availableQuantity ?? 0) : (item.unitCounts?.available ?? 0)} color="success" variant="outlined" />
+      </TableCell>
+      <TableCell align="center">
+        <Chip size="small" label={item.unitCounts?.checkedOut ?? 0} color={item.unitCounts?.checkedOut > 0 ? 'info' : 'default'} variant="outlined" />
+      </TableCell>
+      <TableCell align="center">
+        <Typography variant="body2">{item.itemType === 'CONSUMABLE' ? (item.derivedQuantity ?? item.quantity ?? 0) : (item.unitCounts?.totalUnits ?? 0)}</Typography>
+      </TableCell>
+      <TableCell align="right" onClick={(e) => e.stopPropagation()}>
+        <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+          <MutationIconButton size="small" tooltip="Edit" onClick={() => { setFormItem(item); setFormOpen(true) }}>
+            <EditIcon fontSize="small" />
+          </MutationIconButton>
+          {ITEM_RETIRE_ENABLED && (
+            <MutationIconButton size="small" tooltip="Retire" color="error" onClick={() => setRetireItem(item)}>
+              <ArchiveIcon fontSize="small" />
+            </MutationIconButton>
+          )}
+        </Stack>
+      </TableCell>
+    </TableRow>
+  )
 
   return (
     <Box>
@@ -1456,7 +1568,7 @@ function AdminInventoryContent() {
             <Chip
               key={type || 'all'}
               label={type === '' ? 'All' : type === 'CONSUMABLE' ? 'Consumables' : 'Serialized'}
-              onClick={() => { setFilters({ itemType: type }); setPage(0) }}
+              onClick={() => { setFilters({ itemType: type, page: '' }); setPage(0) }}
               color={itemTypeFilter === type ? 'primary' : 'default'}
               variant={itemTypeFilter === type ? 'filled' : 'outlined'}
               size="small"
@@ -1470,7 +1582,7 @@ function AdminInventoryContent() {
             size="small"
             label="Category"
             value={categoryFilter}
-            onChange={(e) => { setFilters({ categoryId: e.target.value }); setPage(0) }}
+            onChange={(e) => { setFilters({ categoryId: e.target.value, page: '' }); setPage(0) }}
             sx={{ width: 200 }}
           >
             <MenuItem value="">All categories</MenuItem>
@@ -1483,7 +1595,7 @@ function AdminInventoryContent() {
             size="small"
             label="Hub"
             value={hubFilter}
-            onChange={(e) => { setFilters({ hubId: e.target.value }); setPage(0) }}
+            onChange={(e) => { setFilters({ hubId: e.target.value, page: '' }); setPage(0) }}
             sx={{ width: 180 }}
           >
             <MenuItem value="">All hubs</MenuItem>
@@ -1496,7 +1608,7 @@ function AdminInventoryContent() {
             size="small"
             label="Operator"
             value={operatorFilter}
-            onChange={(e) => { setFilters({ operatorId: e.target.value }); setPage(0) }}
+            onChange={(e) => { setFilters({ operatorId: e.target.value, page: '' }); setPage(0) }}
             sx={{ width: 180 }}
           >
             <MenuItem value="">All operators</MenuItem>
@@ -1509,125 +1621,79 @@ function AdminInventoryContent() {
             size="small"
             label="Project"
             value={projectFilter}
-            onChange={(e) => { setFilters({ projectId: e.target.value }); setPage(0) }}
+            onChange={(e) => { setFilters({ projectId: e.target.value, page: '' }); setPage(0) }}
             sx={{ width: 180 }}
           >
             <MenuItem value="">All projects</MenuItem>
             {projects.map((p) => <MenuItem key={p.id} value={p.id}>{p.name}</MenuItem>)}
           </TextField>
         )}
+        {/* D-a (list half): retired items are hidden, not deleted — this is the
+            door to them. Retiring itself is PR-3b; the row action stays hidden
+            until it does something. */}
+        <FormControlLabel
+          control={
+            <Switch
+              size="small"
+              checked={includeRetired}
+              onChange={(e) => { setIncludeRetired(e.target.checked); setPage(0) }}
+            />
+          }
+          label={<Typography variant="body2">Show retired</Typography>}
+        />
         {(categoryFilter || itemTypeFilter || hubFilter || operatorFilter || projectFilter || search) && (
           <Button size="small" variant="text" onClick={() => {
             setSearch('')
-            setFilters({ categoryId: '', itemType: '', hubId: '', operatorId: '', projectId: '' })
+            setFilters({ categoryId: '', itemType: '', hubId: '', operatorId: '', projectId: '', page: '' })
             setPage(0)
           }}>Clear filters</Button>
         )}
       </Stack>
 
       {/* Table */}
-      <TableContainer component={Paper} variant="outlined">
-        <Table size="small">
-          <TableHead>
-            <TableRow sx={{ '& th': { fontWeight: 600, fontSize: 12, color: 'text.secondary' } }}>
-              <TableCell>Name</TableCell>
-              <TableCell>Category</TableCell>
-              <TableCell>Hub</TableCell>
-              <TableCell align="center">Available</TableCell>
-              <TableCell align="center">Out</TableCell>
-              <TableCell align="center">Total</TableCell>
-              <TableCell align="right">Actions</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {loading
-              ? Array.from({ length: 6 }).map((_, i) => (
-                  <TableRow key={i}>
-                    {Array.from({ length: 7 }).map((__, j) => (
-                      <TableCell key={j}><Skeleton height={24} /></TableCell>
-                    ))}
-                  </TableRow>
-                ))
-              : groupBy(
-                  items,
-                  (item) => (typeof item.category === 'object' ? item.category?.name : (item.category as unknown as string)) ?? 'Uncategorized',
-                ).flatMap(({ group, items: gi }) => [
-                  <TableRow key={`__hdr__${group}`}>
-                    <TableCell colSpan={7} sx={{ bgcolor: 'grey.50', py: 0.5, borderBottom: '1px solid', borderColor: 'divider' }}>
-                      <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1.6 }}>{group}</Typography>
-                    </TableCell>
-                  </TableRow>,
-                  ...gi.map((item) => (
-                    <TableRow
-                      key={item.id}
-                      hover
-                      sx={{ cursor: 'pointer' }}
-                      onClick={() => setDetailRow(item)}
-                    >
-                      <TableCell>
-                        <Stack direction="row" spacing={1} alignItems="center">
-                          <Typography variant="body2" fontWeight={500}>{item.name}</Typography>
-                          {item.itemType === 'SERIALIZED' && (
-                            <StatusChip label="S" variant="outlined" color="primary" />
-                          )}
-                          {item.unitCounts?.inoperable > 0 && (
-                            <Tooltip title={`${item.unitCounts.inoperable} inoperable`}>
-                              <WarningAmberIcon fontSize="small" color="warning" />
-                            </Tooltip>
-                          )}
-                        </Stack>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2" color="text.secondary">
-                          {typeof item.category === 'object' ? item.category?.name : (item.category ?? '—')}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2" color="text.secondary">
-                          {item.hub ? `${item.hub.city}, ${item.hub.state}` : '—'}
-                        </Typography>
-                      </TableCell>
-                      <TableCell align="center">
-                        <Chip size="small" label={item.itemType === 'CONSUMABLE' ? (item.availableQuantity ?? 0) : (item.unitCounts?.available ?? 0)} color="success" variant="outlined" />
-                      </TableCell>
-                      <TableCell align="center">
-                        <Chip size="small" label={item.unitCounts?.checkedOut ?? 0} color={item.unitCounts?.checkedOut > 0 ? 'info' : 'default'} variant="outlined" />
-                      </TableCell>
-                      <TableCell align="center">
-                        <Typography variant="body2">{item.itemType === 'CONSUMABLE' ? (item.derivedQuantity ?? item.quantity ?? 0) : (item.unitCounts?.totalUnits ?? 0)}</Typography>
-                      </TableCell>
-                      <TableCell align="right" onClick={(e) => e.stopPropagation()}>
-                        <Stack direction="row" spacing={0.5} justifyContent="flex-end">
-                          <MutationIconButton size="small" tooltip="Edit" onClick={() => { setFormItem(item); setFormOpen(true) }}>
-                            <EditIcon fontSize="small" />
-                          </MutationIconButton>
-                          <MutationIconButton size="small" tooltip="Retire" color="error" onClick={() => setRetireItem(item)}>
-                            <ArchiveIcon fontSize="small" />
-                          </MutationIconButton>
-                        </Stack>
-                      </TableCell>
-                    </TableRow>
-                  )),
-                ])}
-            {!loading && items.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={7} align="center" sx={{ py: 4, color: 'text.secondary' }}>
-                  No items found{search ? ` for "${search}"` : ''}.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </TableContainer>
-
-      <TablePagination
-        component="div"
-        count={total}
-        page={page}
-        rowsPerPage={pageSize}
-        rowsPerPageOptions={[25]}
-        onPageChange={(_, p) => setPage(p)}
-      />
+      <PagedTable
+        colSpan={7}
+        total={total}
+        page={q.page}
+        pageSize={q.pageSize}
+        truncated={q.truncated}
+        loading={loading}
+        onPageChange={setPage}
+        onPageSizeChange={q.setPageSize}
+        itemNoun="items"
+        emptyMessage={`No items found${search ? ` for "${search}"` : ''}.`}
+        head={
+          <TableRow sx={{ '& th': { fontWeight: 600, fontSize: 12, color: 'text.secondary' } }}>
+            <TableCell>Name</TableCell>
+            <TableCell>Category</TableCell>
+            <TableCell>Hub</TableCell>
+            <TableCell align="center">Available</TableCell>
+            <TableCell align="center">Out</TableCell>
+            <TableCell align="center">Total</TableCell>
+            <TableCell align="right">Actions</TableCell>
+          </TableRow>
+        }
+      >
+        {justAdded && [
+          <TableRow key="__hdr__just-added">
+            <TableCell colSpan={7} sx={{ bgcolor: 'grey.50', py: 0.5, borderBottom: '1px solid', borderColor: 'divider' }}>
+              <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1.6 }}>Just added</Typography>
+            </TableCell>
+          </TableRow>,
+          itemRow(justAdded, true),
+        ]}
+        {groupBy(
+          rows,
+          (item) => (typeof item.category === 'object' ? item.category?.name : (item.category as unknown as string)) ?? 'Uncategorized',
+        ).flatMap(({ group, items: gi }) => [
+          <TableRow key={`__hdr__${group}`}>
+            <TableCell colSpan={7} sx={{ bgcolor: 'grey.50', py: 0.5, borderBottom: '1px solid', borderColor: 'divider' }}>
+              <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1.6 }}>{group}</Typography>
+            </TableCell>
+          </TableRow>,
+          ...gi.map((item) => itemRow(item, false)),
+        ])}
+      </PagedTable>
 
       {/* Add / Edit dialog */}
       {formOpen && (

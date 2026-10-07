@@ -2,8 +2,36 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
-import { money, parsePagination } from '@/lib/validation'
+import { money, parsePagination, listResponse } from '@/lib/validation'
 import { nextDueFromInterval } from '@/lib/maintenance'
+
+/**
+ * PR-1a: the maintenance tabs, defined once on the server. `null` (no `tab`
+ * param) means "every task" — see the note in GET.
+ */
+const MAINTENANCE_TABS = ['damage', 'overdue', 'active', 'completed', 'all'] as const
+type MaintenanceTab = (typeof MAINTENANCE_TABS)[number]
+
+function tabWhere(tab: MaintenanceTab | null) {
+  switch (tab) {
+    case 'damage': return { isDamageReport: true, status: { not: 'COMPLETED' as const } }
+    case 'overdue': return { status: 'OVERDUE' as const }
+    case 'active': return { status: 'IN_PROGRESS' as const }
+    case 'completed': return { status: 'COMPLETED' as const }
+    default: return {}
+  }
+}
+
+type FacetCounts = { damage: number; overdue: number; active: number; completed: number }
+
+async function countFacets(baseWhere: Record<string, unknown>): Promise<FacetCounts> {
+  const [damage, overdue, active, completed] = await Promise.all(
+    (['damage', 'overdue', 'active', 'completed'] as const).map((t) =>
+      prisma.maintenanceTask.count({ where: { ...baseWhere, ...tabWhere(t) } as never }),
+    ),
+  )
+  return { damage, overdue, active, completed }
+}
 
 export async function GET(req: NextRequest) {
   const session = await requireAuth()
@@ -16,27 +44,47 @@ export async function GET(req: NextRequest) {
   // one-line filter — an operator whose gear went to repair can now see it on My
   // Deployment. Already operator-readable (costs stripped below), so no auth change.
   const rigId = searchParams.get('rigId')
-  const { pageSize, skip } = parsePagination(searchParams)
+  // PR-1a (L-1/C-1/U-4/P-11): the tab is a SERVER filter. The page used to fetch
+  // one page of every task, re-sort it and regroup it under tabs — so past 25
+  // tasks the Damage and Overdue tabs lost rows and their counts were the counts
+  // of a page. The default is deliberately NO tab filter: `/api/maintenance?rigId=`
+  // (operator My Deployment) must keep seeing scheduled tasks, and D21 forbids
+  // editing that page to compensate. The admin page sends `tab=damage` explicitly.
+  const tabParam = searchParams.get('tab')
+  const tab = MAINTENANCE_TABS.includes(tabParam as MaintenanceTab) ? (tabParam as MaintenanceTab) : null
+  const { page, pageSize, skip, clamped } = parsePagination(searchParams)
 
-  const tasks = await prisma.maintenanceTask.findMany({
-    where: {
-      deletedAt: null,
-      ...(status && { status: status as never }),
-      ...(vehicleId && { vehicleId }),
-      ...(rigId && { rigId }),
-    },
-    orderBy: [{ status: 'asc' }, { nextDue: 'asc' }],
-    take: pageSize,
-    skip,
-    include: {
-      vehicle: { select: { id: true, name: true } },
-      item: { select: { id: true, name: true } },
-      unit: { select: { id: true, qrCodeId: true, serialNumber: true, status: true } },
-      repairHub: { select: { id: true, name: true } },
-      hub: { select: { id: true, name: true } },
-      photos: { select: { id: true, url: true, takenAt: true }, orderBy: { takenAt: 'desc' } },
-    },
-  })
+  const baseWhere = {
+    deletedAt: null,
+    ...(status && { status: status as never }),
+    ...(vehicleId && { vehicleId }),
+    ...(rigId && { rigId }),
+  }
+  const where = { ...baseWhere, ...tabWhere(tab) }
+
+  // The facet counts are the SAME `where` as the rows, plus that tab's clause —
+  // so a tab's badge and its row count can never disagree (C-1).
+  const [tasks, total, facets] = await Promise.all([
+    prisma.maintenanceTask.findMany({
+      where: where as never,
+      // L-13: every list sort ends with a stable tiebreaker, or two tasks sharing
+      // a status and due date can swap places between pages — skipping one row
+      // and showing another twice.
+      orderBy: [{ status: 'asc' }, { nextDue: 'asc' }, { id: 'asc' }],
+      take: pageSize,
+      skip,
+      include: {
+        vehicle: { select: { id: true, name: true } },
+        item: { select: { id: true, name: true } },
+        unit: { select: { id: true, qrCodeId: true, serialNumber: true, status: true } },
+        repairHub: { select: { id: true, name: true } },
+        hub: { select: { id: true, name: true } },
+        photos: { select: { id: true, url: true, takenAt: true }, orderBy: { takenAt: 'desc' } },
+      },
+    }),
+    prisma.maintenanceTask.count({ where: where as never }),
+    countFacets(baseWhere),
+  ])
 
   // NOTE: overdue-alert creation lives in the cron dispatcher (a GET must not write).
 
@@ -69,7 +117,7 @@ export async function GET(req: NextRequest) {
         return rest
       })
 
-  return NextResponse.json({ data })
+  return NextResponse.json({ ...listResponse(data, total, { page, pageSize, clamped }), facets })
 }
 
 const createSchema = z.object({

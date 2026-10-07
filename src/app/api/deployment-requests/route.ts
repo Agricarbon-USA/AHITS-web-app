@@ -8,6 +8,7 @@ import { sendEmail } from '@/lib/email/resend'
 import { genericAlertEmail } from '@/lib/email/templates'
 import { prisma } from '@/lib/prisma'
 import { withIdempotency } from '@/lib/idempotency'
+import { listResponse } from '@/lib/validation'
 
 const lineSchema = z
   .object({
@@ -51,7 +52,11 @@ export async function GET() {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   // Admins see every request; operators see only their own.
   const scope = session.role === 'ADMIN' ? undefined : session.userId
-  return NextResponse.json({ data: await listRequests(scope) })
+  const data = await listRequests(scope)
+  // Uncapped read — `total` is the row count, `truncated` false. (The per-line
+  // substitutable-item LIMIT 200 inside listRequests is a nested cap, not a
+  // truncation of this list; PR-2 owns that one.)
+  return NextResponse.json(listResponse(data, data.length, { page: 1, pageSize: data.length || 1 }))
 }
 
 export async function POST(req: NextRequest) {

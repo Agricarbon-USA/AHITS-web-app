@@ -5,7 +5,7 @@ import { isUniqueViolation } from '@/lib/api-errors'
 import { requireAdmin } from '@/lib/auth/session'
 import { hashPin } from '@/lib/auth/pin'
 import { writeAudit } from '@/lib/audit'
-import { pinSchema, money } from '@/lib/validation'
+import { pinSchema, money, listResponse } from '@/lib/validation'
 import { getActiveProjectsForOperators } from '@/lib/project-associations'
 
 export async function GET() {
@@ -18,16 +18,17 @@ export async function GET() {
       mustChangePin: true, hourlyRate: true, homeHubId: true,
       homeHub: { select: { id: true, name: true } },
     },
-    orderBy: { name: 'asc' },
+    orderBy: [{ name: 'asc' }, { id: 'asc' }], // L-13: stable tiebreaker
   })
   const operatorIds = users.filter((u) => u.role === 'OPERATOR').map((u) => u.id)
   const projectMap = await getActiveProjectsForOperators(operatorIds)
-  return NextResponse.json({
-    data: users.map((u) => ({
-      ...u,
-      activeProjects: u.role === 'OPERATOR' ? (projectMap.get(u.id) ?? []) : [],
-    })),
-  })
+  const data = users.map((u) => ({
+    ...u,
+    activeProjects: u.role === 'OPERATOR' ? (projectMap.get(u.id) ?? []) : [],
+  }))
+  // PR-1a: uncapped read, so `total` is the row count and `truncated` is false —
+  // the envelope says that rather than leaving the caller to assume it.
+  return NextResponse.json(listResponse(data, data.length, { page: 1, pageSize: data.length || 1 }))
 }
 
 const createSchema = z.object({

@@ -5,7 +5,7 @@ import { getDeploymentRostersForDisplay } from '@/lib/deployment-assignments'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import type { EquipmentCategory, EquipmentStatus, ItemType } from '@prisma/client'
 import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions } from '@/lib/inventory'
-import { money, parsePagination } from '@/lib/validation'
+import { money, parsePagination, listResponse } from '@/lib/validation'
 import { setStockAtHub, resyncItemTotal, listStockForItems } from '@/lib/inventory-stock'
 import type { ItemStockRow } from '@/lib/inventory-stock'
 import { getActiveProjectsForItems } from '@/lib/project-associations'
@@ -15,8 +15,13 @@ export async function GET(req: NextRequest) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = req.nextUrl
-  const { page, pageSize } = parsePagination(searchParams)
+  const { page, pageSize, skip, clamped } = parsePagination(searchParams)
   const status = searchParams.get('status') as EquipmentStatus | null
+  // PR-1a (D-a, list half): a RETIRED item is out of service, not deleted — it
+  // belongs behind a switch, not in the working list. An explicit `status=` filter
+  // (including `status=RETIRED`) still wins, so the Retired view and the status
+  // deep-links keep working.
+  const includeRetired = searchParams.get('includeRetired') === '1'
   const category = searchParams.get('category') as EquipmentCategory | null
   const categoryId = searchParams.get('categoryId')
   const itemType = searchParams.get('itemType')
@@ -55,6 +60,7 @@ export async function GET(req: NextRequest) {
   const where = {
     deletedAt: null,
     ...(status && { status }),
+    ...(!status && !includeRetired && { status: { not: 'RETIRED' as const } }),
     ...(category && { category }),
     ...(categoryId && { categoryId }),
     ...(itemType && { itemType: itemType as ItemType }),
@@ -75,9 +81,11 @@ export async function GET(req: NextRequest) {
   const [items, total] = await Promise.all([
     prisma.inventoryItem.findMany({
       where,
-      skip: (page - 1) * pageSize,
+      skip,
       take: pageSize,
-      orderBy: { name: 'asc' },
+      // L-13: a stable tiebreaker, or two items sharing a name can swap places
+      // between pages — one skipped, the other shown twice.
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
       include: {
         categoryRef: { select: { id: true, name: true } },
         hub: { select: { id: true, name: true, city: true, state: true } },
@@ -183,7 +191,7 @@ export async function GET(req: NextRequest) {
     }
   })
 
-  return NextResponse.json({ data, total, page, pageSize })
+  return NextResponse.json(listResponse(data, total, { page, pageSize, clamped }))
 }
 
 const createSchema = z.object({

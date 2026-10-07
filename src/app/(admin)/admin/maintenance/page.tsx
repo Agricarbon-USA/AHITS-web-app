@@ -4,11 +4,13 @@ import * as React from 'react'
 import { formatDate } from '@/lib/utils'
 import {
   Box, Typography, Stack, Chip, Divider, Button, TextField, MenuItem,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Paper,
-  Skeleton, Tabs, Tab, CircularProgress,
+  TableCell, TableRow, Paper,
+  Tabs, Tab, CircularProgress,
   Dialog, DialogTitle, DialogContent, DialogActions,
 } from '@mui/material'
 import { DetailDrawer } from '@/components/ui/DetailDrawer'
+import { PagedTable } from '@/components/ui/PagedTable'
+import { useListQuery } from '@/hooks/useListQuery'
 import BuildIcon from '@mui/icons-material/Build'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import { useToast } from '@/components/shared/useToast'
@@ -133,10 +135,26 @@ function woChip(state?: string) {
 export default function AdminMaintenancePage() {
   const canEdit = useCanEdit()
   const showToast = useToast()
-  const [tasks, setTasks] = React.useState<MaintenanceTask[]>([])
   const [hubs, setHubs] = React.useState<HubOption[]>([])
-  const [loading, setLoading] = React.useState(true)
   const [filter, setFilter] = React.useState<FilterKey>('damage')
+  // PR-1a (L-1/C-1/U-4/P-11): the tab is a SERVER filter and the rows are paged.
+  // This page used to fetch `/api/maintenance` bare — the first 25 tasks, sorted
+  // so scheduled "upcoming" items came first — then regroup THAT page under the
+  // tabs. Past 25 tasks the Damage and Overdue tabs silently lost rows, their
+  // counts were the counts of a page, and an alert's "View" opened nothing.
+  const q = useListQuery<MaintenanceTask>({
+    endpoint: '/api/maintenance',
+    params: { tab: filter },
+    errorMessage: 'Could not load maintenance tasks.',
+  })
+  const tasks = q.rows
+  const loading = q.loading
+  // `q.reload` is stable for a given query, so this stays a safe effect dep.
+  const reload = q.reload
+  const load = React.useCallback(() => { void reload({ bypassCache: true }) }, [reload])
+  // C-1: the tab badges are the server's facet counts over the SAME `where` as
+  // the rows — never the length of what this page happened to fetch.
+  const facets = (q.extra.facets ?? null) as { damage: number; overdue: number; active: number; completed: number } | null
   const [selected, setSelected] = React.useState<MaintenanceTask | null>(null)
   const [draft, setDraft] = React.useState<Draft | null>(null)
   const [saving, setSaving] = React.useState(false)
@@ -224,19 +242,6 @@ export default function AdminMaintenancePage() {
     }
   }
 
-  const load = React.useCallback(async () => {
-    setLoading(true)
-    try {
-      const res = await fetch('/api/maintenance')
-      const json = await res.json()
-      setTasks(json.data ?? [])
-    } catch {
-      showToast({ message: 'Could not load maintenance tasks.', severity: 'error' })
-    } finally {
-      setLoading(false)
-    }
-  }, [showToast])
-
   const loadLinks = React.useCallback(async () => {
     try {
       const res = await fetch('/api/status-links?type=WORK_ORDER')
@@ -253,7 +258,7 @@ export default function AdminMaintenancePage() {
   }, [])
 
   React.useEffect(() => {
-    load()
+    // No `load()` here — useListQuery owns the task read and fetches on mount.
     loadLinks()
     loadInoperable()
     fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(Array.isArray(d) ? d : (d?.data ?? []))).catch(() => {})
@@ -263,16 +268,38 @@ export default function AdminMaintenancePage() {
       .then((d: { id: string; label: string | null; operator?: { name: string | null } | null }[]) =>
         setActiveRigs((Array.isArray(d) ? d : []).map((r) => ({ id: r.id, label: r.label ?? 'Deployment', operatorName: r.operator?.name ?? null }))))
       .catch(() => {})
-  }, [load, loadLinks, loadInoperable])
+  }, [loadLinks, loadInoperable])
+
+  const listError = q.error
+  React.useEffect(() => {
+    if (listError) showToast({ message: listError, severity: 'error' })
+  }, [listError, showToast])
 
   // Deep link from a dashboard alert (?task=<id>) auto-opens that task once.
+  // PR-1a (U-4/P-11): fetched by id through the new `GET /api/maintenance/[id]`,
+  // so it opens whatever page or tab the task lives on. It used to search the one
+  // page of rows this screen had loaded — past 25 tasks the link was a dead end
+  // that silently did nothing. A closed-or-deleted task now says so.
   React.useEffect(() => {
-    if (autoOpenedRef.current || tasks.length === 0) return
+    if (autoOpenedRef.current) return
     const taskId = new URLSearchParams(window.location.search).get('task')
-    if (!taskId) { autoOpenedRef.current = true; return }
-    const t = tasks.find((x) => x.id === taskId)
-    if (t) { openTask(t); autoOpenedRef.current = true }
-  }, [tasks])
+    autoOpenedRef.current = true
+    if (!taskId) return
+    void (async () => {
+      try {
+        const res = await fetch(`/api/maintenance/${taskId}`)
+        if (!res.ok) {
+          showToast({ message: 'That repair is closed or no longer exists.', severity: 'info' })
+          return
+        }
+        const json = await res.json()
+        if (json?.data) openTask(json.data as MaintenanceTask)
+      } catch {
+        showToast({ message: 'Could not open that repair. Check your connection.', severity: 'error' })
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once on mount
+  }, [])
 
   // UXP-6 (6b): `?sched=vehicle:<id>` (the vehicle drawer's Setup block → "Service
   // schedules · Add") opens the Add-scheduled-task dialog prefilled with that vehicle —
@@ -284,21 +311,9 @@ export default function AdminMaintenancePage() {
     if (m) void openSched({ subject: m[1] as 'vehicle' | 'item', id: m[2] })
   }, [])
 
-  const counts = React.useMemo(() => ({
-    damage: tasks.filter((t) => t.isDamageReport && t.status !== 'COMPLETED').length,
-    overdue: tasks.filter((t) => t.status === 'OVERDUE').length,
-    active: tasks.filter((t) => t.status === 'IN_PROGRESS').length,
-  }), [tasks])
-
-  const visible = React.useMemo(() => tasks.filter((t) => {
-    switch (filter) {
-      case 'damage': return t.isDamageReport && t.status !== 'COMPLETED'
-      case 'overdue': return t.status === 'OVERDUE'
-      case 'active': return t.status === 'IN_PROGRESS'
-      case 'completed': return t.status === 'COMPLETED'
-      default: return true
-    }
-  }), [tasks, filter])
+  // The rows ARE the tab — the server filtered them. No client re-filtering, which
+  // is what made the tabs show a subset of a subset.
+  const visible = tasks
 
   function openTask(t: MaintenanceTask) {
     setSelected(t)
@@ -336,8 +351,10 @@ export default function AdminMaintenancePage() {
       }
       const d = await res.json()
       const updated: MaintenanceTask = { ...(selected as MaintenanceTask), ...d.data }
-      setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...d.data } : t)))
       setSelected((s) => (s && s.id === id ? updated : s))
+      // The rows and the tab counts are server-owned; refetch rather than splice,
+      // so a status change that moves the task to another tab is reflected.
+      load()
       showToast({ message: successMsg, severity: 'success' })
       return true
     } catch {
@@ -415,8 +432,8 @@ export default function AdminMaintenancePage() {
         return
       }
       const d = await res.json()
-      setTasks((prev) => prev.map((x) => (x.id === t.id ? { ...x, ...d.data } : x)))
       setSelected((s) => (s && s.id === t.id ? { ...s, ...d.data } : s))
+      load()
       setCompletionOdo('')
       showToast({
         message: t.isDamageReport
@@ -591,17 +608,38 @@ export default function AdminMaintenancePage() {
         </Paper>
       )}
 
-      <Tabs value={filter} onChange={(_, v) => setFilter(v)} sx={{ mb: 2 }} variant="scrollable" allowScrollButtonsMobile>
-        <Tab value="damage" label={<Stack direction="row" spacing={1} alignItems="center"><span>Damage reports</span>{counts.damage > 0 && <Chip size="small" color="error" label={counts.damage} />}</Stack>} />
-        <Tab value="overdue" label={<Stack direction="row" spacing={1} alignItems="center"><span>Overdue</span>{counts.overdue > 0 && <Chip size="small" color="warning" label={counts.overdue} />}</Stack>} />
-        <Tab value="active" label={`In progress${counts.active ? ` (${counts.active})` : ''}`} />
-        <Tab value="completed" label="Completed" />
+      {/* C-1: the badges are the server's facet counts over the same `where` as the
+          rows, so a tab's number and its row count cannot disagree. Changing tab
+          re-reads the server and goes back to page 1. */}
+      <Tabs
+        value={filter}
+        onChange={(_, v: FilterKey) => { setFilter(v); q.setPage(0) }}
+        sx={{ mb: 2 }}
+        variant="scrollable"
+        allowScrollButtonsMobile
+      >
+        <Tab value="damage" label={<Stack direction="row" spacing={1} alignItems="center"><span>Damage reports</span>{!!facets && facets.damage > 0 && <Chip size="small" color="error" label={facets.damage} />}</Stack>} />
+        <Tab value="overdue" label={<Stack direction="row" spacing={1} alignItems="center"><span>Overdue</span>{!!facets && facets.overdue > 0 && <Chip size="small" color="warning" label={facets.overdue} />}</Stack>} />
+        <Tab value="active" label={`In progress${facets && facets.active ? ` (${facets.active})` : ''}`} />
+        <Tab value="completed" label={`Completed${facets && facets.completed ? ` (${facets.completed})` : ''}`} />
         <Tab value="all" label="All" />
       </Tabs>
 
-      <TableContainer component={Paper} variant="outlined">
-        <Table size="small">
-          <TableHead>
+      <PagedTable
+        colSpan={9}
+        total={q.total}
+        page={q.page}
+        pageSize={q.pageSize}
+        truncated={q.truncated}
+        loading={loading}
+        onPageChange={q.setPage}
+        onPageSizeChange={q.setPageSize}
+        itemNoun="repairs"
+        skeletonRows={4}
+        emptyMessage={filter === 'damage'
+          ? 'No open damage reports. Field-reported damage will appear here.'
+          : 'Nothing here right now.'}
+        head={
             <TableRow>
               <TableCell>Subject</TableCell>
               <TableCell>Task</TableCell>
@@ -613,21 +651,9 @@ export default function AdminMaintenancePage() {
               <TableCell>Work order</TableCell>
               <TableCell align="right">Cost</TableCell>
             </TableRow>
-          </TableHead>
-          <TableBody>
-            {loading && Array.from({ length: 4 }).map((_, i) => (
-              <TableRow key={i}><TableCell colSpan={9}><Skeleton height={28} /></TableCell></TableRow>
-            ))}
-            {!loading && visible.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={9}>
-                  <Typography color="text.secondary" align="center" py={4}>
-                    {filter === 'damage' ? 'No open damage reports. Field-reported damage will appear here.' : 'Nothing here right now.'}
-                  </Typography>
-                </TableCell>
-              </TableRow>
-            )}
-            {!loading && visible.map((t) => (
+        }
+      >
+            {visible.map((t) => (
               <TableRow key={t.id} hover sx={{ cursor: 'pointer' }} onClick={() => openTask(t)}>
                 <TableCell>
                   <Typography variant="body2" fontWeight={600}>{t.item?.name ?? t.vehicle?.name ?? '—'}</Typography>
@@ -660,9 +686,7 @@ export default function AdminMaintenancePage() {
                 <TableCell align="right"><Typography variant="body2">{fmtMoney(t.actualCost ?? t.estimatedCost)}</Typography></TableCell>
               </TableRow>
             ))}
-          </TableBody>
-        </Table>
-      </TableContainer>
+      </PagedTable>
 
       <DetailDrawer open={!!selected} onClose={closeDrawer} width={460} paperSx={{ p: 0 }}>
         {selected && draft && (
