@@ -38,6 +38,7 @@ import { useCanEdit, EditGuard, MutationButton, MutationIconButton } from '@/com
 import { ConditionSelect } from '@/components/shared/ConditionSelect'
 import { useToast } from '@/components/shared/useToast'
 import { apiErrorMessage } from '@/lib/api-error-shape'
+import { fetchPickerOptions } from '@/lib/inventory-options'
 import { useUrlFilters } from '@/hooks/useUrlFilters'
 import {
   RentalVehicleForm, rentalFieldsToVehiclePayload, isRentalFormValid,
@@ -1177,33 +1178,13 @@ function DeploymentDrawer({
 // back-button correct). Module scope so the useUrlFilters setter stays referentially stable.
 const DEPLOYMENT_FILTER_DEFAULTS = { ended: '', operatorId: '', projectId: '' }
 
-type RawUnit = { id: string; serialNumber: string | null; status?: string; position?: number }
-
 /**
- * UXP-6 (6d, T8): the pickers' unit labels come from the API's own `availableUnits`
- * (position among ALL of the item's units — the number the inventory drawer shows).
- * The old client recount over AVAILABLE units alone relabelled "Unit 3" as "Unit 1"
- * whenever Units 1–2 were out. `units` is only a fallback for a response without it.
+ * PR-1b: `toInventoryOptions` lived here — it recounted AVAILABLE units out of a
+ * capped page and renumbered their positions client-side. Both jobs moved to
+ * `GET /api/inventory?mode=options` (which computes positions over ALL of an
+ * item's units, the UXP-6 6d/T8 rule) and `toPickerOptions`. Deleted rather than
+ * left unused: a second normaliser is a second place for the rule to drift.
  */
-function toInventoryOptions(body: unknown): InventoryOption[] {
-  const rows = (body as { data?: unknown[] } | null)?.data
-  if (!Array.isArray(rows)) return []
-  return rows.map((raw) => {
-    const item = raw as InventoryOption & { units?: RawUnit[]; availableUnits?: RawUnit[] }
-    const available = Array.isArray(item.availableUnits)
-      ? item.availableUnits
-      : (item.units ?? []).filter((u) => u.status === 'AVAILABLE')
-    return {
-      ...item,
-      availableUnits: available.map((u, idx) => ({
-        id: u.id,
-        serialNumber: u.serialNumber ?? null,
-        position: typeof u.position === 'number' ? u.position : idx + 1,
-      })),
-    }
-  })
-}
-
 function toVehicleOptions(body: unknown): VehicleOption[] {
   const rows = (body as { data?: unknown } | null)?.data ?? body
   return Array.isArray(rows) ? (rows as VehicleOption[]) : []
@@ -1245,6 +1226,11 @@ function AdminDeploymentsContent() {
   const filterOperator = filters.operatorId
   const filterProject = filters.projectId
   const [operators, setOperators] = React.useState<OperatorRow[]>([])
+  // PR-1b: the picker set is complete unless the server hit its ceiling (then the
+  // builder searches the server) or the read failed (then it offers a retry rather
+  // than an empty list that looks like an empty catalog all session — L-16).
+  const [itemsTruncated, setItemsTruncated] = React.useState(false)
+  const [pickersFailed, setPickersFailed] = React.useState(false)
   const [projects, setProjects] = React.useState<{ id: string; name: string }[]>([])
   const [vehicles, setVehicles] = React.useState<VehicleOption[]>([])
   const [inventoryItems, setInventoryItems] = React.useState<InventoryOption[]>([])
@@ -1298,33 +1284,46 @@ function AdminDeploymentsContent() {
   // what comes back) and after every drawer mutation — so a second deployment in one
   // sitting never offers a unit or vehicle the first one just took. Returns the fresh
   // lists (null when either read failed) because the 409 recovery needs them
-  // synchronously, not on a later render. `pageSize=100` is the server's clamp
-  // (parsePagination maxSize) — asking for more only pretends to cover a catalog
-  // this read cannot see, and the 409 diff would then report an item beyond #100
-  // as "taken".
+  // synchronously, not on a later render.
+  //
+  // PR-1b (L-2): `?mode=options` replaces `?pageSize=100`. That clamp was the bug,
+  // twice over — item 101 onward could not be picked at all, AND the 409 diff then
+  // reported it as "taken", because the diff compared the builder's picks against
+  // a list that never contained it. `mode=options` is the complete pickable set.
   const refetchPickers = React.useCallback(async (): Promise<PickerData | null> => {
     try {
-      const [vRes, iRes] = await Promise.all([fetch('/api/vehicles'), fetch('/api/inventory?pageSize=100')])
-      if (!vRes.ok || !iRes.ok) return null
+      const [vRes, picker] = await Promise.all([fetch('/api/vehicles'), fetchPickerOptions()])
+      if (!vRes.ok || picker.failed) { setPickersFailed(true); return null }
       const fresh: PickerData = {
         vehicles: toVehicleOptions(await vRes.json()),
-        inventoryItems: toInventoryOptions(await iRes.json()),
+        inventoryItems: picker.options as unknown as InventoryOption[],
       }
       setVehicles(fresh.vehicles)
       setInventoryItems(fresh.inventoryItems)
+      setItemsTruncated(picker.truncated)
+      setPickersFailed(false)
       return fresh
     } catch {
+      setPickersFailed(true)
       return null
     }
   }, [])
 
   React.useEffect(() => {
-    fetch('/api/users').then((r) => r.json()).then((d) => setOperators(d.data ?? [])).catch(() => {})
+    // PR-1b (L-7, picker half): `/api/operators` — active people only. `/api/users`
+    // returns DEACTIVATED accounts too, so Start Deployment and add-secondary were
+    // offering operators who can no longer sign in. (The server guard that refuses
+    // such a write is PR-3b; this stops offering them.)
+    fetch('/api/operators').then((r) => r.json()).then((d) => setOperators(d.data ?? [])).catch(() => {})
     fetch('/api/projects').then((r) => r.json()).then((d) => setProjects(d.data ?? d ?? [])).catch(() => {})
     // Same normalisers as refetchPickers (T8 positions from the API) — kept as
     // `.then` chains here so the mount read is not a synchronous setState-in-effect.
     fetch('/api/vehicles').then((r) => r.json()).then((d) => setVehicles(toVehicleOptions(d))).catch(() => {})
-    fetch('/api/inventory?pageSize=100').then((r) => r.json()).then((d) => setInventoryItems(toInventoryOptions(d))).catch(() => {})
+    fetchPickerOptions().then((pk) => {
+      if (pk.failed) { setPickersFailed(true); return }
+      setInventoryItems(pk.options as unknown as InventoryOption[])
+      setItemsTruncated(pk.truncated)
+    })
     fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(Array.isArray(d) ? d : (d?.data ?? []))).catch(() => {})
   }, [])
 

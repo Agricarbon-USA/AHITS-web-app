@@ -30,6 +30,7 @@ vi.mock('next/navigation', () => ({
 
 import { NewDeploymentDialog, dropUnavailablePicks, droppedPicksMessage, hubLabel, type PickerData } from '@/components/admin/NewDeploymentDialog'
 import AdminDeploymentsPage from '@/app/(admin)/admin/deployments/page'
+import { toPickerOptions } from '@/lib/inventory-options'
 
 // ── Fixtures ──────────────────────────────────────────────────────
 
@@ -47,27 +48,44 @@ const HUBS = [
 ]
 const PROJECTS = [{ id: 'p1', name: 'TX Soil' }]
 const NO_UNITS = { available: 0, checkedOut: 0, inMaintenance: 0, inoperable: 0, retired: 0, totalUnits: 0 }
-const INVENTORY = [
+// PR-1b: the pickers read `GET /api/inventory?mode=options` — the COMPLETE
+// pickable set — instead of `?pageSize=100`, which clamped the catalog at 100 and
+// made item 101 unpickable.
+//
+// `INVENTORY_OPTIONS` is that WIRE shape; `INVENTORY` is the PROP shape the
+// dialog renders, derived from it through the real `toPickerOptions`. Deriving
+// rather than hand-writing both means the adapter is exercised here and the two
+// fixtures cannot drift apart. The T8 position still comes from the server
+// (`pickableUnits[].position`) — the client no longer recounts, which is what the
+// "Unit 3, not Unit 1" assertion below is really checking.
+const INVENTORY_OPTIONS = [
   {
-    id: 'i-bags', name: 'Sample bags', itemType: 'CONSUMABLE' as const, quantity: 40,
-    unitCounts: NO_UNITS, availableUnits: [], category: { id: 'c1', name: 'Sampling' },
+    id: 'i-bags', name: 'Sample bags', itemType: 'CONSUMABLE' as const,
+    categoryId: 'c1', categoryName: 'Sampling',
+    pickableUnits: [], availableQuantity: 40,
+    availableByHub: [{ hubId: 'h1', hubName: 'Toledo Hub', quantity: 40, reservedQty: 0, available: 40 }],
   },
   {
-    id: 'i-gps', name: 'GPS unit', itemType: 'SERIALIZED' as const, quantity: 2,
-    unitCounts: { ...NO_UNITS, available: 1, checkedOut: 1, totalUnits: 2 },
-    availableUnits: [{ id: 'unit-7', serialNumber: 'GPS-007', position: 1 }], category: { id: 'c2', name: 'Instruments' },
+    id: 'i-gps', name: 'GPS unit', itemType: 'SERIALIZED' as const,
+    categoryId: 'c2', categoryName: 'Instruments',
+    pickableUnits: [{ id: 'unit-7', serialNumber: 'GPS-007', qrCodeId: 'qr-7', status: 'AVAILABLE', position: 1 }],
+    availableQuantity: 0, availableByHub: [],
   },
   {
-    // Units 1–2 are out; the API says the free one is position 3 (T8).
-    id: 'i-corer', name: 'Corer', itemType: 'SERIALIZED' as const, quantity: 3,
-    unitCounts: { ...NO_UNITS, available: 1, checkedOut: 2, totalUnits: 3 },
-    availableUnits: [{ id: 'unit-c3', serialNumber: null, position: 3 }], category: { id: 'c2', name: 'Instruments' },
+    // Units 1–2 are out; the SERVER says the free one is position 3 (T8).
+    id: 'i-corer', name: 'Corer', itemType: 'SERIALIZED' as const,
+    categoryId: 'c2', categoryName: 'Instruments',
+    pickableUnits: [{ id: 'unit-c3', serialNumber: null, qrCodeId: 'qr-c3', status: 'AVAILABLE', position: 3 }],
+    availableQuantity: 0, availableByHub: [],
   },
 ]
 /** Fresh availability after someone else took Corer Unit 3. */
-const INVENTORY_WITHOUT_CORER = INVENTORY.map((i) =>
-  i.id === 'i-corer' ? { ...i, unitCounts: { ...i.unitCounts, available: 0, checkedOut: 3 }, availableUnits: [] } : i,
+const INVENTORY_OPTIONS_WITHOUT_CORER = INVENTORY_OPTIONS.map((i) =>
+  i.id === 'i-corer' ? { ...i, pickableUnits: [] } : i,
 )
+
+const INVENTORY = toPickerOptions({ data: INVENTORY_OPTIONS }).options
+const INVENTORY_WITHOUT_CORER = toPickerOptions({ data: INVENTORY_OPTIONS_WITHOUT_CORER }).options
 const CREATED_RIG = {
   id: 'rig-2', label: null, startedAt: '2026-09-03T10:00:00Z', endedAt: null,
   operator: { id: 'u2', name: 'Op Two' }, project: null, vehicles: [], kits: [{ id: 'k2', items: [] }], secondaryOperators: [],
@@ -403,15 +421,8 @@ const RIG_ONE = {
   operator: { id: 'u1', name: 'Op One' }, project: null, vehicles: [], kits: [{ id: 'k1', items: [] }], secondaryOperators: [],
 }
 
-/** The inventory API row: `units` (with two out) AND the API's own `availableUnits`. */
-const INVENTORY_API = INVENTORY.map((i) => i.id === 'i-corer' ? {
-  ...i,
-  units: [
-    { id: 'unit-c1', serialNumber: null, status: 'CHECKED_OUT', position: 1 },
-    { id: 'unit-c2', serialNumber: null, status: 'CHECKED_OUT', position: 2 },
-    { id: 'unit-c3', serialNumber: null, status: 'AVAILABLE', position: 3 },
-  ],
-} : i)
+/** What the stubbed endpoint returns — the wire shape, not the prop shape. */
+const INVENTORY_API = INVENTORY_OPTIONS
 
 function stubPage(opts: { addItems?: { status: number; body: unknown } } = {}) {
   const calls: string[] = []
@@ -434,7 +445,11 @@ function stubPage(opts: { addItems?: { status: number; body: unknown } } = {}) {
     if (url.startsWith('/api/deployments/') && url.endsWith('/history')) return jsonRes({ data: [] })
     if (url.startsWith('/api/deployments?')) return jsonRes([RIG_ONE])
     if (url.startsWith('/api/transfers')) return jsonRes([])
-    if (url === '/api/users') return jsonRes({ data: OPERATORS })
+    // PR-1b (L-7): the deployment pickers read /api/operators (ACTIVE people only);
+    // /api/users also returns deactivated accounts. Both are stubbed so a
+    // regression back to /api/users would still be caught by the assertion below.
+    if (url === '/api/operators') return jsonRes({ data: OPERATORS })
+    if (url === '/api/users') return jsonRes({ data: [] })
     if (url === '/api/projects') return jsonRes({ data: PROJECTS })
     if (url === '/api/vehicles') return jsonRes({ data: VEHICLES })
     if (url.startsWith('/api/inventory')) return jsonRes({ data: INVENTORY_API })
