@@ -1554,7 +1554,15 @@ function AdminInventoryContent() {
         </MutationButton>
       </Stack>
 
-      {/* Filters */}
+      {/* Filters.
+          PR-1a: a URL-backed filter change calls `setFilters` and NOTHING ELSE —
+          the `page: ''` in the patch clears the page key in that one
+          history-replace, and `useListQuery` zeroes its own page when the filter
+          set changes. Adding `setPage(0)` here would issue a SECOND
+          `router.replace`, built from a `window.location` Next has not committed
+          yet, which lands last and silently reverts the filter. The two
+          component-state filters below (search, Show retired) have no competing
+          replace, so they call `setPage(0)` to clear a stale `?page=`. */}
       <Stack direction="row" spacing={2} mb={2} alignItems="center" flexWrap="wrap" useFlexGap>
         <TextField
           size="small"
@@ -1568,7 +1576,7 @@ function AdminInventoryContent() {
             <Chip
               key={type || 'all'}
               label={type === '' ? 'All' : type === 'CONSUMABLE' ? 'Consumables' : 'Serialized'}
-              onClick={() => { setFilters({ itemType: type, page: '' }); setPage(0) }}
+              onClick={() => setFilters({ itemType: type, page: '' })}
               color={itemTypeFilter === type ? 'primary' : 'default'}
               variant={itemTypeFilter === type ? 'filled' : 'outlined'}
               size="small"
@@ -1582,7 +1590,7 @@ function AdminInventoryContent() {
             size="small"
             label="Category"
             value={categoryFilter}
-            onChange={(e) => { setFilters({ categoryId: e.target.value, page: '' }); setPage(0) }}
+            onChange={(e) => setFilters({ categoryId: e.target.value, page: '' })}
             sx={{ width: 200 }}
           >
             <MenuItem value="">All categories</MenuItem>
@@ -1595,7 +1603,7 @@ function AdminInventoryContent() {
             size="small"
             label="Hub"
             value={hubFilter}
-            onChange={(e) => { setFilters({ hubId: e.target.value, page: '' }); setPage(0) }}
+            onChange={(e) => setFilters({ hubId: e.target.value, page: '' })}
             sx={{ width: 180 }}
           >
             <MenuItem value="">All hubs</MenuItem>
@@ -1608,7 +1616,7 @@ function AdminInventoryContent() {
             size="small"
             label="Operator"
             value={operatorFilter}
-            onChange={(e) => { setFilters({ operatorId: e.target.value, page: '' }); setPage(0) }}
+            onChange={(e) => setFilters({ operatorId: e.target.value, page: '' })}
             sx={{ width: 180 }}
           >
             <MenuItem value="">All operators</MenuItem>
@@ -1621,7 +1629,7 @@ function AdminInventoryContent() {
             size="small"
             label="Project"
             value={projectFilter}
-            onChange={(e) => { setFilters({ projectId: e.target.value, page: '' }); setPage(0) }}
+            onChange={(e) => setFilters({ projectId: e.target.value, page: '' })}
             sx={{ width: 180 }}
           >
             <MenuItem value="">All projects</MenuItem>
@@ -1645,7 +1653,6 @@ function AdminInventoryContent() {
           <Button size="small" variant="text" onClick={() => {
             setSearch('')
             setFilters({ categoryId: '', itemType: '', hubId: '', operatorId: '', projectId: '', page: '' })
-            setPage(0)
           }}>Clear filters</Button>
         )}
       </Stack>

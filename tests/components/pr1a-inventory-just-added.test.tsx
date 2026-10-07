@@ -19,8 +19,9 @@ import { ToastProvider } from '@/components/shared/useToast'
 //  - the row **Retire** action is HIDDEN, not a no-op: retiring an item writes a
 //    flag nothing reads today (B1/U-1) and the semantics land in PR-3b.
 
+const replace = vi.fn()
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
+  useRouter: () => ({ replace, push: vi.fn() }),
   usePathname: () => '/admin/inventory',
   useSearchParams: () => new URLSearchParams(),
 }))
@@ -70,6 +71,8 @@ function mockFetch() {
 }
 
 beforeEach(() => {
+  replace.mockClear()
+  window.history.replaceState({}, '', '/admin/inventory')
   listUrls.length = 0
   listRows = [row('i-1', 'Manual Corer')]
   listTotal = 160
@@ -139,6 +142,32 @@ describe('PR-1a · Inventory list truth', () => {
     fireEvent.change(screen.getByPlaceholderText('Search items…'), { target: { value: 'corer' } })
     await waitFor(() => expect(lastListUrl()).toContain('q=corer'), { timeout: 2000 })
     await waitFor(() => expect(screen.queryByText('Just added')).not.toBeInTheDocument())
+  })
+
+  it('changes a URL-backed filter with exactly ONE history replace, even from a deep page', async () => {
+    // The regression guard for a bug PR-1a introduced and this test now pins.
+    // `setFilters` issues a `router.replace` built from `searchParams` + the
+    // patch; a second `setPage(0)` issued the same tick builds ITS replace from a
+    // `window.location` Next has not committed yet. The second lands last,
+    // carrying the OLD filters — so picking a category silently did nothing and
+    // the list came back unfiltered. Starting at `?page=3` is what makes the
+    // second replace differ from the current URL and therefore actually fire, so
+    // this is the case that reproduces it.
+    window.history.replaceState({}, '', '/admin/inventory?page=3')
+    await renderPage()
+    expect(lastListUrl()).toContain('page=3')
+
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: /Category/ }))
+    fireEvent.click(await screen.findByRole('option', { name: 'Sampling' }))
+
+    await waitFor(() => expect(replace).toHaveBeenCalledTimes(1))
+    const [url] = replace.mock.calls[0]!
+    expect(String(url)).toContain('categoryId=c1')
+    expect(String(url)).not.toContain('page=')
+    // (The refetch under the new filter is not assertable here: this harness
+    // mocks `useSearchParams` statically, so `useUrlFilters` — for which the URL
+    // is the source of truth — never sees the patch. The replace is the only
+    // observable, and it is the one that was wrong.)
   })
 
   it('offers no row-level Retire while retiring an item does nothing (B1) — Edit stays', async () => {

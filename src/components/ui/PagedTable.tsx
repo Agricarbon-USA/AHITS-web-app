@@ -103,7 +103,11 @@ export function PagedTable({
         }}
       >
         <Box>
-          <Typography variant="caption" color="text.secondary">{caption}</Typography>
+          {/* `total` is 0 until the first response lands, so captioning during
+              that load would print "No rows to show" under the skeletons. */}
+          <Typography variant="caption" color="text.secondary">
+            {loading && total === 0 ? 'Loading…' : caption}
+          </Typography>
           {showTruncationNote && (
             <Typography variant="caption" color="warning.main" display="block">
               This list is capped — not every matching row is shown. Narrow the filters to see the rest.

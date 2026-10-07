@@ -118,6 +118,10 @@ export function useListQuery<T = unknown>(opts: ListQueryOptions): ListQueryResu
       if (next <= 0) search.delete(pageParam)
       else search.set(pageParam, String(next + 1))
       const qs = search.toString()
+      // No-op when the URL already says this. Without the guard, a caller that
+      // calls `setPage(0)` on every keystroke issues a replace per keystroke,
+      // and a redundant replace is one more chance to race a caller's own.
+      if (qs === new URLSearchParams(window.location.search).toString()) return
       router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
     },
     [pathname, router, pageParam],
