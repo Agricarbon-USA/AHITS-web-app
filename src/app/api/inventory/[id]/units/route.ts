@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
-import { computeUnitCounts, withPositions } from '@/lib/inventory'
+import { computeUnitCounts, itemCounts, withPositions } from '@/lib/inventory'
 
 const bodySchema = z.object({
   count: z.number().int().min(1).max(200).default(1),
@@ -56,7 +56,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     })
 
     return NextResponse.json(
-      { data: { units: withPositions(units), unitCounts: computeUnitCounts(units) } },
+      {
+        data: {
+          units: withPositions(units),
+          unitCounts: computeUnitCounts(units),
+          itemCounts: itemCounts({ itemType: 'SERIALIZED', quantity: 0, units }),
+        },
+      },
       { status: 201 },
     )
   } catch (err: unknown) {

@@ -40,7 +40,8 @@ interface ProjectRow {
   sizeHa: number | null
   sampleCount: number | null
   lead: { id: string; name: string } | null
-  _count?: { rigs: number }
+  /** PR-2 (C-12): active deployments, counted server-side via deployment_projects. */
+  activeDeployments?: number
 }
 
 interface ProjectDetail extends ProjectRow {
@@ -108,8 +109,6 @@ export default function AdminProjectsPage() {
     }
   }
 
-  const activeRigs = (p: ProjectDetail) => p.rigs.filter((r) => !r.endedAt).length
-
   return (
     <Box>
       <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1} mb={2}>
@@ -159,7 +158,7 @@ export default function AdminProjectsPage() {
                     <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{p.sampleCount ?? '—'}</TableCell>
                     <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>{p.startDate || p.endDate ? `${fmt(p.startDate)} – ${fmt(p.endDate)}` : '—'}</TableCell>
                     <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>{p.lead?.name ?? '—'}</TableCell>
-                    <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }} align="right">{p._count?.rigs ?? 0}</TableCell>
+                    <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }} align="right">{p.activeDeployments ?? 0}</TableCell>
                     <TableCell align="right" onClick={(e) => e.stopPropagation()}>
                       <MutationIconButton size="small" tooltip="Edit" onClick={() => { setEditing(p); setFormOpen(true) }}><EditIcon fontSize="small" /></MutationIconButton>
                       <MutationIconButton size="small" tooltip="Delete" onClick={() => setConfirmDelete(p)}><DeleteIcon fontSize="small" /></MutationIconButton>
@@ -200,7 +199,7 @@ export default function AdminProjectsPage() {
             <Divider />
             <Box>
               <Typography variant="subtitle2" gutterBottom>
-                Deployments ({detail.rigs.length}{detail.rigs.length > 0 ? ` · ${activeRigs(detail)} active` : ''})
+                Deployments ({detail.rigs.length}{(detail.activeDeployments ?? 0) > 0 ? ` · ${detail.activeDeployments} active` : ''})
               </Typography>
               {detail.rigs.length === 0 ? (
                 <Typography variant="body2" color="text.secondary">No deployments assigned to this project yet.</Typography>

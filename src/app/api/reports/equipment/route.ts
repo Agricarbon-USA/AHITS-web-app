@@ -12,6 +12,16 @@ import { requireAdmin } from '@/lib/auth/session'
 //   downtimeDays     — days a damage/repair task held the asset out of service
 //
 // Read-only aggregation; admin-only. `?format=csv` streams a CSV download.
+//
+// PR-2 (C-8, D-b) — two populations, on purpose:
+//   • the ROWS, `assetCount` and `avgUtilizationPct` are over assets still in the
+//     fleet (LIVE_VEHICLE / ACTIVE_UNIT): a retired or deleted asset is not
+//     "an asset" any more and must not drag utilization down;
+//   • the MONEY and event totals (`totalMaintenanceSpend`, events, downtime,
+//     rental cost) are over EVERY asset, retired and deleted included — repair
+//     spend on gear that was later retired is still money spent, and is the
+//     number the 25% repair-spend metric is measured against.
+// Soft-deleted tasks count nowhere.
 
 const MS_PER_DAY = 86_400_000
 
@@ -86,8 +96,35 @@ function rentalCostInWindow(
   return perDay * days
 }
 
-function maintInWindow(t: { createdAt: Date; completedAt: Date | null }, from: Date, to: Date): boolean {
-  return t.createdAt.getTime() <= to.getTime() && (t.completedAt == null || t.completedAt.getTime() >= from.getTime())
+interface TaskForWindow {
+  createdAt: Date
+  completedAt: Date | null
+  lastCompleted: Date | null
+  isDamageReport: boolean
+}
+
+/**
+ * PR-2 (C-8): is this task a maintenance EVENT in the window?
+ *  - a damage report is an event while it overlaps the window (open repairs too);
+ *  - a scheduled task is an event only when it was actually done in the window.
+ *    The complete route rolls a schedule forward by nulling `completedAt` and
+ *    stamping `lastCompleted`, so the done-date is `completedAt ?? lastCompleted`.
+ *    A schedule that has never been done is not an event — it was being counted
+ *    as one (and as downtime) from the day it was created.
+ */
+function maintInWindow(t: TaskForWindow, from: Date, to: Date): boolean {
+  if (t.isDamageReport) {
+    return t.createdAt.getTime() <= to.getTime() && (t.completedAt == null || t.completedAt.getTime() >= from.getTime())
+  }
+  const done = t.completedAt ?? t.lastCompleted
+  return done != null && done.getTime() >= from.getTime() && done.getTime() <= to.getTime()
+}
+
+/** Downtime is damage-repair time only — a service schedule never holds an asset out. */
+function downtimeIn(tasks: ReadonlyArray<TaskForWindow>, from: Date, to: Date, now: Date): number {
+  return tasks
+    .filter((t) => t.isDamageReport)
+    .reduce((sum, t) => sum + overlapDays(t.createdAt, t.completedAt ?? now, from, to), 0)
 }
 
 function csvCell(v: string | number | null): string {
@@ -111,11 +148,17 @@ export async function GET(req: NextRequest) {
   }
   const windowDays = (to.getTime() - from.getTime()) / MS_PER_DAY
 
+  const taskSelect = {
+    where: { deletedAt: null },
+    select: { createdAt: true, completedAt: true, lastCompleted: true, actualCost: true, isDamageReport: true },
+  }
+  // Every vehicle (deleted ones too) and every non-deleted unit (retired too) —
+  // the spend population. `live` below picks the row population out of it.
   const [vehicles, units] = await Promise.all([
     prisma.vehicle.findMany({
       include: {
         rigVehicles: { select: { addedAt: true, removedAt: true } },
-        maintenanceTasks: { select: { createdAt: true, completedAt: true, actualCost: true, isDamageReport: true, status: true } },
+        maintenanceTasks: taskSelect,
       },
     }),
     prisma.inventoryUnit.findMany({
@@ -123,23 +166,23 @@ export async function GET(req: NextRequest) {
       include: {
         inventoryItem: { select: { name: true, category: true } },
         kitItems: { select: { addedAt: true, removedAt: true } },
-        maintenanceTasks: { select: { createdAt: true, completedAt: true, actualCost: true, isDamageReport: true, status: true } },
+        maintenanceTasks: taskSelect,
       },
     }),
   ])
 
-  const rows: ReportRow[] = []
+  const allRows: (ReportRow & { live: boolean })[] = []
 
   for (const v of vehicles) {
     const assignments = v.rigVehicles.filter((rv) => overlapDays(rv.addedAt, rv.removedAt ?? now, from, to) > 0)
     const daysDeployed = assignments.reduce((sum, rv) => sum + overlapDays(rv.addedAt, rv.removedAt ?? now, from, to), 0)
     const tasks = v.maintenanceTasks.filter((t) => maintInWindow(t, from, to))
     const maintenanceSpend = tasks.reduce((sum, t) => sum + dec(t.actualCost), 0)
-    const downtimeDays = tasks
-      .filter((t) => t.isDamageReport || t.status === 'IN_PROGRESS' || t.status === 'OVERDUE')
-      .reduce((sum, t) => sum + overlapDays(t.createdAt, t.completedAt ?? now, from, to), 0)
+    const downtimeDays = downtimeIn(tasks, from, to, now)
     const rentalCost = rentalCostInWindow(v, from, to, daysDeployed)
-    rows.push({
+    allRows.push({
+      // LIVE_VEHICLE, in memory.
+      live: v.deletedAt == null && v.status !== 'RETIRED',
       assetType: 'VEHICLE',
       id: v.id,
       name: v.name,
@@ -166,10 +209,10 @@ export async function GET(req: NextRequest) {
     const daysDeployed = assignments.reduce((sum, ki) => sum + overlapDays(ki.addedAt, ki.removedAt ?? now, from, to), 0)
     const tasks = u.maintenanceTasks.filter((t) => maintInWindow(t, from, to))
     const maintenanceSpend = tasks.reduce((sum, t) => sum + dec(t.actualCost), 0)
-    const downtimeDays = tasks
-      .filter((t) => t.isDamageReport || t.status === 'IN_PROGRESS' || t.status === 'OVERDUE')
-      .reduce((sum, t) => sum + overlapDays(t.createdAt, t.completedAt ?? now, from, to), 0)
-    rows.push({
+    const downtimeDays = downtimeIn(tasks, from, to, now)
+    allRows.push({
+      // ACTIVE_UNIT, in memory (the query already dropped deleted units).
+      live: u.status !== 'RETIRED',
       assetType: 'UNIT',
       id: u.id,
       name: u.inventoryItem.name,
@@ -189,6 +232,8 @@ export async function GET(req: NextRequest) {
     })
   }
 
+  const rows: ReportRow[] = allRows.filter((r) => r.live).map(({ live, ...r }) => { void live; return r })
+
   // Default ordering: biggest maintenance spend first (the headline signal).
   rows.sort((a, b) => b.maintenanceSpend - a.maintenanceSpend || b.utilizationPct - a.utilizationPct)
 
@@ -196,13 +241,15 @@ export async function GET(req: NextRequest) {
     windowDays: round(windowDays),
     from: from.toISOString(),
     to: to.toISOString(),
+    // Row population: assets still in the fleet.
     assetCount: rows.length,
-    totalMaintenanceSpend: round(rows.reduce((s, r) => s + r.maintenanceSpend, 0), 2),
-    totalMaintenanceEvents: rows.reduce((s, r) => s + r.maintenanceEvents, 0),
     avgUtilizationPct: rows.length ? round(rows.reduce((s, r) => s + r.utilizationPct, 0) / rows.length) : 0,
-    totalDowntimeDays: round(rows.reduce((s, r) => s + r.downtimeDays, 0)),
     rentalCount: rows.filter((r) => r.isRental).length,
-    totalRentalCost: round(rows.reduce((s, r) => s + r.rentalCost, 0), 2),
+    // Money/event population: every asset, retired and deleted included (D-b).
+    totalMaintenanceSpend: round(allRows.reduce((s, r) => s + r.maintenanceSpend, 0), 2),
+    totalMaintenanceEvents: allRows.reduce((s, r) => s + r.maintenanceEvents, 0),
+    totalDowntimeDays: round(allRows.reduce((s, r) => s + r.downtimeDays, 0)),
+    totalRentalCost: round(allRows.reduce((s, r) => s + r.rentalCost, 0), 2),
   }
 
   if (searchParams.get('format') === 'csv') {

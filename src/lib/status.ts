@@ -16,6 +16,10 @@ export const EQUIPMENT_STATUS: Record<string, StatusMeta> = {
   IN_MAINTENANCE: { label: 'In Maintenance', color: 'warning' },
   INOPERABLE: { label: 'Inoperable', color: 'error' },
   RETIRED: { label: 'Retired', color: 'default' },
+  // PR-2 (C-6/U-3/S-8, D-e): back at the hub, receipt not yet confirmed. Its own
+  // bucket and word — before this it rendered as the raw enum "IN_TRANSIT" and
+  // fell out of every count. Pickable only from PR-3a (D-n).
+  IN_TRANSIT: { label: 'Returning', color: 'info' },
 }
 
 // Vehicle status (VehicleStatus enum).

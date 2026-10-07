@@ -4,6 +4,7 @@ import { ProjectType, ProjectStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getDeploymentRostersForDisplay } from '@/lib/deployment-assignments'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
+import { countActiveDeploymentsForProjects } from '@/lib/project-associations'
 
 export async function GET(_: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAuth()
@@ -22,7 +23,11 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
   if (!project) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   // W0-10 PR-1: attach each rig's operator from the assignment roster, not Rig.operatorId.
   const projectRosters = await getDeploymentRostersForDisplay(project.rigs.map((r) => r.id))
-  const projectOut = { ...project, rigs: project.rigs.map((r) => ({ ...r, operator: projectRosters.get(r.id)?.operator ?? null })) }
+  // PR-2 (C-12): the active count is the list's number (via deployment_projects),
+  // so the drawer and the list can't disagree. The `rigs` history below still
+  // reads the legacy column (residual, listed in PR-2's body).
+  const activeDeployments = (await countActiveDeploymentsForProjects([id])).get(id) ?? 0
+  const projectOut = { ...project, activeDeployments, rigs: project.rigs.map((r) => ({ ...r, operator: projectRosters.get(r.id)?.operator ?? null })) }
   return NextResponse.json({ data: projectOut })
 }
 

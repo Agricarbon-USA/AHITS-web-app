@@ -23,7 +23,9 @@ import AdminInventoryPage from '@/app/(admin)/admin/inventory/page'
 
 const CATEGORIES = [{ id: 'c1', name: 'Sampling' }, { id: 'c2', name: 'Instruments' }]
 const HUBS = [{ id: 'h1', name: 'Toledo Hub', city: 'Toledo', state: 'OH' }]
-const UNIT_COUNTS = { totalUnits: 0, available: 0, checkedOut: 0, inMaintenance: 0, inoperable: 0, retired: 0 }
+const UNIT_COUNTS = { totalUnits: 0, available: 0, checkedOut: 0, inMaintenance: 0, inoperable: 0, inTransit: 0, retired: 0 }
+// PR-2: every inventory payload carries the server's itemCounts.
+const itemCountsOf = (n: number) => ({ owned: n, onHand: n, available: n, reserved: 0, out: 0, inMaintenance: 0, inoperable: 0, inTransit: 0, retired: 0 })
 
 const EXISTING = {
   id: 'i-1', name: 'Sample bags', category: { id: 'c1', name: 'Sampling' }, hub: HUBS[0],
@@ -31,11 +33,11 @@ const EXISTING = {
   notes: null, lowStockThreshold: null, itemType: 'CONSUMABLE', unitId: null, expectedQuantity: null,
   createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-01T00:00:00Z',
   currentOperator: null, currentProject: null, activeProjects: [], unitCounts: UNIT_COUNTS, units: [],
-  derivedQuantity: 40, availableQuantity: 40,
+  derivedQuantity: 40, availableQuantity: 40, itemCounts: itemCountsOf(40),
 }
 
 const detailFor = (id: string, name: string, itemType: string) => ({
-  ...EXISTING, id, name, itemType, supplier: null, unitCost: null, quantity: 0, derivedQuantity: 0, availableQuantity: 0,
+  ...EXISTING, id, name, itemType, supplier: null, unitCost: null, quantity: 0, derivedQuantity: 0, availableQuantity: 0, itemCounts: itemCountsOf(0),
   checkLogs: [], photos: [],
 })
 

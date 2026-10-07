@@ -4,6 +4,7 @@ import { VehicleType, VehicleStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getVehicleOperators } from '@/lib/deployment-assignments'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
+import { OPEN_TASK } from '@/lib/populations'
 import { writeOr404 } from '@/lib/api-errors'
 
 // Whitelist of admin-editable fields. Excludes id/createdAt/updatedAt and
@@ -49,7 +50,8 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
     where: { id, deletedAt: null },
     include: {
       dailyChecks: { orderBy: { date: 'desc' }, take: 10, include: { operator: true } },
-      maintenanceTasks: { orderBy: { nextDue: 'asc' } },
+      // PR-2 (C-11): open tasks only, so the drawer's count matches the list's.
+      maintenanceTasks: { where: OPEN_TASK, orderBy: [{ nextDue: 'asc' }, { id: 'asc' }] },
       photos: { orderBy: { takenAt: 'desc' }, take: 6 },
     },
   })

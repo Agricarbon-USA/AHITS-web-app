@@ -34,6 +34,7 @@ import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { PhotoGallery } from '@/components/shared/PhotoGallery'
 import { RepairReviewDialog } from '@/components/shared/RepairReviewDialog'
 import { EQUIPMENT_STATUS } from '@/lib/status'
+import type { ItemCounts } from '@/lib/inventory'
 import { useCanEdit, EditGuard, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 import { groupBy, formatDate } from '@/lib/utils'
 
@@ -76,6 +77,7 @@ interface UnitCounts {
   checkedOut: number
   inMaintenance: number
   inoperable: number
+  inTransit: number
   retired: number
 }
 
@@ -104,6 +106,8 @@ interface InventoryItemRow {
   currentProject: { id: string; name: string; location: string | null } | null
   activeProjects?: { id: string; name: string }[]
   unitCounts: UnitCounts
+  /** PR-2 (RC-3): the server's one set of numbers. Render these; never recount. */
+  itemCounts: ItemCounts
   units: UnitRow[]
   derivedQuantity: number
   availableQuantity: number
@@ -469,9 +473,10 @@ function ItemFormDialog({
               {isSerialized ? 'Total Units' : 'Total Stock'}
             </Typography>
             <Typography variant="body2">
+              {/* PR-2: `owned` — retired units excluded, consumable stock on rigs included. */}
               {isSerialized
-                ? `${item.unitCounts?.totalUnits ?? item.quantity ?? 0} (managed in Units tab)`
-                : `${item.quantity ?? 0} total (managed per hub — use Stock by Hub below)`}
+                ? `${item.itemCounts.owned} (managed in Units tab)`
+                : `${item.itemCounts.owned} total (managed per hub — use Stock by Hub below)`}
             </Typography>
           </Box>
         ) : isSerialized ? (
@@ -492,7 +497,9 @@ function ItemFormDialog({
           helperText={err('expectedQuantity') ?? 'How many of this item should exist in total? Used to spot shrinkage.'} />
         <TextField label="Low Stock Alert Threshold" type="number" value={values.lowStockThreshold} onChange={(e) => setField('lowStockThreshold', e.target.value)}
           fullWidth inputProps={{ min: 0 }} error={!!err('lowStockThreshold')}
-          helperText={err('lowStockThreshold') ?? 'Show a warning when available unit count falls to or below this number.'} />
+          helperText={err('lowStockThreshold') ?? (isSerialized
+            ? 'Alert when units available to pick, across all hubs, fall to or below this number.'
+            : 'Alert when on-hand stock at any one hub falls to or below this number.')} />
         <Accordion expanded={purchasingOpen} onChange={(_, expanded) => setPurchasingOpen(expanded)}>
           <AccordionSummary expandIcon={<ExpandMoreIcon />}>
             <Typography variant="body2">Purchasing Info</Typography>
@@ -1015,22 +1022,33 @@ function ItemDetailDrawer({
                   variant="outlined" color={detail.itemType === 'SERIALIZED' ? 'primary' : 'default'} sx={{ mt: 0.5 }} />
               </Box>
             </Stack>
-            {/* Unit count breakdown */}
+            {/* PR-2 (D-b): owned excludes retired; retired is its own number. */}
+            <Typography variant="body2" color="text.secondary" mt={0.5}>
+              {detail.itemCounts.retired > 0
+                ? `${detail.itemCounts.owned} owned · ${detail.itemCounts.retired} retired`
+                : `${detail.itemCounts.owned} owned`}
+            </Typography>
+            {/* Unit count breakdown — read from itemCounts, never recounted here. */}
             <Stack direction="row" spacing={0.5} flexWrap="wrap" mt={1}>
-              {detail.unitCounts.available > 0 && (
-                <Chip size="small" color="success" label={`${detail.unitCounts.available} Available`} />
+              {detail.itemCounts.available > 0 && (
+                <Chip size="small" color="success" label={`${detail.itemCounts.available} Available`} />
               )}
-              {detail.unitCounts.checkedOut > 0 && (
-                <Chip size="small" color="info" label={`${detail.unitCounts.checkedOut} Checked Out`} />
+              {detail.itemCounts.out > 0 && (
+                <Chip size="small" color="info" label={`${detail.itemCounts.out} Checked Out`} />
               )}
-              {detail.unitCounts.inMaintenance > 0 && (
-                <Chip size="small" color="warning" label={`${detail.unitCounts.inMaintenance} In Maintenance`} />
+              {detail.itemCounts.inTransit > 0 && (
+                // Outlined so "Returning" reads apart from "Checked Out" (same palette slot).
+                <Chip size="small" variant="outlined" color={EQUIPMENT_STATUS.IN_TRANSIT!.color}
+                  label={`${detail.itemCounts.inTransit} ${EQUIPMENT_STATUS.IN_TRANSIT!.label}`} />
               )}
-              {detail.unitCounts.inoperable > 0 && (
-                <Chip size="small" color="error" label={`${detail.unitCounts.inoperable} Inoperable`} />
+              {detail.itemCounts.inMaintenance > 0 && (
+                <Chip size="small" color="warning" label={`${detail.itemCounts.inMaintenance} In Maintenance`} />
               )}
-              {detail.unitCounts.retired > 0 && (
-                <Chip size="small" color="default" label={`${detail.unitCounts.retired} Retired`} />
+              {detail.itemCounts.inoperable > 0 && (
+                <Chip size="small" color="error" label={`${detail.itemCounts.inoperable} Inoperable`} />
+              )}
+              {detail.itemCounts.retired > 0 && (
+                <Chip size="small" color="default" label={`${detail.itemCounts.retired} Retired`} />
               )}
               {detail.unitCounts.totalUnits === 0 && (
                 <Chip size="small" color="default" label="No units" />
@@ -1040,7 +1058,10 @@ function ItemDetailDrawer({
 
           <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)} sx={{ px: 2, borderBottom: 1, borderColor: 'divider' }}>
             <Tab label="Info" />
-            <Tab label={`Units (${detail.unitCounts.totalUnits})`} />
+            {/* The Units tab lists every row, retired included — so it says how many are retired. */}
+            <Tab label={detail.itemCounts.retired > 0
+              ? `Units (${detail.unitCounts.totalUnits} · ${detail.itemCounts.retired} retired)`
+              : `Units (${detail.unitCounts.totalUnits})`} />
             <Tab label="History" />
           </Tabs>
 
@@ -1080,7 +1101,7 @@ function ItemDetailDrawer({
                   <Box>
                     <Typography variant="caption" color="text.secondary" fontWeight={600}>Total Units</Typography>
                     <Typography variant="body2">
-                      {detail.expectedQuantity != null ? `${detail.unitCounts.totalUnits} / ${detail.expectedQuantity}` : String(detail.unitCounts.totalUnits)}
+                      {detail.expectedQuantity != null ? `${detail.itemCounts.owned} / ${detail.expectedQuantity}` : String(detail.itemCounts.owned)}
                     </Typography>
                   </Box>
                   <Box>
@@ -1115,7 +1136,7 @@ function ItemDetailDrawer({
                   <StockByHubSection itemId={detail.id} hubs={hubs} onUpdated={() => { loadDetail(detail.id); onUpdated() }} />
                 )}
 
-                {detail.unitCounts.checkedOut > 0 && (
+                {detail.itemCounts.out > 0 && (
                   <Box mb={2}>
                     <Typography variant="subtitle2" fontWeight={600} mb={0.5}>Current Status</Typography>
                     {row?.currentOperator && <Typography variant="body2">Currently with <strong>{row.currentOperator.name}</strong></Typography>}
@@ -1177,8 +1198,10 @@ function ItemDetailDrawer({
                                 SelectProps={{ style: { fontSize: 13 } }}
                                 disabled={!canEdit}
                               >
+                                {/* IN_TRANSIT ("Returning") is listed so a returning unit shows its
+                                    state, but it can't be chosen: the server sets it on return. */}
                                 {Object.entries(EQUIPMENT_STATUS).map(([v, m]) => (
-                                  <MenuItem key={v} value={v}>{m.label}</MenuItem>
+                                  <MenuItem key={v} value={v} disabled={v === 'IN_TRANSIT'}>{m.label}</MenuItem>
                                 ))}
                               </TextField>
                             </TableCell>
@@ -1500,8 +1523,8 @@ function AdminInventoryContent() {
             <StatusChip label="S" variant="outlined" color="primary" />
           )}
           {item.status === 'RETIRED' && <StatusChip status="RETIRED" kind="equipment" />}
-          {item.unitCounts?.inoperable > 0 && (
-            <Tooltip title={`${item.unitCounts.inoperable} inoperable`}>
+          {item.itemCounts.inoperable > 0 && (
+            <Tooltip title={`${item.itemCounts.inoperable} inoperable`}>
               <WarningAmberIcon fontSize="small" color="warning" />
             </Tooltip>
           )}
@@ -1518,13 +1541,14 @@ function AdminInventoryContent() {
         </Typography>
       </TableCell>
       <TableCell align="center">
-        <Chip size="small" label={item.itemType === 'CONSUMABLE' ? (item.availableQuantity ?? 0) : (item.unitCounts?.available ?? 0)} color="success" variant="outlined" />
+        {/* PR-2 (B3/C-7/C-10): Available · Out · Total = available · out · owned, straight from the server. */}
+        <Chip size="small" label={item.itemCounts.available} color="success" variant="outlined" />
       </TableCell>
       <TableCell align="center">
-        <Chip size="small" label={item.unitCounts?.checkedOut ?? 0} color={item.unitCounts?.checkedOut > 0 ? 'info' : 'default'} variant="outlined" />
+        <Chip size="small" label={item.itemCounts.out} color={item.itemCounts.out > 0 ? 'info' : 'default'} variant="outlined" />
       </TableCell>
       <TableCell align="center">
-        <Typography variant="body2">{item.itemType === 'CONSUMABLE' ? (item.derivedQuantity ?? item.quantity ?? 0) : (item.unitCounts?.totalUnits ?? 0)}</Typography>
+        <Typography variant="body2">{item.itemCounts.owned}</Typography>
       </TableCell>
       <TableCell align="right" onClick={(e) => e.stopPropagation()}>
         <Stack direction="row" spacing={0.5} justifyContent="flex-end">

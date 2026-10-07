@@ -13,5 +13,9 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./tests/setup.ui.ts'],
     include: ['tests/components/**/*.test.{ts,tsx}', 'tests/offline/**/*.test.{ts,tsx}'],
+    // Serial, matching vitest.config.ts. Some component tests are timing-
+    // dependent and failed under parallel load (seen on a non-CI Node); the
+    // STATUS §6 parked item is to find and fix those tests, not this setting.
+    fileParallelism: false,
   },
 })

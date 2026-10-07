@@ -5,7 +5,8 @@ import { prisma } from '@/lib/prisma'
 import { getDeploymentRoster } from '@/lib/deployment-assignments'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import { writeOr404 } from '@/lib/api-errors'
-import { computeUnitCounts, deriveQuantities, categoryDisplay, withPositions } from '@/lib/inventory'
+import { computeUnitCounts, itemCounts, isLiveKitLine, categoryDisplay, withPositions } from '@/lib/inventory'
+import { listItemStock } from '@/lib/inventory-stock'
 import { money } from '@/lib/validation'
 
 // Whitelist of admin-editable fields. Excludes id/qrCodeId/deletedAt/timestamps
@@ -49,6 +50,9 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
       kitItems: {
         where: { removedAt: null },
         select: {
+          quantity: true,
+          drawnQuantity: true,
+          drawnHubId: true,
           kit: {
             select: {
               rig: {
@@ -75,7 +79,15 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
   if (!item) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const unitCounts = computeUnitCounts(item.units)
-  const derived = deriveQuantities(item, unitCounts)
+  // PR-2 (RC-3): the same numbers the list row carries, from the same helper.
+  const stockRows = item.itemType === 'CONSUMABLE' ? await listItemStock(item.id) : []
+  const counts = itemCounts({
+    itemType: item.itemType,
+    quantity: item.quantity,
+    units: item.units,
+    stockRows,
+    liveKitLines: item.kitItems.filter(isLiveKitLine),
+  })
 
   const activeKit = item.kitItems.find((ki) => ki.kit.rig !== null && ki.kit.rig.endedAt === null)
   const activeRig = activeKit?.kit.rig ?? null
@@ -92,9 +104,10 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
     units: withPositions(item.units),
     category: categoryDisplay(item),
     unitCounts,
-    // Derived single-source-of-truth quantities (units for serialized, stored count for consumables)
-    derivedQuantity: derived.effectiveQuantity,
-    availableQuantity: derived.availableQuantity,
+    itemCounts: counts,
+    // Kept for existing readers, read off `itemCounts` (same rule as the list).
+    derivedQuantity: item.itemType === 'CONSUMABLE' ? counts.onHand : counts.owned,
+    availableQuantity: counts.available,
     currentOperator,
     currentProject: activeRig?.project ?? null,
   }

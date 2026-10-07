@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { getVehicleOperators } from '@/lib/deployment-assignments'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
+import { OPEN_TASK } from '@/lib/populations'
 import { getActiveProjectsForVehicles } from '@/lib/project-associations'
 
 export async function GET(req: NextRequest) {
@@ -20,7 +21,9 @@ export async function GET(req: NextRequest) {
       ...(type && { type: type as never }),
     },
     orderBy: { name: 'asc' },
-    include: { _count: { select: { dailyChecks: true, maintenanceTasks: true } } },
+    // PR-2 (C-11): the maintenance count is OPEN tasks — the same number the
+    // drawer and the detail read.
+    include: { _count: { select: { dailyChecks: true, maintenanceTasks: { where: OPEN_TASK } } } },
   })
 
   // Merge hub + assigned-operator names via raw SQL — `hubId` is newer than the

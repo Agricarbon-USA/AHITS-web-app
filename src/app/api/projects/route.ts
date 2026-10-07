@@ -4,6 +4,7 @@ import { ProjectType, ProjectStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import { listResponse } from '@/lib/validation'
+import { countActiveDeploymentsForProjects } from '@/lib/project-associations'
 
 export async function GET() {
   const session = await requireAuth()
@@ -13,13 +14,16 @@ export async function GET() {
     orderBy: [{ name: 'asc' }, { id: 'asc' }], // L-13: stable tiebreaker
     include: {
       lead: { select: { id: true, name: true } },
-      // Active deployments = rigs on this project that haven't ended.
-      _count: { select: { rigs: true } },
     },
   })
 
+  // PR-2 (C-12): active deployments via deployment_projects, not `_count.rigs`
+  // over the legacy column (which counted ended rigs too).
+  const active = await countActiveDeploymentsForProjects(projects.map((p) => p.id))
+  const data = projects.map((p) => ({ ...p, activeDeployments: active.get(p.id) ?? 0 }))
+
   // Uncapped read — `total` is the row count, `truncated` false.
-  return NextResponse.json(listResponse(projects, projects.length, { page: 1, pageSize: projects.length || 1 }))
+  return NextResponse.json(listResponse(data, data.length, { page: 1, pageSize: data.length || 1 }))
 }
 
 const createSchema = z
