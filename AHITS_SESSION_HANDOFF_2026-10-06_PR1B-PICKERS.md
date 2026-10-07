@@ -1,6 +1,6 @@
 # Session handoff · 2026-10-06 · fix-program **PR-1b — Lists tell the truth · pickers**
 
-> STATUS: PR-1b **built, pushed, PR OPEN — NOT merged, nothing on staging from it** · WROTE: 2026-10-06
+> STATUS: PR-1b **built, pushed, PR #244 OPEN, CI GREEN on all four checks — NOT merged, nothing on staging from it** · WROTE: 2026-10-06
 > READ-WITH: `AHITS_FIX_PROGRAM_2026-10-05_FIVE-PRS.md` (PR-1b is what this session executed; **§0's owner decisions D-a…D-n are final — apply them, don't re-ask them**), `AHITS_SCREENING_REPORT_2026-10-05_ROOT-CAUSES.md` (RC-2; every finding ID below has its file:line there), `AHITS_SESSION_HANDOFF_2026-10-06_PR1A-LISTS.md` (PR-1a, merged — `b34918c`), `DECISIONS.md` (**D39**, D10's 2026-10-06 note, D16, D21)
 > BRANCH: `feature/20261006/Agricarbon-USA-pr1b-pickers`, branched from `development` @ `425e278` (i.e. after #242 and #243)
 
@@ -45,7 +45,7 @@
 
 ## 2 · Tests, and the two housekeeping items
 
-**New: 25 tests** — 15 jsdom + 10 node (CI).
+**New: 30 tests** — 15 jsdom (10 picker + 5 bell) + 15 node (CI).
 
 | File | Env | Covers |
 |---|---|---|
