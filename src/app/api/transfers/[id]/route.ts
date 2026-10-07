@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
 import { restoreToHub, resyncItemTotal } from '@/lib/inventory-stock'
+import { releaseFromEndedRig } from '@/lib/asset-status'
 
 export async function DELETE(
   _req: Request,
@@ -78,22 +79,17 @@ export async function DELETE(
 
           await tx.kitItem.update({ where: { id: kitItem.id }, data: { removedAt: now } })
 
+          // PR-3a: the unit leaves a deployment that has already ended, so a CHECKED_OUT unit is
+          // free again — but only that: a unit in repair stays in repair (this used to write
+          // AVAILABLE unconditionally).
           if (kitItem.inventoryUnitId) {
-            await tx.inventoryUnit.update({
-              where: { id: kitItem.inventoryUnitId },
-              data: { status: 'AVAILABLE' },
-            })
+            await releaseFromEndedRig(tx, [kitItem.inventoryUnitId])
           } else {
             const units = await tx.inventoryUnit.findMany({
               where: { inventoryItemId: kitItem.inventoryItemId, status: 'CHECKED_OUT' },
               take: kitItem.quantity,
             })
-            if (units.length > 0) {
-              await tx.inventoryUnit.updateMany({
-                where: { id: { in: units.map((u) => u.id) } },
-                data: { status: 'AVAILABLE' },
-              })
-            }
+            await releaseFromEndedRig(tx, units.map((u) => u.id))
           }
 
           await tx.checkLog.create({

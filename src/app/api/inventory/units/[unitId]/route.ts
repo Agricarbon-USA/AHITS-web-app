@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
 import { writeOr404 } from '@/lib/api-errors'
+import { setUnitStatusByAdmin } from '@/lib/asset-status'
 
 const patchSchema = z.object({
   status: z.enum(['AVAILABLE', 'CHECKED_OUT', 'IN_MAINTENANCE', 'INOPERABLE', 'RETIRED']).optional(),
@@ -20,10 +21,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ un
 
   let unit: { id: string; qrCodeId: string; serialNumber: string | null; status: string; notes: string | null; createdAt: Date; inventoryItemId: string } | undefined
   const notFound = await writeOr404(async () => {
-    unit = await prisma.inventoryUnit.update({
-      where: { id: unitId },
-      data: parsed.data,
-      select: { id: true, qrCodeId: true, serialNumber: true, status: true, notes: true, createdAt: true, inventoryItemId: true },
+    // PR-3a: the status write goes through the status module (the values accepted are
+    // unchanged here; PR-3b narrows them to the admin-owned states, D-g).
+    const { status, ...fields } = parsed.data
+    unit = await prisma.$transaction(async (tx) => {
+      if (status) await setUnitStatusByAdmin(tx, unitId, status)
+      return tx.inventoryUnit.update({
+        where: { id: unitId },
+        data: fields,
+        select: { id: true, qrCodeId: true, serialNumber: true, status: true, notes: true, createdAt: true, inventoryItemId: true },
+      })
     })
   }, 'Unit not found')
   if (notFound) return notFound

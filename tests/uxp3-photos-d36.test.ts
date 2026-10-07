@@ -22,7 +22,7 @@ vi.mock('../src/lib/auth/session', () => ({
   requireAdmin: () =>
     Promise.resolve((mockSession as { role?: string } | null)?.role === 'ADMIN' ? mockSession : null),
 }))
-vi.mock('../src/lib/alerts', () => ({ createAlert: vi.fn().mockResolvedValue({}), resolveActiveAlert: vi.fn().mockResolvedValue({}) }))
+vi.mock('../src/lib/alerts', () => ({ createAlert: vi.fn().mockResolvedValue({}), resolveActiveAlert: vi.fn().mockResolvedValue({}), resolveAlertsFor: vi.fn().mockResolvedValue({}) }))
 
 function jsonReq(url: string, method: string, body: unknown) {
   return new NextRequest(url, { method, body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } })

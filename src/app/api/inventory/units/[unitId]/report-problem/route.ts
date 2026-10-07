@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
-import { createAlert } from '@/lib/alerts'
+import { openDamageTask } from '@/lib/maintenance'
 import { withIdempotency } from '@/lib/idempotency'
 import { photoUrlsField, isPhotoNotUploadedError } from '@/lib/validation'
 import { filterAllowedPhotoUrls } from '@/lib/photo-security'
@@ -58,41 +58,21 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ unitId: s
     if (inKit) rigId = activeRigId
   }
 
+  // Self-triage: "Still usable" (default) keeps the unit CHECKED_OUT in the kit; "Out of
+  // service" pulls it to IN_MAINTENANCE. The kit item is NEVER removed either way. A unit
+  // that already has an open report gets this one appended (PR-3a: one open task per asset).
   const task = await prisma.$transaction(async (tx) => {
-    const t = await tx.maintenanceTask.create({
-      data: {
-        itemId: unit.inventoryItemId,
-        inventoryUnitId: unit.id,
-        taskName: `Reported problem: ${unit.inventoryItem.name}`,
-        isDamageReport: true,
-        status: 'IN_PROGRESS',
-        rigId,
-        reportedById: session.userId,
-        notes,
-      },
+    const { task: t } = await openDamageTask(tx, { kind: 'unit', id: unit.id, itemId: unit.inventoryItemId }, {
+      taskName: `Reported problem: ${unit.inventoryItem.name}`,
+      notes,
+      rigId,
+      reportedById: session.userId,
+      photoUrls: filterAllowedPhotoUrls(photoUrls),
+      alertMeta: { itemName: unit.inventoryItem.name, operatorId: session.userId },
+      source: 'REPORT',
+      pull: !stillUsable,
     })
-    await createAlert('DAMAGE_REPORTED', 'maintenance_tasks', t.id, {
-      itemName: unit.inventoryItem.name,
-      operatorId: session.userId,
-    }, tx)
-    const urls = filterAllowedPhotoUrls(photoUrls)
-    if (urls.length > 0) {
-      await tx.photo.createMany({
-        data: urls.map((url) => ({
-          url,
-          context: 'DAMAGE' as const,
-          inventoryItemId: unit.inventoryItemId,
-          maintenanceId: t.id,
-          uploadedById: session.userId,
-        })),
-      })
-    }
-    // Self-triage: "Still usable" (default) keeps the unit CHECKED_OUT in the kit; "Out of
-    // service" flips it to IN_MAINTENANCE. The kit item is NEVER removed either way.
-    if (!stillUsable) {
-      await tx.inventoryUnit.update({ where: { id: unit.id }, data: { status: 'IN_MAINTENANCE' } })
-    }
-    return t
+    return tx.maintenanceTask.findUniqueOrThrow({ where: { id: t.id } })
   })
 
   return NextResponse.json({ data: task }, { status: 201 })

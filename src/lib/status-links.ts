@@ -6,6 +6,7 @@ import { applyRequestTransition } from '@/lib/deployment-requests'
 import { createAlert, resolveActiveAlert } from '@/lib/alerts'
 import type { Prisma, StatusLink, StatusLinkType } from '@prisma/client'
 import { ACTIVE_USER } from '@/lib/populations'
+import { receiveUnitAtHub } from '@/lib/asset-status'
 
 /**
  * Wave F — tokenized status links (the outbound-delivery primitive).
@@ -88,8 +89,9 @@ export async function issueStatusLink(
 /**
  * Wave F-R soft-gate: for each "Return to Hub" disposition of a SERIALIZED unit,
  * issue a HUB_RETURN status link so the hub can confirm receipt. Best-effort and
- * non-blocking — the unit stays AVAILABLE (re-deployable); this only records a
- * pending receipt. Shared by every return path that carries a hub target
+ * non-blocking — the unit is Returning (IN_TRANSIT, still pickable — D-e) while the
+ * link is open; a caller whose issue fails falls the unit back to AVAILABLE
+ * (`releaseUnlinkedReturns`). Shared by every return path that carries a hub target
  * (end-of-deployment and bulk item returns) so coverage is consistent.
  */
 export async function issueHubReturnLinks(
@@ -312,11 +314,9 @@ export async function applyTransition(
       const itemName = link.inventoryUnit?.inventoryItem?.name ?? 'an item'
       const adminLink = '/admin/inventory'
       if (action === 'RECEIVED') {
-        // Confirm receipt: flip the in-transit unit back to AVAILABLE.
-        await tx.inventoryUnit.updateMany({
-          where: { id: link.inventoryUnitId, status: 'IN_TRANSIT' },
-          data: { status: 'AVAILABLE' },
-        })
+        // Confirm receipt: the Returning unit is back on the shelf (PR-3a: the status
+        // module owns the write).
+        await receiveUnitAtHub(tx, link.inventoryUnitId)
         await tx.statusLink.update({ where: { id: link.id }, data: { state: 'COMPLETED', completedAt: now, actedAt: now } })
         // W0-9: one confirmation clears the unit everywhere — complete any sibling
         // active HUB_RETURN links for the same unit so duplicates don't linger.

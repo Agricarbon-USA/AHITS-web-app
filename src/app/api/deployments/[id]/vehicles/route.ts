@@ -5,7 +5,7 @@ import { hydrateRigOperator } from '@/lib/deployment-assignments'
 import { getAuthorizedActiveRig } from '@/lib/deployment-auth'
 import { requireAuth } from '@/lib/auth/session'
 import { withIdempotency } from '@/lib/idempotency'
-import { createAlert } from '@/lib/alerts' // CC-34 (1c): Send-to-Maintenance orphan flip
+import { removeVehicleFromRig } from '@/lib/asset-status'
 
 const RIG_INCLUDE = {
   project: { select: { id: true, name: true } },
@@ -154,8 +154,6 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
     }
   }
 
-  const now = new Date()
-
   try {
     await prisma.$transaction(async (tx) => {
       for (const disp of vehicles) {
@@ -174,53 +172,18 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
           })
           // Don't clear assignedOperatorId yet — happens on acceptance
         } else {
-          // Mark the RigVehicle as removed for all non-TRANSFER dispositions
-          await tx.rigVehicle.updateMany({
-            where: {
-              rigId: id,
-              vehicleId: disp.vehicleId,
-              removedAt: null,
-            },
-            data: {
-              removedAt: now,
-              removeNote: disp.note ?? note,
-            },
+          // PR-3a (S-1): close the RigVehicle row through the status module. "Available"
+          // no longer forces the vehicle ACTIVE — a vehicle with an open repair stays In
+          // Maintenance, one an admin took out of service stays out. "Send to Maintenance"
+          // opens (or joins) the vehicle's damage task and pulls it (CC-34 1c's task +
+          // alert, now via openDamageTask); "Retired" retires it.
+          await removeVehicleFromRig(tx, {
+            rigId: id,
+            vehicleId: disp.vehicleId,
+            disposition: disp.dispositionType as 'AVAILABLE' | 'IN_MAINTENANCE' | 'RETIRED',
+            note: disp.note ?? note ?? null,
+            reportedById: session.userId,
           })
-          // Update vehicle status and clear assignment
-          const statusMap: Record<string, 'ACTIVE' | 'IN_MAINTENANCE' | 'RETIRED'> = {
-            AVAILABLE: 'ACTIVE',
-            IN_MAINTENANCE: 'IN_MAINTENANCE',
-            RETIRED: 'RETIRED',
-          }
-          await tx.vehicle.update({
-            where: { id: disp.vehicleId },
-            data: {
-              status: statusMap[disp.dispositionType] ?? 'ACTIVE',
-              assignedOperatorId: null,
-            },
-          })
-          // CC-34 (1c): "Send to Maintenance" now creates the vehicle damage task + alert
-          // (mirror of vehicles/[id]/report-damage) so the flip reaches /admin/maintenance
-          // and the bell instead of going IN_MAINTENANCE with nothing tracking it. The
-          // removal note becomes the task notes; rigId is the rig it was removed from.
-          if (disp.dispositionType === 'IN_MAINTENANCE') {
-            const v = await tx.vehicle.findUnique({ where: { id: disp.vehicleId }, select: { name: true } })
-            const task = await tx.maintenanceTask.create({
-              data: {
-                taskName: `Damage report: ${v?.name ?? 'vehicle'}`,
-                isDamageReport: true,
-                status: 'IN_PROGRESS',
-                vehicleId: disp.vehicleId,
-                notes: disp.note ?? note ?? null,
-                rigId: id,
-                reportedById: session.userId,
-              },
-            })
-            await createAlert('DAMAGE_REPORTED', 'maintenance_tasks', task.id, {
-              vehicleName: v?.name ?? 'vehicle',
-              operatorId: session.userId,
-            }, tx)
-          }
         }
       }
     })

@@ -4,7 +4,8 @@ import { IntervalType, Priority, MaintenanceStatus, RepairType } from '@prisma/c
 import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import { money } from '@/lib/validation'
-import { writeOr404 } from '@/lib/api-errors'
+import { resolveAlertsFor } from '@/lib/alerts'
+import { closeDamageTask } from '@/lib/maintenance'
 
 // Whitelist of admin-editable fields. Excludes id/vehicleId/itemId (the task's
 // subject) and isDamageReport (system-set) to prevent mass-assignment.
@@ -93,8 +94,29 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten().fieldErrors }, { status: 400 })
   }
+  const current = await prisma.maintenanceTask.findFirst({
+    where: { id, deletedAt: null },
+    select: { isDamageReport: true, status: true },
+  })
+  if (!current) return NextResponse.json({ error: 'Task not found or update failed' }, { status: 404 })
+
+  // PR-3a (S-4 / U-7): on a damage report, a status edit moves the asset too.
+  // Setting COMPLETED closes the repair (`closeDamageTask`: alerts resolved, asset
+  // restored only if no other open report holds it); moving a COMPLETED report back
+  // to an open status is Reopen (asset pulled again). Other fields save as before.
+  // Scheduled tasks keep the plain field update.
+  const { status, ...fields } = parsed.data
+  const closing = current.isDamageReport && status === 'COMPLETED' && current.status !== 'COMPLETED'
+  const reopening = current.isDamageReport && status !== undefined && status !== 'COMPLETED' && current.status === 'COMPLETED'
   try {
-    const task = await prisma.maintenanceTask.update({ where: { id }, data: parsed.data })
+    const task = await prisma.$transaction(async (tx) => {
+      if (closing) await closeDamageTask(tx, id, 'COMPLETED')
+      if (reopening) await closeDamageTask(tx, id, 'REOPEN')
+      return tx.maintenanceTask.update({
+        where: { id },
+        data: closing || reopening ? { ...fields, ...(reopening && { status }) } : parsed.data,
+      })
+    })
     return NextResponse.json({ data: task })
   } catch {
     return NextResponse.json({ error: 'Task not found or update failed' }, { status: 404 })
@@ -106,13 +128,19 @@ export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id:
   if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const { id } = await params
   // Soft-delete (CR-8): preserve the repair/damage record rather than hard-delete.
-  const notFound = await writeOr404(() => prisma.maintenanceTask.update({ where: { id }, data: { deletedAt: new Date() } }), 'Task not found')
-  if (notFound) return notFound
+  const task = await prisma.maintenanceTask.findFirst({ where: { id, deletedAt: null }, select: { isDamageReport: true } })
+  if (!task) return NextResponse.json({ error: 'Task not found' }, { status: 404 })
   // CC-34 (1c): a report mis-filed and deleted (instead of completed) must not leave a
-  // permanent bell ghost — resolve its active alert, mirroring the complete route.
-  await prisma.alert.updateMany({
-    where: { sourceTable: 'maintenance_tasks', sourceId: id, resolved: false },
-    data: { resolved: true, resolvedAt: new Date(), activeKey: null },
+  // permanent bell ghost — its alerts resolve. PR-3a: a deleted damage report also
+  // releases its asset through `closeDamageTask(DELETED)` (restored only if no other open
+  // report holds it); it used to stay In Maintenance with nothing tracking it (S-4).
+  await prisma.$transaction(async (tx) => {
+    if (task.isDamageReport) {
+      await closeDamageTask(tx, id, 'DELETED')
+    } else {
+      await tx.maintenanceTask.update({ where: { id }, data: { deletedAt: new Date() } })
+      await resolveAlertsFor('maintenance_tasks', id, tx)
+    }
   })
   return NextResponse.json({ ok: true })
 }
