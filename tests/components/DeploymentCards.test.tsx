@@ -23,7 +23,7 @@ const VEHICLES: VehicleRow[] = [
   { id: 'rv1', vehicle: { id: 'v1', name: 'Truck-01', type: 'TRUCK', isRental: true, rentalAgreementUrl: null } },
 ]
 const KIT: KitRow[] = [
-  { id: 'ki1', quantity: 2, item: { id: 'i1', name: 'Drill', itemType: 'CONSUMABLE', lowStockThreshold: 5 }, inventoryUnit: null },
+  { id: 'ki1', quantity: 2, item: { id: 'i1', name: 'Drill', itemType: 'CONSUMABLE' }, inventoryUnit: null },
 ]
 const noop = () => {}
 

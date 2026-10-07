@@ -46,6 +46,8 @@ assertSafeTestDatabase(process.env.DATABASE_URL)
 
 afterEach(async () => {
   await prisma.idempotencyKey.deleteMany()
+  // PR-2: cron tests raise alerts; any send attempt leaves an email_logs row. No FKs.
+  await prisma.emailLog.deleteMany()
   await prisma.rateLimitHit.deleteMany()
   await prisma.photo.deleteMany()
   await prisma.alert.deleteMany()

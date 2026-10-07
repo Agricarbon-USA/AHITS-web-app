@@ -30,7 +30,9 @@ import AdminInventoryPage from '@/app/(admin)/admin/inventory/page'
 
 const CATEGORIES = [{ id: 'c1', name: 'Sampling' }]
 const HUBS = [{ id: 'h1', name: 'Toledo Hub', city: 'Toledo', state: 'OH' }]
-const UNIT_COUNTS = { totalUnits: 0, available: 0, checkedOut: 0, inMaintenance: 0, inoperable: 0, retired: 0 }
+const UNIT_COUNTS = { totalUnits: 0, available: 0, checkedOut: 0, inMaintenance: 0, inoperable: 0, inTransit: 0, retired: 0 }
+// PR-2: every inventory payload carries the server's itemCounts.
+const itemCountsOf = (n: number) => ({ owned: n, onHand: n, available: n, reserved: 0, out: 0, inMaintenance: 0, inoperable: 0, inTransit: 0, retired: 0 })
 
 const row = (id: string, name: string, extra: Record<string, unknown> = {}) => ({
   id, name, category: CATEGORIES[0], hub: HUBS[0], sku: null, quantity: 4, unitCost: null,
@@ -38,7 +40,7 @@ const row = (id: string, name: string, extra: Record<string, unknown> = {}) => (
   lowStockThreshold: null, itemType: 'CONSUMABLE', unitId: null, expectedQuantity: null,
   createdAt: '2026-10-01T00:00:00Z', updatedAt: '2026-10-01T00:00:00Z',
   currentOperator: null, currentProject: null, activeProjects: [], unitCounts: UNIT_COUNTS,
-  units: [], derivedQuantity: 4, availableQuantity: 4, checkLogs: [], photos: [], ...extra,
+  units: [], derivedQuantity: 4, availableQuantity: 4, itemCounts: itemCountsOf(4), checkLogs: [], photos: [], ...extra,
 })
 
 const jsonRes = (body: unknown, ok = true, status = ok ? 200 : 400) =>
