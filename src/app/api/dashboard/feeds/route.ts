@@ -33,15 +33,25 @@ export async function GET() {
   const longRunningCutoff = new Date(now.getTime() - LONG_RUNNING_DAYS * MS_PER_DAY)
   const spendWindowStart = new Date(now.getTime() - SPEND_WINDOW_DAYS * MS_PER_DAY)
 
-  const [activeRigs, checksToday, dueTasks, longRigs, recentLogs, recentSpend] = await Promise.all([
+  // PR-1b (L-6/C-3/C-4): the chip counts are SERVER counts over the same `where`
+  // as their rows, not `.length` of a `take: 15` array. A 15-capped array made
+  // "16 due soon" render as "15" and stop moving — the chip quietly became a
+  // display of the cap. `missedChecks` already counted a full read and keeps doing
+  // so. (The `deletedAt: null` these task reads still lack is PR-2's `OPEN_TASK`
+  // fragment, applied to rows AND count together so the two can never diverge.)
+  const dueTasksWhere = { status: { not: 'COMPLETED' as const }, nextDue: { not: null, lte: dueSoonCutoff } }
+  const longRigsWhere = { endedAt: null, startedAt: { lt: longRunningCutoff } }
+
+  const [activeRigs, checksToday, dueTasks, dueTasksTotal, longRigs, longRigsTotal, recentLogs, recentSpend] = await Promise.all([
     prisma.rig.findMany({
       where: { endedAt: null },
       select: { id: true, label: true, startedAt: true },
     }),
     prisma.dailyCheck.findMany({ where: { date: businessToday }, select: { operatorId: true } }),
     prisma.maintenanceTask.findMany({
-      where: { status: { not: 'COMPLETED' }, nextDue: { not: null, lte: dueSoonCutoff } },
-      orderBy: { nextDue: 'asc' },
+      where: dueTasksWhere,
+      // L-13: stable tiebreaker — many schedules share a due date.
+      orderBy: [{ nextDue: 'asc' }, { id: 'asc' }],
       take: 15,
       include: {
         vehicle: { select: { name: true } },
@@ -49,12 +59,14 @@ export async function GET() {
         unit: { select: { serialNumber: true } },
       },
     }),
+    prisma.maintenanceTask.count({ where: dueTasksWhere }),
     prisma.rig.findMany({
-      where: { endedAt: null, startedAt: { lt: longRunningCutoff } },
-      orderBy: { startedAt: 'asc' },
+      where: longRigsWhere,
+      orderBy: [{ startedAt: 'asc' }, { id: 'asc' }], // L-13: stable tiebreaker
       take: 15,
       select: { id: true, label: true, startedAt: true },
     }),
+    prisma.rig.count({ where: longRigsWhere }),
     prisma.checkLog.findMany({
       orderBy: { submittedAt: 'desc' },
       take: 10,
@@ -145,8 +157,9 @@ export async function GET() {
     entry.events += 1
     spendByAsset.set(key, entry)
   }
-  const maintenanceWatch = [...spendByAsset.values()]
-    .filter((e) => e.spend > 0)
+  const assetsWithSpend = [...spendByAsset.values()].filter((e) => e.spend > 0)
+  const maintenanceWatchTotal = assetsWithSpend.length
+  const maintenanceWatch = assetsWithSpend
     .sort((a, b) => b.spend - a.spend)
     .slice(0, SPEND_WATCH_LIMIT)
     .map((e) => ({ name: e.name, href: e.href, spend: Math.round(e.spend * 100) / 100, events: e.events, windowDays: SPEND_WINDOW_DAYS }))
@@ -154,10 +167,12 @@ export async function GET() {
   return NextResponse.json({
     data: {
       counts: {
+        // A full read, so its length IS the count.
         missedChecks: missedChecks.length,
-        maintenanceDueSoon: maintenanceDueSoon.length,
-        longRunning: longRunning.length,
-        maintenanceWatch: maintenanceWatch.length,
+        maintenanceDueSoon: dueTasksTotal,
+        longRunning: longRigsTotal,
+        // Counted over every asset with spend in the window, before the top-5 slice.
+        maintenanceWatch: maintenanceWatchTotal,
       },
       missedChecks,
       maintenanceDueSoon,
