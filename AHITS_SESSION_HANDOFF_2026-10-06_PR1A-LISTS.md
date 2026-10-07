@@ -1,6 +1,6 @@
 # Session handoff · 2026-10-06 · fix-program **PR-1a — Lists tell the truth**
 
-> STATUS: PR-1a **built, pushed, PR OPEN — NOT merged, nothing on staging from it** · WROTE: 2026-10-06
+> STATUS: PR-1a **built, pushed, PR #242 OPEN, CI GREEN — NOT merged, nothing on staging from it** · WROTE: 2026-10-06
 > READ-WITH: `AHITS_FIX_PROGRAM_2026-10-05_FIVE-PRS.md` (the build spec — PR-1a's section is what this session executed; **§0's owner decisions D-a…D-n are final, apply them, don't re-ask them**), `AHITS_SCREENING_REPORT_2026-10-05_ROOT-CAUSES.md` (the evidence: every finding ID below has its file:line there), `DECISIONS.md` (**D39** new this session; the dated **D10** note; D16, D21, D31, D38)
 > BRANCH: `feature/20261006/Agricarbon-USA-pr1a-lists-tell-truth`, branched from `development` @ `e83fc7e`
 
@@ -41,7 +41,7 @@
 
 ## 2 · Tests and what was actually verified
 
-**New: 26 tests.**
+**New: 51 tests** — 26 jsdom (`npm run test:ui`) + 25 node (`npm test`, CI).
 
 | File | Env | Covers |
 |---|---|---|
@@ -52,10 +52,10 @@
 
 **Verified locally:** `tsc --noEmit` clean · `eslint .` **0 errors** (48 warnings, all the pre-existing `set-state-in-effect` advisory) · `next build` compiles · the pure `parsePagination`/`listResponse` cases run green under `tsx` · `npm run test:ui` **returns to its exact baseline** (see below) with the 26 new jsdom tests passing.
 
-**⚠️ Two things were NOT verified locally — check them in CI:**
+**CI on PR #242 is GREEN — all four checks** (`verify / Lint, type-check & build` · `verify / Tests` · `migration-safety` · the W0-10 DROP guard). That run is what actually proved the two things this laptop could not:
 
-1. **The node DB suite (`tests/pr1a-list-envelope.test.ts`) has never run.** There is no local Postgres/Docker here; `npm test` is CI-only in this environment. Its DB assertions are unexercised until the PR's `verify` job runs them.
-2. **`npm run test:ui` fails 82 tests across 8 files on this laptop, before and after this diff.** `window.localStorage` is `undefined` under the locally installed jsdom (e.g. `tests/components/useAuth-logout.test.tsx:59`). The count is **identical at `e83fc7e` with the branch stashed**, and CI was green on those files at that commit, so it is a local environment fault, not a regression. **Do not change app code for it.** The one real regression this session caused was found and fixed: `PagedTable` used `React.Children.count`, which counts a `false` child as one, so a page whose rows are `{cond && […]}` never looked empty — `toArray` instead (`uxp6-item-form.test.tsx` caught it; that file is 15/15 again, unmodified).
+1. **The node DB suite ran for the first time in CI and passed** — `tests/pr1a-list-envelope.test.ts`, **25 tests**, against the Postgres 16 service container. There is no local Postgres/Docker here (`npm test` is CI-only in this environment), so until that run its DB assertions were unexercised. 55 test files / all passing in both jobs.
+2. **The 82 local `test:ui` failures are confirmed local-only** — the same 55 files pass in CI. On this laptop they fail before and after this diff: `window.localStorage` is `undefined` under the locally installed jsdom (e.g. `tests/components/useAuth-logout.test.tsx:59`). The count is **identical at `e83fc7e` with the branch stashed**, and CI was green on those files at that commit, so it is a local environment fault, not a regression. **Do not change app code for it.** The one real regression this session caused was found and fixed: `PagedTable` used `React.Children.count`, which counts a `false` child as one, so a page whose rows are `{cond && […]}` never looked empty — `toArray` instead (`uxp6-item-form.test.tsx` caught it; that file is 15/15 again, unmodified).
 
 ---
 
