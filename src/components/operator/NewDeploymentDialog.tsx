@@ -45,13 +45,10 @@ export interface InventoryOption {
   // /api/inventory returns category as a {id,name} object (categoryDisplay),
   // matching the scan page and admin deployments builder — not a bare string.
   category: { id: string; name: string } | null
-  unitCounts: {
-    available: number
-    checkedOut: number
-    inMaintenance: number
-    inoperable: number
-    totalUnits: number
-  }
+  // PR-1b: narrowed to what the pickers actually read. The server's picker mode
+  // returns the pickable set, so `available` is `availableUnits.length` by
+  // construction; the other counts were declared here and never rendered.
+  unitCounts: { available: number }
   availableQuantity: number
   availableUnits: Array<{ id: string; serialNumber: string | null; qrCodeId: string; position: number }>
   hubStock?: Array<{ hubId: string; hubName: string | null; quantity: number; reservedQty: number; available: number }>
