@@ -1,8 +1,8 @@
 # Session handoff · 2026-10-06 · fix-program **PR-1a — Lists tell the truth**
 
-> STATUS: PR-1a **built, pushed, PR #242 OPEN, CI GREEN — NOT merged, nothing on staging from it** · WROTE: 2026-10-06
+> STATUS: PR-1a **MERGED and LIVE on staging** — PR #242, squash `b34918c`, revision `ahits-web-app-staging-00424-pxq`, deploy green end-to-end, smoked in a real browser · WROTE: 2026-10-06
 > READ-WITH: `AHITS_FIX_PROGRAM_2026-10-05_FIVE-PRS.md` (the build spec — PR-1a's section is what this session executed; **§0's owner decisions D-a…D-n are final, apply them, don't re-ask them**), `AHITS_SCREENING_REPORT_2026-10-05_ROOT-CAUSES.md` (the evidence: every finding ID below has its file:line there), `DECISIONS.md` (**D39** new this session; the dated **D10** note; D16, D21, D31, D38)
-> BRANCH: `feature/20261006/Agricarbon-USA-pr1a-lists-tell-truth`, branched from `development` @ `e83fc7e`
+> BRANCH: `feature/20261006/Agricarbon-USA-pr1a-lists-tell-truth`, branched from `development` @ `e83fc7e`; squashed on merge, pre-squash history kept at **`archive/pr1a-lists-presquash`** (`0762c74`) — do not delete that ref
 
 ---
 
@@ -72,10 +72,34 @@
 
 **Then, in order and not reordered:** 2 (counts) → 3a (status modules + writers) → 3b (guards + admin UI, incl. flipping `ITEM_RETIRE_ENABLED`) → 4 (signals) → 5 (screens).
 
-### Owed by Max on PR-1a
+### PR-1a is done. What the smoke actually proved, and what it could not
 
-1. **Review and merge** — merge is the deploy (D16), in the evening (D31). Nothing reaches staging until then.
-2. **The smoke, four things:** Inventory says "Showing 1–100 of N" and an item you add appears straight away at the top under *Just added*; the Maintenance **Damage** tab lists every open repair and its count matches the dashboard card; clicking **View** on a damage alert opens that repair (and a closed one says so instead of doing nothing); and **on Inventory, pick a Category — the rows narrow and the URL keeps `?categoryId=`.** That last one is the bug found mid-session (§1 item 4); jsdom can only prove "one history replace", so it wants a real browser.
+**Deploy:** merged 2026-10-06 22:11 Central (evening, D31), squash `b34918c`. `deploy.yml` green end-to-end — verify → migration-safety → **migrate** (57 migrations found, 0 pending; PR-1a has no schema change) → deploy → **env-drift passed** (`EMAIL_SANDBOX=true`, `EMAIL_SANDBOX_TO` set). Revision **`ahits-web-app-staging-00424-pxq`**, 100% of traffic.
+
+**Smoked on live staging, real browser, admin role — all four rows pass:**
+
+| Row | Result |
+|---|---|
+| Inventory says how much of how much | **"Showing 1–51 of 51 items"**; pager offers 25/50/100 with first/last |
+| A new item appears at the top | Added **"ZZ SMOKE PR-1a …"** — a name that otherwise sorts **dead last** — and it landed at the top under **Just added** with a **New** chip, rendered **once**, caption moving 51 → 52. Cleared on the next search, as designed |
+| Maintenance tab counts | Badges come from **server facets**: `Completed (16)` and the tab lists **16** rows, caption "Showing 1–16 of 16 repairs" — facet == rows |
+| An alert's "View" | `?task=<id>` **opened the task while the Damage tab held ZERO rows** — precisely the U-4/P-11 dead end, since the old code searched the loaded page. An unknown id toasts *"That repair is closed or no longer exists."* |
+| (the mid-session bug) | Picking a Category **from `?page=2`** → `?categoryId=…`, 3 rows, "Showing 1–3 of 3 items". That is the double-`router.replace` condition, which jsdom could only half-prove |
+
+**Also confirmed on the wire:** the bell returns **30 rows of a real total of 73 with `truncated: true`** and `unread: 38`. Before PR-1a `total` was the array length and `truncated` was false — the capped list claiming completeness (L-5). PR-1b renders those numbers as "N unread · showing 30" with Load more. No console errors anywhere in the pass.
+
+**Cleanup:** the throwaway item was deleted after the check; `/api/inventory` is back to **51**, and it is absent from both the default list **and** the `includeRetired=1` view.
+
+**Three things the smoke could NOT cover — say so rather than assume:**
+
+1. **Phone width.** The browser in the build session would not produce a narrow CSS viewport — `window.innerWidth` stayed **1643** through every resize down to 400px, and `matchMedia('(max-width:600px)')` never matched. **Nobody has looked at Inventory or Maintenance narrow.** Owed on a real phone; the `PagedTable` footer (caption + pager on one row) and the Inventory filter row are the two places to look.
+2. **Operator role with data.** `/operator/my-deployment` renders clean as an admin-held session, but staging has **no active rig**, so the `?rigId=` repair list could not be exercised. The no-tab-default that protects it is covered by the node test and, on staging, by `/api/maintenance` returning all **16** tasks while `tab=damage` returns **0**.
+3. **A live Damage tab.** Staging has **zero** open damage reports (facets `{damage:0, overdue:0, active:0, completed:16}`), so "the Damage tab lists every open repair and its count matches the dashboard card" was verified on the **Completed** tab instead, where facet and row count both read 16. Worth re-checking the day a real damage report exists.
+
+### Still owed by Max
+
+1. **The phone-width pass** (item 1 above) — the only smoke row nobody has done.
+2. **The smoke, for reference, was:** Inventory says "Showing 1–100 of N" and an item you add appears straight away at the top under *Just added*; the Maintenance **Damage** tab lists every open repair and its count matches the dashboard card; clicking **View** on a damage alert opens that repair (and a closed one says so instead of doing nothing); and **on Inventory, pick a Category — the rows narrow and the URL keeps `?categoryId=`.** That last one is the bug found mid-session (§1 item 4); jsdom can only prove "one history replace", so it wants a real browser.
 3. **Worth running before PR-1b** (read-only, Supabase SQL editor — both queries are in the screening report §7): tasks-by-status tells you whether the Maintenance page is lying on staging *today*; unresolved-alerts-by-type tells you whether the dispatcher is already at risk of the PR-4 starvation bug (P-2).
 
 ---
