@@ -91,16 +91,16 @@ describe('GET /api/inventory?mode=options — the complete pickable set (PR-1b)'
     expect(row.pickableUnits.map((u: { serialNumber: string }) => u.serialNumber)).toEqual(['A-1'])
   })
 
-  it('excludes IN_TRANSIT until PR-3a widens PICKABLE_STATUSES (D-n)', async () => {
+  it('offers IN_TRANSIT ("Returning") since PR-3a widened PICKABLE_STATUSES with pickUnit (D-e, D-n)', async () => {
     const item = await createInventoryItem(categoryId, { name: 'Returning corer', itemType: 'SERIALIZED' })
     await createInventoryUnit(item.id, { status: 'IN_TRANSIT', serialNumber: 'T-1' })
     await createInventoryUnit(item.id, { status: 'AVAILABLE', serialNumber: 'T-2' })
 
     // The contract this test pins: the picker offers exactly what the server
-    // accepts. PR-3a flips BOTH in one commit; until then, neither.
-    expect([...PICKABLE_STATUSES]).toEqual(['AVAILABLE'])
+    // accepts. PR-3a flipped BOTH in one commit (pickUnit accepts a Returning unit).
+    expect([...PICKABLE_STATUSES]).toEqual(['AVAILABLE', 'IN_TRANSIT'])
     const row = (await options()).data.find((i: { name: string }) => i.name === 'Returning corer')
-    expect(row.pickableUnits.map((u: { serialNumber: string }) => u.serialNumber)).toEqual(['T-2'])
+    expect(row.pickableUnits.map((u: { serialNumber: string }) => u.serialNumber).sort()).toEqual(['T-1', 'T-2'])
   })
 
   it('numbers a unit by its position among ALL units, not among the free ones (UXP-6 T8)', async () => {

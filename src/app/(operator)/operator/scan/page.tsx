@@ -21,6 +21,8 @@ interface UnitInfo {
   qrCodeId: string
   serialNumber: string | null
   status: string
+  /** Server's answer to "would a checkout accept this unit?" (PICKABLE_STATUSES — D-n). */
+  pickable?: boolean
   notes: string | null
   inventoryItem: {
     id: string
@@ -150,7 +152,9 @@ export default function OperatorScanPage() {
 
   const kitItemForUnit = unit ? activeKitItems.find((ki) => ki.inventoryUnitId === unit.id) : undefined
   const canReturn = !!kitItemForUnit && unit?.status === 'CHECKED_OUT' && !String(kitItemForUnit.id).startsWith('pending-')
-  const canAdd = unit?.status === 'AVAILABLE' && !!activeRigId && !kitItemForUnit
+  // PR-3a: a Returning (IN_TRANSIT) unit can be added too — the server says what it will
+  // accept. A lookup cached before the flag existed falls back to the old AVAILABLE rule.
+  const canAdd = (unit?.pickable ?? unit?.status === 'AVAILABLE') && !!activeRigId && !kitItemForUnit
 
   const refetchActive = async () => {
     const updated = await fetch('/api/deployments').then((r) => r.json())

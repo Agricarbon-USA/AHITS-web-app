@@ -12,6 +12,9 @@ import { issueHubReturnLinks } from '@/lib/status-links'
 import { filterAllowedPhotoUrls } from '@/lib/photo-security'
 import { drawFromHub, getStockAtHub, restoreToHub, resyncItemTotal } from '@/lib/inventory-stock'
 import { claimHeldStock } from '@/lib/deployment-requests'
+import { markInoperable, pickUnit, pickableFirst, releaseUnlinkedReturns, returnUnit } from '@/lib/asset-status'
+import { PICKABLE_UNIT } from '@/lib/populations'
+import { openDamageTask } from '@/lib/maintenance'
 
 const RIG_INCLUDE = {
   project: { select: { id: true, name: true } },
@@ -123,11 +126,11 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     await prisma.$transaction(async (tx) => {
       for (const entry of items) {
         if (entry.itemType === 'SERIALIZED') {
-          const result = await tx.inventoryUnit.updateMany({
-            where: { id: entry.inventoryUnitId, inventoryItemId: entry.inventoryItemId, status: 'AVAILABLE', deletedAt: null },
-            data: { status: 'CHECKED_OUT' },
-          })
-          if (result.count === 0) {
+          // PR-3a (D-e / D-n): `pickUnit` takes AVAILABLE or Returning (IN_TRANSIT) units —
+          // a Returning unit's open hub-return link is completed — guarded so a unit taken by
+          // a concurrent checkout is refused rather than double-allocated.
+          const picked = await pickUnit(tx, entry.inventoryUnitId, { inventoryItemId: entry.inventoryItemId, actorLabel: session.name })
+          if (!picked) {
             throw Object.assign(new Error('UNIT_CONFLICT'), { unitId: entry.inventoryUnitId })
           }
           await tx.kitItem.create({
@@ -157,24 +160,22 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           // SERIALIZED items added by quantity must reserve that many real AVAILABLE
           // units. CONSUMABLE quantity is authoritative and may have no units.
           const requireUnits = invItem?.itemType === 'SERIALIZED'
-          const availableUnits = await tx.inventoryUnit.findMany({
-            where: { inventoryItemId: entry.inventoryItemId, status: 'AVAILABLE', deletedAt: null },
-            take: entry.quantity,
-          })
+          // Pickable units (PICKABLE_STATUSES), AVAILABLE first so a Returning unit's hub
+          // link is only completed when the shelf can't cover the quantity.
+          const availableUnits = pickableFirst(await tx.inventoryUnit.findMany({
+            where: { inventoryItemId: entry.inventoryItemId, ...PICKABLE_UNIT },
+            select: { id: true, status: true },
+          })).slice(0, entry.quantity)
           if (requireUnits && availableUnits.length < entry.quantity) {
             throw Object.assign(new Error('INSUFFICIENT_UNITS'), {
               available: availableUnits.length,
               requested: entry.quantity,
             })
           }
-          if (availableUnits.length > 0) {
-            // Status-guarded flip + count reconciliation: a unit taken by a concurrent
-            // checkout between this read and write cannot be double-allocated.
-            const flipped = await tx.inventoryUnit.updateMany({
-              where: { id: { in: availableUnits.map((u) => u.id) }, status: 'AVAILABLE' },
-              data: { status: 'CHECKED_OUT' },
-            })
-            if (flipped.count < availableUnits.length) {
+          // Status-guarded pick per unit: a unit taken by a concurrent checkout between
+          // this read and write is refused, not double-allocated.
+          for (const u of availableUnits) {
+            if (!(await pickUnit(tx, u.id, { actorLabel: session.name }))) {
               throw Object.assign(new Error('UNIT_CONFLICT'), {})
             }
           }
@@ -313,6 +314,10 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
     },
   })
 
+  // Serialized units that went Returning inside the transaction — their HUB_RETURN links
+  // are issued after commit (with a fallback to AVAILABLE if that fails).
+  const returning: { kitItemId: string; unitId: string; hubId: string }[] = []
+
   try {
     await prisma.$transaction(async (tx) => {
     for (const disp of itemDispositions) {
@@ -387,11 +392,30 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
           },
         })
 
+        // PR-3a: the one return rule (`returnUnit`) — the same as end of deployment. GOOD →
+        // Returning (IN_TRANSIT) with its hub link; damaged → an open damage task that pulls
+        // the unit; already in repair → stays in repair, this hub recorded as its
+        // destination (D-d). This path used to write AVAILABLE for every condition, freeing
+        // out-of-service units (S-2). Anonymous units can't carry a link: GOOD → AVAILABLE.
+        const condition = disp.returnCondition ?? 'GOOD'
+        const damageTask = {
+          itemId: inventoryItemId,
+          taskName: `Damage repair: ${kitItem.item.name}`,
+          notes: note ?? null,
+          rigId: id,
+          reportedById: session.userId,
+          alertMeta: { itemName: kitItem.item.name, operatorId: session.userId },
+        }
         if (kitItem.inventoryUnit) {
-          await tx.inventoryUnit.update({
-            where: { id: kitItem.inventoryUnit.id },
-            data: { status: 'AVAILABLE' },
+          const ended = await returnUnit(tx, kitItem.inventoryUnit.id, {
+            condition,
+            hubId: disp.hubId,
+            linked: true,
+            task: damageTask,
           })
+          if (ended === 'IN_TRANSIT' && disp.hubId) {
+            returning.push({ kitItemId: kitItem.id, unitId: kitItem.inventoryUnit.id, hubId: disp.hubId })
+          }
         } else {
           const excludeUnitIds = await getUnitsInOtherRigs(tx, inventoryItemId, id)
           const units = await tx.inventoryUnit.findMany({
@@ -402,11 +426,8 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
             },
             take: removeQty,
           })
-          if (units.length > 0) {
-            await tx.inventoryUnit.updateMany({
-              where: { id: { in: units.map((u) => u.id) } },
-              data: { status: 'AVAILABLE' },
-            })
+          for (const u of units) {
+            await returnUnit(tx, u.id, { condition, hubId: disp.hubId, linked: false, task: damageTask })
           }
         }
         if (disp.hubId) {
@@ -427,30 +448,31 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
             condition: logCondition,
           },
         })
+        const targetUnit = kitItem.inventoryUnit
+          ? kitItem.inventoryUnit
+          : (await tx.inventoryUnit.findFirst({ where: { inventoryItemId, status: 'CHECKED_OUT' } }))
+        const photoUrls = filterAllowedPhotoUrls(disp.photoUrls)
         if (disp.canBeFixed) {
-          const targetUnit = kitItem.inventoryUnit
-            ? kitItem.inventoryUnit
-            : (await tx.inventoryUnit.findFirst({ where: { inventoryItemId, status: 'CHECKED_OUT' } }))
-
+          // PR-3a: the repair goes through `openDamageTask` (pulls the unit; joins an
+          // already-open report on it rather than starting a second).
           if (targetUnit) {
             await tx.inventoryUnit.update({
               where: { id: targetUnit.id },
               data: {
-                status: 'IN_MAINTENANCE',
                 inoperableNotes: disp.inoperableNotes ?? null,
                 inoperableReportedAt: now,
                 inoperableReportedById: session.userId,
               },
             })
           }
-          const task = await tx.maintenanceTask.create({
-            data: {
-              itemId: inventoryItemId,
-              // UR-029: link the specific unit so completing the repair returns
-              // THIS unit to service (the complete route keys off task.unit).
-              inventoryUnitId: targetUnit?.id ?? null,
+          // UR-029: link the specific unit so completing the repair returns THIS unit to
+          // service. CC-34 (1b): the deployment this damage came from + who reported it.
+          await openDamageTask(
+            tx,
+            targetUnit ? { kind: 'unit', id: targetUnit.id, itemId: inventoryItemId } : { kind: 'item', itemId: inventoryItemId },
+            {
               taskName: `Damage repair: ${kitItem.item.name}`,
-              isDamageReport: true,
+              notes: null,
               repairType: disp.repairType ?? null,
               shopName: disp.shopName ?? null,
               shopAddress: disp.shopAddress ?? null,
@@ -458,41 +480,20 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
               purchaseOrder: disp.purchaseOrder ?? null,
               invoiceNumber: disp.invoiceNumber ?? null,
               repairHubId: disp.repairHubId ?? null,
-              // CC-34 (1b): the deployment this damage came from + who reported it.
               rigId: id,
               reportedById: session.userId,
-              status: 'IN_PROGRESS',
+              photoUrls,
+              alertMeta: { itemName: kitItem.item.name, operatorId: session.userId },
+              source: 'RETURN',
+              pull: true,
             },
-          })
-          await createAlert('DAMAGE_REPORTED', 'maintenance_tasks', task.id, {
-            itemName: kitItem.item.name,
-            operatorId: session.userId,
-          }, tx)
-          if (disp.photoUrls.length > 0) {
-            await tx.photo.createMany({
-              data: filterAllowedPhotoUrls(disp.photoUrls).map((url) => ({
-                url,
-                context: 'DAMAGE' as const,
-                inventoryItemId,
-                maintenanceId: task.id,
-                uploadedById: session.userId,
-              })),
-            })
-          }
+          )
         } else {
-          const targetUnit = kitItem.inventoryUnit
-            ? kitItem.inventoryUnit
-            : (await tx.inventoryUnit.findFirst({ where: { inventoryItemId, status: 'CHECKED_OUT' } }))
-
           if (targetUnit) {
-            await tx.inventoryUnit.update({
-              where: { id: targetUnit.id },
-              data: {
-                status: 'INOPERABLE',
-                inoperableNotes: disp.inoperableNotes ?? null,
-                inoperableReportedAt: now,
-                inoperableReportedById: session.userId,
-              },
+            await markInoperable(tx, targetUnit.id, {
+              notes: disp.inoperableNotes ?? null,
+              reportedById: session.userId,
+              at: now,
             })
             // CC-34 (1c): ring the bell on an inoperable flip so triage happens before
             // someone opens the maintenance page. review-inoperable clears this same
@@ -502,9 +503,9 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
               operatorId: session.userId,
             }, tx)
           }
-          if (disp.photoUrls.length > 0) {
+          if (photoUrls.length > 0) {
             await tx.photo.createMany({
-              data: filterAllowedPhotoUrls(disp.photoUrls).map((url) => ({
+              data: photoUrls.map((url) => ({
                 url,
                 context: 'DAMAGE' as const,
                 inventoryItemId,
@@ -542,17 +543,15 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 
-  // Wave F-R (soft-gate, best-effort, non-blocking): for each "Return to Hub" of
-  // a serialized unit, issue a HUB_RETURN status link so the hub can confirm
-  // receipt. The unit stays AVAILABLE (still re-deployable) — this only records a
-  // pending receipt; any failure here never affects the return that committed.
+  // Wave F-R (soft-gate, best-effort, non-blocking): issue a HUB_RETURN status link for
+  // each unit that went Returning, so the hub can confirm receipt (the unit stays
+  // pickable meanwhile — D-e). If issuance fails, those units fall back to AVAILABLE
+  // rather than sit Returning with no link; the return itself has already committed.
   try {
-    const hubDisps = itemDispositions
-      .filter((d) => d.type === 'HUB' && d.hubId)
-      .map((d) => ({ kitItemId: d.kitItemId, hubId: d.hubId as string }))
-    await issueHubReturnLinks(session.userId, hubDisps)
+    await issueHubReturnLinks(session.userId, returning.map(({ kitItemId, hubId }) => ({ kitItemId, hubId })))
   } catch (e) {
     console.error('[items hub-return link issue]', e)
+    await releaseUnlinkedReturns(returning.map((r) => r.unitId)).catch(() => {})
   }
 
   const updated = await prisma.rig.findUniqueOrThrow({ where: { id }, include: RIG_INCLUDE })

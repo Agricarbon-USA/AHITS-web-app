@@ -3,6 +3,8 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
 import { categoryDisplay } from '@/lib/inventory'
 import { parseScannedCode } from '@/lib/qr'
+import { PICKABLE_STATUSES } from '@/lib/populations'
+import type { EquipmentStatus } from '@prisma/client'
 
 // GET /api/inventory/units/by-qr/[qrCodeId]
 // Resolve a scanned QR payload to an InventoryUnit + its parent item.
@@ -58,6 +60,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ qrC
       notes: unit.notes,
       inventoryItemId: unit.inventoryItemId,
       position,
+      // PR-3a (D-n): whether a checkout would accept this unit — the scan page's "Add"
+      // reads this instead of re-spelling the pickable statuses on the client.
+      pickable: (PICKABLE_STATUSES as readonly EquipmentStatus[]).includes(unit.status),
     },
     item: {
       id: unit.inventoryItem.id,

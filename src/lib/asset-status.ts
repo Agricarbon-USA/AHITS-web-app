@@ -1,7 +1,7 @@
 import type { EquipmentStatus, Prisma, VehicleStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { resolveAlertsFor } from '@/lib/alerts'
-import { LIVE_KIT_ITEM, OPEN_TASK } from '@/lib/populations'
+import { LIVE_KIT_ITEM, OPEN_TASK, PICKABLE_STATUSES } from '@/lib/populations'
 import { closeDamageTask, openDamageTask, type DamageTaskFields } from '@/lib/maintenance'
 
 /**
@@ -25,6 +25,8 @@ import { closeDamageTask, openDamageTask, type DamageTaskFields } from '@/lib/ma
 type Tx = Prisma.TransactionClient
 
 export type AssetRef = { kind: 'vehicle'; id: string } | { kind: 'unit'; id: string }
+
+const ACTIVE_HUB_RETURN_STATES = ['ISSUED', 'VIEWED', 'ACTED'] as const
 
 /**
  * Put an asset in repair. Vehicle → IN_MAINTENANCE from ACTIVE only; unit →
@@ -194,6 +196,62 @@ export async function markInoperable(
       inoperableReportedById: report.reportedById,
     },
   })
+}
+
+/**
+ * Pick a unit onto a deployment: AVAILABLE or IN_TRANSIT → CHECKED_OUT, guarded on
+ * the status it was read in so two concurrent picks of the same unit cannot both
+ * win. Picking a Returning unit completes its open HUB_RETURN link(s) — the hub
+ * never needs to confirm gear that has already gone back out (D-e, P-15).
+ * Returns false when the unit is not pickable (or was just taken).
+ *
+ * D-n: this landed in the same commit that widened `PICKABLE_STATUSES` to
+ * ['AVAILABLE', 'IN_TRANSIT'], so no picker offers a unit this refuses.
+ */
+export async function pickUnit(
+  tx: Tx,
+  unitId: string,
+  opts: { inventoryItemId?: string; actorLabel?: string } = {},
+): Promise<boolean> {
+  const unit = await tx.inventoryUnit.findFirst({
+    where: {
+      id: unitId,
+      deletedAt: null,
+      ...(opts.inventoryItemId && { inventoryItemId: opts.inventoryItemId }),
+    },
+    select: { status: true },
+  })
+  if (!unit || !(PICKABLE_STATUSES as readonly EquipmentStatus[]).includes(unit.status)) return false
+  const claimed = await tx.inventoryUnit.updateMany({
+    where: { id: unitId, status: unit.status },
+    data: { status: 'CHECKED_OUT' },
+  })
+  if (claimed.count === 0) return false
+
+  if (unit.status === 'IN_TRANSIT') {
+    const now = new Date()
+    const links = await tx.statusLink.findMany({
+      where: { type: 'HUB_RETURN', inventoryUnitId: unitId, state: { in: [...ACTIVE_HUB_RETURN_STATES] } },
+      select: { id: true },
+    })
+    for (const link of links) {
+      await tx.statusLink.update({ where: { id: link.id }, data: { state: 'COMPLETED', completedAt: now } })
+      await tx.statusLinkEvent.create({
+        data: {
+          statusLinkId: link.id,
+          action: 'COMPLETED',
+          note: 'Re-deployed before hub receipt',
+          actorLabel: opts.actorLabel ?? 'system',
+        },
+      })
+    }
+  }
+  return true
+}
+
+/** Order pickable units for a by-quantity checkout: AVAILABLE before Returning. */
+export function pickableFirst<T extends { status: EquipmentStatus }>(units: T[]): T[] {
+  return [...units].sort((a, b) => Number(a.status !== 'AVAILABLE') - Number(b.status !== 'AVAILABLE'))
 }
 
 /**
