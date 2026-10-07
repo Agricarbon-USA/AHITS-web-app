@@ -31,6 +31,7 @@ import {
   type InventoryOption,
   type VehicleOption,
 } from '@/components/shared/RequestComposer'
+import { fetchPickerOptions } from '@/lib/inventory-options'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -80,6 +81,32 @@ export default function RequestsPage() {
   const [categories, setCategories] = React.useState<CategoryOption[]>([])
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const [dialogDataLoaded, setDialogDataLoaded] = React.useState(false)
+
+  // PR-1b (L-2/L-10/L-16): the item picker is the COMPLETE pickable set, refetched
+  // on every dialog open (availability changes while a tab sits open — a picker
+  // loaded once per session offers gear that has since been packed), with server
+  // search past the ceiling and a retry when the read fails.
+  const [inventoryTruncated, setInventoryTruncated] = React.useState(false)
+  const [inventoryFailed, setInventoryFailed] = React.useState(false)
+  const loadInventory = React.useCallback(async () => {
+    const pk = await fetchPickerOptions()
+    setInventoryFailed(pk.failed)
+    setInventoryTruncated(pk.truncated)
+    if (!pk.failed) setInventory(pk.options as unknown as InventoryOption[])
+  }, [])
+  const inventorySearch = React.useMemo(() => ({
+    truncated: inventoryTruncated,
+    failed: inventoryFailed,
+    onRetry: () => { void loadInventory() },
+    load: async (q: string) => {
+      const pk = await fetchPickerOptions({ q })
+      return pk.options.map((i) => ({
+        value: i.id,
+        label: `${i.name}${i.itemType === 'SERIALIZED' ? ' (serialized)' : ''} · ${i.category.name}`,
+      }))
+    },
+  }), [inventoryTruncated, inventoryFailed, loadInventory])
+
   const [cancellingId, setCancellingId] = React.useState<string | null>(null)
   // CC-14: confirm before cancelling a request (was a one-tap irreversible action).
   const [confirmCancelId, setConfirmCancelId] = React.useState<string | null>(null)
@@ -116,11 +143,13 @@ export default function RequestsPage() {
 
   const openDialog = async () => {
     setDialogOpen(true)
+    // L-10: the item picker is refetched EVERY open, outside the one-time guard
+    // below — hubs/projects/categories are stable, availability is not.
+    void loadInventory()
     if (!dialogDataLoaded) {
-      const [hubsRes, projectsRes, inventoryRes, vehiclesRes, categoriesRes] = await Promise.all([
+      const [hubsRes, projectsRes, vehiclesRes, categoriesRes] = await Promise.all([
         fetch('/api/hubs'),
         fetch('/api/projects'),
-        fetch('/api/inventory?pageSize=200'),
         fetch('/api/vehicles'),
         fetch('/api/categories'),
       ])
@@ -128,10 +157,6 @@ export default function RequestsPage() {
       if (projectsRes.ok) {
         const d = await projectsRes.json()
         setProjects((d.data as ProjectOption[]) ?? [])
-      }
-      if (inventoryRes.ok) {
-        const d = await inventoryRes.json()
-        setInventory((d.data as InventoryOption[]) ?? [])
       }
       if (vehiclesRes.ok) {
         const d = await vehiclesRes.json()
@@ -301,6 +326,7 @@ export default function RequestsPage() {
           hubs={hubs}
           projects={projects}
           inventory={inventory}
+          inventorySearch={inventorySearch}
           vehicles={vehicles}
           categories={categories}
           defaultHubId={user?.homeHubId}

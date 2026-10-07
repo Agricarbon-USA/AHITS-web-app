@@ -44,6 +44,20 @@ export interface InventoryOption {
   availableUnits: UnitOption[]
 }
 export interface VehicleOption { id: string; name: string; type: string }
+
+/**
+ * PR-1b (L-2/L-16): how the item picker behaves when the catalog outgrows one
+ * read, or the read fails. `truncated` switches the picker to debounced server
+ * search (a client filter over a partial list is the bug — the item exists and
+ * the picker says "No options"); `failed` makes it offer a retry instead of an
+ * empty list that reads as an empty catalog for the rest of the session.
+ */
+export interface InventorySearch {
+  truncated: boolean
+  failed: boolean
+  onRetry: () => void
+  load: (q: string) => Promise<{ value: string; label: string }[]>
+}
 export interface OperatorOption { id: string; name: string }
 
 export interface DraftLine {
@@ -170,6 +184,7 @@ function LineEditor({
   categories,
   hubs,
   homeHubId,
+  inventorySearch,
   onChange,
   onRemove,
 }: {
@@ -180,6 +195,7 @@ function LineEditor({
   categories: CategoryOption[]
   hubs: HubOption[]
   homeHubId?: string | null
+  inventorySearch?: InventorySearch
   onChange: (patch: Partial<DraftLine>) => void
   onRemove: () => void
 }) {
@@ -260,6 +276,10 @@ function LineEditor({
                     label: `${i.name}${i.itemType === 'SERIALIZED' ? ' (serialized)' : ''}${i.category ? ` · ${i.category.name}` : ''}`,
                   })),
                 ]}
+                truncated={inventorySearch?.truncated}
+                loadFailed={inventorySearch?.failed}
+                onRetry={inventorySearch?.onRetry}
+                loadOptions={inventorySearch?.load}
               />
 
               {!line.specificInventoryItemId && (
@@ -450,6 +470,8 @@ export interface RequestComposerProps {
   inventory: InventoryOption[]
   vehicles: VehicleOption[]
   categories: CategoryOption[]
+  /** PR-1b: server search / retry for the item picker (see `InventorySearch`). */
+  inventorySearch?: InventorySearch
   /** Default hub for SHIPPING_LABEL lines (operator's home hub). */
   defaultHubId?: string | null
   /** When provided, shows a "For operator" selector (admin-on-behalf-of). */
@@ -471,6 +493,7 @@ export function RequestComposer({
   inventory,
   vehicles,
   categories,
+  inventorySearch,
   defaultHubId,
   operators,
   offline,
@@ -713,6 +736,7 @@ export function RequestComposer({
               line={line}
               mode={mode}
               inventory={inventory}
+              inventorySearch={inventorySearch}
               vehicles={vehicles}
               categories={categories}
               hubs={hubs}

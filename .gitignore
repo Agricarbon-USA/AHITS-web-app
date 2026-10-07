@@ -55,3 +55,8 @@ google-creds.json
 _to_delete/
 .ahits_write_test_*
 .ahits-codebase-snapshot.tar.gz
+# Scratch SQL/output from Claude Code sessions. The tracked record of a session is
+# its AHITS_SESSION_HANDOFF_*.md; these are the loose working files beside it, and
+# an untracked directory sitting in `git status` makes the SESSION CLOSE "git status
+# clean" check meaningless. Added 2026-10-06 (PR-1b session).
+Claude outputs/
