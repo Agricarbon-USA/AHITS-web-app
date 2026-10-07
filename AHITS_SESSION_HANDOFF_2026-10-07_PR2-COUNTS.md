@@ -9,7 +9,8 @@
 2. `63821c5`: CLAUDE.md, deployment Notes, gains the **revert rule**: reverting `development`/`production` needs the owner's explicit go in chat; a hard `/api/health` outage is the only exception; the symptom must reproduce after the revision settles, on a surface the PR touched. The reason is recorded as the 2026-10-07 #245 incident. **The owner's instruction said 2026-10-08; git shows #245 (`1da7bff`) merged 2026-10-07 07:53 −0600, so 10-07 was written.**
 3. `9cbcd96`: PR-2 code. Populations, `tally`/`itemCounts`, "Returning", fragments applied, report and project populations, business-day dashboard.
 4. `a79ba44`: PR-2 tests (pure, UI, DB/CI) and `tests/setup.ts` clearing `email_logs`.
-5. Docs commit: STATUS, DECISIONS (D40/D41), this handoff, and the TODO row note.
+5. `6fc1655`: docs. STATUS, DECISIONS (D40/D41), this handoff, and the TODO row note.
+6. `810f31b`: follow-ups from the pre-ready review. The options route's legacy fallback goes through `itemCounts`; the project drawer's "N active" uses the list's counter (the history list still reads the legacy column, a residual); and the dashboard test adds the spec's 23:30 UTC fixture. Searching for other server-midnight "today" compares found none left (FND-7 already covered the cron, feeds, daily-check and operator Today).
 
 The full what and why, including the finding IDs closed, is in #248's body. It isn't repeated here.
 
