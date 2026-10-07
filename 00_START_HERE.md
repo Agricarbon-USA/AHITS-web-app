@@ -54,6 +54,8 @@ Before writing code, also read `CLAUDE.md` + `AGENTS.md` (deploy flow + the DB/m
 | run the **pilot / launch week** | `AHITS_PILOT_CHARTER.md` (the signed contract) + `AHITS_LAUNCH_HANDOFF_2026-07-27.md` (day-by-day; **the fixed 07-27 date is void — rolling start per D17**) |
 | see the **2026-07-28 six-seat review** (findings, file:line evidence) | `AHITS_SIX_SEAT_REVIEW_2026-07-28.md` |
 | run the **pilot-floor build queue** (CC-29/30/31/16S/33/34 — gates the first operator) | `AHITS_CC29-31_PILOT_FLOOR_PACKETS.md` **+ paste-along riders in `AHITS_PACKET_ERRATA_2026-07-29.md`** + workplan §15 |
+| **build the current fix program** (the seven PRs from the 2026-10-05 owner test: 1a·1b·2·3a·3b·4·5, in order) | `AHITS_FIX_PROGRAM_2026-10-05_FIVE-PRS.md` — the build spec; **§0's owner decisions D-a…D-n are final, apply them** |
+| see the **evidence** behind a fix-program line (the five root causes, ~40 findings, file:line) | `AHITS_SCREENING_REPORT_2026-10-05_ROOT-CAUSES.md` |
 
 ---
 
@@ -61,7 +63,7 @@ Before writing code, also read `CLAUDE.md` + `AGENTS.md` (deploy flow + the DB/m
 
 - **Always-current (root):** `STATUS.md`, `DECISIONS.md`, `00_START_HERE.md` — maintained every session.
 - **Canonical strategy & plan (root):** the exec summary, North Star v3, Master Roadmap, the 2026-07-10 workplan / state-of-app / CC-instructions / landing-checklist / prod-cutover-deferred, the field-feedback fix plan, the W0-10 migration plan, `AHITS_PHASE3_WORKPLAN_v2.md` (the ID register). Each carries a status banner.
-- **Reference (root):** PRD v2 + addendum, `CLAUDE.md`, `AGENTS.md`, `README.md`, the A6 checklists, `PROD_CUTOVER_RUNBOOK.md` (deferred).
+- **Reference (root):** PRD v2 + addendum, `CLAUDE.md`, `AGENTS.md`, `README.md`, the A6 checklists, `PROD_CUTOVER_RUNBOOK.md` (deferred), **`AHITS_SCREENING_REPORT_2026-10-05_ROOT-CAUSES.md`** (the 2026-10-05 five-root-cause evidence register) and **`AHITS_FIX_PROGRAM_2026-10-05_FIVE-PRS.md`** (its seven-PR build spec — **supersedes `AHITS_BUGFIX_PACKET_2026-10-05_INVENTORY-MAINTENANCE.md`**, whose four fixes it delivers as consequences of the shared modules).
 - **History (`docs/archive/`):** dated session records, execution logs, superseded North Stars (v1/v2), old workplans, one-off scripts, feature/sprint notes. Provenance only — **never act on an archived doc.**
 
 ---
