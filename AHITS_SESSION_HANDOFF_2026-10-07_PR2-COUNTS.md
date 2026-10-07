@@ -14,8 +14,39 @@
 
 The full what and why, including the finding IDs closed, is in #248's body. It isn't repeated here.
 
+## Merge, deploy and smoke (same day, 2026-10-07)
+- **Merged:** #248 was squash-merged at 17:04 UTC as `3b86c7e`, on the owner's go in chat.
+- **Deployed:** deploy run 37657189045 deployed staging with every job green (verify, migration-safety, migrate, deploy). PR-2 adds no migration.
+- **Baseline first:** before/after numbers were taken read-only on staging before the merge. The smoke ran on the warm revision; health returned 200 in about 270 ms.
+- **The smoke script names a "Manual Corer" item, which doesn't exist on staging.** That case comes from the test fixtures. The live equivalent is **Garmin Glo2**, which has 5 AVAILABLE, 3 IN_TRANSIT and 4 RETIRED units:
+  - The row went from a Total of 12 to **5 · 0 · 8**.
+  - The drawer reads "8 owned · 4 retired", with chips 5 Available, 3 Returning and 4 Retired.
+  - The Units tab reads "Units (12 · 4 retired)".
+- **Consumable Total = owned can't be observed yet.** Staging has 0 active deployments and nothing is out, so every consumable Total is unchanged. Re-check after the first live deployment with consumables.
+- **Returning:**
+  - The chip shows in the Glo2 drawer and in the Equipment report (Ulefone x13).
+  - Picker options still offer 5 for Glo2 (AVAILABLE only), so Returning units aren't pickable until PR-3a.
+- **Vehicle drawer:** the 32' Gooseneck Trailer has 3 tasks, all COMPLETED. Its drawer now reads "Open maintenance (0)", and the list's Maint. column dropped from 3 to 0.
+- **Equipment report,** fixed window 2026-04-10..2026-10-07:
+
+  | Measure | Before | After | Why |
+  |---|---|---|---|
+  | Tracked assets | 173 | 160 | retired assets left |
+  | Spend | $0.00 | $0.00 | unchanged |
+  | Events | 11 | 10 | a soft-deleted or never-done task left |
+  | Rental count | 3 | 2 | a retired rental no longer has a row |
+  | Rental cost | $1,492.74 | $1,492.74 | unchanged |
+  | Downtime | 279.4 | 279.4 | unchanged |
+
+- **Alerts:** pending alerts are still 3 and the dashboard counts didn't change. No serialized item has a `lowStockThreshold`, so the new serialized LOW_INVENTORY scan has nothing to raise yet.
+- **Not caused by PR-2, and not investigated:** every admin page waits about 5–9 s on the client before its first data request, then each request returns in about 0.5 s.
+  - It happens on Hubs too, which PR-2 didn't touch.
+  - Nobody timed page loads before the merge, so it's unknown whether this predates PR-2.
+  - It isn't a revert trigger under the CLAUDE.md revert rule.
+  - Look first at client hydration and the service worker (`src/app/sw.ts`, `useAuth`).
+- **Close-out:** D40 and D41 are stamped with the merge. STATUS §1, §3 and §4 and TODO Part 4 row 2 are updated. These docs ship in their own docs-only PR.
+
 ## Resume points
-- **#248's CI** must be green. If CI is red, fix it on this branch; don't merge around it.
 - **After merge** (stamp D40/D41 with merge date, squash and revision; tick TODO Part 4 row 2), run the PR-2 owner smoke **without "can be picked"**, which is PR-3a:
   - The Manual Corer row reads 11 · 0 · 14, and the drawer reads "14 owned · 1 retired".
   - A unit awaiting hub confirmation shows **Returning**.
