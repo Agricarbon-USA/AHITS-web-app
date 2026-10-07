@@ -5,7 +5,7 @@ import { getActiveRigForOperator } from '@/lib/deployment-assignments'
 import { requireAuth } from '@/lib/auth/session'
 import { createAlert, resolveActiveAlert } from '@/lib/alerts'
 import { applyOdometerReading } from '@/lib/maintenance'
-import { parsePagination } from '@/lib/validation'
+import { parsePagination, listResponse } from '@/lib/validation'
 import { businessDate } from '@/lib/business-date'
 import { withIdempotency } from '@/lib/idempotency'
 
@@ -60,7 +60,7 @@ export async function GET(req: NextRequest) {
   const vehicleId = searchParams.get('vehicleId')
   const date = searchParams.get('date')
   const operatorId = session.role === 'OPERATOR' ? session.userId : searchParams.get('operatorId')
-  const { page, pageSize } = parsePagination(searchParams)
+  const { page, pageSize, skip, clamped } = parsePagination(searchParams)
 
   const where = {
     ...(vehicleId && { vehicleId }),
@@ -71,15 +71,16 @@ export async function GET(req: NextRequest) {
   const [data, total] = await Promise.all([
     prisma.dailyCheck.findMany({
       where,
-      skip: (page - 1) * pageSize,
+      skip,
       take: pageSize,
-      orderBy: { date: 'desc' },
+      // L-13: a stable tiebreaker — several checks share one `date`.
+      orderBy: [{ date: 'desc' }, { id: 'asc' }],
       include: { vehicle: true, operator: { select: { id: true, name: true } } },
     }),
     prisma.dailyCheck.count({ where }),
   ])
 
-  return NextResponse.json({ data, total, page, pageSize })
+  return NextResponse.json(listResponse(data, total, { page, pageSize, clamped }))
 }
 
 export async function POST(req: NextRequest) {

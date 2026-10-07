@@ -47,7 +47,7 @@ ORDER BY "createdAt";
 
 **A5 · Transfers and handoffs still pending**
 ```sql
-SELECT 'transfer' AS kind, id, "fromRigId" AS rig, status, "createdAt"::date AS created FROM transfer_requests WHERE status = 'PENDING'
+SELECT 'transfer' AS kind, id, "fromRigId" AS rig, status::text, "createdAt"::date AS created FROM transfer_requests WHERE status = 'PENDING'
 UNION ALL
 SELECT 'handoff', id, "rigId", status::text, "createdAt"::date FROM deployment_handoffs WHERE status::text = 'PENDING'
 ORDER BY created;
@@ -93,7 +93,7 @@ SELECT count(*) AS before_open FROM alerts
    AND type IN ('DAILY_CHECK_MISSED','DAILY_CHECK_FAILED','MATERIAL_REQUEST','EQUIPMENT_NOT_RETURNED','PIN_LOCKED','EMAIL_FAILED','LOW_INVENTORY');
 
 UPDATE alerts
-   SET resolved = true, "resolvedAt" = now(),
+   SET resolved = true, "resolvedAt" = now(), "activeKey" = NULL,
        metadata = coalesce(metadata, '{}'::jsonb) || '{"cleanupBatch":"2026-09-07-july-trial"}'::jsonb
  WHERE resolved = false AND "triggeredAt" < '2026-09-01'
    AND type IN ('DAILY_CHECK_MISSED','DAILY_CHECK_FAILED','MATERIAL_REQUEST','EQUIPMENT_NOT_RETURNED','PIN_LOCKED','EMAIL_FAILED','LOW_INVENTORY');
@@ -104,7 +104,21 @@ SELECT count(*) AS after_open FROM alerts
 -- expect after_open = 0. If anything looks wrong: ROLLBACK;
 COMMIT;
 ```
-*Undo, exact:* `UPDATE alerts SET resolved = false, "resolvedAt" = NULL WHERE metadata->>'cleanupBatch' = '2026-09-07-july-trial';`
+> **Correction (PR-1a session, 2026-10-06): `"activeKey" = NULL` is part of the resolve, not optional.**
+> `activeKey` is the dedup key every raise path writes; leaving it set on a resolved
+> row means the next cron pass finds a live key, treats the alert as already raised,
+> and **never re-raises it** — so a condition that is still true goes permanently
+> quiet. (PR-4 makes `resolved = false ⇔ activeKey IS NOT NULL` a DB CHECK, which an
+> uncorrected run of this block would violate.) The undo must therefore rebuild the
+> key, not just clear `resolved`.
+
+*Undo, exact:*
+```sql
+UPDATE alerts
+   SET resolved = false, "resolvedAt" = NULL,
+       "activeKey" = "type"::text || ':' || "sourceTable" || ':' || "sourceId"
+ WHERE metadata->>'cleanupBatch' = '2026-09-07-july-trial';
+```
 *Note:* a `DAILY_CHECK_MISSED` for an operator whose rig you KEEP OPEN will be re-raised by the next cron run — expected.
 
 **C3 · Clear the trial's bell backlog (SQL)** — marks old notifications read; nothing is removed.
@@ -113,7 +127,7 @@ UPDATE notifications SET "readAt" = now()
  WHERE "readAt" IS NULL AND "createdAt" < '2026-09-01';
 ```
 
-**C4 · Requests and transfers from A4/A5 — in the admin app.** Requests: Admin → Requests → **Deny** (with a one-line note "closed in the Sept 7 cleanup") or let the requester Cancel — this releases any reserved stock; **do not** flip them in SQL (a `STAGED` reservation cancelled by SQL leaves stock counted as reserved forever). Transfers/handoffs still pending from July: decline them from the receiving phone or cancel from the sender's; if those phones are unreachable, this SQL is safe (no stock side-effects):
+**C4 · Requests and transfers from A4/A5 — in the admin app.** Requests: Admin → Requests → **Decline** (the button says Decline — this doc said "Deny", which is the per-LINE verb inside the hub fulfilment checklist, a different control; corrected in the PR-1a session, 2026-10-06), with a one-line note "closed in the Sept 7 cleanup" or let the requester Cancel — this releases any reserved stock; **do not** flip them in SQL (a `STAGED` reservation cancelled by SQL leaves stock counted as reserved forever). Transfers/handoffs still pending from July: decline them from the receiving phone or cancel from the sender's; if those phones are unreachable, this SQL is safe (no stock side-effects):
 ```sql
 UPDATE transfer_requests SET status = 'CANCELLED', "respondedAt" = now(),
        "responseNote" = 'Cancelled in the 2026-09-07 July-trial cleanup'

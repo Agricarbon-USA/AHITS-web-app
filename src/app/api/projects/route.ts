@@ -3,13 +3,14 @@ import { z } from 'zod'
 import { ProjectType, ProjectStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
+import { listResponse } from '@/lib/validation'
 
 export async function GET() {
   const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const projects = await prisma.project.findMany({
-    orderBy: { name: 'asc' },
+    orderBy: [{ name: 'asc' }, { id: 'asc' }], // L-13: stable tiebreaker
     include: {
       lead: { select: { id: true, name: true } },
       // Active deployments = rigs on this project that haven't ended.
@@ -17,7 +18,8 @@ export async function GET() {
     },
   })
 
-  return NextResponse.json({ data: projects })
+  // Uncapped read — `total` is the row count, `truncated` false.
+  return NextResponse.json(listResponse(projects, projects.length, { page: 1, pageSize: projects.length || 1 }))
 }
 
 const createSchema = z

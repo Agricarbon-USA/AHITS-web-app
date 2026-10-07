@@ -3,6 +3,10 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
 import { createAlert, CRON_SILENT_SOURCE_TABLE, CRON_SILENT_SOURCE_ID } from '@/lib/alerts'
 import { getCronLastRunAt } from '@/lib/notification-config'
+import { listResponse } from '@/lib/validation'
+
+// The read is deliberately capped — this route is hit on every admin page load.
+const ALERTS_PAGE_SIZE = 50
 
 // CC-22: how long the cron can go quiet before this read path raises CRON_SILENT.
 // A dead cron can't report its own silence, so this is evaluated here (an admin
@@ -34,10 +38,18 @@ export async function GET() {
 
   await checkCronHeartbeat()
 
-  const alerts = await prisma.alert.findMany({
-    where: { resolved: false },
-    orderBy: { triggeredAt: 'desc' },
-    take: 50,
-  })
-  return NextResponse.json({ data: alerts })
+  const where = { resolved: false }
+  const [alerts, total] = await Promise.all([
+    prisma.alert.findMany({
+      where,
+      // L-13: stable tiebreaker (alerts raised in one cron pass share a timestamp).
+      orderBy: [{ triggeredAt: 'desc' }, { id: 'asc' }],
+      take: ALERTS_PAGE_SIZE,
+    }),
+    prisma.alert.count({ where }),
+  ])
+  // PR-1a (L-6/C-3): the dashboard banner counted THIS capped array while the
+  // card beside it showed the true count, so the two disagreed past 50 open
+  // alerts. The envelope carries the real total; PR-1b points the banner at it.
+  return NextResponse.json(listResponse(alerts, total, { page: 1, pageSize: ALERTS_PAGE_SIZE }))
 }
