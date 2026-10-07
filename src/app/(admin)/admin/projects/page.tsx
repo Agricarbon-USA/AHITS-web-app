@@ -109,8 +109,6 @@ export default function AdminProjectsPage() {
     }
   }
 
-  const activeRigs = (p: ProjectDetail) => p.rigs.filter((r) => !r.endedAt).length
-
   return (
     <Box>
       <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1} mb={2}>
@@ -201,7 +199,7 @@ export default function AdminProjectsPage() {
             <Divider />
             <Box>
               <Typography variant="subtitle2" gutterBottom>
-                Deployments ({detail.rigs.length}{detail.rigs.length > 0 ? ` · ${activeRigs(detail)} active` : ''})
+                Deployments ({detail.rigs.length}{(detail.activeDeployments ?? 0) > 0 ? ` · ${detail.activeDeployments} active` : ''})
               </Typography>
               {detail.rigs.length === 0 ? (
                 <Typography variant="body2" color="text.secondary">No deployments assigned to this project yet.</Typography>

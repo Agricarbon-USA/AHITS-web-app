@@ -117,11 +117,18 @@ async function optionsResponse(req: NextRequest) {
   const data = page.map((item) => {
     const stockRows = item.itemType === 'CONSUMABLE' ? (stockMap.get(item.id) ?? []) : []
     const scoped = hubId ? stockRows.filter((r) => r.hubId === hubId) : stockRows
-    // Legacy fallback, same rule as the paged list: an item with no stock rows
-    // has never been backfilled, so its stored quantity is the only truth there is.
+    const counts = itemCounts({
+      itemType: item.itemType,
+      quantity: item.quantity,
+      units: unitsByItem.get(item.id) ?? [],
+      stockRows,
+      liveKitLines: item.kitItems,
+    })
+    // Hub-scoped when the item has stock rows (pickers gate on the source hub);
+    // otherwise the legacy fallback, which lives in `itemCounts` and nowhere else.
     const availableQuantity = stockRows.length > 0
       ? scoped.reduce((sum, r) => sum + r.available, 0)
-      : (item.quantity ?? 0)
+      : counts.available
 
     return {
       id: item.id,
@@ -140,13 +147,7 @@ async function optionsResponse(req: NextRequest) {
       availableByHub: stockRows,
       // PR-2: item-wide numbers (not hub-scoped). Pickers keep gating on the
       // source hub through `availableByHub`; these are for display.
-      itemCounts: itemCounts({
-        itemType: item.itemType,
-        quantity: item.quantity,
-        units: unitsByItem.get(item.id) ?? [],
-        stockRows,
-        liveKitLines: item.kitItems,
-      }),
+      itemCounts: counts,
     }
   })
 

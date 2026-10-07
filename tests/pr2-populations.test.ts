@@ -179,6 +179,31 @@ describe('dashboard "Today\'s checks" is the business day (C-5/P-12)', () => {
     const { data } = await (await dashboardGET()).json()
     expect(data.todayChecksSubmitted).toBe(1)
   })
+
+  it('at 23:30 UTC (18:30 CDT), a 10 pm Central check from last night is yesterday — not today', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-07T23:30:00Z')) // 2026-10-07 18:30 CDT
+    const op = await createOperator()
+    const truck = await createVehicle()
+    // Filed 03:00 UTC on the 7th = 22:00 CDT on the 6th → business date 10-06.
+    // Server-midnight (UTC) code counted it as today.
+    await prisma.dailyCheck.create({
+      data: {
+        vehicleId: truck.id, operatorId: op.id, checklistJson: [],
+        date: new Date('2026-10-06'), submittedAt: new Date('2026-10-07T03:00:00Z'),
+      },
+    })
+    const other = await createOperator()
+    await prisma.dailyCheck.create({
+      data: {
+        vehicleId: truck.id, operatorId: other.id, checklistJson: [],
+        date: new Date('2026-10-07'), submittedAt: new Date('2026-10-07T15:00:00Z'),
+      },
+    })
+
+    const { data } = await (await dashboardGET()).json()
+    expect(data.todayChecksSubmitted).toBe(1)
+  })
 })
 
 describe('inventory payloads carry itemCounts (B3/C-6)', () => {
