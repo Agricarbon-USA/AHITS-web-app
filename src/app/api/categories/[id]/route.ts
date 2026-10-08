@@ -28,7 +28,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   const inUse = await prisma.inventoryItem.count({ where: { categoryId: id } })
   if (inUse > 0) {
     return NextResponse.json(
-      { error: `Cannot delete: ${inUse} item(s) still use this category` },
+      { error: `${inUse} ${inUse === 1 ? 'item still uses' : 'items still use'} this category — move ${inUse === 1 ? 'it' : 'them'} to another category first.` },
       { status: 409 },
     )
   }

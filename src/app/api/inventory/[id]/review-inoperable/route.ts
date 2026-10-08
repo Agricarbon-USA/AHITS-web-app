@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
 import { resolveActiveAlert } from '@/lib/alerts' // CC-34 (1c): triage clears the bell
 import { retireUnit } from '@/lib/asset-status'
+import { assertNoOpenReferences, openReferences, referenceConflictBody } from '@/lib/asset-references'
 import { openDamageTask } from '@/lib/maintenance'
 
 const schema = z.object({
@@ -42,26 +43,34 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // replacement; open repairs closed; the unit's alerts resolved). REPAIR → an open damage
   // task that pulls the unit (source ADMIN_REVIEW: no new bell — the admin is the one
   // deciding; an already-open repair on the unit is reused).
-  await prisma.$transaction(async (tx) => {
-    if (decision === 'RETIRE') {
-      await retireUnit(tx, unitId, note)
-      return
-    }
-    await openDamageTask(tx, { kind: 'unit', id: unitId, itemId: id }, {
-      taskName: `Admin repair decision: unit ${unit.serialNumber ?? unitId}`,
-      notes: note,
-      reportedById: null,
-      repairType: repairType ?? null,
-      shopName: shopName ?? null,
-      shopAddress: shopAddress ?? null,
-      dateDelivered: dateDelivered ? new Date(dateDelivered) : null,
-      purchaseOrder: purchaseOrder ?? null,
-      invoiceNumber: invoiceNumber ?? null,
-      repairHubId: repairHubId ?? null,
-      source: 'ADMIN_REVIEW',
-      pull: true,
+  try {
+    await prisma.$transaction(async (tx) => {
+      if (decision === 'RETIRE') {
+        // PR-3b: the same guard as every other retire path (refused while anything live holds it).
+        assertNoOpenReferences('unit', `Unit ${unit.serialNumber ?? unitId}`, await openReferences({ unitId }, tx))
+        await retireUnit(tx, unitId, note)
+        return
+      }
+      await openDamageTask(tx, { kind: 'unit', id: unitId, itemId: id }, {
+        taskName: `Admin repair decision: unit ${unit.serialNumber ?? unitId}`,
+        notes: note,
+        reportedById: null,
+        repairType: repairType ?? null,
+        shopName: shopName ?? null,
+        shopAddress: shopAddress ?? null,
+        dateDelivered: dateDelivered ? new Date(dateDelivered) : null,
+        purchaseOrder: purchaseOrder ?? null,
+        invoiceNumber: invoiceNumber ?? null,
+        repairHubId: repairHubId ?? null,
+        source: 'ADMIN_REVIEW',
+        pull: true,
+      })
     })
-  })
+  } catch (err) {
+    const conflict = referenceConflictBody(err)
+    if (conflict) return NextResponse.json(conflict, { status: 409 })
+    throw err
+  }
 
   // CC-34 (1c): triaging an inoperable unit (either RETIRE or REPAIR) clears the
   // DAMAGE_REPORTED bell raised when the unit was flagged inoperable in the field

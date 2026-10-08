@@ -6,6 +6,7 @@ import { getAuthorizedActiveRig } from '@/lib/deployment-auth'
 import { requireAuth } from '@/lib/auth/session'
 import { withIdempotency } from '@/lib/idempotency'
 import { removeVehicleFromRig } from '@/lib/asset-status'
+import { referenceConflictBody } from '@/lib/asset-references'
 
 const RIG_INCLUDE = {
   project: { select: { id: true, name: true } },
@@ -188,6 +189,9 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
       }
     })
   } catch (err: unknown) {
+    // PR-3b: a "Retired" disposition on a vehicle something else still holds is refused.
+    const conflict = referenceConflictBody(err)
+    if (conflict) return NextResponse.json(conflict, { status: 409 })
     const msg = err instanceof Error ? err.message : 'Failed to remove vehicles'
     console.error('[DELETE /api/deployments/[id]/vehicles]', err)
     return NextResponse.json({ error: msg }, { status: 500 })

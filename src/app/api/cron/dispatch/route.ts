@@ -518,8 +518,73 @@ async function run() {
     } else {
       await resolveActiveAlert('INVENTORY_DRIFT', 'inventory_units', 'inv5-custody-strands')
     }
+
+    // PR-3b (D-g): the status invariants the modules keep, watched in case anything
+    // slips past them (a hand-run SQL fix, a pre-3a row). One aggregate alert per
+    // invariant and table, raised while any row violates it and cleared when none do —
+    // the INV-5 pattern. (No INV-7: an open repair on an asset that is in service is
+    // legitimate — a "Still usable" report, D29.)
+    const drift = async (sourceTable: 'inventory_units' | 'vehicles', sourceId: string, label: string, rows: { id: string }[]) => {
+      if (rows.length > 0) {
+        invariantViolations += rows.length
+        await createAlert('INVENTORY_DRIFT', sourceTable, sourceId, {
+          itemName: label,
+          count: rows.length,
+          sample: JSON.stringify(rows.slice(0, 3)),
+        })
+      } else {
+        await resolveActiveAlert('INVENTORY_DRIFT', sourceTable, sourceId)
+      }
+    }
+
+    // INV-6: In Maintenance with no open damage report holding it.
+    const inv6Units = await prisma.$queryRaw<{ id: string; serialNumber: string | null }[]>`
+      SELECT u."id", u."serialNumber" FROM "inventory_units" u
+      WHERE u."deletedAt" IS NULL AND u."status" = 'IN_MAINTENANCE'
+        AND NOT EXISTS (
+          SELECT 1 FROM "maintenance_tasks" t
+          WHERE t."inventoryUnitId" = u."id" AND t."isDamageReport" = true
+            AND t."deletedAt" IS NULL AND t."status" <> 'COMPLETED')
+    `
+    await drift('inventory_units', 'inv6-maintenance-without-repair', 'INV-6 units In Maintenance with no open repair', inv6Units)
+    const inv6Vehicles = await prisma.$queryRaw<{ id: string; name: string }[]>`
+      SELECT v."id", v."name" FROM "vehicles" v
+      WHERE v."deletedAt" IS NULL AND v."status" = 'IN_MAINTENANCE'
+        AND NOT EXISTS (
+          SELECT 1 FROM "maintenance_tasks" t
+          WHERE t."vehicleId" = v."id" AND t."inventoryUnitId" IS NULL AND t."isDamageReport" = true
+            AND t."deletedAt" IS NULL AND t."status" <> 'COMPLETED')
+    `
+    await drift('vehicles', 'inv6-maintenance-without-repair', 'INV-6 vehicles In Maintenance with no open repair', inv6Vehicles)
+
+    // INV-8: a unit marked AVAILABLE or Returning while a live kit line still holds it.
+    const inv8 = await prisma.$queryRaw<{ id: string; status: string }[]>`
+      SELECT DISTINCT u."id", u."status"::text AS "status" FROM "inventory_units" u
+      JOIN "kit_items" ki ON ki."inventoryUnitId" = u."id" AND ki."removedAt" IS NULL
+      JOIN "kits" k ON k."id" = ki."kitId"
+      JOIN "rigs" rg ON rg."id" = k."rigId" AND rg."endedAt" IS NULL
+      WHERE u."deletedAt" IS NULL AND u."status" IN ('AVAILABLE', 'IN_TRANSIT')
+    `
+    await drift('inventory_units', 'inv8-free-but-in-kit', 'INV-8 units Available/Returning but still in a live kit', inv8)
+
+    // INV-9: a live deployment still holding a deleted or retired asset.
+    const inv9Vehicles = await prisma.$queryRaw<{ id: string; name: string }[]>`
+      SELECT DISTINCT v."id", v."name" FROM "vehicles" v
+      JOIN "rig_vehicles" rv ON rv."vehicleId" = v."id" AND rv."removedAt" IS NULL
+      JOIN "rigs" rg ON rg."id" = rv."rigId" AND rg."endedAt" IS NULL
+      WHERE v."deletedAt" IS NOT NULL OR v."status" = 'RETIRED'
+    `
+    await drift('vehicles', 'inv9-live-on-retired', 'INV-9 deleted/retired vehicles still on a live deployment', inv9Vehicles)
+    const inv9Units = await prisma.$queryRaw<{ id: string; status: string }[]>`
+      SELECT DISTINCT u."id", u."status"::text AS "status" FROM "inventory_units" u
+      JOIN "kit_items" ki ON ki."inventoryUnitId" = u."id" AND ki."removedAt" IS NULL
+      JOIN "kits" k ON k."id" = ki."kitId"
+      JOIN "rigs" rg ON rg."id" = k."rigId" AND rg."endedAt" IS NULL
+      WHERE u."deletedAt" IS NOT NULL OR u."status" = 'RETIRED'
+    `
+    await drift('inventory_units', 'inv9-live-on-retired', 'INV-9 deleted/retired units still in a live kit', inv9Units)
   } catch (err) {
-    // CC-30: same as the drift block above — INV-1..5 are the invariant monitors,
+    // CC-30: same as the drift block above — INV-1..6, 8, 9 are the invariant monitors,
     // so a failing invariant QUERY must not look like five passing invariants.
     // Non-fatal by design; visible now.
     console.error('[cron] invariant/drift check errored', err)

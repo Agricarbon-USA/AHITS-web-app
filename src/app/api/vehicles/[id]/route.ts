@@ -5,7 +5,8 @@ import { prisma } from '@/lib/prisma'
 import { getVehicleOperators } from '@/lib/deployment-assignments'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import { OPEN_TASK } from '@/lib/populations'
-import { setVehicleStatusByAdmin } from '@/lib/asset-status'
+import { retireVehicle, setVehicleServiceStatus } from '@/lib/asset-status'
+import { assertNoOpenReferences, openReferences, referenceConflictBody } from '@/lib/asset-references'
 import { writeOr404 } from '@/lib/api-errors'
 
 // Whitelist of admin-editable fields. Excludes id/createdAt/updatedAt and
@@ -98,21 +99,48 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten().fieldErrors }, { status: 400 })
   }
-  // hubId is newer than the generated client — update it via raw SQL, the rest
-  // through the typed client.
-  // PR-3a: `status` is written through the status module (same accepted values here;
-  // PR-3b narrows them to ACTIVE / OUT_OF_SERVICE / RETIRED, D-g).
+  const current = await prisma.vehicle.findFirst({ where: { id, deletedAt: null }, select: { status: true, name: true } })
+  if (!current) return NextResponse.json({ error: 'Vehicle not found or update failed' }, { status: 404 })
+
+  // PR-3b (D-g · U-7): status by hand is only the admin-owned states — ACTIVE,
+  // OUT_OF_SERVICE, RETIRED. IN_MAINTENANCE comes from a repair (Report damage) and
+  // leaves when the repair closes, so it can't be set — and Active can't be chosen
+  // while a repair is still open. Sending the vehicle's current status unchanged (the
+  // Edit form always sends it) is not a change and is not checked.
   const { hubId, status, ...rest } = parsed.data
+  const changing = status !== undefined && status !== current.status
+  if (changing && status === 'IN_MAINTENANCE') {
+    return NextResponse.json({ error: 'In maintenance comes from a repair — use Report damage instead.' }, { status: 400 })
+  }
+  if (changing && status === 'ACTIVE' && current.status === 'IN_MAINTENANCE') {
+    const repair = await prisma.maintenanceTask.findFirst({
+      where: { ...OPEN_TASK, isDamageReport: true, vehicleId: id, inventoryUnitId: null },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: { taskName: true },
+    })
+    if (repair) {
+      return NextResponse.json({ error: `Close the repair first — "${repair.taskName}" is still open.` }, { status: 409 })
+    }
+  }
   try {
+    // hubId is newer than the generated client — update it via raw SQL, the rest
+    // through the typed client.
     const vehicle = await prisma.$transaction(async (tx) => {
-      if (status) await setVehicleStatusByAdmin(tx, id, status)
+      if (changing && status === 'RETIRED') {
+        assertNoOpenReferences('vehicle', current.name, await openReferences({ vehicleId: id }, tx))
+        await retireVehicle(tx, id, null)
+      } else if (changing) {
+        await setVehicleServiceStatus(tx, id, status as 'ACTIVE' | 'OUT_OF_SERVICE')
+      }
       return tx.vehicle.update({ where: { id }, data: rest })
     })
     if ('hubId' in parsed.data) {
       await prisma.$executeRaw`UPDATE "vehicles" SET "hubId" = ${hubId ?? null} WHERE "id" = ${id}`
     }
     return NextResponse.json({ data: { ...vehicle, hubId: hubId ?? null } })
-  } catch {
+  } catch (err) {
+    const conflict = referenceConflictBody(err)
+    if (conflict) return NextResponse.json(conflict, { status: 409 })
     return NextResponse.json({ error: 'Vehicle not found or update failed' }, { status: 404 })
   }
 }
@@ -123,6 +151,16 @@ export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id:
   const { id } = await params
   // Soft-delete (CR-8): never hard-delete a vehicle with check/maintenance
   // history — set the tombstone so reads hide it but history is preserved.
+  // PR-3b (S-7): refused while a live deployment or a pending transfer holds it.
+  const vehicle = await prisma.vehicle.findFirst({ where: { id, deletedAt: null }, select: { name: true } })
+  if (!vehicle) return NextResponse.json({ error: 'Vehicle not found' }, { status: 404 })
+  try {
+    assertNoOpenReferences('vehicle', vehicle.name, await openReferences({ vehicleId: id }))
+  } catch (err) {
+    const conflict = referenceConflictBody(err)
+    if (conflict) return NextResponse.json(conflict, { status: 409 })
+    throw err
+  }
   const notFound = await writeOr404(
     () => prisma.vehicle.update({ where: { id }, data: { deletedAt: new Date() } }),
     'Vehicle not found',

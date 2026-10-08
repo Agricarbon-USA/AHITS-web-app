@@ -178,6 +178,16 @@ async function _POST(req: NextRequest) {
   const { note, vehicleIds, kitItems, projectId, label, sourceHubId, fromRequestId } = parsed.data
   const operatorId = session.role === 'OPERATOR' ? session.userId : (parsed.data.operatorId ?? session.userId)
 
+  // PR-3b (L-7, server half): a deactivated user can't be put on a deployment — the
+  // pickers already hide them (PR-1b); this is the guard behind them.
+  if (operatorId !== session.userId) {
+    const op = await prisma.user.findUnique({ where: { id: operatorId }, select: { isActive: true, name: true } })
+    if (!op) return NextResponse.json({ error: 'Operator not found.' }, { status: 404 })
+    if (!op.isActive) {
+      return NextResponse.json({ error: `${op.name} is deactivated — reactivate them or choose someone else.` }, { status: 409 })
+    }
+  }
+
   let rig
   try {
   rig = await prisma.$transaction(async (tx) => {

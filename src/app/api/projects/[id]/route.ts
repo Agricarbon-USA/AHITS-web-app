@@ -74,7 +74,7 @@ export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id:
   const rigCount = await prisma.rig.count({ where: { projectId: id } })
   if (rigCount > 0) {
     return NextResponse.json(
-      { error: `Cannot delete: ${rigCount} deployment${rigCount > 1 ? 's are' : ' is'} assigned to this project.` },
+      { error: `${rigCount} deployment${rigCount > 1 ? 's are' : ' is'} assigned to this project — reassign ${rigCount > 1 ? 'them' : 'it'} first.` },
       { status: 409 },
     )
   }
