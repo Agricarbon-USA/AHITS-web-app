@@ -238,7 +238,8 @@ async function assetOf(
 /**
  * Close (or reopen) a damage task and settle its asset. `MaintenanceStatus` has
  * one terminal state, so COMPLETED / FIELD_FIX / RETIRED all write COMPLETED
- * (FIELD_FIX adds `resolutionPath: IN_FIELD`; RETIRED notes "unit retired");
+ * (FIELD_FIX adds `resolutionPath: IN_FIELD`; RETIRED notes "Unit retired" or
+ * "Vehicle retired");
  * DELETED soft-deletes. The task is closed BEFORE the restore check, its alerts
  * are resolved, and the asset goes back to service only if no other open report
  * holds it (`restoreIfClear`). REOPEN puts the task back IN_PROGRESS and pulls the
@@ -273,7 +274,7 @@ export async function closeDamageTask(
       : { status: 'COMPLETED', completedAt: now, lastCompleted: now }
   if (reason === 'FIELD_FIX') data.resolutionPath = 'IN_FIELD'
   if (reason === 'RETIRED') {
-    data.notes = [task.notes, extra.notes, 'Unit retired'].filter((s) => s && s.trim()).join('\n')
+    data.notes = [task.notes, extra.notes, task.inventoryUnitId ? 'Unit retired' : task.vehicleId ? 'Vehicle retired' : 'Retired'].filter((s) => s && s.trim()).join('\n')
   } else if (extra.notes) {
     data.notes = extra.notes
   }

@@ -1,8 +1,9 @@
-import type { EquipmentStatus, Prisma, VehicleStatus } from '@prisma/client'
+import type { EquipmentStatus, Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { resolveAlertsFor } from '@/lib/alerts'
 import { LIVE_KIT_ITEM, OPEN_TASK, PICKABLE_STATUSES } from '@/lib/populations'
 import { closeDamageTask, openDamageTask, type DamageTaskFields } from '@/lib/maintenance'
+import { assertNoOpenReferences, openReferences } from '@/lib/asset-references'
 
 /**
  * PR-3a (RC-1 · D-g): the ONLY writers of `vehicle.status` and
@@ -291,7 +292,10 @@ export async function removeVehicleFromRig(
       pull: true,
     })
   } else if (input.disposition === 'RETIRED') {
-    await tx.vehicle.updateMany({ where: { id: input.vehicleId }, data: { status: 'RETIRED' } })
+    // PR-3b: off this deployment now — but still refused if anything else holds it.
+    const v = await tx.vehicle.findUnique({ where: { id: input.vehicleId }, select: { name: true } })
+    assertNoOpenReferences('vehicle', v?.name ?? 'This vehicle', await openReferences({ vehicleId: input.vehicleId }, tx))
+    await retireVehicle(tx, input.vehicleId, input.note)
   }
 }
 
@@ -340,14 +344,50 @@ export async function releaseFromEndedRig(tx: Tx, unitIds: string[]): Promise<vo
 }
 
 /**
- * Admin status overrides — the unit dropdown and the vehicle Edit form. PR-3a only
- * moves the write here (so the guard holds); the values each route accepts are
- * unchanged. PR-3b narrows them to the admin-owned states (D-g).
+ * Retire a vehicle (Edit form, or the remove-from-deployment "Retired" disposition):
+ * RETIRED, and any open damage report on it closed as RETIRED. The caller has
+ * already passed `assertNoOpenReferences('vehicle')` (PR-3b) — a vehicle on a live
+ * deployment or in a pending transfer is refused before this runs.
  */
-export async function setUnitStatusByAdmin(tx: Tx, unitId: string, status: EquipmentStatus): Promise<void> {
-  await tx.inventoryUnit.update({ where: { id: unitId }, data: { status } })
+export async function retireVehicle(tx: Tx, vehicleId: string, note: string | null): Promise<void> {
+  await tx.vehicle.update({ where: { id: vehicleId }, data: { status: 'RETIRED' } })
+  const open = await tx.maintenanceTask.findMany({
+    where: { ...OPEN_TASK, isDamageReport: true, vehicleId, inventoryUnitId: null },
+    select: { id: true },
+  })
+  for (const t of open) await closeDamageTask(tx, t.id, 'RETIRED', { notes: note })
 }
 
-export async function setVehicleStatusByAdmin(tx: Tx, vehicleId: string, status: VehicleStatus): Promise<void> {
+/**
+ * The admin-owned vehicle states (D-g): ACTIVE ↔ OUT_OF_SERVICE — "Return to
+ * service" / "Take out of service" in the drawer and the Edit form's Status. ACTIVE
+ * from IN_MAINTENANCE is allowed only when no open repair holds the vehicle (the
+ * route refuses with "Close the repair first" otherwise); RETIRED goes through
+ * `retireVehicle`. IN_MAINTENANCE is never set here — it is derived from a repair.
+ */
+export async function setVehicleServiceStatus(tx: Tx, vehicleId: string, status: 'ACTIVE' | 'OUT_OF_SERVICE'): Promise<void> {
   await tx.vehicle.update({ where: { id: vehicleId }, data: { status } })
+}
+
+/**
+ * The admin-owned unit states (D-g): AVAILABLE ↔ RETIRED. Retiring goes through
+ * `retireUnit`; this is the other direction — a retired unit brought back. Retire
+ * released its QR label with a `::retired::<ts>` suffix; un-retiring restores the
+ * original code so the physical label scans again — unless another live unit has
+ * re-registered that code meanwhile, in which case the suffix stays (that label now
+ * belongs to the other unit) and the caller reports it.
+ */
+export async function unretireUnit(tx: Tx, unitId: string): Promise<{ restored: boolean; labelRestored: boolean }> {
+  const unit = await tx.inventoryUnit.findUnique({ where: { id: unitId }, select: { status: true, qrCodeId: true } })
+  if (!unit || unit.status !== 'RETIRED') return { restored: false, labelRestored: false }
+  const base = unit.qrCodeId.split('::retired::')[0]
+  const taken = base !== unit.qrCodeId
+    ? await tx.inventoryUnit.findFirst({ where: { qrCodeId: base, id: { not: unitId } }, select: { id: true } })
+    : null
+  const labelRestored = base !== unit.qrCodeId && !taken
+  await tx.inventoryUnit.update({
+    where: { id: unitId },
+    data: { status: 'AVAILABLE', ...(labelRestored && { qrCodeId: base }) },
+  })
+  return { restored: true, labelRestored }
 }
