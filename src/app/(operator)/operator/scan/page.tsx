@@ -136,6 +136,9 @@ export default function OperatorScanPage() {
       severity: result.queued ? 'info' : 'success',
     })
     setFieldFixOpen(false)
+    // PR-3b (U-8): an applied fix may have closed the repair and put the asset back in
+    // service — show it now instead of after a re-scan. (Queued fixes apply later.)
+    if (!result.queued) await refetchScanned()
   }
 
   // CC-34 (2a): after a report is applied online, refresh the scanned panel so an
@@ -438,7 +441,7 @@ export default function OperatorScanPage() {
         <DialogContent>
           <Stack spacing={2} pt={0.5}>
             <Typography variant="body2" color="text.secondary">
-              Use this for issues you noticed and fixed on the spot. No repair task is opened.
+              Log the fix. Any open report for this {vehicle ? 'vehicle' : 'item'} is closed and it goes back in service, unless an admin took it out of service.
             </Typography>
             <TextField
               label="What was fixed"

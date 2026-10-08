@@ -18,6 +18,7 @@ import ChecklistIcon from '@mui/icons-material/Checklist'
 import QrCode2Icon from '@mui/icons-material/QrCode2'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import { StatusChip } from '@/components/shared/StatusChip'
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { useToast } from '@/components/shared/useToast'
 import { useCanEdit, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 import { SearchableSelect } from '@/components/shared/SearchableSelect'
@@ -36,6 +37,9 @@ const RENTAL_PERIODS: { value: 'DAY' | 'WEEK' | 'MONTH' | 'FLAT'; label: string 
   { value: 'MONTH', label: '/ month' }, { value: 'FLAT', label: 'flat' },
 ]
 const VEHICLE_STATUSES = ['ACTIVE', 'IN_MAINTENANCE', 'OUT_OF_SERVICE', 'RETIRED']
+// PR-3b (D-g): the states an admin sets by hand. IN_MAINTENANCE is derived — it comes
+// from a repair and leaves when the repair closes — so the Edit form never offers it.
+const ADMIN_VEHICLE_STATUSES = ['ACTIVE', 'OUT_OF_SERVICE', 'RETIRED']
 
 interface VehicleRow {
   id: string
@@ -149,6 +153,8 @@ export default function AdminVehiclesPage() {
   // null = not known (fetch failed / not admin) → the Setup block shows "—", never a guess.
   const [templates, setTemplates] = React.useState<ChecklistTemplateSummary[] | null>(null)
   const [confirmDelete, setConfirmDelete] = React.useState<VehicleRow | null>(null)
+  // PR-3b (D-g): drawer "Return to service" / "Take out of service" confirmation.
+  const [serviceChange, setServiceChange] = React.useState<'ACTIVE' | 'OUT_OF_SERVICE' | null>(null)
   // CC-10: field-fix dialog
   const [fieldFixOpen, setFieldFixOpen] = React.useState(false)
   const [fieldFixNotes, setFieldFixNotes] = React.useState('')
@@ -327,6 +333,24 @@ export default function AdminVehiclesPage() {
     }
   }
 
+  const doServiceChange = async () => {
+    if (!detail || !serviceChange) return
+    const res = await fetch(`/api/vehicles/${detail.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: serviceChange }),
+    })
+    const d = await res.json().catch(() => ({}))
+    setServiceChange(null)
+    if (!res.ok) {
+      showToast({ message: typeof d.error === 'string' ? d.error : 'Could not change the vehicle status.', severity: 'error' })
+      return
+    }
+    showToast({ message: serviceChange === 'ACTIVE' ? `${detail.name} is back in service` : `${detail.name} is out of service`, severity: 'success' })
+    load()
+    openDetail(detail.id)
+  }
+
   async function submitFieldFix() {
     if (!detail || !fieldFixNotes.trim()) return
     setFieldFixSaving(true)
@@ -343,6 +367,9 @@ export default function AdminVehiclesPage() {
       }
       showToast({ message: 'Field fix logged.', severity: 'success' })
       setFieldFixOpen(false)
+      // PR-3b (U-8): the fix may have closed repairs and put the vehicle back in
+      // service — refresh the list as well as the drawer.
+      load()
       openDetail(detail.id)
     } catch {
       showToast({ message: 'Network error. Please try again.', severity: 'error' })
@@ -607,6 +634,31 @@ export default function AdminVehiclesPage() {
               <Chip size="small" label={vehicleTypeLabel(detail.type)} variant="outlined" />
               {detail.hubName && <Chip size="small" label={detail.hubName} variant="outlined" />}
             </Stack>
+            {/* PR-3b (D-g): In maintenance is derived from an open repair, so it is shown
+                read-only with the repair that explains it; the admin-owned states get
+                their own actions. */}
+            {detail.status === 'IN_MAINTENANCE' && (() => {
+              const repair = detail.maintenanceTasks.find((t) => t.isDamageReport)
+              return (
+                <Typography variant="body2" color="text.secondary">
+                  In maintenance while a repair is open
+                  {repair && (
+                    <>{' — '}<Link component={NextLink} href={`/admin/maintenance?task=${repair.id}`} fontWeight={600}>{repair.taskName}</Link></>
+                  )}
+                  . It goes back in service when the repair is closed.
+                </Typography>
+              )
+            })()}
+            {detail.status === 'OUT_OF_SERVICE' && (
+              <MutationButton variant="outlined" color="success" size="small" onClick={() => setServiceChange('ACTIVE')}>
+                Return to service
+              </MutationButton>
+            )}
+            {detail.status === 'ACTIVE' && (
+              <MutationButton variant="outlined" color="warning" size="small" onClick={() => setServiceChange('OUT_OF_SERVICE')}>
+                Take out of service
+              </MutationButton>
+            )}
 
             <Box>
               <Typography variant="subtitle2" gutterBottom>Details</Typography>
@@ -807,7 +859,7 @@ export default function AdminVehiclesPage() {
         <DialogContent>
           <Stack spacing={2} pt={0.5}>
             <Typography variant="body2" color="text.secondary">
-              Record an issue that was noticed and fixed on the spot. No repair task is opened and no alert is fired.
+              Log the fix. Any open report for this vehicle is closed and it goes back in service, unless an admin took it out of service.
             </Typography>
             <TextField
               label="What was fixed"
@@ -890,6 +942,18 @@ export default function AdminVehiclesPage() {
           showToast={showToast}
         />
       )}
+
+      <ConfirmDialog
+        open={!!serviceChange}
+        title={serviceChange === 'ACTIVE' ? 'Return to service?' : 'Take out of service?'}
+        message={serviceChange === 'ACTIVE'
+          ? `${detail?.name ?? 'This vehicle'} goes back to Active and can be put on a deployment.`
+          : `${detail?.name ?? 'This vehicle'} is taken out of service until an admin returns it. Repairs and field fixes won't put it back on their own.`}
+        confirmLabel={serviceChange === 'ACTIVE' ? 'Return to service' : 'Take out of service'}
+        confirmColor={serviceChange === 'ACTIVE' ? 'primary' : 'warning'}
+        onClose={() => setServiceChange(null)}
+        onConfirm={doServiceChange}
+      />
 
       <Dialog open={!!confirmDelete} onClose={() => setConfirmDelete(null)} maxWidth="xs" fullWidth>
         <DialogTitle>Delete vehicle</DialogTitle>
@@ -1185,7 +1249,11 @@ function VehicleFormDialog({ vehicle, duplicateOf, hubs, onClose, onSaved, showT
           {isEdit && (
             <TextField select label="Status" value={v.status} onChange={(e) => set('status', e.target.value)} fullWidth
               error={!!err('status')} helperText={err('status')}>
-              {VEHICLE_STATUSES.map((s) => <MenuItem key={s} value={s}>{s.replace(/_/g, ' ')}</MenuItem>)}
+              {/* A vehicle in repair shows that state (disabled) so the field reads truthfully;
+                  it can't be chosen, and saving other edits leaves it as it is. */}
+              {(ADMIN_VEHICLE_STATUSES.includes(v.status) ? ADMIN_VEHICLE_STATUSES : [v.status, ...ADMIN_VEHICLE_STATUSES]).map((s) => (
+                <MenuItem key={s} value={s} disabled={!ADMIN_VEHICLE_STATUSES.includes(s)}>{s.replace(/_/g, ' ')}</MenuItem>
+              ))}
             </TextField>
           )}
         </Stack>
