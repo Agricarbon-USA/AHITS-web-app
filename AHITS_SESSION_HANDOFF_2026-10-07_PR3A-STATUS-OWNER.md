@@ -17,16 +17,22 @@
   4. `100b66d`: the new tests (the guard, the helpers, the route acceptance tests).
   5. The docs commit for this session close.
 
+## Merge, deploy and smoke (2026-10-08)
+- **Merged:** #250 was squash-merged at 17:32 UTC on 2026-10-08 as `fad9e37`, on the owner's go.
+- **Deployed:** deploy run 37817431916 was green on every job. There was no migration.
+- **Smoke:** all seven admin-side acceptance rows passed. The table is in STATUS §3.
+  - Rows 1–6 were driven through the admin session using the app's own APIs. Row 7 was done in the Start Deployment UI.
+  - The assets were Christie-Drill-1, three Wintex Cores units and Home Lab, on throwaway deployments for Field Op 1.
+- **Cleanup through the app:** every asset is back in service, there are no active deployments, and pending alerts are back to 3.
+  - The history rows remain. A scoped hard-delete script for them was handed to the owner; it was not run.
+- **Residuals, none from 3a's own design:**
+  - The same unit gets a different picker label with and without a search term.
+  - The picker has no Returning marker.
+  - Build Rig offers vehicles that are In Maintenance.
+  - Reopen can create a second open repair on an asset. PR-5 U-15 is where that gets guarded.
+
 ## Resume points
-- **#250's CI must be green.** If it goes red, fix it on the branch. The DB suite runs only in CI, and the tests most likely to need a touch are:
-  - The two new `pr3a-*` DB files.
-  - `cc34-orphan-closure`: the INOPERABLE scan-return now opens a repair.
-  - Any older test that asserted a return to AVAILABLE on bulk or single return.
-- **After merge:**
-  - Stamp D42, D43 and the D40 amendment with the merge date, squash and revision.
-  - Tick the 3a half of TODO Part 4 row 3.
-  - Run the 3a owner smoke listed in STATUS §3. Picking a Returning unit should complete its Inbound row.
-  - Don't judge a screenshot of an admin page as a regression until its rows have rendered (see STATUS §6).
+- **Done 2026-10-08:** D40, D42 and D43 are stamped, the TODO row is updated, and the smoke passed.
 - **Next PR is 3b:**
   - `asset-references.ts` and `assertNoOpenReferences` (used by retire, delete and deactivate).
   - Item retire (D-a).
