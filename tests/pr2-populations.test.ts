@@ -117,13 +117,13 @@ describe('cron populations (S-9/P-4, C-9)', () => {
     await prisma.inventoryItem.update({ where: { id: item.id }, data: { lowStockThreshold: 2 } })
     await createInventoryUnit(item.id)
     await createInventoryUnit(item.id, { status: 'CHECKED_OUT' }) // not pickable
-    await createInventoryUnit(item.id, { status: 'IN_TRANSIT' }) // not pickable until PR-3a (D-n)
+    await createInventoryUnit(item.id, { status: 'IN_TRANSIT' }) // Returning — pickable since PR-3a (D-n)
     const sourceId = `${item.id}:serialized`
 
     await cronDispatch(cronReq())
     const raised = await prisma.alert.findFirst({ where: { type: 'LOW_INVENTORY', sourceId, resolved: false } })
     expect(raised).not.toBeNull()
-    expect((raised!.metadata as { quantity: number }).quantity).toBe(1)
+    expect((raised!.metadata as { quantity: number }).quantity).toBe(2)
 
     await createInventoryUnit(item.id)
     await createInventoryUnit(item.id)
@@ -217,13 +217,14 @@ describe('inventory payloads carry itemCounts (B3/C-6)', () => {
 
     const body = await (await inventoryGET(get('/api/inventory'))).json()
     const row = body.data.find((r: { id: string }) => r.id === item.id)
-    expect(row.itemCounts).toMatchObject({ available: 11, out: 0, owned: 14, retired: 1, inTransit: 1 })
+    // PR-3a: the Returning unit is pickable (D-n), so available is 11 on the shelf + 1.
+    expect(row.itemCounts).toMatchObject({ available: 12, out: 0, owned: 14, retired: 1, inTransit: 1 })
 
     const opts = await (await inventoryGET(get('/api/inventory?mode=options'))).json()
     const opt = opts.data.find((r: { id: string }) => r.id === item.id)
-    expect(opt.itemCounts).toMatchObject({ available: 11, owned: 14, inTransit: 1 })
-    // D-n: the Returning unit is counted but still not offered.
-    expect(opt.pickableUnits).toHaveLength(11)
+    expect(opt.itemCounts).toMatchObject({ available: 12, owned: 14, inTransit: 1 })
+    // …and offered: the picker and the server agree.
+    expect(opt.pickableUnits).toHaveLength(12)
   })
 
   it('consumable Out is the on-rig quantity; a legacy item with no stock rows keeps its quantity', async () => {

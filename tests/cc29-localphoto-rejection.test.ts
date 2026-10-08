@@ -17,7 +17,7 @@ vi.mock('../src/lib/auth/session', () => ({
   requireAuth: () => Promise.resolve(mockSession),
   requireAdmin: () => Promise.resolve(null),
 }))
-vi.mock('../src/lib/alerts', () => ({ createAlert: vi.fn().mockResolvedValue({}), resolveActiveAlert: vi.fn().mockResolvedValue({}) }))
+vi.mock('../src/lib/alerts', () => ({ createAlert: vi.fn().mockResolvedValue({}), resolveActiveAlert: vi.fn().mockResolvedValue({}), resolveAlertsFor: vi.fn().mockResolvedValue({}) }))
 
 function reqFor(path: string, body: unknown) {
   return new NextRequest(`http://localhost${path}`, {

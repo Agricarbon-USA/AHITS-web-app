@@ -18,19 +18,14 @@ import { Prisma } from '@prisma/client'
  * The unit statuses a picker may offer — i.e. the ones the server will accept on
  * a kit/reservation write.
  *
- * **AVAILABLE only, deliberately (D-n).** The schema's comment on `IN_TRANSIT`
- * says a returned-but-unconfirmed unit "can still be re-deployed", and D-e makes
- * that the intended behaviour — but no write path implements it yet. Widening
- * this list before `pickUnit` exists would make every picker offer units the
- * server then refuses, which is worse than not offering them: the operator picks
- * gear, gets an error, and learns not to trust the list.
- *
- * **PR-3a widens this to `['AVAILABLE', 'IN_TRANSIT']` in the same commit that
- * makes the server accept an IN_TRANSIT pick and complete its HUB_RETURN link.**
- * Not before, and not in a commit of its own. PR-2 gives IN_TRANSIT its own
- * "Returning" bucket and label, but NOT pickability.
+ * **AVAILABLE and IN_TRANSIT ("Returning") — D-e, D-n.** A returned unit the hub
+ * has not yet confirmed can go straight back out; picking it completes its open
+ * HUB_RETURN link, so the hub never needs to confirm gear that has already left
+ * again. Widened in PR-3a in the same commit as `pickUnit`
+ * (`src/lib/asset-status.ts`), the one write path that accepts it — so no picker
+ * ever offers a unit the server would refuse. Until then it was AVAILABLE only.
  */
-export const PICKABLE_STATUSES = ['AVAILABLE'] as const
+export const PICKABLE_STATUSES = ['AVAILABLE', 'IN_TRANSIT'] as const
 
 export type PickableStatus = (typeof PICKABLE_STATUSES)[number]
 

@@ -6,7 +6,8 @@ import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { withIdempotency } from '@/lib/idempotency'
 import { restoreToHub, resyncItemTotal } from '@/lib/inventory-stock'
-import { createAlert } from '@/lib/alerts' // CC-34 (1c): close the scan-return orphan flip
+import { issueHubReturnLinks } from '@/lib/status-links'
+import { releaseUnlinkedReturns, returnUnit } from '@/lib/asset-status'
 
 const bodySchema = z.object({
   quantity: z.number().int().min(1).optional(),
@@ -57,10 +58,6 @@ async function _DELETE(
 
   const returnCondition = body.data.returnCondition ?? 'GOOD'
   const isSerialized = kitItem.item.itemType === 'SERIALIZED'
-  const newUnitStatus =
-    returnCondition === 'IN_MAINTENANCE' ? 'IN_MAINTENANCE'
-    : returnCondition === 'INOPERABLE' ? 'INOPERABLE'
-    : 'AVAILABLE'
 
   // G1: a genuine consumable return must land in a real hub. Resolve the
   // destination (chosen → drawn → home) and reject up front if none exists, so
@@ -72,6 +69,23 @@ async function _DELETE(
     return NextResponse.json({ error: 'A return hub is required for this item.' }, { status: 400 })
   }
 
+  // PR-3a: units follow the one return rule (`returnUnit`) — the same as bulk return and
+  // end of deployment. GOOD → Returning (IN_TRANSIT) with a HUB_RETURN link issued after
+  // commit when there is a hub to send it to (this path never issued one before), else
+  // AVAILABLE; damaged → an open damage task that pulls the unit (CC-34 1c's task + bell,
+  // now via openDamageTask — an INOPERABLE scan-return lands In Maintenance with a repair
+  // rather than in the inoperable review queue); already in repair → stays in repair,
+  // the hub recorded as its destination (D-d).
+  const damageTask = {
+    itemId: kitItem.inventoryItemId,
+    taskName: `Damage repair: ${kitItem.item.name}`,
+    notes: body.data.notes ?? null,
+    rigId,
+    reportedById: session.userId,
+    alertMeta: { itemName: kitItem.item.name, operatorId: session.userId },
+  }
+  let returningUnitId: string | null = null
+
   await prisma.$transaction(async (tx) => {
     if (isSerialized) {
       // Claim the removal conditionally (CR-17): if a concurrent return already
@@ -82,10 +96,13 @@ async function _DELETE(
       })
       if (claimed.count === 0) return
       if (kitItem.inventoryUnitId) {
-        await tx.inventoryUnit.update({
-          where: { id: kitItem.inventoryUnitId },
-          data: { status: newUnitStatus },
+        const ended = await returnUnit(tx, kitItem.inventoryUnitId, {
+          condition: returnCondition,
+          hubId: resolvedHub,
+          linked: !!resolvedHub,
+          task: damageTask,
         })
+        if (ended === 'IN_TRANSIT') returningUnitId = kitItem.inventoryUnitId
         await tx.checkLog.create({
           data: {
             action: 'CHECK_IN',
@@ -97,36 +114,6 @@ async function _DELETE(
             condition: returnConditionToLogCondition(returnCondition),
           },
         })
-        // CC-34 (1c): a serialized scan-return that flips the unit for maintenance must
-        // reach /admin/maintenance and the bell — a status flip with no task/alert is a
-        // silent orphan. Scoped to the serialized branch (non-null unit) so the alert
-        // activeKey is unit-specific; consumables (no resolvable unit) are skipped.
-        if (returnCondition === 'IN_MAINTENANCE') {
-          const task = await tx.maintenanceTask.create({
-            data: {
-              itemId: kitItem.inventoryItemId,
-              inventoryUnitId: kitItem.inventoryUnitId,
-              taskName: `Damage repair: ${kitItem.item.name}`,
-              isDamageReport: true,
-              status: 'IN_PROGRESS',
-              rigId,
-              reportedById: session.userId,
-              notes: body.data.notes ?? null,
-            },
-          })
-          await createAlert('DAMAGE_REPORTED', 'maintenance_tasks', task.id, {
-            itemName: kitItem.item.name,
-            operatorId: session.userId,
-          }, tx)
-        } else if (returnCondition === 'INOPERABLE') {
-          // Keep the INOPERABLE flip (review-queue semantics) but ring the bell so triage
-          // happens before someone opens the maintenance page. review-inoperable resolves
-          // this same ('inventory_units', unitId) key on RETIRE or REPAIR.
-          await createAlert('DAMAGE_REPORTED', 'inventory_units', kitItem.inventoryUnitId, {
-            itemName: kitItem.item.name,
-            operatorId: session.userId,
-          }, tx)
-        }
       }
     } else {
       const removeQty = body.data.quantity ?? kitItem.quantity
@@ -181,11 +168,8 @@ async function _DELETE(
         take: removeQty,
         orderBy: { createdAt: 'asc' },
       })
-      if (units.length > 0) {
-        await tx.inventoryUnit.updateMany({
-          where: { id: { in: units.map((u) => u.id) } },
-          data: { status: newUnitStatus === 'AVAILABLE' ? 'AVAILABLE' : newUnitStatus },
-        })
+      for (const u of units) {
+        await returnUnit(tx, u.id, { condition: returnCondition, hubId: resolvedHub, linked: false, task: damageTask })
       }
       await tx.checkLog.create({
         data: {
@@ -199,6 +183,17 @@ async function _DELETE(
       })
     }
   })
+
+  // Best-effort, after commit: the Returning unit's HUB_RETURN link; if it can't be issued
+  // the unit falls back to AVAILABLE rather than sit Returning with nothing to confirm.
+  if (returningUnitId && resolvedHub) {
+    try {
+      await issueHubReturnLinks(session.userId, [{ kitItemId, hubId: resolvedHub }])
+    } catch (e) {
+      console.error('[single return hub-return link issue]', e)
+      await releaseUnlinkedReturns([returningUnitId]).catch(() => {})
+    }
+  }
 
   return NextResponse.json({ ok: true })
 }

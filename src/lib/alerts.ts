@@ -59,10 +59,33 @@ export async function createAlert(
  * fresh alert. Used by self-clearing scans (e.g. LOW_INVENTORY when stock
  * recovers above threshold). No-op when there's no active alert.
  */
-export async function resolveActiveAlert(type: string, sourceTable: string, sourceId: string) {
+export async function resolveActiveAlert(
+  type: string,
+  sourceTable: string,
+  sourceId: string,
+  // PR-3a (FND-28): the caller's transaction client, so a resolve inside a status
+  // change commits or rolls back with it instead of running on the global client.
+  db: Prisma.TransactionClient = prisma,
+) {
   const activeKey = `${type}:${sourceTable}:${sourceId}`
-  await prisma.alert.updateMany({
+  await db.alert.updateMany({
     where: { activeKey, resolved: false },
+    data: { resolved: true, resolvedAt: new Date(), activeKey: null },
+  })
+}
+
+/**
+ * PR-3a: resolve every unresolved alert raised for one source row, whatever its
+ * type — the clear that matches "this record is closed / retired / gone".
+ * Rows only for now; PR-4 extends it to mark the matching notifications read.
+ */
+export async function resolveAlertsFor(
+  sourceTable: string,
+  sourceId: string,
+  db: Prisma.TransactionClient = prisma,
+) {
+  await db.alert.updateMany({
+    where: { sourceTable, sourceId, resolved: false },
     data: { resolved: true, resolvedAt: new Date(), activeKey: null },
   })
 }

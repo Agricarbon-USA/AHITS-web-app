@@ -34,6 +34,7 @@ vi.mock('../src/lib/auth/session', () => ({
 vi.mock('../src/lib/alerts', () => ({
   createAlert: vi.fn().mockResolvedValue({}),
   resolveActiveAlert: vi.fn().mockResolvedValue({}),
+  resolveAlertsFor: vi.fn().mockResolvedValue({}),
 }))
 
 const resolvedWith = (type: string, table: string, id: string) =>

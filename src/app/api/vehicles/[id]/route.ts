@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { getVehicleOperators } from '@/lib/deployment-assignments'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import { OPEN_TASK } from '@/lib/populations'
+import { setVehicleStatusByAdmin } from '@/lib/asset-status'
 import { writeOr404 } from '@/lib/api-errors'
 
 // Whitelist of admin-editable fields. Excludes id/createdAt/updatedAt and
@@ -99,9 +100,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
   // hubId is newer than the generated client — update it via raw SQL, the rest
   // through the typed client.
-  const { hubId, ...rest } = parsed.data
+  // PR-3a: `status` is written through the status module (same accepted values here;
+  // PR-3b narrows them to ACTIVE / OUT_OF_SERVICE / RETIRED, D-g).
+  const { hubId, status, ...rest } = parsed.data
   try {
-    const vehicle = await prisma.vehicle.update({ where: { id }, data: rest })
+    const vehicle = await prisma.$transaction(async (tx) => {
+      if (status) await setVehicleStatusByAdmin(tx, id, status)
+      return tx.vehicle.update({ where: { id }, data: rest })
+    })
     if ('hubId' in parsed.data) {
       await prisma.$executeRaw`UPDATE "vehicles" SET "hubId" = ${hubId ?? null} WHERE "id" = ${id}`
     }

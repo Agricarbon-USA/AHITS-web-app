@@ -22,14 +22,15 @@ describe('tally', () => {
     expect(Object.keys(tally([]).byStatus).sort()).toEqual(Object.values(EquipmentStatus).sort())
   })
 
-  it('counts IN_TRANSIT in its own bucket, as active and not pickable (D-n)', () => {
+  // PR-3a widened PICKABLE_STATUSES with `pickUnit` (D-n): a Returning unit is pickable.
+  it('counts IN_TRANSIT in its own bucket, as active and — since PR-3a — pickable (D-e, D-n)', () => {
     const t = tally(units('AVAILABLE', 'IN_TRANSIT', 'IN_TRANSIT', 'RETIRED'))
     expect(t.byStatus.IN_TRANSIT).toBe(2)
     expect(t.total).toBe(4)
     expect(t.retired).toBe(1)
     expect(t.active).toBe(3)
-    expect(t.pickable).toBe(1)
-    expect([...PICKABLE_STATUSES]).toEqual(['AVAILABLE'])
+    expect(t.pickable).toBe(3)
+    expect([...PICKABLE_STATUSES]).toEqual(['AVAILABLE', 'IN_TRANSIT'])
   })
 
   it('computeUnitCounts reads from tally, IN_TRANSIT included', () => {
@@ -38,7 +39,8 @@ describe('tally', () => {
 })
 
 describe('itemCounts — serialized', () => {
-  it('Manual Corer: 11 available · 0 out · 14 owned, 1 retired (B3)', () => {
+  // B3's acceptance was 11 · 0 · 14 in PR-2; from PR-3a the Returning unit is pickable, so 12.
+  it('Manual Corer: 12 available (11 on the shelf + 1 Returning) · 0 out · 14 owned, 1 retired (B3)', () => {
     const c = itemCounts({
       itemType: 'SERIALIZED',
       quantity: 999, // the stored column is never read for serialized items
@@ -49,7 +51,7 @@ describe('itemCounts — serialized', () => {
       ),
     })
     expect(c).toEqual({
-      owned: 14, onHand: 14, available: 11, reserved: 0, out: 0,
+      owned: 14, onHand: 14, available: 12, reserved: 0, out: 0,
       inMaintenance: 1, inoperable: 1, inTransit: 1, retired: 1,
     })
   })

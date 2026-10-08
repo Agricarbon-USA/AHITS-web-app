@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
 import { resolveActiveAlert } from '@/lib/alerts'
+import { openDamageTask } from '@/lib/maintenance'
 import { withIdempotency } from '@/lib/idempotency'
 
 // CC-34 (2c): promote a FAILED daily check into a repair task — admin triage, never
@@ -54,25 +55,22 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   })
   const rigId = rv?.rigId ?? null
 
+  // PR-3a: through `openDamageTask` with source DAILY_CHECK — no DAMAGE_REPORTED bell (see
+  // above), and a vehicle that already has an open repair gets these notes appended to it
+  // instead of a second task. `flipVehicle` is the admin's "take it out of use" choice.
   const task = await prisma.$transaction(async (tx) => {
-    const t = await tx.maintenanceTask.create({
-      data: {
-        taskName: 'Repair from failed daily check',
-        isDamageReport: true,
-        status: 'IN_PROGRESS',
-        vehicleId: check.vehicleId,
-        notes,
-        rigId,
-        reportedById: check.operatorId, // the operator reported it, not the admin clicking
-      },
+    const { task: t } = await openDamageTask(tx, { kind: 'vehicle', id: check.vehicleId }, {
+      taskName: 'Repair from failed daily check',
+      notes,
+      rigId,
+      reportedById: check.operatorId, // the operator reported it, not the admin clicking
+      source: 'DAILY_CHECK',
+      pull: flipVehicle === true,
     })
     // Re-link the check's photos to the task WITHOUT dropping dailyCheckId — one photo, two
     // contexts (it still belongs to the check; it now also documents the repair).
     await tx.photo.updateMany({ where: { dailyCheckId: check.id }, data: { maintenanceId: t.id } })
-    if (flipVehicle) {
-      await tx.vehicle.update({ where: { id: check.vehicleId }, data: { status: 'IN_MAINTENANCE' as never } })
-    }
-    return t
+    return tx.maintenanceTask.findUniqueOrThrow({ where: { id: t.id } })
   })
 
   // Triaged = resolved: the failed-check bell clears now that the task is the live object.

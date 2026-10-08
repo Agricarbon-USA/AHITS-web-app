@@ -3,7 +3,8 @@ import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
-import { nextDueFromInterval } from '@/lib/maintenance'
+import { closeDamageTask, nextDueFromInterval } from '@/lib/maintenance'
+import { resolveAlertsFor } from '@/lib/alerts'
 import { money } from '@/lib/validation'
 import { withIdempotency } from '@/lib/idempotency'
 
@@ -20,8 +21,9 @@ const schema = z.object({
 
 /**
  * Complete a maintenance task. (Wave G)
- *   • Damage report → terminal COMPLETED; the repaired unit returns to service
- *     and the alert(s) tied to the task are resolved.
+ *   • Damage report → `closeDamageTask(COMPLETED)` (PR-3a): terminal COMPLETED, its
+ *     alerts resolved, and the asset back in service only if no other open report
+ *     still holds it (S-5 — closing one of two reports used to restore early).
  *   • Scheduled recurring task → records this service (`lastCompleted`) and rolls
  *     `nextDue` / `nextOdometer` forward by the interval, staying active for the
  *     next cycle. Any overdue alert is resolved.
@@ -67,72 +69,23 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   const now = new Date()
 
   const result = await prisma.$transaction(async (tx) => {
-    // Resolve alerts tied to this task either way (it's been serviced).
-    await tx.alert.updateMany({
-      where: { sourceTable: 'maintenance_tasks', sourceId: id, resolved: false },
-      data: { resolved: true, resolvedAt: now, activeKey: null },
-    })
-
     if (task.isDamageReport) {
-      // One-off repair → terminal. Restore the asset to service.
-      if (isVehicleTask) {
-        // Vehicle damage: restore vehicle to ACTIVE if it was pulled.
-        if (task.vehicle && task.vehicle.status === 'IN_MAINTENANCE') {
-          await tx.vehicle.update({ where: { id: task.vehicleId! }, data: { status: 'ACTIVE' as never } })
-        }
-      } else {
-        // CC-34 (3c): a "Still usable" field report (PR-2a) leaves a unit IN_MAINTENANCE
-        // while it stays in the operator's kit. Flipping such a unit straight to AVAILABLE
-        // on close would strand it — AVAILABLE inside an OPEN kit item on an ACTIVE rig, so
-        // it's double-issuable and invisible to INV-5. If an open kit item still references
-        // the unit, restore it to CHECKED_OUT (still in the kit); otherwise AVAILABLE (hub).
-        const restoreStatusFor = async (unitId: string): Promise<'AVAILABLE' | 'CHECKED_OUT'> => {
-          const openKit = await tx.kitItem.findFirst({
-            where: { inventoryUnitId: unitId, removedAt: null, kit: { rig: { endedAt: null } } },
-            select: { id: true },
-          })
-          return openKit ? 'CHECKED_OUT' : 'AVAILABLE'
-        }
-        // Unit damage: restore the specific unit (or the unambiguous UR-029 fallback).
-        if (task.unit && task.unit.status === 'IN_MAINTENANCE') {
-          await tx.inventoryUnit.update({ where: { id: task.unit.id }, data: { status: await restoreStatusFor(task.unit.id) } })
-        } else if (!task.inventoryUnitId && task.itemId) {
-          // UR-029 fallback for legacy tasks created before the unit was linked at
-          // creation: if exactly one unit of this item is in maintenance, it's
-          // unambiguously the one this repair covers — return it. Skip when
-          // ambiguous (0 or >1 in maintenance) to avoid freeing the wrong unit.
-          const inMaint = await tx.inventoryUnit.findMany({
-            where: { inventoryItemId: task.itemId, status: 'IN_MAINTENANCE' },
-            select: { id: true },
-            take: 2,
-          })
-          if (inMaint.length === 1) {
-            await tx.inventoryUnit.update({ where: { id: inMaint[0].id }, data: { status: await restoreStatusFor(inMaint[0].id) } })
-          }
-        }
-      }
-      const data: Prisma.MaintenanceTaskUpdateInput = {
-        status: 'COMPLETED',
-        completedAt: now,
-        lastCompleted: now,
-      }
-      if (actualCost != null) data.actualCost = actualCost
-      if (notes) data.notes = notes
-      const updated = await tx.maintenanceTask.update({ where: { id }, data })
-      // Persist the per-case return destination (A.4) for unit repairs. Raw SQL
-      // because the columns are newer than the generated client; vehicle repairs
-      // skip this — they have no return destination.
-      if (!isVehicleTask) {
-        await tx.$executeRaw`
-          UPDATE "maintenance_tasks"
-          SET "returnDestinationType" = ${returnDestinationType}::"ReturnDestinationType",
-              "returnDestinationId" = ${returnDestinationId},
-              "repairMethod" = ${repairMethod ?? null}::"RepairMethod"
-          WHERE "id" = ${id}
-        `
-      }
-      return updated
+      // A.4: the per-case return destination is recorded for unit repairs; vehicle
+      // repairs have none. The task is marked COMPLETED before the restore check.
+      await closeDamageTask(tx, id, 'COMPLETED', {
+        actualCost: actualCost ?? null,
+        notes: notes || null,
+        ...(!isVehicleTask && {
+          returnDestinationType: returnDestinationType ?? null,
+          returnDestinationId: returnDestinationId ?? null,
+          repairMethod: repairMethod ?? null,
+        }),
+      })
+      return tx.maintenanceTask.findUniqueOrThrow({ where: { id } })
     }
+
+    // Resolve alerts tied to this task (it's been serviced).
+    await resolveAlertsFor('maintenance_tasks', id, tx)
 
     // Recurring scheduled task → roll forward.
     const data: Prisma.MaintenanceTaskUpdateInput = {

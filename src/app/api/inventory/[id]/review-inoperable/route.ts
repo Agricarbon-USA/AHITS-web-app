@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
 import { resolveActiveAlert } from '@/lib/alerts' // CC-34 (1c): triage clears the bell
+import { retireUnit } from '@/lib/asset-status'
+import { openDamageTask } from '@/lib/maintenance'
 
 const schema = z.object({
   unitId: z.string(),
@@ -35,42 +37,31 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: 'Unit is not in INOPERABLE status' }, { status: 409 })
   }
 
-  if (decision === 'RETIRE') {
-    // Free the physical QR label for reuse on a replacement unit: the retired
-    // row keeps its history but releases its unique code so the same label can
-    // be re-registered (QR-reuse-on-retire). The `::retired::` suffix can't
-    // collide with a real scanned code.
-    await prisma.inventoryUnit.update({
-      where: { id: unitId },
-      data: { status: 'RETIRED', qrCodeId: `${unit.qrCodeId}::retired::${Date.now()}` },
+  // PR-3a: both decisions go through the status modules. RETIRE → `retireUnit` (QR label
+  // released with the `::retired::` suffix so the physical label can be re-registered on a
+  // replacement; open repairs closed; the unit's alerts resolved). REPAIR → an open damage
+  // task that pulls the unit (source ADMIN_REVIEW: no new bell — the admin is the one
+  // deciding; an already-open repair on the unit is reused).
+  await prisma.$transaction(async (tx) => {
+    if (decision === 'RETIRE') {
+      await retireUnit(tx, unitId, note)
+      return
+    }
+    await openDamageTask(tx, { kind: 'unit', id: unitId, itemId: id }, {
+      taskName: `Admin repair decision: unit ${unit.serialNumber ?? unitId}`,
+      notes: note,
+      reportedById: null,
+      repairType: repairType ?? null,
+      shopName: shopName ?? null,
+      shopAddress: shopAddress ?? null,
+      dateDelivered: dateDelivered ? new Date(dateDelivered) : null,
+      purchaseOrder: purchaseOrder ?? null,
+      invoiceNumber: invoiceNumber ?? null,
+      repairHubId: repairHubId ?? null,
+      source: 'ADMIN_REVIEW',
+      pull: true,
     })
-  } else {
-    await prisma.$transaction(async (tx) => {
-      await tx.inventoryUnit.update({
-        where: { id: unitId },
-        data: { status: 'IN_MAINTENANCE' },
-      })
-      await tx.maintenanceTask.create({
-        data: {
-          itemId: id,
-          // UR-029: link the specific unit so completing the repair returns THIS
-          // unit to service (the complete route keys off task.unit).
-          inventoryUnitId: unitId,
-          taskName: `Admin repair decision: unit ${unit.serialNumber ?? unitId}`,
-          isDamageReport: true,
-          repairType: repairType ?? null,
-          shopName: shopName ?? null,
-          shopAddress: shopAddress ?? null,
-          dateDelivered: dateDelivered ? new Date(dateDelivered) : null,
-          purchaseOrder: purchaseOrder ?? null,
-          invoiceNumber: invoiceNumber ?? null,
-          repairHubId: repairHubId ?? null,
-          status: 'IN_PROGRESS',
-          notes: note,
-        },
-      })
-    })
-  }
+  })
 
   // CC-34 (1c): triaging an inoperable unit (either RETIRE or REPAIR) clears the
   // DAMAGE_REPORTED bell raised when the unit was flagged inoperable in the field

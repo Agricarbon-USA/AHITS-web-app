@@ -24,6 +24,7 @@ vi.mock('../src/lib/auth/session', () => ({
 vi.mock('../src/lib/alerts', () => ({
   createAlert: vi.fn().mockResolvedValue({}),
   resolveActiveAlert: vi.fn().mockResolvedValue({}),
+  resolveAlertsFor: vi.fn().mockResolvedValue({}),
 }))
 
 let keyCounter = 0

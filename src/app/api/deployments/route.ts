@@ -6,6 +6,8 @@ import { getDeploymentRostersForDisplay, ensureOpenAssignment, addProjectLink, g
 import { drawFromHub, getStockAtHub, totalStock, setStockAtHub, resyncItemTotal } from '@/lib/inventory-stock'
 import { claimHeldStock, releaseAllHeldForRequest } from '@/lib/deployment-requests'
 import { withIdempotency } from '@/lib/idempotency'
+import { pickUnit, pickableFirst } from '@/lib/asset-status'
+import { PICKABLE_UNIT } from '@/lib/populations'
 
 const RIG_INCLUDE = {
   project: { select: { id: true, name: true } },
@@ -228,11 +230,11 @@ async function _POST(req: NextRequest) {
     if (kitItems.length > 0) {
       for (const ki of kitItems) {
         if ('inventoryUnitId' in ki && ki.inventoryUnitId) {
-          const result = await tx.inventoryUnit.updateMany({
-            where: { id: ki.inventoryUnitId, inventoryItemId: ki.inventoryItemId, status: 'AVAILABLE', deletedAt: null },
-            data: { status: 'CHECKED_OUT' },
-          })
-          if (result.count === 0) {
+          // PR-3a (D-e / D-n): `pickUnit` takes AVAILABLE or Returning (IN_TRANSIT) units —
+          // a Returning unit's open hub-return link is completed — guarded so a unit taken by
+          // a concurrent checkout is refused rather than double-allocated.
+          const picked = await pickUnit(tx, ki.inventoryUnitId, { inventoryItemId: ki.inventoryItemId, actorLabel: session.name })
+          if (!picked) {
             throw Object.assign(new Error('UNIT_CONFLICT'), { unitId: ki.inventoryUnitId })
           }
           await tx.kitItem.create({
@@ -251,25 +253,22 @@ async function _POST(req: NextRequest) {
           // AVAILABLE units. CONSUMABLE quantity is authoritative and may have no
           // units, so it is allowed to proceed without reserving any.
           const requireUnits = item?.itemType === 'SERIALIZED'
-          const available = await tx.inventoryUnit.findMany({
-            where: { inventoryItemId: ki.inventoryItemId, status: 'AVAILABLE', deletedAt: null },
-            take: quantity,
-          })
+          // Pickable units (PICKABLE_STATUSES), AVAILABLE first so a Returning unit's hub
+          // link is only completed when the shelf can't cover the quantity.
+          const available = pickableFirst(await tx.inventoryUnit.findMany({
+            where: { inventoryItemId: ki.inventoryItemId, ...PICKABLE_UNIT },
+            select: { id: true, status: true },
+          })).slice(0, quantity)
           if (requireUnits && available.length < quantity) {
             throw Object.assign(new Error('INSUFFICIENT_UNITS'), {
               available: available.length,
               requested: quantity,
             })
           }
-          if (available.length > 0) {
-            // Status-guarded flip: only rows still AVAILABLE transition, so a unit
-            // grabbed by a concurrent checkout between the read above and this write
-            // is not double-allocated — the count reconciliation catches the shortfall.
-            const flipped = await tx.inventoryUnit.updateMany({
-              where: { id: { in: available.map((u) => u.id) }, status: 'AVAILABLE' },
-              data: { status: 'CHECKED_OUT' },
-            })
-            if (flipped.count < available.length) {
+          // Status-guarded pick per unit: a unit grabbed by a concurrent checkout between
+          // the read above and this write is refused, not double-allocated.
+          for (const u of available) {
+            if (!(await pickUnit(tx, u.id, { actorLabel: session.name }))) {
               throw Object.assign(new Error('UNIT_CONFLICT'), {})
             }
           }

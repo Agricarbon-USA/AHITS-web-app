@@ -24,10 +24,16 @@ vi.mock('../src/lib/auth/session', () => ({
   requireAdmin: () => Promise.resolve((mockSession as { role?: string } | null)?.role === 'ADMIN' ? mockSession : null),
 }))
 
-vi.mock('../src/lib/alerts', () => ({
-  createAlert: vi.fn().mockResolvedValue({}),
-  resolveActiveAlert: vi.fn().mockResolvedValue({}),
-}))
+// createAlert / resolveActiveAlert are spied; resolveAlertsFor (PR-3a) stays real so the
+// DB-level "alert resolved" assertions below still see the row change.
+vi.mock('../src/lib/alerts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/lib/alerts')>()
+  return {
+    ...actual,
+    createAlert: vi.fn().mockResolvedValue({}),
+    resolveActiveAlert: vi.fn().mockResolvedValue({}),
+  }
+})
 
 function jsonReq(url: string, method: string, body: unknown) {
   return new NextRequest(url, {
@@ -73,7 +79,10 @@ describe('CC-34 (1c) orphan closure', () => {
     )
   })
 
-  it('scan-return INOPERABLE rings the unit bell without a task (consumable-safe key)', async () => {
+  // PR-3a: a scan-return marked INOPERABLE follows the one return rule (`returnUnit`):
+  // an open repair task that pulls the unit, rung on the task's key — no longer a bare
+  // INOPERABLE flip into the review queue.
+  it('scan-return INOPERABLE opens a repair task and pulls the unit (PR-3a returnUnit)', async () => {
     const item = await createInventoryItem(cat.id, { itemType: 'SERIALIZED', quantity: 0 })
     const unit = await createInventoryUnit(item.id, { status: 'CHECKED_OUT' })
     const { rig, kit } = await createRig(op.id)
@@ -87,10 +96,11 @@ describe('CC-34 (1c) orphan closure', () => {
     )
     expect(res.status).toBe(200)
 
-    const task = await prisma.maintenanceTask.findFirst({ where: { inventoryUnitId: unit.id } })
-    expect(task).toBeNull()
+    const task = await prisma.maintenanceTask.findFirst({ where: { inventoryUnitId: unit.id, isDamageReport: true } })
+    expect(task?.status).toBe('IN_PROGRESS')
+    expect((await prisma.inventoryUnit.findUnique({ where: { id: unit.id } }))?.status).toBe('IN_MAINTENANCE')
     expect(vi.mocked(createAlert)).toHaveBeenCalledWith(
-      'DAMAGE_REPORTED', 'inventory_units', unit.id, expect.anything(), expect.anything(),
+      'DAMAGE_REPORTED', 'maintenance_tasks', task!.id, expect.anything(), expect.anything(),
     )
   })
 

@@ -6,7 +6,10 @@ import { createVehicle, createCategory, createInventoryItem, createInventoryUnit
 // ── CC-10 Field Fix & Vehicle Damage ─────────────────────────────────────────
 // Acceptance criteria:
 //   1. POST /api/maintenance/field-fix creates COMPLETED task, resolutionPath=IN_FIELD,
-//      repairType=IN_FIELD, no status change, no alert.
+//      repairType=IN_FIELD, no alert. Since PR-3a (D-c) it also closes every open damage
+//      report on the asset and returns an IN_MAINTENANCE asset to service; an asset that
+//      is already in service (ACTIVE / AVAILABLE, as here) is left exactly as it was.
+//      The restore cases are in tests/pr3a-status-owner-routes.test.ts.
 //   2. POST /api/vehicles/[id]/report-damage creates IN_PROGRESS task, flips
 //      vehicle to IN_MAINTENANCE, fires DAMAGE_REPORTED alert.
 //   3. POST /api/maintenance/[id]/complete on a vehicle damage task restores
@@ -59,7 +62,7 @@ describe('CC-10 field fix', () => {
       expect(body.data.completedAt).not.toBeNull()
       expect(body.data.vehicleId).toBe(vehicle.id)
 
-      // Vehicle status must NOT have changed
+      // Already in service, no open report: field fix leaves it as it was
       const refreshed = await prisma.vehicle.findFirst({ where: { id: vehicle.id } })
       expect(refreshed?.status).toBe('ACTIVE')
 
@@ -87,7 +90,7 @@ describe('CC-10 field fix', () => {
       expect(body.data.inventoryUnitId).toBe(unit.id)
       expect(body.data.status).toBe('COMPLETED')
 
-      // Unit status must NOT have changed
+      // Already in service, no open report: field fix leaves it as it was
       const refreshed = await prisma.inventoryUnit.findFirst({ where: { id: unit.id } })
       expect(refreshed?.status).toBe('AVAILABLE')
     })
