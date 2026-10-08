@@ -255,7 +255,8 @@ function DeploymentDrawer({
 
   const outgoingTransfers = pendingTransfers.filter((t) => t.fromRig.id === rig.id)
   const kitItems = rig.kits.flatMap((k) => k.items)
-  const unassignedVehicles = vehicles.filter((v) => !v.assignedOperatorId || v.assignedOperatorId === rig.operator.id)
+  // PR-3b: Active only — the server refuses a vehicle in repair, out of service or retired.
+  const unassignedVehicles = vehicles.filter((v) => (!v.assignedOperatorId || v.assignedOperatorId === rig.operator.id) && v.status === 'ACTIVE')
   const availableItems = inventoryItems.filter(isPickableItem)
   const isActive = !rig.endedAt
   const pendingHasConsumable = Array.from(pendingItems.values()).some((e) => e.itemType === 'CONSUMABLE')

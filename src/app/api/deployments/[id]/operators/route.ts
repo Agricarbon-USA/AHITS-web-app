@@ -29,6 +29,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const rig = await prisma.rig.findUnique({ where: { id }, select: { id: true } })
   if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   const primaryId = await getActivePrimaryForRig(id)
+  // PR-3b (L-7, server half): a deactivated user can't be added to a deployment.
+  const op = await prisma.user.findUnique({ where: { id: operatorId }, select: { isActive: true, name: true } })
+  if (!op) return NextResponse.json({ error: 'Operator not found.' }, { status: 404 })
+  if (!op.isActive) {
+    return NextResponse.json({ error: `${op.name} is deactivated — reactivate them or choose someone else.` }, { status: 409 })
+  }
   if (primaryId === operatorId) {
     return NextResponse.json({ error: 'Operator is already the primary operator' }, { status: 409 })
   }

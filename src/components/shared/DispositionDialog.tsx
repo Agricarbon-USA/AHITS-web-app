@@ -61,6 +61,19 @@ interface DispositionDialogProps {
   presets?: readonly string[]
 }
 
+
+/**
+ * PR-3b (S-2): a unit that is not plainly checked out — reported "Out of service"
+ * (In maintenance) or otherwise held — starts on "Mark Inoperable / Damaged" with
+ * "can be fixed", so it is returned into repair rather than defaulted back to a hub
+ * shelf as if it were fine. Everything else starts on "Return to Hub".
+ */
+function initialDisposition(item: { kitItemId: string; inventoryUnit: { status: string } | null }, hubId?: string): ItemDisposition {
+  if (item.inventoryUnit && item.inventoryUnit.status !== 'CHECKED_OUT') {
+    return { kitItemId: item.kitItemId, type: 'INOPERABLE', canBeFixed: true, photoUrls: [] }
+  }
+  return { kitItemId: item.kitItemId, type: 'HUB', hubId, photoUrls: [] }
+}
 export function DispositionDialog({
   open,
   mode,
@@ -74,9 +87,7 @@ export function DispositionDialog({
 }: DispositionDialogProps) {
   const [dispositions, setDispositions] = React.useState<Map<string, ItemDisposition>>(() => {
     const m = new Map<string, ItemDisposition>()
-    for (const item of items) {
-      m.set(item.kitItemId, { kitItemId: item.kitItemId, type: 'HUB', photoUrls: [] })
-    }
+    for (const item of items) m.set(item.kitItemId, initialDisposition(item))
     return m
   })
   const [note, setNote] = React.useState('')
@@ -94,9 +105,7 @@ export function DispositionDialog({
     if (open) {
       const defaultHub = hubs[0]?.id ?? ''
       const m = new Map<string, ItemDisposition>()
-      for (const item of items) {
-        m.set(item.kitItemId, { kitItemId: item.kitItemId, type: 'HUB', hubId: defaultHub || undefined, photoUrls: [] })
-      }
+      for (const item of items) m.set(item.kitItemId, initialDisposition(item, defaultHub || undefined))
       setDispositions(m)
       setFinalHubId(defaultHub)
       setNote('')

@@ -6,6 +6,7 @@ import { hashPin } from '@/lib/auth/pin'
 import { resolveActiveAlert } from '@/lib/alerts'
 import { writeAudit, type AuditAction } from '@/lib/audit'
 import { pinSchema, money } from '@/lib/validation'
+import { assertNoOpenReferences, openReferences, referenceConflictBody } from '@/lib/asset-references'
 
 // Account-management actions for a single user (Wave 2A.5 §B). A strict,
 // whitelisted schema — no mass-assignment.
@@ -65,6 +66,19 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         { error: 'Cannot demote or deactivate the last active admin.' },
         { status: 400 },
       )
+    }
+  }
+
+  // PR-3b (D-f): deactivating someone who is the operator on an active deployment is
+  // refused, naming it — end or transfer the deployment first. (Reactivation and every
+  // other edit are unaffected.)
+  if (isActive === false && target.isActive) {
+    try {
+      assertNoOpenReferences('user', target.name, await openReferences({ userId: id }))
+    } catch (err) {
+      const conflict = referenceConflictBody(err)
+      if (conflict) return NextResponse.json(conflict, { status: 409 })
+      throw err
     }
   }
 

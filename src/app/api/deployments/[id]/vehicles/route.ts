@@ -6,6 +6,8 @@ import { getAuthorizedActiveRig } from '@/lib/deployment-auth'
 import { requireAuth } from '@/lib/auth/session'
 import { withIdempotency } from '@/lib/idempotency'
 import { removeVehicleFromRig } from '@/lib/asset-status'
+import { referenceConflictBody } from '@/lib/asset-references'
+import { vehicleNotActiveMessage } from '@/lib/status'
 
 const RIG_INCLUDE = {
   project: { select: { id: true, name: true } },
@@ -72,6 +74,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   })
   if (vehicles.length !== vehicleIds.length) {
     return NextResponse.json({ error: 'One or more vehicles not found' }, { status: 404 })
+  }
+  // PR-3b: only an Active vehicle can go on a deployment — not one in repair, out of
+  // service or retired (the pickers offer Active only; this is the guard behind them).
+  const notActive = vehicles.find((v) => v.status !== 'ACTIVE')
+  if (notActive) {
+    return NextResponse.json({ error: vehicleNotActiveMessage(notActive) }, { status: 409 })
   }
 
   // Reject vehicles already held by a different active deployment (open RigVehicle).
@@ -188,6 +196,9 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
       }
     })
   } catch (err: unknown) {
+    // PR-3b: a "Retired" disposition on a vehicle something else still holds is refused.
+    const conflict = referenceConflictBody(err)
+    if (conflict) return NextResponse.json(conflict, { status: 409 })
     const msg = err instanceof Error ? err.message : 'Failed to remove vehicles'
     console.error('[DELETE /api/deployments/[id]/vehicles]', err)
     return NextResponse.json({ error: msg }, { status: 500 })

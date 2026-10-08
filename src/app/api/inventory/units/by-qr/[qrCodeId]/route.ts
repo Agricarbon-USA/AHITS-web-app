@@ -46,7 +46,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ qrC
   // fallback for units without a serial number.
   const siblings = await prisma.inventoryUnit.findMany({
     where: { inventoryItemId: unit.inventoryItemId, deletedAt: null },
-    orderBy: { createdAt: 'asc' },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     select: { id: true },
   })
   const position = siblings.findIndex((s) => s.id === unit.id) + 1

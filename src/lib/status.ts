@@ -30,6 +30,16 @@ export const VEHICLE_STATUS: Record<string, StatusMeta> = {
   RETIRED: { label: 'Retired', color: 'default' },
 }
 
+/**
+ * PR-3b: the 409 when a vehicle that is not Active is put on a deployment. Names the
+ * vehicle and the state that keeps it off ("Truck-01 is In Maintenance — only Active
+ * vehicles can go on a deployment.").
+ */
+export function vehicleNotActiveMessage(v: { name: string; status: string; deletedAt?: Date | null }): string {
+  const state = v.deletedAt ? 'deleted' : (VEHICLE_STATUS[v.status]?.label ?? v.status)
+  return `${v.name} is ${state} — only Active vehicles can go on a deployment.`
+}
+
 // Maintenance-task status (MaintenanceStatus enum).
 export const MAINTENANCE_STATUS: Record<string, StatusMeta> = {
   UPCOMING: { label: 'Upcoming', color: 'default' },

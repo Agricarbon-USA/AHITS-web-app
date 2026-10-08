@@ -8,6 +8,7 @@ import { claimHeldStock, releaseAllHeldForRequest } from '@/lib/deployment-reque
 import { withIdempotency } from '@/lib/idempotency'
 import { pickUnit, pickableFirst } from '@/lib/asset-status'
 import { PICKABLE_UNIT } from '@/lib/populations'
+import { vehicleNotActiveMessage } from '@/lib/status'
 
 const RIG_INCLUDE = {
   project: { select: { id: true, name: true } },
@@ -178,6 +179,16 @@ async function _POST(req: NextRequest) {
   const { note, vehicleIds, kitItems, projectId, label, sourceHubId, fromRequestId } = parsed.data
   const operatorId = session.role === 'OPERATOR' ? session.userId : (parsed.data.operatorId ?? session.userId)
 
+  // PR-3b (L-7, server half): a deactivated user can't be put on a deployment — the
+  // pickers already hide them (PR-1b); this is the guard behind them.
+  if (operatorId !== session.userId) {
+    const op = await prisma.user.findUnique({ where: { id: operatorId }, select: { isActive: true, name: true } })
+    if (!op) return NextResponse.json({ error: 'Operator not found.' }, { status: 404 })
+    if (!op.isActive) {
+      return NextResponse.json({ error: `${op.name} is deactivated — reactivate them or choose someone else.` }, { status: 409 })
+    }
+  }
+
   let rig
   try {
   rig = await prisma.$transaction(async (tx) => {
@@ -197,6 +208,14 @@ async function _POST(req: NextRequest) {
     if (projectId) await addProjectLink(newRig.id, projectId, tx)
 
     if (vehicleIds.length > 0) {
+      // PR-3b: only Active vehicles (not in repair, out of service, retired or deleted).
+      const picked = await tx.vehicle.findMany({ where: { id: { in: vehicleIds } }, select: { id: true, name: true, status: true, deletedAt: true } })
+      const notActive = picked.find((v) => v.status !== 'ACTIVE' || v.deletedAt)
+      if (notActive || picked.length !== vehicleIds.length) {
+        throw Object.assign(new Error('VEHICLE_NOT_ACTIVE'), {
+          message409: notActive ? vehicleNotActiveMessage(notActive) : 'One or more vehicles were not found.',
+        })
+      }
       // Reject vehicles already held by another active deployment (open RigVehicle).
       const vehicleConflicts = await tx.rigVehicle.findMany({
         where: {
@@ -358,6 +377,9 @@ async function _POST(req: NextRequest) {
         { error: 'One or more vehicles are already assigned to another active deployment. Remove them there first.' },
         { status: 409 }
       )
+    }
+    if (err instanceof Error && err.message === 'VEHICLE_NOT_ACTIVE') {
+      return NextResponse.json({ error: (err as Error & { message409: string }).message409 }, { status: 409 })
     }
     if (err instanceof Error && err.message === 'OPERATOR_HAS_ACTIVE_RIG') {
       return NextResponse.json(

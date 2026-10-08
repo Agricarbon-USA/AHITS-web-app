@@ -46,16 +46,16 @@ import { groupBy, formatDate } from '@/lib/utils'
 // once). Two concurrent replaces would race and one would win with a stale query.
 const INVENTORY_FILTER_DEFAULTS = { categoryId: '', itemType: '', hubId: '', operatorId: '', projectId: '', page: '' }
 
-/**
- * PR-1a: retiring an ITEM is write-only today — it sets a flag nothing reads, so
- * the item stays in the list, its units are untouched, and the confirmation ("All
- * available units will be marked retired") describes something that never happens
- * (B1/U-1/S-3). The real semantics — retire every unit on hand, release their QR
- * labels, refuse while any unit is out — land in PR-3b with `asset-status.ts`.
- * Until then the action is HIDDEN rather than left as a no-op with copy that lies;
- * PR-3b flips this to `true` in the commit that makes it true.
- */
-const ITEM_RETIRE_ENABLED: boolean = false
+/** PR-3b (D-g): the unit states an admin sets by hand. */
+const ADMIN_UNIT_STATUSES = ['AVAILABLE', 'RETIRED']
+
+/** Where each derived unit state comes from — shown under its chip in the Units tab. */
+const UNIT_STATUS_SOURCE: Record<string, string> = {
+  CHECKED_OUT: 'via a deployment',
+  IN_TRANSIT: 'via a return to hub',
+  IN_MAINTENANCE: 'via Report a problem',
+  INOPERABLE: 'via Report a problem',
+}
 
 // ── Types ─────────────────────────────────────────────────────────
 
@@ -909,6 +909,8 @@ function ItemDetailDrawer({
   const [addUnitError, setAddUnitError] = React.useState('')
   const [repairUnitId, setRepairUnitId] = React.useState<string | null>(null)
   const [retireUnitId, setRetireUnitId] = React.useState<string | null>(null)
+  // PR-3b: the Units-tab dropdown's "Retired" choice, confirmed before it is sent.
+  const [confirmUnitRetireId, setConfirmUnitRetireId] = React.useState<string | null>(null)
   const [expandedUnitId, setExpandedUnitId] = React.useState<string | null>(null)
 
   const loadDetail = React.useCallback(async (id: string) => {
@@ -1188,22 +1190,36 @@ function ItemDetailDrawer({
                               />
                             </TableCell>
                             <TableCell>
-                              <TextField
-                                select
-                                size="small"
-                                variant="standard"
-                                value={unit.status}
-                                onChange={(e) => handleUnitStatusChange(unit.id, e.target.value)}
-                                sx={{ minWidth: 130 }}
-                                SelectProps={{ style: { fontSize: 13 } }}
-                                disabled={!canEdit}
-                              >
-                                {/* IN_TRANSIT ("Returning") is listed so a returning unit shows its
-                                    state, but it can't be chosen: the server sets it on return. */}
-                                {Object.entries(EQUIPMENT_STATUS).map(([v, m]) => (
-                                  <MenuItem key={v} value={v} disabled={v === 'IN_TRANSIT'}>{m.label}</MenuItem>
-                                ))}
-                              </TextField>
+                              {/* PR-3b (D-g): by hand a unit is only Available or Retired. Every
+                                  other state comes from what happened to it (a deployment, a
+                                  return, a reported problem, the review queue) and is shown as a
+                                  chip with where it comes from. */}
+                              {ADMIN_UNIT_STATUSES.includes(unit.status) ? (
+                                <TextField
+                                  select
+                                  size="small"
+                                  variant="standard"
+                                  value={unit.status}
+                                  onChange={(e) => {
+                                    // Retiring releases the QR label and closes open repairs —
+                                    // confirm it; un-retiring is applied directly.
+                                    if (e.target.value === 'RETIRED') setConfirmUnitRetireId(unit.id)
+                                    else handleUnitStatusChange(unit.id, e.target.value)
+                                  }}
+                                  sx={{ minWidth: 130 }}
+                                  SelectProps={{ style: { fontSize: 13 } }}
+                                  disabled={!canEdit}
+                                >
+                                  {ADMIN_UNIT_STATUSES.map((v) => (
+                                    <MenuItem key={v} value={v}>{EQUIPMENT_STATUS[v]?.label ?? v}</MenuItem>
+                                  ))}
+                                </TextField>
+                              ) : (
+                                <Stack spacing={0.25} alignItems="flex-start">
+                                  <StatusChip status={unit.status} kind="equipment" />
+                                  <Typography variant="caption" color="text.secondary">{UNIT_STATUS_SOURCE[unit.status] ?? ''}</Typography>
+                                </Stack>
+                              )}
                             </TableCell>
                             <TableCell align="right">
                               <Stack direction="row" spacing={0.5} justifyContent="flex-end">
@@ -1335,7 +1351,10 @@ function ItemDetailDrawer({
           <Divider />
           <Stack direction="row" spacing={1} px={3} py={2} justifyContent="flex-end">
             <Button onClick={onClose}>Close</Button>
-            {ITEM_RETIRE_ENABLED && detail.unitCounts.available > 0 && (
+            {/* PR-3b (D-a): Retire is offered for any item not already retired — consumables
+                included (the old `available > 0` gate never showed it for them). The server
+                refuses, naming the count, while anything is out or in repair. */}
+            {detail.status !== 'RETIRED' && (
               <MutationButton variant="outlined" color="error" startIcon={<ArchiveIcon />}
                 onClick={() => { onClose(); onRetire(detail) }}>
                 Retire
@@ -1348,6 +1367,21 @@ function ItemDetailDrawer({
           </Stack>
         </Box>
       )}
+
+      {/* Units-tab dropdown → Retired (PR-3b): the same retire as the review queue. */}
+      <ConfirmDialog
+        open={!!confirmUnitRetireId}
+        title="Retire this unit?"
+        message="Its QR label is released and any open repair on it is closed. Units that are out or Returning can't be retired. History is preserved."
+        confirmLabel="Retire Unit"
+        confirmColor="error"
+        onClose={() => setConfirmUnitRetireId(null)}
+        onConfirm={async () => {
+          const id = confirmUnitRetireId
+          setConfirmUnitRetireId(null)
+          if (id) await handleUnitStatusChange(id, 'RETIRED')
+        }}
+      />
 
       {/* Per-unit retire confirmation */}
       <ConfirmDialog
@@ -1470,8 +1504,10 @@ function AdminInventoryContent() {
       body: JSON.stringify({ status: 'RETIRED' }),
     })
     setRetireItem(null)
-    if (res.ok) { showToast({ message: `${retireItem.name} retired`, severity: 'success' }); load() }
-    else showToast({ message: 'Failed to retire item', severity: 'error' })
+    if (res.ok) { showToast({ message: `${retireItem.name} retired`, severity: 'success' }); load(); return }
+    // PR-3b: the 409 names what blocks it ("2 units are still out or in repair — …").
+    const d = await res.json().catch(() => ({}))
+    showToast({ message: apiErrorMessage(d, 'Failed to retire item'), severity: 'error' })
   }
 
   // UXP-6 (6c): "<name> added · Open" (the drawer), or — when a serialized item's
@@ -1555,7 +1591,7 @@ function AdminInventoryContent() {
           <MutationIconButton size="small" tooltip="Edit" onClick={() => { setFormItem(item); setFormOpen(true) }}>
             <EditIcon fontSize="small" />
           </MutationIconButton>
-          {ITEM_RETIRE_ENABLED && (
+          {item.status !== 'RETIRED' && (
             <MutationIconButton size="small" tooltip="Retire" color="error" onClick={() => setRetireItem(item)}>
               <ArchiveIcon fontSize="small" />
             </MutationIconButton>
@@ -1661,8 +1697,8 @@ function AdminInventoryContent() {
           </TextField>
         )}
         {/* D-a (list half): retired items are hidden, not deleted — this is the
-            door to them. Retiring itself is PR-3b; the row action stays hidden
-            until it does something. */}
+            door to them. Retiring is real since PR-3b (units on hand retired, refused
+            while any are out); Clear filters turns this back off. */}
         <FormControlLabel
           control={
             <Switch
@@ -1673,9 +1709,10 @@ function AdminInventoryContent() {
           }
           label={<Typography variant="body2">Show retired</Typography>}
         />
-        {(categoryFilter || itemTypeFilter || hubFilter || operatorFilter || projectFilter || search) && (
+        {(categoryFilter || itemTypeFilter || hubFilter || operatorFilter || projectFilter || search || includeRetired) && (
           <Button size="small" variant="text" onClick={() => {
             setSearch('')
+            setIncludeRetired(false)
             setFilters({ categoryId: '', itemType: '', hubId: '', operatorId: '', projectId: '', page: '' })
           }}>Clear filters</Button>
         )}
@@ -1752,7 +1789,7 @@ function AdminInventoryContent() {
       <ConfirmDialog
         open={!!retireItem}
         title="Retire item?"
-        message={`Retire "${retireItem?.name}"? All available units will be marked retired. History is preserved.`}
+        message={`Retire "${retireItem?.name}"? Units on hand will be retired and their QR labels released. Units that are out or in repair block this. History is preserved.`}
         confirmLabel="Retire"
         confirmColor="error"
         onClose={() => setRetireItem(null)}

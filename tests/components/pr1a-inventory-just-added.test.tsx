@@ -16,8 +16,9 @@ import { ToastProvider } from '@/components/shared/useToast'
 //    is never shown twice;
 //  - **Show retired** is the door to retired items (D-a, list half) — the list
 //    excludes them by default;
-//  - the row **Retire** action is HIDDEN, not a no-op: retiring an item writes a
-//    flag nothing reads today (B1/U-1) and the semantics land in PR-3b.
+//  - the row **Retire** action was HIDDEN here while retiring an item wrote a flag
+//    nothing read (B1/U-1); PR-3b made retire real and turned it back on (the flow
+//    is tested in pr3b-guards.test.tsx).
 
 const replace = vi.fn()
 vi.mock('next/navigation', () => ({
@@ -172,9 +173,9 @@ describe('PR-1a · Inventory list truth', () => {
     // observable, and it is the one that was wrong.)
   })
 
-  it('offers no row-level Retire while retiring an item does nothing (B1) — Edit stays', async () => {
+  it('offers row-level Retire again now that retiring an item is real (PR-3b) — Edit stays', async () => {
     await renderPage()
     expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Retire' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retire' })).toBeInTheDocument()
   })
 })

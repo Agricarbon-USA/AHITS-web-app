@@ -8,6 +8,8 @@ import { writeOr404 } from '@/lib/api-errors'
 import { computeUnitCounts, itemCounts, isLiveKitLine, categoryDisplay, withPositions } from '@/lib/inventory'
 import { listItemStock } from '@/lib/inventory-stock'
 import { money } from '@/lib/validation'
+import { retireUnit } from '@/lib/asset-status'
+import { assertNoOpenReferences, openReferences, referenceConflictBody } from '@/lib/asset-references'
 
 // Whitelist of admin-editable fields. Excludes id/qrCodeId/deletedAt/timestamps
 // and the unitId helper to prevent mass-assignment. categoryId/hubId are kept
@@ -45,7 +47,7 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
       units: {
         where: { deletedAt: null },
         select: { id: true, qrCodeId: true, serialNumber: true, status: true, notes: true, createdAt: true },
-        orderBy: { createdAt: 'asc' },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       },
       kitItems: {
         where: { removedAt: null },
@@ -131,10 +133,38 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // rather than real CUIDs — avoids a Prisma FK error when items have enum-fallback categories
   if (categoryId && !/^[A-Z_]+$/.test(categoryId)) updateData.categoryId = categoryId
   if (hubId && !/^[A-Z_]+$/.test(hubId)) updateData.hubId = hubId
+
+  const current = await prisma.inventoryItem.findFirst({ where: { id, deletedAt: null }, select: { status: true, name: true } })
+  if (!current) return NextResponse.json({ error: 'Item not found or update failed' }, { status: 400 })
+  const retiring = rest.status === 'RETIRED' && current.status !== 'RETIRED'
+
   try {
-    const item = await prisma.inventoryItem.update({ where: { id }, data: updateData as never })
+    const item = await prisma.$transaction(async (tx) => {
+      if (retiring) {
+        // PR-3b (D-a · B1): retiring an item retires every unit on hand (AVAILABLE /
+        // INOPERABLE) with its QR label released, and is refused — nothing written —
+        // while any unit is out, Returning or in repair, any of it is still on a
+        // deployment, or it is held for a reservation. Consumable stock rows and the
+        // stored quantity stay as history; the low-stock scan skips retired items
+        // (PR-2), and the item's open LOW_INVENTORY alerts are resolved here. Nothing
+        // is soft-deleted: the item hides behind "Show retired".
+        assertNoOpenReferences('item', current.name, await openReferences({ itemId: id }, tx))
+        const onHand = await tx.inventoryUnit.findMany({
+          where: { inventoryItemId: id, deletedAt: null, status: { in: ['AVAILABLE', 'INOPERABLE'] } },
+          select: { id: true },
+        })
+        for (const u of onHand) await retireUnit(tx, u.id, `Item "${current.name}" retired`)
+        await tx.alert.updateMany({
+          where: { type: 'LOW_INVENTORY', sourceTable: 'inventory_items', sourceId: { startsWith: `${id}:` }, resolved: false },
+          data: { resolved: true, resolvedAt: new Date(), activeKey: null },
+        })
+      }
+      return tx.inventoryItem.update({ where: { id }, data: updateData as never })
+    })
     return NextResponse.json({ data: item })
-  } catch {
+  } catch (err) {
+    const conflict = referenceConflictBody(err)
+    if (conflict) return NextResponse.json(conflict, { status: 409 })
     return NextResponse.json({ error: 'Item not found or update failed' }, { status: 400 })
   }
 }
@@ -144,6 +174,17 @@ export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id:
   if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const { id } = await params
   // Soft-delete (CR-8): preserve kit/check history instead of FK-erroring.
+  // PR-3b (S-7): refused while anything live still holds the item — the same
+  // references that block retiring it.
+  const item = await prisma.inventoryItem.findFirst({ where: { id, deletedAt: null }, select: { name: true } })
+  if (!item) return NextResponse.json({ error: 'Item not found' }, { status: 404 })
+  try {
+    assertNoOpenReferences('item', item.name, await openReferences({ itemId: id }))
+  } catch (err) {
+    const conflict = referenceConflictBody(err)
+    if (conflict) return NextResponse.json(conflict, { status: 409 })
+    throw err
+  }
   const notFound = await writeOr404(
     () => prisma.inventoryItem.update({ where: { id }, data: { deletedAt: new Date() } }),
     'Item not found',

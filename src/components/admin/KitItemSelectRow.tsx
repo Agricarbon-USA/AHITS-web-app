@@ -3,6 +3,7 @@
 import * as React from 'react'
 import { Stack, Box, Typography, Checkbox, TextField } from '@mui/material'
 import { StatusChip } from '@/components/shared/StatusChip'
+import { unitLabel } from '@/lib/inventory-options'
 
 // Canonical entry type for the admin deployment/add-items kit builders.
 // UXP-6 (6d): entries carry `itemName` so a 409 recovery can say WHICH pick was
@@ -11,10 +12,8 @@ export type AdminKitEntry =
   | { inventoryItemId: string; itemType: 'CONSUMABLE'; quantity: number; itemName: string }
   | { inventoryItemId: string; itemType: 'SERIALIZED'; inventoryUnitId: string; unitLabel: string; itemName: string }
 
-/** The label a unit shows everywhere in the admin builders: its serial, else the API's position. */
-export function unitLabel(u: { serialNumber: string | null; position: number }): string {
-  return u.serialNumber ?? `Unit ${u.position}`
-}
+// The label a unit shows in every picker lives with the picker adapter (PR-3b: one builder, Returning tagged).
+export { unitLabel } from '@/lib/inventory-options'
 
 export interface SelectableItem {
   id: string
