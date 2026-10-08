@@ -304,6 +304,13 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Revisit triggers:** a hub that cannot take repairs (then the destination is chosen per-case, not refused).
 - **Rationale:** refusing the return blocks a truck in the field on an admin's attention (screening §6 Q1); before PR-3a the bulk return wrote AVAILABLE for every condition, freeing out-of-service units (S-2).
 
+
+### D44 · Deactivating a user who is the operator on an active deployment is refused, naming the deployment
+- **Date:** decided 2026-10-05 (fix program §0 **D-f**), recorded 2026-10-08 · **Owner:** Max · **Status:** ACTIVE on merge of **PR-3b #252** — *open, not merged when written; stamp the merge date/squash/revision here at merge* · **Read-with:** D42, `src/lib/asset-references.ts`
+- **Decision:** a user who is the **PRIMARY** operator on a deployment that has not ended cannot be deactivated: the request is refused with a 409 naming the deployment ("Brett Hill is the operator on "North field run" — end or transfer it first."). The admin ends or transfers the deployment, then deactivates. A deployment is never ended automatically as a side effect of deactivation. The same guard family (`assertNoOpenReferences`) refuses retiring/deleting a vehicle, item or unit and deactivating a hub while something live still references it, and Start Deployment / add-operator refuse a user who is already deactivated.
+- **Revisit triggers:** a real need to deactivate someone mid-deployment urgently (e.g. a security incident) — then an explicit admin "end and deactivate" action, recorded here, not a silent auto-end.
+- **Rationale:** screening §6 Q5 — auto-ending a rig would strand its gear and its daily-check obligations without anyone deciding where they go; refusing with the deployment named makes the admin decide.
+
 ---
 
 _To add a decision: copy the D-format above, give it the next Dn id, fill in date/owner/status/decision/rationale, and set any superseded prior decision's `Superseded-by: Dn`. Reference decisions by id (`D1`) in handoffs and workplans instead of re-explaining them._
