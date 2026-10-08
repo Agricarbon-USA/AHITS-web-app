@@ -14,6 +14,7 @@ import { PATCH as patchUser } from '../src/app/api/users/[id]/route'
 import { PATCH as patchHub, DELETE as deleteHub } from '../src/app/api/hubs/[id]/route'
 import { POST as createDeployment } from '../src/app/api/deployments/route'
 import { POST as addOperator } from '../src/app/api/deployments/[id]/operators/route'
+import { POST as addVehicles } from '../src/app/api/deployments/[id]/vehicles/route'
 import { GET as cronDispatch } from '../src/app/api/cron/dispatch/route'
 import { GET as inventoryList } from '../src/app/api/inventory/route'
 import {
@@ -225,6 +226,30 @@ describe('vehicles: delete guard and the admin-owned states (D-g · U-7)', () =>
     expect(res.status).toBe(200)
   })
 
+  it('Return to service with a repair still open lands In Maintenance, not Active', async () => {
+    const v = await createVehicle({ status: 'OUT_OF_SERVICE' })
+    await prisma.maintenanceTask.create({ data: { taskName: 'Brakes', isDamageReport: true, status: 'IN_PROGRESS', vehicleId: v.id } })
+    const res = await patchVehicle(req(`/api/vehicles/${v.id}`, 'PATCH', { status: 'ACTIVE' }), p({ id: v.id }))
+    expect(res.status).toBe(200)
+    expect((await res.json()).data.status).toBe('IN_MAINTENANCE')
+    expect((await prisma.vehicle.findUnique({ where: { id: v.id } }))?.status).toBe('IN_MAINTENANCE')
+  })
+
+  it('only Active vehicles go on a deployment — Start Deployment and add-vehicle refuse others, naming them', async () => {
+    const inRepair = await createVehicle({ name: 'Truck-03', status: 'IN_MAINTENANCE' })
+    const res = await createDeployment(req('/api/deployments', 'POST', { operatorId: op.id, vehicleIds: [inRepair.id] }))
+    expect(res.status).toBe(409)
+    expect((await res.json()).error).toBe('Truck-03 is In Maintenance — only Active vehicles can go on a deployment.')
+    expect(await prisma.rig.count({ where: { operatorId: op.id } })).toBe(0)
+
+    const { rig } = await createRig(op.id)
+    const out = await createVehicle({ name: 'Truck-04', status: 'OUT_OF_SERVICE' })
+    const add = await addVehicles(req(`/api/deployments/${rig.id}/vehicles`, 'POST', { vehicleIds: [out.id] }), p({ id: rig.id }))
+    expect(add.status).toBe(409)
+    expect((await add.json()).error).toBe('Truck-04 is Out of Service — only Active vehicles can go on a deployment.')
+    expect(await prisma.rigVehicle.count({ where: { vehicleId: out.id } })).toBe(0)
+  })
+
   it('RETIRED on a live deployment is refused; free → retired, its open repair closed', async () => {
     const onRig = await createVehicle({ name: 'Truck-02' })
     const { rig } = await createRig(op.id)
@@ -310,6 +335,15 @@ describe('people and hubs', () => {
     const res = await deleteHub(req(`/api/hubs/${hub.id}`, 'DELETE'), p({ id: hub.id }))
     expect(res.status).toBe(409)
     expect((await prisma.hub.findUnique({ where: { id: hub.id } }))?.isActive).toBe(true)
+
+    // A stock row that holds nothing (0 on hand, 0 reserved) does not block; a reservation does.
+    const drained = await createHub({ name: 'Drained Hub' })
+    await seedInventoryStock(bags.id, drained.id, 0)
+    expect((await deleteHub(req(`/api/hubs/${drained.id}`, 'DELETE'), p({ id: drained.id }))).status).toBe(204)
+    const held = await createHub({ name: 'Held Hub' })
+    await seedInventoryStock(bags.id, held.id, 0)
+    await prisma.inventoryStock.updateMany({ where: { itemId: bags.id, hubId: held.id }, data: { reservedQty: 1 } })
+    expect((await deleteHub(req(`/api/hubs/${held.id}`, 'DELETE'), p({ id: held.id }))).status).toBe(409)
 
     const empty = await createHub({ name: 'Empty Hub' })
     expect((await deleteHub(req(`/api/hubs/${empty.id}`, 'DELETE'), p({ id: empty.id }))).status).toBe(204)

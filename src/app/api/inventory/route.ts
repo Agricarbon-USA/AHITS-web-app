@@ -71,7 +71,7 @@ async function optionsResponse(req: NextRequest) {
         // IN_TRANSIT pick. No picker may offer a unit the server would refuse.
         where: PICKABLE_UNIT,
         select: { id: true, qrCodeId: true, serialNumber: true, status: true },
-        orderBy: { createdAt: 'asc' },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       },
       // PR-2: live kit lines, for a consumable's `itemCounts.out`.
       kitItems: {
@@ -92,7 +92,7 @@ async function optionsResponse(req: NextRequest) {
     ? await prisma.inventoryUnit.findMany({
         where: { inventoryItemId: { in: serializedIds }, deletedAt: null },
         select: { id: true, inventoryItemId: true, status: true, createdAt: true },
-        orderBy: { createdAt: 'asc' },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       })
     : []
   const unitsByItem = new Map<string, { status: string }[]>()
@@ -248,7 +248,7 @@ export async function GET(req: NextRequest) {
             notes: true,
             createdAt: true,
           },
-          orderBy: { createdAt: 'asc' },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
         },
         kitItems: {
           where: { removedAt: null },

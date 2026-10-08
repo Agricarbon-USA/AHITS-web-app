@@ -98,9 +98,9 @@ export function hubLabel(h: { name: string; city?: string | null; state?: string
   return `${h.name} · ${h.city}${h.state ? `, ${h.state}` : ''}`
 }
 
-/** A vehicle the builder may offer: not on a rig, not retired. */
+/** A vehicle the builder may offer: not on a rig, and Active (PR-3b — not in repair, out of service or retired; the server refuses anything else). */
 export function isPickableVehicle(v: VehicleOption): boolean {
-  return !v.assignedOperatorId && v.status !== 'RETIRED'
+  return !v.assignedOperatorId && v.status === 'ACTIVE'
 }
 
 /** Consumables show when quantity > 0; serialized when at least one unit is available. */

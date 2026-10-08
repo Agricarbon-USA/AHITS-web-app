@@ -24,6 +24,7 @@ import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import { VEHICLE_TYPE_LABELS } from '@/lib/vehicle-types'
 import { SearchableSelect } from '@/components/shared/SearchableSelect'
 import { useHistoryGuard } from '@/hooks/useHistoryGuard'
+import { unitLabel } from '@/lib/inventory-options'
 
 // Shared deployment-request composer. Used by BOTH the operator requests page
 // (offline-first: onSubmit routes through the offline queue) and the admin
@@ -312,7 +313,7 @@ function LineEditor({
                   <MenuItem value="">Any available unit</MenuItem>
                   {(selectedItem?.availableUnits ?? []).map((u) => (
                     <MenuItem key={u.id} value={u.id}>
-                      {u.serialNumber ?? `Unit #${u.position}`}
+                      {unitLabel(u)}
                     </MenuItem>
                   ))}
                 </TextField>

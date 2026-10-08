@@ -34,6 +34,8 @@ import AdminVehiclesPage from '@/app/(admin)/admin/vehicles/page'
 import AdminInventoryPage from '@/app/(admin)/admin/inventory/page'
 import OperatorScanPage from '@/app/(operator)/operator/scan/page'
 import { DispositionDialog } from '@/components/shared/DispositionDialog'
+import { unitLabel } from '@/lib/inventory-options'
+import { isPickableVehicle } from '@/components/admin/NewDeploymentDialog'
 
 const jsonRes = (body: unknown, status = 200) =>
   Promise.resolve({ ok: status < 400, status, json: async () => body } as Response)
@@ -90,6 +92,14 @@ describe('vehicle drawer — derived and admin-owned states (D-g)', () => {
     const dlg = await screen.findByRole('dialog', { name: 'Return to service?' })
     fireEvent.click(within(dlg).getByRole('button', { name: 'Return to service' }))
     await waitFor(() => expect(calls.find((c) => c.method === 'PATCH')).toMatchObject({ url: '/api/vehicles/v1', body: { status: 'ACTIVE' } }))
+  })
+
+  it('OUT_OF_SERVICE with a repair still open: the confirm says it will show as In Maintenance', async () => {
+    stubVehicles('OUT_OF_SERVICE', [{ id: 't1', taskName: 'Brakes', status: 'IN_PROGRESS', nextDue: null, actualCost: null, isDamageReport: true, intervalValue: 0, deletedAt: null }])
+    await openVehicleDrawer()
+    fireEvent.click(screen.getByRole('button', { name: 'Return to service' }))
+    const dlg = await screen.findByRole('dialog', { name: 'Return to service?' })
+    expect(dlg).toHaveTextContent("A repair is still open — it will show as In Maintenance until that's closed")
   })
 
   it('IN_MAINTENANCE: read-only, the open repair linked, no service buttons', async () => {
@@ -268,5 +278,21 @@ describe('scan: an applied field fix refreshes the panel (U-8)', () => {
     fireEvent.click(within(dlg).getByRole('button', { name: /Log fix/ }))
     await waitFor(() => expect(calls.filter((c) => c.url.startsWith('/api/vehicles/by-qr/')).length).toBe(2))
     expect(await screen.findByText('Active')).toBeInTheDocument()
+  })
+})
+
+// ── Pickers ───────────────────────────────────────────────────────────────────
+describe('pickers (PR-3b)', () => {
+  it('Build Rig offers Active, unassigned vehicles only', () => {
+    const v = (status: string, assignedOperatorId: string | null = null) => ({ id: 'x', name: 'x', type: 'TRUCK', status, assignedOperatorId })
+    expect(isPickableVehicle(v('ACTIVE') as never)).toBe(true)
+    for (const s of ['IN_MAINTENANCE', 'OUT_OF_SERVICE', 'RETIRED']) expect(isPickableVehicle(v(s) as never)).toBe(false)
+    expect(isPickableVehicle(v('ACTIVE', 'op9') as never)).toBe(false)
+  })
+
+  it('one unit label everywhere: serial, else "Unit <position>"; a Returning unit says so', () => {
+    expect(unitLabel({ serialNumber: 'SN-7', position: 3, status: 'AVAILABLE' })).toBe('SN-7')
+    expect(unitLabel({ serialNumber: null, position: 3, status: 'AVAILABLE' })).toBe('Unit 3')
+    expect(unitLabel({ serialNumber: null, position: 18, status: 'IN_TRANSIT' })).toBe('Unit 18 · Returning')
   })
 })

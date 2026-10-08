@@ -51,7 +51,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const units = await prisma.inventoryUnit.findMany({
       where: { inventoryItemId: id, deletedAt: null },
-      orderBy: { createdAt: 'asc' },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       select: { id: true, qrCodeId: true, serialNumber: true, status: true, notes: true, createdAt: true },
     })
 

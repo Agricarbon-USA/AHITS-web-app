@@ -18,6 +18,7 @@ import { groupBy } from '@/lib/utils'
 import { NOTE_PRESETS } from '@/lib/note-presets'
 import { stockAvailabilityLabel } from '@/lib/stock-format'
 import { VEHICLE_TYPE_ORDER, vehicleTypeLabel } from '@/lib/vehicle-types'
+import { unitLabel } from '@/lib/inventory-options'
 
 // UXP-3 (3d, D21): extracted move-only from app/(operator)/operator/my-deployment/page.tsx —
 // the anti-regrowth rule says new builder work on my-deployment goes in NEW files, and the
@@ -195,7 +196,7 @@ export function NewDeploymentDialog({
       if (!(unit?.pickable ?? unit?.status === 'AVAILABLE')) return { status: 'error', message: 'That unit isn’t available — it’s checked out or in repair.' }
       setKitItems((prev) => {
         const m = new Map(prev)
-        m.set(itemId, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: unit.id, unitLabel: unit.serialNumber ?? `Unit ${unit.position}` })
+        m.set(itemId, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: unit.id, unitLabel: unitLabel(unit) })
         return m
       })
       return { status: 'ok' }
@@ -399,13 +400,13 @@ export function NewDeploymentDialog({
                                         const u = item.availableUnits?.find((u) => u.id === e.target.value)
                                         if (!u) return
                                         const m = new Map(kitItems)
-                                        m.set(item.id, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: u.id, unitLabel: u.serialNumber ?? `Unit ${u.position}` })
+                                        m.set(item.id, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: u.id, unitLabel: unitLabel(u) })
                                         setKitItems(m)
                                       }}>
                                       <MenuItem value="" disabled>Select a unit…</MenuItem>
                                       {(item.availableUnits ?? []).map((u) => (
                                         <MenuItem key={u.id} value={u.id}>
-                                          {u.serialNumber ?? `Unit ${u.position}`}
+                                          {unitLabel(u)}
                                         </MenuItem>
                                       ))}
                                     </TextField>

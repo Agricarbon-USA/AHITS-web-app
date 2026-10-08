@@ -120,3 +120,15 @@ export async function fetchPickerOptions(params?: { q?: string; hubId?: string }
     return EMPTY
   }
 }
+
+/**
+ * The label a unit shows in every picker: its serial, else "Unit <position>" — the
+ * API's position among ALL of the item's units (T8; ordered by createdAt then id, so
+ * the same unit has the same number in every list). A Returning unit (IN_TRANSIT —
+ * back from a deployment, not yet received at the hub; pickable since PR-3a) says so,
+ * so picking it is a choice, not a surprise.
+ */
+export function unitLabel(u: { serialNumber: string | null; position: number; status?: string }): string {
+  const base = u.serialNumber ?? `Unit ${u.position}`
+  return u.status === 'IN_TRANSIT' ? `${base} · Returning` : base
+}

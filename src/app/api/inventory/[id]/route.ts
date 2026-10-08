@@ -47,7 +47,7 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
       units: {
         where: { deletedAt: null },
         select: { id: true, qrCodeId: true, serialNumber: true, status: true, notes: true, createdAt: true },
-        orderBy: { createdAt: 'asc' },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       },
       kitItems: {
         where: { removedAt: null },

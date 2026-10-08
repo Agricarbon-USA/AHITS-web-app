@@ -40,7 +40,7 @@ export interface OpenReferences {
   activeLinks: { id: string; inventoryUnitId: string | null }[]
   /** Reservation holds not yet claimed or released. */
   heldLines: { id: string; held: number }[]
-  /** Stock on hand (quantity > 0). */
+  /** Stock rows that hold something (quantity > 0, or for a hub, reservedQty > 0). */
   stock: { itemName: string; hubName: string; quantity: number }[]
   /** Active deployments on which the user is the PRIMARY operator (D-f). */
   primaryRigs: { rigId: string; label: string | null }[]
@@ -138,8 +138,10 @@ export async function openReferences(target: ReferenceTarget, db: Db = prisma): 
 
   if ('hubId' in target) {
     const id = target.hubId
+    // A stock row only references the hub while it holds something: on-hand
+    // quantity or a reservation. Empty rows (0 / 0) are history and don't block.
     const stock = await db.inventoryStock.findMany({
-      where: { hubId: id, quantity: { gt: 0 } },
+      where: { hubId: id, OR: [{ quantity: { gt: 0 } }, { reservedQty: { gt: 0 } }] },
       select: { quantity: true, hub: { select: { name: true } }, item: { select: { name: true } } },
     })
     refs.stock = stock.map((s) => ({ itemName: s.item.name, hubName: s.hub.name, quantity: s.quantity }))

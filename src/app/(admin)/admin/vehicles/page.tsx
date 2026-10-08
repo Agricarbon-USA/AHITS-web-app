@@ -346,7 +346,15 @@ export default function AdminVehiclesPage() {
       showToast({ message: typeof d.error === 'string' ? d.error : 'Could not change the vehicle status.', severity: 'error' })
       return
     }
-    showToast({ message: serviceChange === 'ACTIVE' ? `${detail.name} is back in service` : `${detail.name} is out of service`, severity: 'success' })
+    const landed = (d as { data?: { status?: string } }).data?.status
+    showToast({
+      message: serviceChange === 'OUT_OF_SERVICE'
+        ? `${detail.name} is out of service`
+        : landed === 'IN_MAINTENANCE'
+          ? `${detail.name} is back in service — In Maintenance until its repair is closed`
+          : `${detail.name} is back in service`,
+      severity: 'success',
+    })
     load()
     openDetail(detail.id)
   }
@@ -947,7 +955,9 @@ export default function AdminVehiclesPage() {
         open={!!serviceChange}
         title={serviceChange === 'ACTIVE' ? 'Return to service?' : 'Take out of service?'}
         message={serviceChange === 'ACTIVE'
-          ? `${detail?.name ?? 'This vehicle'} goes back to Active and can be put on a deployment.`
+          ? (detail?.maintenanceTasks.some((t) => t.isDamageReport)
+            ? "A repair is still open — it will show as In Maintenance until that's closed"
+            : `${detail?.name ?? 'This vehicle'} goes back to Active and can be put on a deployment.`)
           : `${detail?.name ?? 'This vehicle'} is taken out of service until an admin returns it. Repairs and field fixes won't put it back on their own.`}
         confirmLabel={serviceChange === 'ACTIVE' ? 'Return to service' : 'Take out of service'}
         confirmColor={serviceChange === 'ACTIVE' ? 'primary' : 'warning'}

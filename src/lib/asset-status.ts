@@ -360,13 +360,28 @@ export async function retireVehicle(tx: Tx, vehicleId: string, note: string | nu
 
 /**
  * The admin-owned vehicle states (D-g): ACTIVE ↔ OUT_OF_SERVICE — "Return to
- * service" / "Take out of service" in the drawer and the Edit form's Status. ACTIVE
- * from IN_MAINTENANCE is allowed only when no open repair holds the vehicle (the
- * route refuses with "Close the repair first" otherwise); RETIRED goes through
- * `retireVehicle`. IN_MAINTENANCE is never set here — it is derived from a repair.
+ * service" / "Take out of service" in the drawer and the Edit form's Status. Returning
+ * a vehicle to service while a damage report is still open lands it IN_MAINTENANCE,
+ * not ACTIVE: the admin's hold is lifted, the repair still holds it, and it goes
+ * Active when the repair closes (D-g — IN_MAINTENANCE ⇒ an open repair). ACTIVE from
+ * IN_MAINTENANCE with an open repair is refused by the route ("Close the repair
+ * first"); RETIRED goes through `retireVehicle`. Returns the status written.
  */
-export async function setVehicleServiceStatus(tx: Tx, vehicleId: string, status: 'ACTIVE' | 'OUT_OF_SERVICE'): Promise<void> {
-  await tx.vehicle.update({ where: { id: vehicleId }, data: { status } })
+export async function setVehicleServiceStatus(
+  tx: Tx,
+  vehicleId: string,
+  status: 'ACTIVE' | 'OUT_OF_SERVICE',
+): Promise<'ACTIVE' | 'OUT_OF_SERVICE' | 'IN_MAINTENANCE'> {
+  let to: 'ACTIVE' | 'OUT_OF_SERVICE' | 'IN_MAINTENANCE' = status
+  if (status === 'ACTIVE') {
+    const repair = await tx.maintenanceTask.findFirst({
+      where: { ...OPEN_TASK, isDamageReport: true, vehicleId, inventoryUnitId: null },
+      select: { id: true },
+    })
+    if (repair) to = 'IN_MAINTENANCE'
+  }
+  await tx.vehicle.update({ where: { id: vehicleId }, data: { status: to } })
+  return to
 }
 
 /**

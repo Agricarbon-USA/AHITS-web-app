@@ -36,7 +36,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { groupBy, formatDate } from '@/lib/utils'
 import { NOTE_PRESETS, HANDOFF_NOTE_PRESETS } from '@/lib/note-presets'
 import { stockAvailabilityLabel } from '@/lib/stock-format'
-import { fetchPickerOptions } from '@/lib/inventory-options'
+import { fetchPickerOptions, unitLabel } from '@/lib/inventory-options'
 import { VEHICLE_TYPE_ORDER, vehicleTypeLabel } from '@/lib/vehicle-types'
 
 // ── Types ─────────────────────────────────────────────────────────
@@ -205,7 +205,7 @@ export default function MyRigPage() {
       if (!(unit?.pickable ?? unit?.status === 'AVAILABLE')) return { status: 'error', message: 'That unit isn’t available — it’s checked out or in repair.' }
       setPendingItems((prev) => {
         const m = new Map(prev)
-        m.set(itemId, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: unit.id, unitLabel: unit.serialNumber ?? `Unit ${unit.position}` })
+        m.set(itemId, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: unit.id, unitLabel: unitLabel(unit) })
         return m
       })
       return { status: 'ok' }
@@ -1131,13 +1131,13 @@ export default function MyRigPage() {
                                 const unit = item.availableUnits?.find((u) => u.id === e.target.value)
                                 if (!unit) return
                                 const m = new Map(pendingItems)
-                                m.set(item.id, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: unit.id, unitLabel: unit.serialNumber ?? `Unit ${unit.position}` })
+                                m.set(item.id, { itemType: 'SERIALIZED', quantity: 1, inventoryUnitId: unit.id, unitLabel: unitLabel(unit) })
                                 setPendingItems(m)
                               }}>
                               <MenuItem value="" disabled>Select a unit…</MenuItem>
                               {(item.availableUnits ?? []).map((u) => (
                                 <MenuItem key={u.id} value={u.id}>
-                                  {u.serialNumber ?? `Unit ${u.position}`}
+                                  {unitLabel(u)}
                                 </MenuItem>
                               ))}
                             </TextField>
