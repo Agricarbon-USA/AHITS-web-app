@@ -130,5 +130,7 @@ describe('copy contract — src/lib/copy/admin-actions.ts', () => {
     expect(ADMIN_ACTIONS['hub.deactivate'].confirm).toBe('Deactivate')
     expect(ADMIN_ACTIONS['vehicle.delete'].message('Truck-01')).toContain('Restorable under Show deleted.')
     expect(ADMIN_ACTIONS['vehicle.delete'].message('Truck-01')).not.toMatch(/can.t be undone/i)
+    // No vehicle Retire button exists — the copy names the real path (Edit → Status).
+    expect(ADMIN_ACTIONS['vehicle.delete'].message('Truck-01')).toContain('edit it and set Status to Retired')
   })
 })

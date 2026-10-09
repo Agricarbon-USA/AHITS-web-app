@@ -181,7 +181,8 @@ export const ADMIN_ACTIONS = {
   // Show deleted → Restore exists.
   'vehicle.delete': {
     title: 'Delete vehicle?',
-    message: (name: string) => `Delete "${name}"? Use this for mistakes, duplicates and test entries. To retire a real vehicle use Retire instead — it stays in history and reports. Restorable under Show deleted.`,
+    // There is no vehicle Retire button — retiring is Edit → Status → Retired (PR-3b), so say that.
+    message: (name: string) => `Delete "${name}"? Use this for mistakes, duplicates and test entries. To retire a real vehicle, edit it and set Status to Retired — it stays in history and reports. Restorable under Show deleted.`,
     confirm: 'Delete',
     success: (name: string) => `${name} deleted`,
     undo: 'Undo',
