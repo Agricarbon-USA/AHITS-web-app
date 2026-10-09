@@ -31,6 +31,12 @@ export function DeploymentSummary({ deployment, onOpenDeployment }: Props) {
                 <Typography variant="body2">{deployment.site}</Typography>
               </Stack>
             )}
+            {/* PR-5c: a crew member sees the rig too — say whose it is. */}
+            {deployment.isPrimary === false && deployment.operator && (
+              <Typography variant="body2" color="text.secondary" mt={0.5} sx={{ wordBreak: 'break-word' }}>
+                {`On ${deployment.operator.name}'s crew`}
+              </Typography>
+            )}
             <Stack direction="row" alignItems="center" spacing={0.5} mt={0.5} sx={{ color: 'text.secondary' }}>
               <LocalShippingIcon fontSize="small" />
               <Typography variant="body2">

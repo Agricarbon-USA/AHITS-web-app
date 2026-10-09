@@ -1,9 +1,7 @@
 import { prisma } from '@/lib/prisma'
-import {
-  getActiveRigForOperator,
-  getDeploymentRosterForDisplay,
-  hydrateTransfersFromRig,
-} from '@/lib/deployment-assignments'
+import { getDeploymentRosterForDisplay, hydrateTransfersFromRig } from '@/lib/deployment-assignments'
+import { resolveMyRigId } from '@/lib/rig-list'
+import { getRigChecksForDay } from '@/lib/rig-daily-checks'
 import { listRequests, getAwaitingPickupForOperator } from '@/lib/deployment-requests'
 import { listHandoffs } from '@/lib/deployment-handoffs'
 import { businessDate } from '@/lib/business-date'
@@ -49,19 +47,21 @@ const TRANSFER_INCLUDE = {
 export async function getOperatorToday(userId: string, role: string) {
   const today = new Date(businessDate()) // business-day date, APP_TIMEZONE — matches the daily-check upsert key
 
-  // Resolve the operator's active PRIMARY rig first (null when not deployed — Today
-  // must still render the waiting/requests sections + an empty state, so everything
-  // downstream tolerates rigId === null).
-  const rigId = await getActiveRigForOperator(userId)
+  // PR-5c (L-8): the same resolver as /api/deployments/mine — a SECONDARY sees their
+  // crew rig. Null when not deployed (Today still renders the waiting/requests
+  // sections + an empty state, so everything downstream tolerates rigId === null).
+  const rigId = await resolveMyRigId(userId)
 
-  const [rig, roster, todayChecks, transfersRaw, handoffs, requests, awaitingPickup] = await Promise.all([
+  const [rig, roster, todayChecks, crewChecks, transfersRaw, handoffs, requests, awaitingPickup] = await Promise.all([
     rigId ? prisma.rig.findUnique({ where: { id: rigId }, include: RIG_INCLUDE_TODAY }) : Promise.resolve(null),
     rigId ? getDeploymentRosterForDisplay(rigId) : Promise.resolve(null),
-    // This operator's daily checks filed for the business "today" — the done/due signal.
+    // This operator's own daily checks filed for the business "today".
     prisma.dailyCheck.findMany({
       where: { operatorId: userId, date: today },
       select: { id: true, vehicleId: true, site: true, odometer: true, submittedAt: true },
     }),
+    // PR-5c: the rig's checks are shared — the first crew check per rig vehicle today.
+    rigId ? getRigChecksForDay(rigId, today) : Promise.resolve(new Map()),
     prisma.transferRequest.findMany({
       where: { toOperatorId: userId, status: 'PENDING' },
       include: TRANSFER_INCLUDE,
@@ -74,11 +74,22 @@ export async function getOperatorToday(userId: string, role: string) {
 
   const transfers = await hydrateTransfersFromRig(transfersRaw)
 
-  // Per-vehicle done/due: a rig vehicle is "done" if this operator filed a check for it
-  // today. The view maps rig.vehicles → done/due + a one-tap deep link.
-  const checkedVehicleIds = [...new Set(todayChecks.map((c) => c.vehicleId))]
+  // Per-vehicle done/due (PR-5c): a rig vehicle is "done" once ANY crew member checked
+  // it today — done for everyone, with who and when (`vehicleChecks`). The operator's own
+  // checks of other vehicles still count for their own list, as before.
+  const vehicleChecks = [...crewChecks.values()].map((c) => ({
+    vehicleId: c.vehicleId,
+    checkId: c.checkId,
+    operatorId: c.operatorId,
+    operatorName: c.operatorName,
+    submittedAt: c.submittedAt,
+    byMe: c.operatorId === userId,
+  }))
+  const checkedVehicleIds = [...new Set([...todayChecks.map((c) => c.vehicleId), ...crewChecks.keys()])]
   // Today's site, if the operator already entered one on any of today's checks (read-only).
   const todaySite = todayChecks.find((c) => c.site && c.site.trim() !== '')?.site ?? null
+  // PR-5c: is the caller the rig's PRIMARY? Drives the one-line notes on Today's card.
+  const isPrimary = !!roster?.operator && roster.operator.id === userId
 
   const deployment = rig
     ? {
@@ -91,12 +102,14 @@ export async function getOperatorToday(userId: string, role: string) {
         project: roster?.projects[0] ?? null,
         vehicles: rig.vehicles,
         site: todaySite,
+        isPrimary,
       }
     : null
 
   return {
     deployment,
     checkedVehicleIds,
+    vehicleChecks,
     transfers,
     handoffs,
     requests,

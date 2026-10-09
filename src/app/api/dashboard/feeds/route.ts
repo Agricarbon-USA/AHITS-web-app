@@ -4,6 +4,7 @@ import { businessDate } from '@/lib/business-date'
 import { requireAuth } from '@/lib/auth/session'
 import { getDeploymentRostersForDisplay } from '@/lib/deployment-assignments'
 import { OPEN_TASK } from '@/lib/populations'
+import { getRigChecksForDay } from '@/lib/rig-daily-checks'
 
 // Operational feeds for the dashboard (alert-response KPI): the things to act on
 // today, not just the headline counts. Read-only. Readable by any authenticated
@@ -97,6 +98,12 @@ export async function GET() {
   ])
 
   const checkedToday = new Set(checksToday.map((c) => c.operatorId))
+  // PR-5c: a rig's checks are shared — a crewmate's check of a rig vehicle today covers
+  // the rig (rig-daily-checks is the one definition, as the MISSED evaluator uses).
+  const crewChecked = new Set<string>()
+  for (const r of activeRigs) {
+    if ((await getRigChecksForDay(r.id, businessToday)).size > 0) crewChecked.add(r.id)
+  }
   // W0-10 PR-1: rig operator (id + name) from the assignment roster, not Rig.operatorId.
   const rigRosters = await getDeploymentRostersForDisplay(activeRigs.map((r) => r.id))
   const missedChecks = activeRigs
@@ -115,7 +122,7 @@ export async function GET() {
         isAdminHeld: roster?.operator?.role === 'ADMIN',
       }
     })
-    .filter(({ operatorId }) => operatorId && !checkedToday.has(operatorId))
+    .filter(({ r, operatorId }) => operatorId && !checkedToday.has(operatorId) && !crewChecked.has(r.id))
     .map(({ r, operatorId, operatorName, isAdminHeld }) => ({ rigId: r.id, operatorId, operator: operatorName, isAdminHeld, label: r.label, startedAt: r.startedAt }))
 
   const maintenanceDueSoon = dueTasks.map((t) => ({

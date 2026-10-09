@@ -120,6 +120,7 @@ export default function OperatorTodayPage() {
               <VehicleChecks
                 vehicles={vehicles}
                 checkedVehicleIds={checkedVehicleIds}
+                checks={today?.vehicleChecks}
                 onCheck={(vehicleId) => router.push(`/operator/daily-check?vehicleId=${vehicleId}`)}
                 onViewCheck={setViewCheckVehicleId}
               />
@@ -138,16 +139,13 @@ export default function OperatorTodayPage() {
           <MyRequestsSummary requests={openRequests} onOpenRequests={() => router.push('/operator/requests')} />
 
           {nothingToShow && !error && (
-            /* CC-32 (2.9b): the old copy ("When you pick up a rig, your day shows up
-               here") misdirected a SECOND-SEAT operator into starting a duplicate
-               deployment — under the secondary-operator deferral, the crewmate's rig
-               legitimately carries the checks. This is the honest reading of that
-               state. The MODEL fix (getActiveRigForOperator) is its own pre-CC-17
-               packet and is deliberately NOT touched here. */
+            /* PR-5c (L-8): Today resolves the rig like /api/deployments/mine, so a crew
+               member (SECONDARY) sees their rig above — this state now means the operator
+               is on no active rig at all, as its operator or on its crew. */
             <EmptyState
               icon={<EventAvailableIcon fontSize="inherit" />}
               title="No deployment assigned to you yet"
-              description="If you're riding with a crew today, your crewmate's rig carries the checks for now — see My Deployment for anything waiting on you. You can still scan equipment below."
+              description="When you're put on a rig — as its operator or on its crew — your day shows up here. You can still scan equipment below."
             />
           )}
 

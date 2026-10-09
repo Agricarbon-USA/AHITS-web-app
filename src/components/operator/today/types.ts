@@ -29,6 +29,18 @@ export interface TodayDeployment {
   project: { id: string; name: string } | null
   vehicles: TodayVehicle[]
   site: string | null
+  /** PR-5c: whether the caller is this rig's PRIMARY (a SECONDARY sees the crew rig too). */
+  isPrimary?: boolean
+}
+
+/** PR-5c: the first crew check of a rig vehicle today — shared by everyone on the rig. */
+export interface TodayVehicleCheck {
+  vehicleId: string
+  checkId: string
+  operatorId: string
+  operatorName: string
+  submittedAt: string
+  byMe: boolean
 }
 
 export interface TodayTransfer {
@@ -55,6 +67,7 @@ export interface TodayRequest {
 export interface TodayData {
   deployment: TodayDeployment | null
   checkedVehicleIds: string[]
+  vehicleChecks?: TodayVehicleCheck[]
   transfers: TodayTransfer[]
   handoffs: TodayHandoff[]
   requests: TodayRequest[]

@@ -261,10 +261,9 @@ export async function hydrateTransfersFromRig<T extends { fromRigId: string; fro
  *
  * Default (PRIMARY only) is the WRITE-GUARD reading — "does this person already
  * hold a deployment": deployments POST, transfer/handoff accept, handoff create,
- * the daily-check alert and report-problem attribution all keep it, and Today
- * keeps it too (its done/due checks are per-operator; the secondary-operator
- * Today view is its own deferred packet). `includeSecondary` is the READER
- * reading behind `/api/deployments/mine` — "which rig am I on": a crewmate
+ * the daily-check alert and report-problem attribution all keep it.
+ * `includeSecondary` is the READER reading behind `resolveMyRigId` (rig-list.ts):
+ * `/api/deployments/mine` and, since PR-5c, Today — "which rig am I on": a crewmate
  * riding as SECONDARY sees their rig, and PRIMARY on an older rig still wins
  * over SECONDARY on a newer one.
  */
