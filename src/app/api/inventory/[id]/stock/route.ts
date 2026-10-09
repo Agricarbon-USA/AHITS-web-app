@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
+import { deletedItemName, restoreFirst } from '@/lib/asset-status'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import { listItemStock, setStockAtHub, drawFromHub, restoreToHub, resyncItemTotal } from '@/lib/inventory-stock'
 
@@ -42,6 +43,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten().fieldErrors }, { status: 400 })
 
   const body = parsed.data
+  // PR-3c: a deleted item is read-only until it is restored.
+  const deletedName = await deletedItemName(id)
+  if (deletedName) return NextResponse.json({ error: restoreFirst(deletedName) }, { status: 409 })
 
   if ('fromHubId' in body) {
     // Move: draw from source, restore to destination inside a transaction

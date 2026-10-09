@@ -443,6 +443,8 @@ export async function getLineChecklist(
     const units = await prisma.$queryRaw<(AvailableUnit & { itemId: string })[]>`
       SELECT u."id", u."serialNumber", u."inventoryItemId" AS "itemId"
       FROM "inventory_units" u
+      -- PR-3c: never stage a unit of a deleted item.
+      JOIN "inventory_items" ui ON ui."id" = u."inventoryItemId" AND ui."deletedAt" IS NULL
       WHERE u."inventoryItemId" IN (${Prisma.join(serialItemIds)})
         AND ${pickableUnitSql('u')}
       ORDER BY u."serialNumber" ASC NULLS LAST
@@ -472,6 +474,7 @@ export async function getLineChecklist(
         JOIN "inventory_items" sub ON sub."categoryId" = orig."categoryId"
           AND sub."id" != l."specificInventoryItemId"
           AND sub."itemType" = 'CONSUMABLE'
+          AND sub."deletedAt" IS NULL -- PR-3c: a deleted item is never offered as a substitute
         LEFT JOIN "inventory_stock" s ON s."itemId" = sub."id" AND s."hubId" = ${fulfillerHubId}
         WHERE l."id" IN (${Prisma.join(consumableLineIds)})
         ORDER BY l."id", sub."name"
@@ -485,6 +488,7 @@ export async function getLineChecklist(
         JOIN "inventory_items" sub ON sub."categoryId" = orig."categoryId"
           AND sub."id" != l."specificInventoryItemId"
           AND sub."itemType" = 'CONSUMABLE'
+          AND sub."deletedAt" IS NULL -- PR-3c: a deleted item is never offered as a substitute
         WHERE l."id" IN (${Prisma.join(consumableLineIds)})
         ORDER BY l."id", sub."name"
         LIMIT 200
@@ -1001,11 +1005,15 @@ export async function getAwaitingPickupForOperator(operatorId: string): Promise<
            h."id" AS "hubId", h."name" AS "hubName"
     FROM "deployment_requests" r
     JOIN "deployment_request_lines" l ON l."requestId" = r."id"
+    -- PR-3c: a hold on a deleted item is not something to pick up (legacy safety — the
+    -- delete guard refuses while holds are unclaimed).
+    LEFT JOIN "inventory_items" hi ON hi."id" = l."heldItemId"
     LEFT JOIN "hubs" h ON h."id" = r."fulfillerHubId"
     WHERE r."status" = 'FULFILLED'
       AND (r."requestedById" = ${operatorId} OR r."forOperatorId" = ${operatorId})
       AND l."releasedAt" IS NULL
       AND l."heldQty" > l."claimedQty"
+      AND hi."deletedAt" IS NULL
     ORDER BY r."fulfilledAt" ASC NULLS LAST
   `
   if (reqs.length === 0) return []
@@ -1028,6 +1036,7 @@ export async function getAwaitingPickupForOperator(operatorId: string): Promise<
     WHERE l."requestId" IN (${Prisma.join(reqIds)})
       AND l."releasedAt" IS NULL
       AND l."heldQty" > l."claimedQty"
+      AND ii."deletedAt" IS NULL -- PR-3c (see above)
     ORDER BY l."createdAt" ASC
   `
 

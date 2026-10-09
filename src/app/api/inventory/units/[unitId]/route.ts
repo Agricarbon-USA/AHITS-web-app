@@ -4,7 +4,7 @@ import { EquipmentStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
 import { writeOr404 } from '@/lib/api-errors'
-import { retireUnit, unretireUnit } from '@/lib/asset-status'
+import { retireUnit, unretireUnit, restoreFirst } from '@/lib/asset-status'
 import { assertNoOpenReferences, openReferences, referenceConflictBody } from '@/lib/asset-references'
 
 const patchSchema = z.object({
@@ -23,10 +23,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ un
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
   const current = await prisma.inventoryUnit.findFirst({
-    where: { id: unitId, deletedAt: null },
-    select: { status: true, serialNumber: true, inventoryItem: { select: { name: true } } },
+    where: { id: unitId },
+    select: { status: true, serialNumber: true, deletedAt: true, inventoryItem: { select: { name: true, deletedAt: true } } },
   })
   if (!current) return NextResponse.json({ error: 'Unit not found' }, { status: 404 })
+  // PR-3c: a deleted unit (or a unit of a deleted item) is read-only until restored.
+  if (current.deletedAt || current.inventoryItem.deletedAt) {
+    return NextResponse.json({ error: restoreFirst(current.inventoryItem.name) }, { status: 409 })
+  }
 
   // PR-3b (D-g · S-6): by hand, a unit is only AVAILABLE or RETIRED. Checked out,
   // Returning, In maintenance and Inoperable are set by what happens to it (a

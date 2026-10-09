@@ -12,7 +12,8 @@ import { issueHubReturnLinks } from '@/lib/status-links'
 import { filterAllowedPhotoUrls } from '@/lib/photo-security'
 import { drawFromHub, getStockAtHub, restoreToHub, resyncItemTotal } from '@/lib/inventory-stock'
 import { claimHeldStock } from '@/lib/deployment-requests'
-import { markInoperable, pickUnit, pickableFirst, releaseUnlinkedReturns, returnUnit } from '@/lib/asset-status'
+import { referenceConflictBody } from '@/lib/asset-references'
+import { markInoperable, pickUnit, pickableFirst, refuseDeletedItems, releaseUnlinkedReturns, returnUnit } from '@/lib/asset-status'
 import { PICKABLE_UNIT } from '@/lib/populations'
 import { openDamageTask } from '@/lib/maintenance'
 
@@ -124,6 +125,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
   try {
     await prisma.$transaction(async (tx) => {
+      // PR-3c: deleted gear is refused by name, not as "only 0 available".
+      await refuseDeletedItems(tx, items.map((e) => e.inventoryItemId))
       for (const entry of items) {
         if (entry.itemType === 'SERIALIZED') {
           // PR-3a (D-e / D-n): `pickUnit` takes AVAILABLE or Returning (IN_TRANSIT) units —
@@ -246,6 +249,10 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       }
     })
   } catch (err: unknown) {
+    // PR-3c: "<name> was deleted from inventory" is terminal (409) — mapped before the
+    // 500 fallback below, or the offline queue would retry it forever.
+    const conflict = referenceConflictBody(err)
+    if (conflict) return NextResponse.json(conflict, { status: 409 })
     if (err instanceof Error && err.message === 'CONSUMABLE_NEEDS_HUB') {
       return NextResponse.json(
         { error: 'A source hub is required when checking out consumable items.' },

@@ -4,13 +4,11 @@ import { EquipmentCategory, EquipmentStatus } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getDeploymentRoster } from '@/lib/deployment-assignments'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
-import { writeOr404 } from '@/lib/api-errors'
 import { computeUnitCounts, itemCounts, isLiveKitLine, categoryDisplay, withPositions } from '@/lib/inventory'
 import { listItemStock } from '@/lib/inventory-stock'
 import { money } from '@/lib/validation'
-import { retireUnit } from '@/lib/asset-status'
+import { deleteItem, restoreFirst, retireUnit } from '@/lib/asset-status'
 import { assertNoOpenReferences, openReferences, referenceConflictBody } from '@/lib/asset-references'
-import { resolveAlertsFor } from '@/lib/alerts'
 
 // Whitelist of admin-editable fields. Excludes id/qrCodeId/deletedAt/timestamps
 // and the unitId helper to prevent mass-assignment. categoryId/hubId are kept
@@ -40,13 +38,18 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
   const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const { id } = await params
+  // PR-3c: a deleted item is shown (read-only, admin only) with the units deleted with
+  // it — the rows carrying its own stamp — so the drawer reads as it will on Restore.
+  const stamp = await prisma.inventoryItem.findUnique({ where: { id }, select: { deletedAt: true } })
+  if (stamp?.deletedAt && session.role !== 'ADMIN') return NextResponse.json({ error: 'Not found' }, { status: 404 })
   const item = await prisma.inventoryItem.findUnique({
     where: { id },
     include: {
       categoryRef: { select: { id: true, name: true } },
       hub: { select: { id: true, name: true, city: true, state: true } },
+      deletedBy: { select: { id: true, name: true } },
       units: {
-        where: { deletedAt: null },
+        where: { deletedAt: stamp?.deletedAt ?? null },
         select: { id: true, qrCodeId: true, serialNumber: true, status: true, notes: true, createdAt: true },
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       },
@@ -135,8 +138,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (categoryId && !/^[A-Z_]+$/.test(categoryId)) updateData.categoryId = categoryId
   if (hubId && !/^[A-Z_]+$/.test(hubId)) updateData.hubId = hubId
 
-  const current = await prisma.inventoryItem.findFirst({ where: { id, deletedAt: null }, select: { status: true, name: true } })
+  const current = await prisma.inventoryItem.findFirst({ where: { id }, select: { status: true, name: true, deletedAt: true } })
   if (!current) return NextResponse.json({ error: 'Item not found or update failed' }, { status: 400 })
+  // PR-3c: a deleted item is read-only until it is restored.
+  if (current.deletedAt) return NextResponse.json({ error: restoreFirst(current.name) }, { status: 409 })
   const retiring = rest.status === 'RETIRED' && current.status !== 'RETIRED'
 
   try {
@@ -174,24 +179,18 @@ export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id:
   const session = await requireAdmin()
   if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const { id } = await params
-  // Soft-delete (CR-8): preserve kit/check history instead of FK-erroring.
-  // PR-3b (S-7): refused while anything live still holds the item — the same
-  // references that block retiring it.
-  const item = await prisma.inventoryItem.findFirst({ where: { id, deletedAt: null }, select: { name: true } })
-  if (!item) return NextResponse.json({ error: 'Item not found' }, { status: 404 })
+  // PR-3c (D-o): a reversible soft delete — the item, its units and its schedules leave
+  // every list, count, picker and report with one stamp; "Show deleted → Restore"
+  // brings them back. Refused (409, naming what is in the way) while anything still
+  // points at it. Guard and effect run in one transaction. The response's `deletedAt`
+  // is what Undo restores.
   try {
-    assertNoOpenReferences('item', item.name, await openReferences({ itemId: id }))
+    const deleted = await prisma.$transaction((tx) => deleteItem(tx, id, session.userId))
+    if (!deleted) return NextResponse.json({ error: 'Item not found' }, { status: 404 })
+    return NextResponse.json({ ok: true, deletedAt: deleted.deletedAt })
   } catch (err) {
     const conflict = referenceConflictBody(err)
     if (conflict) return NextResponse.json(conflict, { status: 409 })
     throw err
   }
-  const notFound = await writeOr404(
-    () => prisma.inventoryItem.update({ where: { id }, data: { deletedAt: new Date() } }),
-    'Item not found',
-  )
-  if (notFound) return notFound
-  // PR-4 (D-i): the record is gone — every alert raised for it resolves (and its bell rows are read).
-  await resolveAlertsFor('inventory_items', id).catch(() => {})
-  return NextResponse.json({ ok: true })
 }

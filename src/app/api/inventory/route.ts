@@ -158,6 +158,15 @@ export async function GET(req: NextRequest) {
   const session = await requireAuth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+  // PR-3c (D-o): "Show deleted" — only deleted items, admins only, and never a picker.
+  const deletedView = req.nextUrl.searchParams.get('deleted') === '1'
+  if (deletedView) {
+    if (session.role !== 'ADMIN') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    if (req.nextUrl.searchParams.get('mode') === 'options') {
+      return NextResponse.json({ error: 'A picker never offers deleted items.' }, { status: 400 })
+    }
+  }
+
   // PR-1b: the picker read is a different question from the admin list read —
   // a complete set rather than a page — so it takes its own path before any
   // pagination is parsed.
@@ -207,9 +216,10 @@ export async function GET(req: NextRequest) {
   }
 
   const where = {
-    deletedAt: null,
+    // PR-3c: the deleted view replaces the list (retired or not); every other read stays live-only.
+    deletedAt: deletedView ? { not: null } : null,
     ...(status && { status }),
-    ...(!status && !includeRetired && { status: { not: 'RETIRED' as const } }),
+    ...(!status && !includeRetired && !deletedView && { status: { not: 'RETIRED' as const } }),
     ...(category && { category }),
     ...(categoryId && { categoryId }),
     ...(itemType && { itemType: itemType as ItemType }),
@@ -238,8 +248,10 @@ export async function GET(req: NextRequest) {
       include: {
         categoryRef: { select: { id: true, name: true } },
         hub: { select: { id: true, name: true, city: true, state: true } },
+        deletedBy: { select: { id: true, name: true } },
         units: {
-          where: { deletedAt: null },
+          // PR-3c: a deleted item's units are the ones deleted with it (same stamp, below).
+          where: { deletedAt: deletedView ? { not: null } : null },
           select: {
             id: true,
             qrCodeId: true,
@@ -247,6 +259,7 @@ export async function GET(req: NextRequest) {
             status: true,
             notes: true,
             createdAt: true,
+            deletedAt: true,
           },
           orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
         },
@@ -292,7 +305,12 @@ export async function GET(req: NextRequest) {
     .filter((x): x is string => !!x)
   const invRosters = await getDeploymentRostersForDisplay(activeRigIds)
 
-  const data = items.map((item) => {
+  const data = items.map((raw) => {
+    // PR-3c: in the deleted view, only the units that carry the item's own stamp —
+    // a unit deleted separately before is not part of what Restore brings back.
+    const item = deletedView
+      ? { ...raw, units: raw.units.filter((u) => u.deletedAt?.getTime() === raw.deletedAt?.getTime()) }
+      : raw
     const unitCounts = computeUnitCounts(item.units)
 
     // Find active rig assignment via kit items

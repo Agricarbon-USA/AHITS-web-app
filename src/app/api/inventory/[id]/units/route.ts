@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
 import { computeUnitCounts, itemCounts, withPositions } from '@/lib/inventory'
+import { restoreFirst } from '@/lib/asset-status'
 
 const bodySchema = z.object({
   count: z.number().int().min(1).max(200).default(1),
@@ -31,10 +32,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   try {
     const item = await prisma.inventoryItem.findFirst({
-      where: { id, deletedAt: null },
-      select: { id: true },
+      where: { id },
+      select: { id: true, name: true, deletedAt: true },
     })
     if (!item) return NextResponse.json({ error: 'Item not found' }, { status: 404 })
+    if (item.deletedAt) return NextResponse.json({ error: restoreFirst(item.name) }, { status: 409 })
 
     await prisma.inventoryUnit.createMany({
       data: Array.from({ length: count }, (_, i) => {
@@ -68,6 +70,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   } catch (err: unknown) {
     // Duplicate QR label code.
     if ((err as { code?: string }).code === 'P2002') {
+      // PR-3c (D-u): a deleted unit keeps its label bound (so Restore is exact) — say so.
+      const owner = qrCodeIds?.length
+        ? await prisma.inventoryUnit.findFirst({
+            where: { qrCodeId: { in: qrCodeIds.map((q) => q.trim()) } },
+            select: { deletedAt: true, inventoryItem: { select: { name: true, deletedAt: true } } },
+          })
+        : null
+      if (owner && (owner.deletedAt || owner.inventoryItem.deletedAt)) {
+        return NextResponse.json(
+          { error: `This QR label is bound to a deleted unit of "${owner.inventoryItem.name}" — restore it under Show deleted, or print a new label.` },
+          { status: 409 },
+        )
+      }
       return NextResponse.json(
         { error: 'That QR label code is already assigned to another unit.' },
         { status: 409 },
