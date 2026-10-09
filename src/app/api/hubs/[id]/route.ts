@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
 import { writeOr404, isRecordNotFound } from '@/lib/api-errors'
 import { assertNoOpenReferences, openReferences, referenceConflictBody } from '@/lib/asset-references'
+import { resolveAlertsFor } from '@/lib/alerts'
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAdmin()
@@ -73,6 +74,8 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
   if (refusal) return refusal
   const notFound = await writeOr404(() => prisma.hub.update({ where: { id }, data: { isActive: false } }), 'Hub not found')
   if (notFound) return notFound
+  // PR-4 (D-i): the record is gone — every alert raised for it resolves (and its bell rows are read).
+  await resolveAlertsFor('hubs', id).catch(() => {})
   return new NextResponse(null, { status: 204 })
 }
 

@@ -4,9 +4,10 @@ import { requireAuth } from '@/lib/auth/session'
 import { getRequest, getLineChecklist, applyRequestTransition, type RequestAction } from '@/lib/deployment-requests'
 import { createAlert } from '@/lib/alerts'
 import { issueStatusLink, statusLinkUrl } from '@/lib/status-links'
-import { sendEmail } from '@/lib/email/resend'
+import { tryEmail, type ReportedEmail } from '@/lib/email/resend'
 import { genericAlertEmail } from '@/lib/email/templates'
 import { prisma } from '@/lib/prisma'
+import { emailReport } from '@/lib/email-outcome'
 
 // CC-33 (E3): 'complete' is now ADMIN-ONLY — the operator-fulfiller path is gone (D21).
 const ADMIN_ONLY_ACTIONS = ['confirm', 'prepare', 'decline', 'fulfill', 'forward', 'complete'] as const
@@ -87,8 +88,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   } else if (action === 'forward') {
     // CC-33 (E3): only the forward-to-HUB link remains — the forward-to-operator
     // notification arm was removed (D21).
+    // PR-4 (D-j · U-5): the forward returns the hub link and what happened to its
+    // email, so "Forwarded" is never claimed for a hub that has no email on file.
     if (extra.fulfillerHubId) {
-      await issueForwardHubLink(id, extra.fulfillerHubId, session.userId, result.request.label).catch(() => {})
+      const fwd = await issueForwardHubLink(id, extra.fulfillerHubId, session.userId, result.request.label).catch(() => null)
+      if (fwd) return NextResponse.json({ ok: true, ...emailReport(fwd.sent), url: fwd.url })
     }
   } else if (action === 'complete' || (action === 'fulfill' && result.request.requestType === 'MATERIAL')) {
     // UXP-3 (3c / F-04): a MATERIAL `fulfill` (admin "Mark Handled" on a REQUESTED request)
@@ -116,12 +120,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   return NextResponse.json({ ok: true })
 }
 
-async function issueForwardHubLink(requestId: string, hubId: string, createdById: string, label: string | null): Promise<void> {
+async function issueForwardHubLink(
+  requestId: string, hubId: string, createdById: string, label: string | null,
+): Promise<{ url: string; sent: ReportedEmail } | null> {
   const hubs = await prisma.$queryRaw<{ name: string; email: string | null }[]>`
     SELECT "name", "email" FROM "hubs" WHERE "id" = ${hubId}
   `
   const hub = hubs[0]
-  if (!hub) return
+  if (!hub) return null
   const { rawToken } = await issueStatusLink({
     type: 'RESERVATION',
     deploymentRequestId: requestId,
@@ -130,9 +136,8 @@ async function issueForwardHubLink(requestId: string, hubId: string, createdById
     recipientEmail: hub.email ?? undefined,
     recipientName: hub.name,
   })
-  if (!hub.email) return
   const url = statusLinkUrl(rawToken)
-  await sendEmail({ kind: 'RESERVATION',
+  const sent = await tryEmail({ kind: 'RESERVATION',
     to: hub.email,
     subject: `Material request forwarded — ${label ?? 'Material request'}`,
     html: genericAlertEmail(
@@ -142,4 +147,5 @@ async function issueForwardHubLink(requestId: string, hubId: string, createdById
       'Review and respond',
     ),
   })
+  return { url, sent }
 }

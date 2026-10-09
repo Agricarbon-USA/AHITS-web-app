@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
 import { withIdempotency } from '@/lib/idempotency'
 import { getHandoff } from '@/lib/deployment-handoffs'
+import { resolveAlertsFor } from '@/lib/alerts'
 
 const schema = z.object({
   responseNote: z.string().optional(),
@@ -45,6 +46,9 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     const msg = err instanceof Error ? err.message : 'Decline failed'
     return NextResponse.json({ error: msg }, { status: 409 })
   }
+
+  // PR-4 (D-i · P-8): the request is answered — its bell row for the recipient is read.
+  await resolveAlertsFor('deployment_handoffs', id).catch(() => {})
 
   if (handoff.initiatedById && handoff.initiatedById !== session.userId) {
     await prisma.notification.create({

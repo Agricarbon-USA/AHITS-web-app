@@ -15,7 +15,7 @@ import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import { useRouter } from 'next/navigation'
 import { useToast } from '@/components/shared/useToast'
-import { alertLabel, alertLink } from '@/lib/alert-display'
+import { alertLabel, alertLink, clearsItself } from '@/lib/alert-display'
 import { useCanEdit, MutationButton } from '@/components/shared/ReadOnly'
 import type { DashboardStats } from '@/types'
 
@@ -233,14 +233,22 @@ export default function AdminDashboardPage() {
                             View
                           </Button>
                         )}
-                        <MutationButton
-                          size="small"
-                          onClick={() => handleResolve(alert.id)}
-                          disabled={resolving === alert.id}
-                          startIcon={resolving === alert.id ? <CircularProgress size={12} /> : null}
-                        >
-                          Resolve
-                        </MutationButton>
+                        {/* PR-4 (P-9): an evaluator-owned alert clears itself when its condition
+                            ends — a manual Resolve would only come back on the next cron pass. */}
+                        {clearsItself(alert.type) ? (
+                          <Typography variant="caption" color="text.secondary" sx={{ alignSelf: 'center', maxWidth: 140, textAlign: 'right' }}>
+                            Clears itself when the condition ends
+                          </Typography>
+                        ) : (
+                          <MutationButton
+                            size="small"
+                            onClick={() => handleResolve(alert.id)}
+                            disabled={resolving === alert.id}
+                            startIcon={resolving === alert.id ? <CircularProgress size={12} /> : null}
+                          >
+                            Resolve
+                          </MutationButton>
+                        )}
                       </Box>
                     }
                   >

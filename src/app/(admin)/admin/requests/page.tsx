@@ -25,6 +25,7 @@ import {
 } from '@/components/shared/RequestComposer'
 import { fetchPickerOptions } from '@/lib/inventory-options'
 import { VEHICLE_TYPE_LABELS, type VehicleTypeValue } from '@/lib/vehicle-types'
+import { emailOutcomeToast, type EmailReport } from '@/lib/email-outcome'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -89,7 +90,7 @@ function lineDisplayName(l: LineRow): string {
   return l.description ?? 'Item'
 }
 
-async function patchRequest(id: string, body: Record<string, unknown>): Promise<{ ok: boolean; error?: string }> {
+async function patchRequest(id: string, body: Record<string, unknown>): Promise<{ ok: boolean; error?: string; data?: Record<string, unknown> }> {
   const res = await fetch(`/api/deployment-requests/${id}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -97,7 +98,22 @@ async function patchRequest(id: string, body: Record<string, unknown>): Promise<
   })
   const data = await res.json().catch(() => ({}))
   if (!res.ok) return { ok: false, error: data.error ?? 'Action failed.' }
-  return { ok: true }
+  return { ok: true, data }
+}
+
+/**
+ * PR-4 (D-j · U-5): the toast for a hub link — what happened to its email, with a
+ * "Copy link" action whenever the email did not reach the hub (no email on file,
+ * sandbox, failure), since copying it is then the only way it gets there.
+ */
+function hubLinkToast(d: Record<string, unknown>, subject: string) {
+  const t = emailOutcomeToast(d as unknown as EmailReport, subject)
+  const url = typeof d.url === 'string' ? d.url : null
+  return {
+    message: t.message,
+    severity: t.severity,
+    ...(url && d.emailed !== 'SENT' && { action: { label: 'Copy link', onClick: () => { void navigator.clipboard?.writeText(url) } } }),
+  }
 }
 
 async function patchLine(
@@ -130,7 +146,10 @@ function ForwardHubDialog({ requestId, hubs, onClose, onSuccess }: {
     setBusy(true)
     const r = await patchRequest(requestId, { action: 'forward', fulfillerHubId: hubId })
     setBusy(false)
-    if (r.ok) { showToast({ message: 'Forwarded to hub.', severity: 'success' }); onSuccess() }
+    if (r.ok) {
+      showToast(r.data && 'emailed' in r.data ? hubLinkToast(r.data, 'Forward') : { message: 'Forwarded to hub.', severity: 'success' })
+      onSuccess()
+    }
     else setError(r.error ?? 'Failed.')
   }
 
@@ -255,7 +274,7 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
     const res = await fetch(`/api/deployment-requests/${req.id}/resend-link`, { method: 'POST' })
     const d = await res.json().catch(() => ({}))
     setBusy(null)
-    if (res.ok) showToast({ message: 'Hub link resent.', severity: 'success' })
+    if (res.ok) showToast(hubLinkToast(d, 'Hub link'))
     else showToast({ message: d.error ?? 'Resend failed.', severity: 'error' })
   }
 
@@ -413,6 +432,15 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
                       onClick={() => void action('cancel')}>
                       Cancel
                     </Button>
+                    {/* PR-4 (D-j): a forwarded material request can resend its hub link too. */}
+                    {req.fulfillerHubId && (
+                      <Tooltip title="Revoke old link and send a new one to the hub">
+                        <Button size="small" variant="outlined" startIcon={<SendIcon fontSize="small" />}
+                          disabled={!!busy} onClick={() => void resendLink()}>
+                          {busy === 'resend' ? <CircularProgress size={14} color="inherit" /> : 'Resend hub link'}
+                        </Button>
+                      </Tooltip>
+                    )}
                   </>
                 )}
 

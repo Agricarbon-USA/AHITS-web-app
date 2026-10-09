@@ -1236,6 +1236,9 @@ enum EmailStatus {
   SENT
   FAILED
   SKIPPED
+  // PR-4 (D-j): the sandbox delivered the message to EMAIL_SANDBOX_TO instead of the
+  // real recipient — it was NOT sent to `to`. `deliveredTo` records where it went.
+  REDIRECTED
 }
 
 /// FND-8: a delivery record for every outbound email attempt, so a failed
@@ -1249,6 +1252,9 @@ model EmailLog {
   subject    String
   kind       String      @default("OTHER")
   status     EmailStatus
+  /// PR-4 (D-j): where the message actually went — `to` for SENT, the sandbox
+  /// inbox for REDIRECTED, null when nothing was delivered (SKIPPED / FAILED).
+  deliveredTo String?
   attempts   Int         @default(0)
   lastError  String?
   providerId String?

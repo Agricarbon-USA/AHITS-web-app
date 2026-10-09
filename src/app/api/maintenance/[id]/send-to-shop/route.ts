@@ -3,8 +3,9 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
 import { issueStatusLink } from '@/lib/status-links'
-import { sendEmail } from '@/lib/email/resend'
+import { tryEmail } from '@/lib/email/resend'
 import { workOrderEmail } from '@/lib/email/templates'
+import { emailReport } from '@/lib/email-outcome'
 
 const schema = z.object({
   recipientEmail: z.string().email(),
@@ -52,25 +53,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const assetName = task.vehicle?.name ?? task.item?.name ?? 'Equipment'
   const shipToHub = task.repairHub ? `${task.repairHub.name} — ${task.repairHub.city}, ${task.repairHub.state}` : null
 
-  let emailed = false
-  try {
-    await sendEmail({ kind: 'WORK_ORDER',
-      to: recipientEmail,
-      subject: `Work Order: ${assetName} — ${task.taskName}`,
-      html: workOrderEmail({
-        shopName: recipientName ?? task.shopName,
-        taskName: task.taskName,
-        assetName,
-        problem: task.notes,
-        shipToHub,
-        linkUrl: url,
-      }),
-    })
-    emailed = true
-  } catch {
-    // Mailer not configured / transient — the link still exists and can be
-    // copied from the admin UI; we report emailed:false rather than failing.
-  }
+  // PR-4 (D-j · P-1): report what actually happened to the message — SENT,
+  // REDIRECTED (sandbox), SKIPPED or FAILED — instead of a bare emailed:true/false.
+  // The link exists either way and is returned so the admin can copy it.
+  const sent = await tryEmail({ kind: 'WORK_ORDER',
+    to: recipientEmail,
+    subject: `Work Order: ${assetName} — ${task.taskName}`,
+    html: workOrderEmail({
+      shopName: recipientName ?? task.shopName,
+      taskName: task.taskName,
+      assetName,
+      problem: task.notes,
+      shipToHub,
+      linkUrl: url,
+    }),
+  })
 
-  return NextResponse.json({ ok: true, emailed, statusLinkId: statusLink.id, url }, { status: 201 })
+  return NextResponse.json({ ok: true, ...emailReport(sent), statusLinkId: statusLink.id, url }, { status: 201 })
 }

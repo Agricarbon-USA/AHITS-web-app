@@ -3,14 +3,11 @@ import { timingSafeEqual } from 'crypto'
 import * as Sentry from '@sentry/nextjs'
 import { PrismaClient } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { getDeploymentRostersForDisplay } from '@/lib/deployment-assignments'
 import { createAlert, resolveActiveAlert, CRON_SILENT_SOURCE_TABLE, CRON_SILENT_SOURCE_ID } from '@/lib/alerts'
 import { dispatchPendingAlerts } from '@/lib/notifications'
-import { allHubStockForScan, serializedStockForScan } from '@/lib/inventory-stock'
-import { LIVE_VEHICLE } from '@/lib/populations'
 import { releaseAllHeldForRequest } from '@/lib/deployment-requests'
-import { businessDateTime } from '@/lib/business-date'
 import { getNotificationConfig, recordCronHeartbeat } from '@/lib/notification-config'
+import { EVALUATORS, evalContext, runEvaluator } from '@/lib/alert-evaluators'
 
 // Stable i64 key for this handler's advisory lock. Arbitrary but unique per handler.
 const CRON_DISPATCH_LOCK = BigInt('7654321098')
@@ -81,58 +78,23 @@ function authorized(req: NextRequest): boolean {
 }
 
 async function run() {
-  // 1) Scan: flag maintenance tasks past their due date and raise (deduped) alerts.
+  // 1) Scheduled maintenance past its due date → OVERDUE (a task write; the alert
+  // itself is the MAINTENANCE_OVERDUE evaluator's, step 6). Date-based intervals only:
+  // MILEAGE is driven by the daily-check odometer trigger, and PER_DEPLOYMENT by
+  // deployment events — neither should be flagged overdue by a calendar scan.
   const now = new Date()
   const due = await prisma.maintenanceTask.findMany({
     where: {
-      // Date-based intervals only: MILEAGE is driven by the daily-check odometer
-      // trigger, and PER_DEPLOYMENT by deployment events — neither should be
-      // flagged overdue by a calendar scan.
       intervalType: { in: ['DAYS', 'MONTHS'] },
       isDamageReport: false,
       status: { in: ['UPCOMING', 'DUE_SOON'] },
       nextDue: { lt: now },
       deletedAt: null,
     },
-    include: { vehicle: { select: { name: true } }, item: { select: { name: true } } },
+    select: { id: true },
   })
   for (const t of due) {
     await prisma.maintenanceTask.update({ where: { id: t.id }, data: { status: 'OVERDUE' } })
-    await createAlert('MAINTENANCE_OVERDUE', 'maintenance_tasks', t.id, {
-      taskName: t.taskName,
-      itemName: t.item?.name ?? t.vehicle?.name ?? null,
-      daysPastDue: t.nextDue ? Math.floor((now.getTime() - t.nextDue.getTime()) / 86400000) : 0,
-    })
-  }
-
-  // 1b) CC-34 (3b): damage repairs can go stale. The overdue scan above only touches
-  // scheduled tasks (isDamageReport:false); a forgotten damage repair would otherwise idle
-  // forever with no nag. Flag damage tasks untouched for >7 days by REUSING MAINTENANCE_OVERDUE
-  // (no AlertType enum change) with a staleDamageDays marker — activeKey dedup can't collide
-  // because damage tasks never get the calendar arm above. Any task edit bumps updatedAt and
-  // re-arms the 7-day clock (desired). Bounded orderBy updatedAt asc / take 5 per run: dedup +
-  // the 7-day predicate drain the backlog a handful per pass so one run can't fan out a flood.
-  const STALE_DAMAGE_DAYS = 7
-  const staleCutoff = new Date(now.getTime() - STALE_DAMAGE_DAYS * 86_400_000)
-  const staleDamage = await prisma.maintenanceTask.findMany({
-    where: {
-      isDamageReport: true,
-      status: { not: 'COMPLETED' },
-      deletedAt: null,
-      updatedAt: { lt: staleCutoff },
-    },
-    orderBy: { updatedAt: 'asc' },
-    take: 5,
-    include: { vehicle: { select: { name: true } }, item: { select: { name: true } } },
-  })
-  let staleDamageFlagged = 0
-  for (const t of staleDamage) {
-    await createAlert('MAINTENANCE_OVERDUE', 'maintenance_tasks', t.id, {
-      taskName: t.taskName,
-      itemName: t.item?.name ?? t.vehicle?.name ?? null,
-      staleDamageDays: Math.floor((now.getTime() - t.updatedAt.getTime()) / 86_400_000),
-    })
-    staleDamageFlagged++
   }
 
   // 2) Reap idempotency keys older than 48h so the dedup table doesn't grow
@@ -147,127 +109,19 @@ async function run() {
     /* table missing / transient — non-fatal */
   }
 
-  // 3) Per-hub low-stock scan → raise/clear LOW_INVENTORY per (item, hub).
-  // Uses allHubStockForScan (returns ALL rows, not just low ones) so the
-  // clear path works: a hub that recovered above threshold still appears and
-  // gets its alert resolved. Each (item,hub) pair dedupes independently via
-  // a composite sourceId so two hubs' alerts for the same item don't collide.
-  const hubStockRows = await allHubStockForScan()
-  let lowFlagged = 0
-  for (const row of hubStockRows) {
-    const sourceId = `${row.itemId}:${row.hubId}`
-    if (row.quantity <= row.threshold) {
-      await createAlert('LOW_INVENTORY', 'inventory_items', sourceId, {
-        itemName: row.itemName,
-        hubName: row.hubName,
-        hubId: row.hubId,
-        quantity: row.quantity,
-        threshold: row.threshold,
-      })
-      lowFlagged++
-    } else {
-      await resolveActiveAlert('LOW_INVENTORY', 'inventory_items', sourceId)
-    }
-  }
-
-  // 3b) PR-2 (C-9): serialized low stock = pickable units across all hubs ≤ the
-  // item's threshold. Its own sourceId (`<itemId>:serialized`) so it never
-  // collides with a consumable's per-hub `<itemId>:<hubId>` key. Healthy rows
-  // come back too, so a restocked item clears here in the same pass.
-  const serializedRows = await serializedStockForScan()
-  for (const row of serializedRows) {
-    const sourceId = `${row.itemId}:serialized`
-    if (row.pickable <= row.threshold) {
-      await createAlert('LOW_INVENTORY', 'inventory_items', sourceId, {
-        itemName: row.itemName,
-        quantity: row.pickable,
-        threshold: row.threshold,
-      })
-      lowFlagged++
-    } else {
-      await resolveActiveAlert('LOW_INVENTORY', 'inventory_items', sourceId)
-    }
-  }
-
-  // 4) Scan: vehicle insurance/registration expiring within 30 days (or already
-  // expired) → raise/clear the matching alerts. Self-clears once the document is
-  // renewed past the window (or the date is cleared / vehicle retired).
-  // PR-2 (S-9/P-4): LIVE_VEHICLE — a soft-deleted vehicle no longer raises.
-  const EXPIRY_WINDOW_DAYS = 30
-  const expiryCutoff = new Date(now.getTime() + EXPIRY_WINDOW_DAYS * 86_400_000)
-  const vehicles = await prisma.vehicle.findMany({
-    where: LIVE_VEHICLE,
-    select: { id: true, name: true, insuranceExpires: true, registrationExpires: true },
-  })
-  let expiryFlagged = 0
-  for (const v of vehicles) {
-    if (v.insuranceExpires && v.insuranceExpires <= expiryCutoff) {
-      await createAlert('INSURANCE_EXPIRING', 'vehicles', v.id, { itemName: v.name, expiresAt: v.insuranceExpires.toISOString() })
-      expiryFlagged++
-    } else {
-      await resolveActiveAlert('INSURANCE_EXPIRING', 'vehicles', v.id)
-    }
-    if (v.registrationExpires && v.registrationExpires <= expiryCutoff) {
-      await createAlert('REGISTRATION_EXPIRING', 'vehicles', v.id, { itemName: v.name, expiresAt: v.registrationExpires.toISOString() })
-      expiryFlagged++
-    } else {
-      await resolveActiveAlert('REGISTRATION_EXPIRING', 'vehicles', v.id)
-    }
-  }
-
-  // 5) Scan: per-operator DAILY_CHECK_MISSED alert. Raised once per day, after
-  // the configured cutoff, when an operator with an active rig hasn't submitted
-  // any daily check for today (local date in APP_TIMEZONE — must agree with how
-  // the client builds its date string; see UR-026 for the full alignment).
-  // Self-clears when the operator submits any check (see /api/daily-check POST).
+  // 3–6) PR-4 (D-i): every evaluator-owned alert type, over ACTIVE ALERTS ∪
+  // CANDIDATES, so a raise and its clear have one owner and an entity that leaves its
+  // population (retired vehicle, ended rig, removed kit line, lapsed PIN lock, retired
+  // item / inactive hub) has its alert cleared here (P-3 / P-4 / P-5 / P-6). The
+  // predicates are the old per-step scans (MAINTENANCE_OVERDUE incl. the CC-34 3b
+  // stale-damage nag, LOW_INVENTORY per hub and serialized, insurance/registration
+  // expiry, DAILY_CHECK_MISSED after the cutoff, EQUIPMENT_NOT_RETURNED, PIN_LOCKED),
+  // moved into src/lib/alert-evaluators.ts. An evaluator that throws aborts the run,
+  // as the inline scans did, so a broken scan never stamps the heartbeat (CC-30).
   const { dailyCheckCutoff } = await getNotificationConfig()
-  const [cutoffHour, cutoffMinute] = dailyCheckCutoff.split(':').map(Number)
-
-  // Shared business-date/-time helper (FND-7) so the cutoff scan and the client's
-  // check date can never drift out of the APP_TIMEZONE business day.
-  const { date: today, hour: localHour, minute: localMinute } = businessDateTime(now)
-
-  const pastCutoff =
-    localHour > cutoffHour ||
-    (localHour === cutoffHour && localMinute >= cutoffMinute)
-  let missedFlagged = 0
-
-  // W0-10 PR-1: enumerate every active rig (tsc-typed so the PR-4 column drop is a
-  // compile error here, not a silent miss) and resolve its PRIMARY from the assignment
-  // roster, falling back to the legacy Rig.operatorId. The fallback keeps the missed-
-  // daily-check scan from silently dropping a rig if an active rig ever lacks an open
-  // PRIMARY assignment (the alert path must not fail closed).
-  const activeRigs = await prisma.rig.findMany({
-    where: { endedAt: null },
-    select: { id: true },
-  })
-  const cronRosters = await getDeploymentRostersForDisplay(activeRigs.map((r) => r.id))
-
-  for (const rig of activeRigs) {
-    const roster = cronRosters.get(rig.id)
-    const operatorId = roster?.operatorId ?? null
-    if (!operatorId) continue
-    const operatorName = roster?.operator?.name ?? 'Operator'
-    // D3: an admin-held rig still gets a safety-oversight missed-check alert (the
-    // check itself isn't optional), but it must never be conflated with a
-    // payroll-eligible operator miss — flag it distinctly for the dashboard.
-    const isAdminHeld = roster?.operator?.role === 'ADMIN'
-    const checkedToday = await prisma.dailyCheck.findFirst({
-      where: { operatorId, date: new Date(today) },
-      select: { id: true },
-    })
-    if (checkedToday) {
-      await resolveActiveAlert('DAILY_CHECK_MISSED', 'operators', operatorId)
-    } else if (pastCutoff) {
-      await createAlert('DAILY_CHECK_MISSED', 'operators', operatorId, {
-        operatorName,
-        date: today,
-        cutoff: dailyCheckCutoff,
-        isAdminHeld,
-      })
-      missedFlagged++
-    }
-  }
+  const ctx = evalContext(now, dailyCheckCutoff)
+  const evaluated: Record<string, { raised: number; cleared: number }> = {}
+  for (const ev of EVALUATORS) evaluated[ev.type] = await runEvaluator(ev, ctx)
 
   // 7) UR-010 (M5): release STALE holds. A fulfilled reservation whose operator never
   // claimed the held stock (or checked out at a different hub, H6) would otherwise
@@ -598,47 +452,40 @@ async function run() {
   // email-log surface and admins still get every alert in-app regardless of email health.
   let emailFailedFlagged = 0
   try {
-    // Recovery = a LATER successful send of the SAME (to, kind, subject): the specific
-    // message got through on a retry/resend, not merely "the channel is up again".
-    const recovered = async (r: { to: string; kind: string; subject: string; createdAt: Date }) =>
-      (await prisma.emailLog.findFirst({
-        where: { status: 'SENT', to: r.to, kind: r.kind, subject: r.subject, createdAt: { gt: r.createdAt } },
-        select: { id: true },
-      })) !== null
-    // CREATE pass: newest FAILED rows not yet recovered -> one alert per failed send (dedups on row id).
+    // PR-4 (P-13): recovery is matched by LOG ID, not by "a later SENT with the same
+    // to/kind/subject" — that matched an unrelated message and cleared a failure that
+    // was never re-sent. A resend that passes `retryOf: <logId>` resolves its alert on
+    // success (sendEmail → resolveAlertsFor('email_logs', retryOf)); an admin can also
+    // resolve it. A failed row raises ONE alert ever: once alerted (resolved or not) it
+    // is skipped, so a manual resolve does not come back within the hour (P-9).
     const failed = await prisma.emailLog.findMany({
       where: { status: 'FAILED', kind: { not: 'ALERT' } },
-      select: { id: true, to: true, subject: true, kind: true, attempts: true, lastError: true, createdAt: true },
-      orderBy: { createdAt: 'desc' },
+      select: { id: true, to: true, subject: true, kind: true, attempts: true, lastError: true },
+      orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
       take: 200,
     })
+    const alerted = new Set(
+      (await prisma.alert.findMany({
+        where: { type: 'EMAIL_FAILED', sourceTable: 'email_logs', sourceId: { in: failed.map((e) => e.id) } },
+        select: { sourceId: true },
+      })).map((a) => a.sourceId),
+    )
     for (const e of failed) {
-      if (await recovered(e)) continue
+      if (alerted.has(e.id)) continue
       await createAlert('EMAIL_FAILED', 'email_logs', e.id, {
         to: e.to, subject: e.subject, kind: e.kind, attempts: e.attempts, lastError: e.lastError ?? null,
       })
       emailFailedFlagged++
     }
-    // RESOLVE pass: driven off the ACTIVE alerts (not the capped scan) so nothing orphans -
-    // an old failure whose recovery lands after it ages past the newest-200 still clears.
-    // (sourceTable 'email_logs' is unique to EMAIL_FAILED, so no enum filter is needed.)
-    const activeEmailAlerts = await prisma.alert.findMany({
-      where: { sourceTable: 'email_logs', resolved: false },
-      select: { sourceId: true },
-    })
-    for (const a of activeEmailAlerts) {
-      if (!a.sourceId) continue
-      const row = await prisma.emailLog.findUnique({
-        where: { id: a.sourceId },
-        select: { to: true, kind: true, subject: true, createdAt: true },
-      })
-      if (row === null || (await recovered(row))) {
-        await resolveActiveAlert('EMAIL_FAILED', 'email_logs', a.sourceId)
-      }
-    }
-  } catch {
-    /* email_logs missing / transient — non-fatal */
+  } catch (err) {
+    console.error('[cron] email-failed scan errored', err)
+    Sentry.captureException(err)
   }
+
+  // 8d) PR-4 (P-7): the cron is running, so it is not silent — clear CRON_SILENT
+  // BEFORE dispatch, so a recovered cron never bells "the cron is silent" on its first
+  // pass. (The heartbeat itself is still stamped LAST, step 10 — CC-30.)
+  await resolveActiveAlert('CRON_SILENT', CRON_SILENT_SOURCE_TABLE, CRON_SILENT_SOURCE_ID).catch(() => {})
 
   // 9) Dispatch: email admins + create in-app notifications for un-notified alerts.
   const dispatch = await dispatchPendingAlerts()
@@ -652,7 +499,7 @@ async function run() {
   //       actually leaves the process before the response is sent).
   //   (b) In-app secondary signal: persist lastRunAt (read by the admin alerts route's
   //       staleness check, since a dead cron can't self-report its own silence).
-  //   (c) Required re-arm: resolve CRON_SILENT if the previous run(s) left it active.
+  //   (c) CRON_SILENT is cleared earlier now, before dispatch (step 8d, PR-4 P-7).
   //
   // CC-30 VERIFIED: these three statements are the LAST in run(), so an uncaught
   // throw anywhere in the scans above aborts before any of them — a crashed run
@@ -665,9 +512,8 @@ async function run() {
     await fetch(heartbeatUrl, { signal: AbortSignal.timeout(3000) }).catch(() => {})
   }
   await recordCronHeartbeat().catch(() => {})
-  await resolveActiveAlert('CRON_SILENT', CRON_SILENT_SOURCE_TABLE, CRON_SILENT_SOURCE_ID).catch(() => {})
 
-  return { overdueFlagged: due.length, staleDamageFlagged, idempotencyReaped, lowInventoryFlagged: lowFlagged, expiryFlagged, missedFlagged, holdsReleased, inventoryDriftFlagged, invariantViolations, emailFailedFlagged, ...dispatch }
+  return { overdueMarked: due.length, evaluated, idempotencyReaped, holdsReleased, inventoryDriftFlagged, invariantViolations, emailFailedFlagged, ...dispatch }
 }
 
 async function handleCron(req: NextRequest) {

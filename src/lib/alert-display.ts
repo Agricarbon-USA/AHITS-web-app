@@ -59,3 +59,27 @@ export function alertLink(
   if (type === 'EMAIL_FAILED') return '/admin/settings#email-delivery'
   return null
 }
+
+/**
+ * PR-4 (D-i · P-9): alert types an evaluator owns — raised AND cleared by the cron
+ * when the condition starts and ends (src/lib/alert-evaluators.ts, plus the fixed-key
+ * INVENTORY_DRIFT monitors and CRON_SILENT). A manual Resolve on one of these came
+ * back within the hour, because the condition still held; the admin UI hides Resolve
+ * for them and says why. EMAIL_FAILED is NOT here: some failed kinds have no resend
+ * path, so an admin must be able to dismiss it (it does not come back, see the cron).
+ */
+export const SELF_CLEARING_ALERT_TYPES: ReadonlySet<string> = new Set([
+  'MAINTENANCE_OVERDUE',
+  'LOW_INVENTORY',
+  'INSURANCE_EXPIRING',
+  'REGISTRATION_EXPIRING',
+  'DAILY_CHECK_MISSED',
+  'EQUIPMENT_NOT_RETURNED',
+  'PIN_LOCKED',
+  'INVENTORY_DRIFT',
+  'CRON_SILENT',
+])
+
+export function clearsItself(type: string): boolean {
+  return SELF_CLEARING_ALERT_TYPES.has(type)
+}

@@ -16,7 +16,9 @@ vi.mock('../src/lib/auth/session', () => ({
   requireAuth: () => Promise.resolve(mockSession),
   requireAdmin: () => Promise.resolve((mockSession as { role?: string } | null)?.role === 'ADMIN' ? mockSession : null),
 }))
-vi.mock('../src/lib/email/resend', () => ({ sendEmail: vi.fn().mockResolvedValue(null) }))
+// PR-4 (D-j): sendEmail returns what happened; SENT here (a real delivery), so the
+// route keeps its "Invite sent" contract and returns no setupUrl.
+vi.mock('../src/lib/email/resend', () => ({ sendEmail: vi.fn().mockResolvedValue({ outcome: 'SENT', deliveredTo: 'x@test.example', logId: null }) }))
 vi.mock('../src/lib/audit', () => ({ writeAudit: vi.fn().mockResolvedValue(undefined) }))
 
 function createReq(body: unknown) {

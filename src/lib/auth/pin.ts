@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { createAlert } from '@/lib/alerts'
 
 const MAX_ATTEMPTS = 5
-const LOCK_DURATION_MS = 15 * 60 * 1000 // 15 minutes
+export const LOCK_DURATION_MS = 15 * 60 * 1000 // 15 minutes (PR-4: the PIN_LOCKED evaluator reads it)
 
 /**
  * UXP-3 (3b): the one sentence every route returns for an active lock. The
@@ -60,7 +60,10 @@ export async function verifyPinDetailed(userId: string, pin: string): Promise<Pi
         where: { id: userId },
         data: { pinLockedAt: lockedAt },
       })
-      createAlert('PIN_LOCKED', 'users', userId, { name: user.name, email: user.email }).catch(() => {})
+      // PR-4 (P-6): awaited — a floating promise can be dropped when the instance
+      // freezes after the response. The PIN_LOCKED evaluator clears it when the lock
+      // lapses; a failure to raise still never blocks the lockout.
+      await createAlert('PIN_LOCKED', 'users', userId, { name: user.name, email: user.email }).catch(() => {})
       return { ok: false, reason: 'locked', lockedUntil: new Date(lockedAt.getTime() + LOCK_DURATION_MS) }
     }
     return { ok: false, reason: 'wrong' }

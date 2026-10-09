@@ -5,7 +5,7 @@ import { PATCH as patchUser } from '../src/app/api/users/[id]/route'
 import { POST as endDeployment } from '../src/app/api/deployments/[id]/end/route'
 import { applyRequestTransition, createRequest } from '../src/lib/deployment-requests'
 import { applyTransition, resolveStatusLinkById } from '../src/lib/status-links'
-import { createAlert, resolveActiveAlert } from '../src/lib/alerts'
+import { createAlert, resolveActiveAlert, resolveAlertsFor } from '../src/lib/alerts'
 import { prisma } from '../src/lib/prisma'
 import {
   createOperator,
@@ -172,6 +172,8 @@ describe('CC-31 §3.3: ending a deployment resolves EQUIPMENT_NOT_RETURNED per k
 
     const res = await endDeployment(endReq({ itemDispositions: [] }), { params: Promise.resolve({ id: rig.id }) })
     expect(res.status).toBe(200)
-    expect(resolvedWith('EQUIPMENT_NOT_RETURNED', 'kit_items', kitItem.id)).toBe(true)
+    // PR-4: through resolveAlertsFor('kit_items', id) — every alert for the kit line
+    // (EQUIPMENT_NOT_RETURNED included) resolves, and its bell rows are marked read.
+    expect(vi.mocked(resolveAlertsFor)).toHaveBeenCalledWith('kit_items', kitItem.id)
   })
 })

@@ -23,7 +23,8 @@ export function presentAlert(alert: {
 }): AlertPresentation {
   const meta = (alert.metadata ?? {}) as Meta
   const title = ALERT_LABELS[alert.type] ?? alert.type
-  const subject = str(meta.itemName) ?? str(meta.taskName) ?? str(meta.name)
+  // PR-4: a vehicle damage report carries `vehicleName` — it used to read "An item was reported damaged".
+  const subject = str(meta.itemName) ?? str(meta.vehicleName) ?? str(meta.taskName) ?? str(meta.name)
   let message: string
   switch (alert.type) {
     // CC-34 (3e): the shop-completed work order reuses this type with a phase marker —
@@ -71,22 +72,31 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? ''
  * Dispatch every unresolved alert that hasn't been notified yet: create an
  * in-app Notification for each active admin and send one summary email to the
  * admin team, then stamp `notifiedAt` so the same alert is never sent twice.
- * Email failures are swallowed — the in-app rows still land and notifiedAt is
- * still set, so a misconfigured mailer doesn't cause per-minute retry spam.
+ *
+ * PR-4:
+ *   • P-2 — alert types the admin disabled are excluded IN THE QUERY. They used to
+ *     be filtered after a `take: 100`, so 100 unresolved alerts of a disabled type
+ *     filled every page and no other alert was ever notified again. (Disabled types
+ *     stay un-notified — still recorded and on the dashboard — and notify on the
+ *     next run if re-enabled, since notifiedAt is still null.)
+ *   • P-14 — the bell rows are created and the alert CLAIMED (notifiedAt null→now)
+ *     in one transaction, so a crash between the two can't leave an alert marked
+ *     notified with no bell rows (or bell rows with the alert re-sent). Only the run
+ *     whose claim wins sends the email, outside the transaction. Email failures are
+ *     swallowed — the bell rows have landed — so a misconfigured mailer doesn't
+ *     cause per-minute retry spam.
  */
 export async function dispatchPendingAlerts(): Promise<{ alerts: number; notifications: number; emailed: boolean }> {
-  // Respect the admin alert-config: types the admin has disabled are left
-  // un-notified (still recorded + shown on the dashboard; if re-enabled later
-  // they notify on the next run since notifiedAt is still null).
   const { disabledAlertTypes } = await getNotificationConfig()
-  const pendingAll = await prisma.alert.findMany({
-    where: { resolved: false, notifiedAt: null },
-    orderBy: { triggeredAt: 'asc' },
+  const pending = await prisma.alert.findMany({
+    where: {
+      resolved: false,
+      notifiedAt: null,
+      ...(disabledAlertTypes.length > 0 && { type: { notIn: disabledAlertTypes as never[] } }),
+    },
+    orderBy: [{ triggeredAt: 'asc' }, { id: 'asc' }],
     take: 100,
   })
-  const pending = disabledAlertTypes.length
-    ? pendingAll.filter((a) => !disabledAlertTypes.includes(a.type))
-    : pendingAll
   if (pending.length === 0) return { alerts: 0, notifications: 0, emailed: false }
 
   const admins = await prisma.user.findMany({
@@ -99,27 +109,33 @@ export async function dispatchPendingAlerts(): Promise<{ alerts: number; notific
   let emailed = false
 
   for (const alert of pending) {
-    // Atomically CLAIM the alert by flipping notifiedAt null→now. Only the run
-    // that wins the flip (count === 1) proceeds, so overlapping cron runs (or a
-    // retried slow run) can never double-create notifications or double-email.
-    const claim = await prisma.alert.updateMany({
-      where: { id: alert.id, notifiedAt: null, resolved: false },
-      data: { notifiedAt: new Date() },
-    })
-    if (claim.count === 0) continue // already claimed/resolved by a concurrent run
-
     const p = presentAlert(alert)
-    await prisma.notification.createMany({
-      data: admins.map((a) => ({
-        userId: a.id,
-        type: alert.type,
-        title: p.title,
-        body: p.message,
-        link: p.link,
-        alertId: alert.id,
-      })),
-      skipDuplicates: true, // idempotent with the @@unique([alertId, userId]) index
+    // Create the bell rows, then claim — one transaction. A concurrent run that
+    // claimed first makes this claim match 0 rows, and the transaction rolls back
+    // (its bell rows are idempotent anyway via @@unique([alertId, userId])).
+    const claimed = await prisma.$transaction(async (tx) => {
+      await tx.notification.createMany({
+        data: admins.map((a) => ({
+          userId: a.id,
+          type: alert.type,
+          title: p.title,
+          body: p.message,
+          link: p.link,
+          alertId: alert.id,
+        })),
+        skipDuplicates: true,
+      })
+      const claim = await tx.alert.updateMany({
+        where: { id: alert.id, notifiedAt: null, resolved: false },
+        data: { notifiedAt: new Date() },
+      })
+      if (claim.count === 0) throw new AlreadyClaimed()
+      return true
+    }).catch((err) => {
+      if (err instanceof AlreadyClaimed) return false
+      throw err
     })
+    if (!claimed) continue
     notifications += admins.length
 
     try {
@@ -137,3 +153,6 @@ export async function dispatchPendingAlerts(): Promise<{ alerts: number; notific
 
   return { alerts: pending.length, notifications, emailed }
 }
+
+/** Rolls back the create-then-claim transaction when another run claimed the alert first. */
+class AlreadyClaimed extends Error {}
