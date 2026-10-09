@@ -157,6 +157,8 @@ export function DispositionDialog({
       body: { note, itemDispositions },
       method,
       label: mode === 'end-deployment' ? 'End deployment' : 'Return items',
+      // PR-5 (U-9): a queued End/Return re-reads open screens when it applies.
+      invalidates: ['deployments', 'inventory', 'vehicles', 'maintenance', 'today'],
     })
     setLoading(false)
     // mutate() returns ok:true both when the server applied the write and when

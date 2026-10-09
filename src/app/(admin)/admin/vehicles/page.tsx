@@ -20,6 +20,7 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { useToast } from '@/components/shared/useToast'
+import { useInvalidation } from '@/hooks/useInvalidation'
 import { useCanEdit, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 import { SearchableSelect } from '@/components/shared/SearchableSelect'
 import { QrScanField } from '@/components/shared/QrScanField'
@@ -210,6 +211,7 @@ export default function AdminVehiclesPage() {
   }, [])
 
   React.useEffect(() => { load(); loadHubs(); loadTemplates() }, [load, loadHubs, loadTemplates])
+  useInvalidation(['vehicles', 'maintenance', 'deployments'], () => { void load() }) // PR-5
 
   React.useEffect(() => {
     fetch('/api/projects').then((r) => r.json()).then((d) => setProjects(d.data ?? d ?? [])).catch(() => {})

@@ -12,6 +12,7 @@ import AddIcon from '@mui/icons-material/Add'
 import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
 import { useToast } from '@/components/shared/useToast'
+import { useInvalidation } from '@/hooks/useInvalidation'
 import { useCanEdit, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 
 const PROJECT_TYPES = ['CROPLAND', 'RANGELAND', 'FORESTRY', 'OTHER']
@@ -81,6 +82,7 @@ export default function AdminProjectsPage() {
   }, [showToast])
 
   React.useEffect(() => { load() }, [load])
+  useInvalidation(['deployments'], () => { void load() }) // PR-5: deployment counts per project
 
   const openDetail = async (id: string) => {
     setDetailLoading(true)

@@ -222,6 +222,7 @@ export function NewDeploymentDialog({
       endpoint: '/api/deployments',
       method: 'POST',
       label: 'Start deployment',
+      invalidates: ['deployments', 'inventory', 'vehicles', 'today'],
       placeholderId: newPlaceholderId(),
       body: {
         label: label || undefined,

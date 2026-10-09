@@ -15,6 +15,7 @@ import { StatusChip } from '@/components/shared/StatusChip'
 import { DetailDrawer } from '@/components/ui/DetailDrawer'
 import { PagedTable } from '@/components/ui/PagedTable'
 import { useListQuery } from '@/hooks/useListQuery'
+import { useInvalidation } from '@/hooks/useInvalidation'
 import { EntityFormDialog, RequiredLegend } from '@/components/ui/EntityFormDialog'
 import { SearchableSelect } from '@/components/shared/SearchableSelect'
 import { useDirtyState } from '@/hooks/useDirtyState'
@@ -986,6 +987,8 @@ function ItemDetailDrawer({
     if (!row) { setDetail(null); return }
     loadDetail(row.id)
   }, [row, loadDetail])
+  // PR-5 (U-10): a write anywhere (a deployment taking or returning this item) re-reads the open drawer.
+  useInvalidation(['inventory', 'deployments'], () => { if (row) void loadDetail(row.id) })
 
   const handleUnitStatusChange = async (unitId: string, status: string) => {
     const res = await fetch(`/api/inventory/units/${unitId}`, {
@@ -1206,13 +1209,14 @@ function ItemDetailDrawer({
                 {detail.itemCounts.out > 0 && (
                   <Box mb={2}>
                     <Typography variant="subtitle2" fontWeight={600} mb={0.5}>Current Status</Typography>
-                    {row?.currentOperator && <Typography variant="body2">Currently with <strong>{row.currentOperator.name}</strong></Typography>}
+                    {/* PR-5 (U-10): from the drawer's own fresh read, not the row snapshot taken when it opened. */}
+                    {detail.currentOperator && <Typography variant="body2">Currently with <strong>{detail.currentOperator.name}</strong></Typography>}
                     {(row?.activeProjects ?? []).length > 0
                       ? <Stack direction="row" spacing={0.5} flexWrap="wrap" mt={0.5}>
                           <Typography variant="body2" color="text.secondary" sx={{ mr: 0.5 }}>Projects:</Typography>
                           {(row?.activeProjects ?? []).map((p) => <Chip key={p.id} size="small" label={p.name} variant="outlined" />)}
                         </Stack>
-                      : row?.currentProject && <Typography variant="body2">Checked out to <strong>{row.currentProject.name}</strong></Typography>}
+                      : detail.currentProject && <Typography variant="body2">Checked out to <strong>{detail.currentProject.name}</strong></Typography>}
                   </Box>
                 )}
               </>

@@ -17,6 +17,7 @@ import CheckBoxOutlineBlankIcon from '@mui/icons-material/CheckBoxOutlineBlank'
 import CheckBoxIcon from '@mui/icons-material/CheckBox'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { useToast } from '@/components/shared/useToast'
+import { useInvalidation } from '@/hooks/useInvalidation'
 import { useCanEdit, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 import { useMultiSelect } from '@/components/shared/useMultiSelect'
 import { BulkActionBar } from '@/components/shared/BulkActionBar'
@@ -171,6 +172,9 @@ export default function AdminHubsPage() {
     loadHubs()
     loadInbound('active')
   }, [loadHubs]) // eslint-disable-line react-hooks/exhaustive-deps
+  // PR-5: re-read when hubs change, or when gear starts/stops coming back to one.
+  useInvalidation(['hubs'], () => { void loadHubs() })
+  useInvalidation(['hubs', 'deployments', 'inventory'], () => { void loadInbound(inboundFilter) })
 
   const handleFilterChange = (_: React.MouseEvent, val: 'active' | 'resolved' | null) => {
     if (!val) return

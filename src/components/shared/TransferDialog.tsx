@@ -11,6 +11,7 @@ import TerrainIcon from '@mui/icons-material/Terrain'
 import AgricultureIcon from '@mui/icons-material/Agriculture'
 import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
 import { resolvePhotoRefs } from '@/lib/photoStore'
+import { dispatchInvalidate } from '@/lib/invalidation'
 
 const VEHICLE_ICON: Record<string, React.ElementType> = {
   TRUCK: LocalShippingIcon,
@@ -134,6 +135,7 @@ export function TransferDialog({
         return
       }
       showToast({ message: `Transfer request sent — waiting for ${destName} to accept.`, severity: 'success' })
+      dispatchInvalidate(['transfers', 'deployments']) // PR-5 (U-10): every open transfer list re-reads
       onSuccess()
       onClose()
     } catch {
