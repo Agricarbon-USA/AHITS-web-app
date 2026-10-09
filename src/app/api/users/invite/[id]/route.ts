@@ -5,6 +5,7 @@ import { sendEmail } from '@/lib/email/resend'
 import { inviteEmail } from '@/lib/email/templates'
 import { writeAudit } from '@/lib/audit'
 import { generateInviteToken, hashInviteToken } from '@/lib/invite-token'
+import { emailOutcomeToast, emailReport } from '@/lib/email-outcome'
 
 // Revoke an outstanding invite (Wave 2A.5 §B.3).
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -55,8 +56,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     )
   }
 
+  let sent: Awaited<ReturnType<typeof sendEmail>>
   try {
-    await sendEmail({ kind: 'INVITE',
+    sent = await sendEmail({ kind: 'INVITE',
       to: updated.email,
       subject: `You've been invited to AHITS — Agricarbon`,
       html: inviteEmail(updated.name, updated.role, setupUrl),
@@ -67,5 +69,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   await writeAudit(session.userId, 'INVITE_RESENT', null, { email: updated.email, inviteId: id })
-  return NextResponse.json({ ok: true, message: `Invite resent to ${updated.email}` })
+  // PR-4 (D-j · U-13): see the invite route — only SENT says "resent".
+  const report = emailReport(sent)
+  if (sent.outcome === 'SENT') {
+    return NextResponse.json({ ok: true, ...report, message: `Invite resent to ${updated.email}` })
+  }
+  return NextResponse.json(
+    { ok: true, ...report, message: emailOutcomeToast(report, 'Invite').message, setupUrl, expiresAt: updated.expiresAt },
+    { headers: { 'Cache-Control': 'no-store' } },
+  )
 }

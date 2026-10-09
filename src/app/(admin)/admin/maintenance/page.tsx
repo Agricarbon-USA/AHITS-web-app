@@ -20,6 +20,7 @@ import { RepairReviewDialog } from '@/components/shared/RepairReviewDialog'
 import { PhotoGallery } from '@/components/shared/PhotoGallery'
 import { useCanEdit, MutationButton } from '@/components/shared/ReadOnly'
 import { SearchableSelect } from '@/components/shared/SearchableSelect'
+import { emailOutcomeToast, type EmailReport } from '@/lib/email-outcome'
 
 interface InoperableUnit {
   id: string
@@ -381,10 +382,8 @@ export default function AdminMaintenancePage() {
         showToast({ message: typeof d.error === 'string' ? d.error : 'Could not send work order.', severity: 'error' })
         return
       }
-      showToast({
-        message: d.emailed ? 'Work order emailed to the shop.' : 'Work order link created — copy the link below.',
-        severity: 'success',
-      })
+      // PR-4 (D-j · P-1): say where the work order actually went (the link is shown below to copy).
+      showToast(emailOutcomeToast(d as EmailReport, 'Work order'))
       setLastLink(typeof d.url === 'string' ? d.url : null)
       setShopEmail('')
       loadLinks()

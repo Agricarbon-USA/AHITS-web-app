@@ -96,8 +96,13 @@ function InviteDialog({ open, onClose, onSuccess, onLink }: {
       }
       if (delivery === 'LINK') {
         onLink({ url: data.setupUrl, expiresAt: data.expiresAt })
+      } else if (data.setupUrl) {
+        // PR-4 (D-j · U-13): the email did NOT reach them (sandbox redirect / skip) —
+        // say so, and hand over the setup link to copy, as LINK delivery does.
+        onSuccess(typeof data.message === 'string' ? data.message : 'Invite not emailed — copy the link.')
+        onLink({ url: data.setupUrl, expiresAt: data.expiresAt })
       } else {
-        onSuccess(`Invite sent to ${email}`)
+        onSuccess(typeof data.message === 'string' ? data.message : `Invite sent to ${email}`)
       }
       handleClose()
     } catch {

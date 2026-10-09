@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAdmin } from '@/lib/auth/session'
 import { getRequest } from '@/lib/deployment-requests'
 import { issueStatusLink, statusLinkUrl } from '@/lib/status-links'
-import { sendEmail } from '@/lib/email/resend'
+import { tryEmail } from '@/lib/email/resend'
 import { genericAlertEmail } from '@/lib/email/templates'
 import { prisma } from '@/lib/prisma'
+import { emailReport } from '@/lib/email-outcome'
 
 // Revoke any active hub links for this request and issue a fresh one.
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -52,21 +53,24 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   // unobtainable. Mirrors POST /api/maintenance/[id]/send-to-shop, which already
   // returns `url`. (A copyable link in the admin Requests UI is the follow-up.)
   const url = statusLinkUrl(rawToken)
-  let emailed = false
-  if (hub.email) {
-    await sendEmail({ kind: 'RESERVATION',
-      to: hub.email,
-      subject: `Reservation request (resent) — ${request.label ?? 'Rig reservation'}`,
-      html: genericAlertEmail(
-        `Rig reservation request from Agricarbon`,
-        `A rig reservation request requires your confirmation. (This is a resent link; any previous link has been revoked.)`,
-        url,
-        'Review and respond',
-      ),
-    })
-      .then(() => { emailed = true })
-      .catch(() => {})
-  }
+  // PR-4 (D-j · U-5): a hub with no email still gets its fresh link back to copy;
+  // the response says exactly what happened to the email. A MATERIAL request
+  // forwarded to a hub is resent with its own wording.
+  const isMaterial = request.requestType === 'MATERIAL'
+  const sent = await tryEmail({ kind: 'RESERVATION',
+    to: hub.email,
+    subject: isMaterial
+      ? `Material request forwarded (resent) — ${request.label ?? 'Material request'}`
+      : `Reservation request (resent) — ${request.label ?? 'Rig reservation'}`,
+    html: genericAlertEmail(
+      isMaterial ? `Material request from Agricarbon` : `Rig reservation request from Agricarbon`,
+      isMaterial
+        ? `A material request has been forwarded to your hub for fulfillment. (This is a resent link; any previous link has been revoked.)`
+        : `A rig reservation request requires your confirmation. (This is a resent link; any previous link has been revoked.)`,
+      url,
+      'Review and respond',
+    ),
+  })
 
-  return NextResponse.json({ ok: true, emailed, url })
+  return NextResponse.json({ ok: true, ...emailReport(sent), url })
 }

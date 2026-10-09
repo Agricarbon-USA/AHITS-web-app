@@ -9,6 +9,8 @@ interface EmailRow {
   subject: string
   kind: string
   status: string
+  /** PR-4 (D-j): where it actually went — the sandbox inbox for REDIRECTED, null if nothing was delivered. */
+  deliveredTo?: string | null
   attempts: number
   lastError: string | null
   createdAt: string
@@ -41,8 +43,10 @@ export default function EmailDeliverySection() {
   React.useEffect(() => { load() }, [load])
 
   const countFor = (s: string) => counts.find((c) => c.status === s)?.n ?? 0
+  // PR-4 (D-j): REDIRECTED (the sandbox delivered it to the test inbox, not the
+  // recipient) is its own outcome, shown as a warning — it was not "sent".
   const chipColor = (s: string): 'error' | 'warning' | 'success' =>
-    s === 'FAILED' ? 'error' : s === 'SKIPPED' ? 'warning' : 'success'
+    s === 'FAILED' ? 'error' : s === 'SKIPPED' || s === 'REDIRECTED' ? 'warning' : 'success'
 
   return (
     <Card sx={{ mb: 3 }}>
@@ -52,7 +56,7 @@ export default function EmailDeliverySection() {
           <Button size="small" onClick={load}>Refresh</Button>
         </Stack>
         <Typography variant="body2" color="text.secondary" mb={1.5}>
-          Last 7 days: {countFor('SENT')} sent · {countFor('FAILED')} failed · {countFor('SKIPPED')} skipped (sandbox).
+          Last 7 days: {countFor('SENT')} delivered · {countFor('REDIRECTED')} redirected to the sandbox inbox · {countFor('SKIPPED')} not sent · {countFor('FAILED')} failed.
         </Typography>
         <Stack direction="row" spacing={1} mb={1.5}>
           <Chip label="Failed only" size="small" color={failedOnly ? 'primary' : 'default'} onClick={() => setFailedOnly(true)} />
@@ -74,7 +78,7 @@ export default function EmailDeliverySection() {
                   <Typography variant="body2" sx={{ fontWeight: 500 }}>{r.subject}</Typography>
                 </Stack>
                 <Typography variant="caption" color="text.secondary">
-                  → {r.to} · {formatDateTime(r.createdAt)}{r.attempts > 1 ? ` · ${r.attempts} attempts` : ''}
+                  → {r.to}{r.status === 'REDIRECTED' && r.deliveredTo ? ` (redirected to ${r.deliveredTo})` : ''} · {formatDateTime(r.createdAt)}{r.attempts > 1 ? ` · ${r.attempts} attempts` : ''}
                 </Typography>
                 {r.lastError && (
                   <Typography variant="caption" color="error.main" display="block">{r.lastError}</Typography>

@@ -6,6 +6,7 @@ import { sendEmail } from '@/lib/email/resend'
 import { inviteEmail } from '@/lib/email/templates'
 import { writeAudit } from '@/lib/audit'
 import { generateInviteToken, hashInviteToken } from '@/lib/invite-token'
+import { emailOutcomeToast, emailReport } from '@/lib/email-outcome'
 
 // List outstanding (pending) invites for the admin Team Management view.
 export async function GET() {
@@ -85,8 +86,9 @@ export async function POST(req: NextRequest) {
 
   // If the email fails to send, don't leave a dangling invite the admin thinks
   // went out — clean it up and surface the failure.
+  let sent: Awaited<ReturnType<typeof sendEmail>>
   try {
-    await sendEmail({ kind: 'INVITE',
+    sent = await sendEmail({ kind: 'INVITE',
       to: email,
       subject: `You've been invited to AHITS — Agricarbon`,
       html: inviteEmail(name, role, setupUrl),
@@ -101,5 +103,14 @@ export async function POST(req: NextRequest) {
   }
 
   await writeAudit(session.userId, 'INVITE_SENT', null, { email, role, inviteId: invite.id })
-  return NextResponse.json({ ok: true, message: `Invite sent to ${email}` }, { status: 201 })
+  // PR-4 (D-j · U-13): "Invite sent" only when it was. A sandbox redirect or skip did
+  // NOT reach the person, so the setup link comes back to copy (no-store, as LINK).
+  const report = emailReport(sent)
+  if (sent.outcome === 'SENT') {
+    return NextResponse.json({ ok: true, ...report, message: `Invite sent to ${email}` }, { status: 201 })
+  }
+  return NextResponse.json(
+    { ok: true, ...report, message: emailOutcomeToast(report, 'Invite').message, setupUrl, expiresAt: invite.expiresAt },
+    { status: 201, headers: { 'Cache-Control': 'no-store' } },
+  )
 }
