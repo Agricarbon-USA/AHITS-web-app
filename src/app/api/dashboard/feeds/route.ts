@@ -116,7 +116,7 @@ export async function GET() {
       }
     })
     .filter(({ operatorId }) => operatorId && !checkedToday.has(operatorId))
-    .map(({ r, operatorName, isAdminHeld }) => ({ rigId: r.id, operator: operatorName, isAdminHeld, label: r.label, startedAt: r.startedAt }))
+    .map(({ r, operatorId, operatorName, isAdminHeld }) => ({ rigId: r.id, operatorId, operator: operatorName, isAdminHeld, label: r.label, startedAt: r.startedAt }))
 
   const maintenanceDueSoon = dueTasks.map((t) => ({
     id: t.id,
@@ -129,6 +129,8 @@ export async function GET() {
 
   const longRunning = longRigs.map((r) => ({
     rigId: r.id,
+    // PR-5 (U-14): the dashboard row deep-links /admin/deployments?operator=<id>.
+    operatorId: rigRosters.get(r.id)?.operatorId ?? null,
     operator: rigRosters.get(r.id)?.operator?.name ?? 'Unassigned',
     label: r.label,
     startedAt: r.startedAt,

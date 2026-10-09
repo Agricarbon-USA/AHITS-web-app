@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import { money } from '@/lib/validation'
 import { resolveAlertsFor } from '@/lib/alerts'
-import { closeDamageTask } from '@/lib/maintenance'
+import { closeDamageTask, OpenRepairExists } from '@/lib/maintenance'
 
 // Whitelist of admin-editable fields. Excludes id/vehicleId/itemId (the task's
 // subject) and isDamageReport (system-set) to prevent mass-assignment.
@@ -118,7 +118,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       })
     })
     return NextResponse.json({ data: task })
-  } catch {
+  } catch (err) {
+    if (err instanceof OpenRepairExists) return NextResponse.json({ error: err.message }, { status: 409 })
     return NextResponse.json({ error: 'Task not found or update failed' }, { status: 404 })
   }
 }
