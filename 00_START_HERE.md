@@ -55,6 +55,7 @@ Before writing code, also read `CLAUDE.md` + `AGENTS.md` (deploy flow + the DB/m
 | see the **2026-07-28 six-seat review** (findings, file:line evidence) | `AHITS_SIX_SEAT_REVIEW_2026-07-28.md` |
 | run the **pilot-floor build queue** (CC-29/30/31/16S/33/34 — gates the first operator) | `AHITS_CC29-31_PILOT_FLOOR_PACKETS.md` **+ paste-along riders in `AHITS_PACKET_ERRATA_2026-07-29.md`** + workplan §15 |
 | **build the current fix program** (the seven PRs from the 2026-10-05 owner test: 1a·1b·2·3a·3b·4·5, in order) | `AHITS_FIX_PROGRAM_2026-10-05_FIVE-PRS.md` — the build spec; **§0's owner decisions D-a…D-n are final, apply them** |
+| **build PR-3c — delete items (and restore them)** (the fix-program addendum, after 3b) | `AHITS_FIX_PROGRAM_ADDENDUM_PR-3C_DELETE-ITEMS_2026-10-09.md` — read with the program file; **its §0 owner decisions D-o…D-u are final** (built as #256; D46) |
 | see the **evidence** behind a fix-program line (the five root causes, ~40 findings, file:line) | `AHITS_SCREENING_REPORT_2026-10-05_ROOT-CAUSES.md` |
 
 ---
