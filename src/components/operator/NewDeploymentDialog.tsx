@@ -189,6 +189,8 @@ export function NewDeploymentDialog({
     if (!itemId) return { status: 'error', message: 'No item selected.' }
     try {
       const res = await fetch(`/api/inventory/units/by-qr/${encodeURIComponent(code)}`)
+      // PR-3c (D-r): a deleted unit's sticker says so (410), not "isn't registered".
+      if (res.status === 410) return { status: 'error', message: (await res.json()).error }
       if (!res.ok) return { status: 'not-found' }
       const json = await res.json()
       const unit = json.unit
