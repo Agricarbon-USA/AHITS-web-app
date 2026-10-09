@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { resolveAlertsFor } from '@/lib/alerts'
 import { LIVE_KIT_ITEM, OPEN_TASK, PICKABLE_STATUSES } from '@/lib/populations'
 import { closeDamageTask, openDamageTask, type DamageTaskFields } from '@/lib/maintenance'
-import { assertNoOpenReferences, openReferences } from '@/lib/asset-references'
+import { assertNoOpenReferences, openReferences, ReferenceConflict } from '@/lib/asset-references'
 
 /**
  * PR-3a (RC-1 · D-g): the ONLY writers of `vehicle.status` and
@@ -217,12 +217,14 @@ export async function pickUnit(
   const unit = await tx.inventoryUnit.findFirst({
     where: {
       id: unitId,
-      deletedAt: null,
       ...(opts.inventoryItemId && { inventoryItemId: opts.inventoryItemId }),
     },
-    select: { status: true },
+    select: { status: true, deletedAt: true, inventoryItem: { select: { name: true, deletedAt: true } } },
   })
-  if (!unit || !(PICKABLE_STATUSES as readonly EquipmentStatus[]).includes(unit.status)) return false
+  if (!unit) return false
+  // PR-3c: deleted gear is refused by name (409), not as "just taken by someone else".
+  if (unit.deletedAt || unit.inventoryItem.deletedAt) throw deletedGear(unit.inventoryItem.name)
+  if (!(PICKABLE_STATUSES as readonly EquipmentStatus[]).includes(unit.status)) return false
   const claimed = await tx.inventoryUnit.updateMany({
     where: { id: unitId, status: unit.status },
     data: { status: 'CHECKED_OUT' },
@@ -405,4 +407,111 @@ export async function unretireUnit(tx: Tx, unitId: string): Promise<{ restored: 
     data: { status: 'AVAILABLE', ...(labelRestored && { qrCodeId: base }) },
   })
   return { restored: true, labelRestored }
+}
+
+// ── PR-3c · Delete an item (and restore it) ─────────────────────────────────────
+//
+// D-o: Delete is a reversible soft delete for mistakes, duplicates and test entries.
+// The item, its units and its non-damage schedules leave every list, count, picker
+// and report; history rows stay; Restore brings back exactly what one Delete hid.
+// D-u: QR labels stay bound (unlike Retire), so Restore is exact and Undo lossless.
+// Every row one Delete touches carries the same `deletedAt` stamp — that stamp is
+// how Restore tells "deleted with the item" from "deleted separately before".
+
+/** The 409 for checking out, or writing to, gear that was deleted (PR-3c). */
+export function deletedGear(name: string): ReferenceConflict {
+  return new ReferenceConflict(`${name} was deleted from inventory`)
+}
+
+/** The 409 text for a write to a deleted item: "Restore it first". */
+export const restoreFirst = (name: string) => `${name} was deleted — restore it first.`
+
+/** The name of the item if it is deleted, else null (missing items are the caller's 404). */
+export async function deletedItemName(itemId: string, db: Tx = prisma): Promise<string | null> {
+  const item = await db.inventoryItem.findUnique({ where: { id: itemId }, select: { name: true, deletedAt: true } })
+  return item?.deletedAt ? item.name : null
+}
+
+/** Checkout guard: refuse (409, by name) when any of these items was deleted. */
+export async function refuseDeletedItems(tx: Tx, itemIds: string[]): Promise<void> {
+  if (itemIds.length === 0) return
+  const gone = await tx.inventoryItem.findFirst({
+    where: { id: { in: [...new Set(itemIds)] }, deletedAt: { not: null } },
+    select: { name: true },
+  })
+  if (gone) throw deletedGear(gone.name)
+}
+
+/**
+ * Delete an item (D-o). Refused with a 409 naming what is in the way — units out or
+ * in repair, open repairs on it or its units, kit lines left open on any rig, pending
+ * transfers, reservation holds, units reserved on its stock, open requests naming it.
+ * Otherwise, with one `now` stamp: the item (and who deleted it), every live unit
+ * (status and QR untouched — D-u), and its non-damage schedules. Its alerts resolve —
+ * the item's own, its per-hub / serialized LOW_INVENTORY keys (`<id>:<hub>`,
+ * `<id>:serialized`) and each unit's. Stock rows are untouched: Restore needs them,
+ * and the guard has made their reservations 0. Returns null when there is no live item.
+ */
+export async function deleteItem(
+  tx: Tx,
+  itemId: string,
+  byUserId: string | null,
+): Promise<{ name: string; deletedAt: Date } | null> {
+  const item = await tx.inventoryItem.findFirst({ where: { id: itemId, deletedAt: null }, select: { name: true } })
+  if (!item) return null
+  assertNoOpenReferences('item-delete', item.name, await openReferences({ itemId }, tx, { scope: 'delete' }))
+
+  const now = new Date()
+  await tx.inventoryItem.update({ where: { id: itemId }, data: { deletedAt: now, deletedById: byUserId } })
+  const units = await tx.inventoryUnit.findMany({ where: { inventoryItemId: itemId, deletedAt: null }, select: { id: true } })
+  if (units.length > 0) {
+    await tx.inventoryUnit.updateMany({ where: { id: { in: units.map((u) => u.id) } }, data: { deletedAt: now } })
+  }
+  await tx.maintenanceTask.updateMany({
+    where: { itemId, isDamageReport: false, deletedAt: null },
+    data: { deletedAt: now },
+  })
+
+  const itemAlerts = await tx.alert.findMany({
+    where: { resolved: false, sourceTable: 'inventory_items', OR: [{ sourceId: itemId }, { sourceId: { startsWith: `${itemId}:` } }] },
+    select: { sourceId: true },
+  })
+  for (const sourceId of new Set(itemAlerts.map((a) => a.sourceId).filter((x): x is string => !!x))) {
+    await resolveAlertsFor('inventory_items', sourceId, tx)
+  }
+  for (const u of units) await resolveAlertsFor('inventory_units', u.id, tx)
+
+  return { name: item.name, deletedAt: now }
+}
+
+/**
+ * Restore a deleted item: clears its `deletedAt` / `deletedById`, and `deletedAt` on
+ * the units and schedules that carry the item's own stamp. A unit deleted separately
+ * before stays deleted. Stock, status and QR were never touched. (A LOW_INVENTORY
+ * alert may re-raise on the next cron — expected under D-i.) Returns null when the
+ * item is not deleted.
+ */
+export async function restoreItem(tx: Tx, itemId: string): Promise<{ name: string } | null> {
+  const item = await tx.inventoryItem.findFirst({
+    where: { id: itemId, deletedAt: { not: null } },
+    select: { name: true, deletedAt: true },
+  })
+  if (!item?.deletedAt) return null
+  // Prisma cannot say "equals the parent's column" in a nested where — compare in JS.
+  const stamp = item.deletedAt.getTime()
+  const sameStamp = <T extends { id: string; deletedAt: Date | null }>(rows: T[]) =>
+    rows.filter((r) => r.deletedAt?.getTime() === stamp).map((r) => r.id)
+
+  const units = sameStamp(await tx.inventoryUnit.findMany({
+    where: { inventoryItemId: itemId, deletedAt: { not: null } },
+    select: { id: true, deletedAt: true },
+  }))
+  if (units.length > 0) await tx.inventoryUnit.updateMany({ where: { id: { in: units } }, data: { deletedAt: null } })
+  const tasks = sameStamp(await tx.maintenanceTask.findMany({
+    where: { itemId, isDamageReport: false, deletedAt: { not: null } },
+    select: { id: true, deletedAt: true },
+  }))
+  if (tasks.length > 0) await tx.maintenanceTask.updateMany({ where: { id: { in: tasks } }, data: { deletedAt: null } })
+  await tx.inventoryItem.update({ where: { id: itemId }, data: { deletedAt: null, deletedById: null } })
+  return { name: item.name }
 }

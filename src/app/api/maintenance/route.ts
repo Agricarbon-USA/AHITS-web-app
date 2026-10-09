@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
+import { deletedItemName, restoreFirst } from '@/lib/asset-status'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import { money, parsePagination, listResponse } from '@/lib/validation'
 import { nextDueFromInterval } from '@/lib/maintenance'
@@ -141,6 +142,11 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
   const input = parsed.data
   const now = new Date()
+  // PR-3c: no new schedule on a deleted item — restore it first.
+  if (input.itemId) {
+    const deletedName = await deletedItemName(input.itemId)
+    if (deletedName) return NextResponse.json({ error: restoreFirst(deletedName) }, { status: 409 })
+  }
 
   // CC-34 (3a): a schedulable task must never be born unschedulable. A DAYS/MONTHS task
   // with no explicit first-due date would never trip the calendar overdue scan (it needs

@@ -151,7 +151,9 @@ describe('pickUnit (D-e, D-n)', () => {
     await prisma.inventoryUnit.update({ where: { id: gone.id }, data: { deletedAt: new Date() } })
     const ok = await createInventoryUnit(itemId)
     expect(await tx((t) => pickUnit(t, inMaint.id))).toBe(false)
-    expect(await tx((t) => pickUnit(t, gone.id))).toBe(false)
+    // PR-3c: deleted gear is refused by name (409), not as "not pickable".
+    await expect(tx((t) => pickUnit(t, gone.id))).rejects.toThrow(/was deleted from inventory/)
+    expect(await unitStatus(gone.id)).toBe('AVAILABLE')
     expect(await tx((t) => pickUnit(t, ok.id, { inventoryItemId: 'some-other-item' }))).toBe(false)
     expect(await unitStatus(inMaint.id)).toBe('IN_MAINTENANCE')
     expect(await unitStatus(ok.id)).toBe('AVAILABLE')

@@ -198,7 +198,7 @@ export default function MyRigPage() {
     if (!itemId) return { status: 'error', message: 'No item selected.' }
     try {
       const res = await fetch(`/api/inventory/units/by-qr/${encodeURIComponent(code)}`)
-      if (!res.ok) return { status: 'not-found' }
+      if (!res.ok) return res.status === 410 ? { status: 'error', message: (await res.json()).error } : { status: 'not-found' }
       const json = await res.json()
       const unit = json.unit
       if (unit?.inventoryItemId !== itemId) return { status: 'error', message: 'That unit belongs to a different item.' }

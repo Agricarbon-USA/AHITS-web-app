@@ -9,6 +9,8 @@ interface ConfirmDialogProps {
   open: boolean
   title: string
   message: string
+  /** Optional lines under the message — e.g. what goes with a deleted item (PR-3c). */
+  details?: React.ReactNode
   confirmLabel?: string
   confirmColor?: 'error' | 'warning' | 'primary'
   onClose: () => void
@@ -24,6 +26,7 @@ export function ConfirmDialog({
   open,
   title,
   message,
+  details,
   confirmLabel = 'Confirm',
   confirmColor = 'primary',
   onClose,
@@ -43,6 +46,7 @@ export function ConfirmDialog({
       <DialogTitle>{title}</DialogTitle>
       <DialogContent>
         <Typography>{message}</Typography>
+        {details}
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
         <Button onClick={onClose} disabled={loading}>Cancel</Button>

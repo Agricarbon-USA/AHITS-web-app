@@ -64,7 +64,7 @@ async function unitInKit(itemId: string, status = 'CHECKED_OUT') {
 }
 
 // An empty reference set never blocks.
-const NO_REFS = { rigVehicles: [], kitItems: [], pendingTransfers: [], openTasks: [], activeLinks: [], heldLines: [], stock: [], primaryRigs: [], unitsOut: [] }
+const NO_REFS = { rigVehicles: [], kitItems: [], pendingTransfers: [], openTasks: [], activeLinks: [], heldLines: [], stock: [], primaryRigs: [], unitsOut: [], openRequestLines: [], reserved: 0 }
 
 describe('openReferences / assertNoOpenReferences', () => {
   it('vehicle on a live deployment → named, with the operator', async () => {

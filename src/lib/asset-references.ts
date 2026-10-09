@@ -46,14 +46,48 @@ export interface OpenReferences {
   primaryRigs: { rigId: string; label: string | null }[]
   /** Item only: units that are out, Returning or in repair (D-a). */
   unitsOut: { id: string; status: EquipmentStatus }[]
+  /** Item only: open requests (draft / requested / staged / forwarded) that name it (PR-3c, D-t). */
+  openRequestLines: { requestId: string; label: string | null }[]
+  /** Item, delete scope only: units reserved on its stock rows (Σ reservedQty). */
+  reserved: number
 }
 
 const ACTIVE_LINK_STATES = ['ISSUED', 'VIEWED', 'ACTED'] as const
 
 const empty = (): OpenReferences => ({
   rigVehicles: [], kitItems: [], pendingTransfers: [], openTasks: [], activeLinks: [],
-  heldLines: [], stock: [], primaryRigs: [], unitsOut: [],
+  heldLines: [], stock: [], primaryRigs: [], unitsOut: [], openRequestLines: [], reserved: 0,
 })
+
+/** Request statuses that are still open — a line on one of these names gear someone expects. */
+const OPEN_REQUEST_STATUSES = ['DRAFT', 'REQUESTED', 'STAGED', 'FORWARDED'] as const
+
+/**
+ * PR-3c (D-t): open requests whose lines name the item — as the specific item asked
+ * for, as a substitute, or through a staged unit. Request lines carry no Prisma
+ * relation to their request, so it is two reads.
+ */
+async function openRequestLinesFor(db: Db, itemId: string): Promise<OpenReferences['openRequestLines']> {
+  const unitIds = (await db.inventoryUnit.findMany({ where: { inventoryItemId: itemId }, select: { id: true } })).map((u) => u.id)
+  const lines = await db.deploymentRequestLine.findMany({
+    where: {
+      OR: [
+        { specificInventoryItemId: itemId },
+        { substitutedItemId: itemId },
+        ...(unitIds.length > 0 ? [{ resolvedUnitId: { in: unitIds } }] : []),
+      ],
+    },
+    select: { requestId: true },
+  })
+  const requestIds = [...new Set(lines.map((l) => l.requestId))]
+  if (requestIds.length === 0) return []
+  const requests = await db.deploymentRequest.findMany({
+    where: { id: { in: requestIds }, status: { in: [...OPEN_REQUEST_STATUSES] } },
+    select: { id: true, label: true },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+  })
+  return requests.map((r) => ({ requestId: r.id, label: r.label }))
+}
 
 /** The PRIMARY operator's name for each rig (the assignment roster is the source). */
 async function primaryNames(db: Db, rigIds: string[]): Promise<Map<string, string | null>> {
@@ -67,7 +101,19 @@ async function primaryNames(db: Db, rigIds: string[]): Promise<Map<string, strin
   return new Map(rows.map((r) => [r.rigId, byId.get(r.operatorId) ?? null]))
 }
 
-export async function openReferences(target: ReferenceTarget, db: Db = prisma): Promise<OpenReferences> {
+/**
+ * `scope: 'delete'` (PR-3c, item only) widens three reads for Delete, which must
+ * leave nothing behind that still points at the item: kit lines open on ANY rig,
+ * ended or not (a TRANSFER disposition leaves a consumable line open on an ended
+ * rig); damage tasks on the item OR on any of its units; and Σ reservedQty across
+ * its stock rows. Retire keeps the narrower reads it has always had.
+ */
+export async function openReferences(
+  target: ReferenceTarget,
+  db: Db = prisma,
+  opts: { scope?: 'delete' } = {},
+): Promise<OpenReferences> {
+  const forDelete = opts.scope === 'delete' && 'itemId' in target
   const refs = empty()
 
   if ('vehicleId' in target) {
@@ -90,19 +136,26 @@ export async function openReferences(target: ReferenceTarget, db: Db = prisma): 
   if ('unitId' in target || 'itemId' in target) {
     const unitWhere = 'unitId' in target ? { inventoryUnitId: target.unitId } : { inventoryItemId: target.itemId }
     const kis = await db.kitItem.findMany({
-      where: { ...LIVE_KIT_ITEM, ...unitWhere },
+      where: forDelete ? { removedAt: null, ...unitWhere } : { ...LIVE_KIT_ITEM, ...unitWhere },
       select: { id: true, quantity: true, kit: { select: { rigId: true } } },
     })
     const names = await primaryNames(db, kis.map((k) => k.kit.rigId))
     refs.kitItems = kis.map((k) => ({ kitItemId: k.id, rigId: k.kit.rigId, operatorName: names.get(k.kit.rigId) ?? null, quantity: k.quantity }))
 
     const xfers = await db.transferRequest.findMany({
-      where: { status: 'PENDING', items: { some: { kitItem: unitWhere } } },
+      where: {
+        status: 'PENDING',
+        items: { some: { kitItem: forDelete ? { id: { in: kis.map((k) => k.id) } } : unitWhere } },
+      },
       select: { id: true, toOperator: { select: { name: true } } },
     })
     refs.pendingTransfers = xfers.map((t) => ({ transferId: t.id, toOperatorName: t.toOperator?.name ?? null }))
 
-    const taskWhere = 'unitId' in target ? { inventoryUnitId: target.unitId } : { itemId: target.itemId }
+    const taskWhere = 'unitId' in target
+      ? { inventoryUnitId: target.unitId }
+      : forDelete
+        ? { OR: [{ itemId: target.itemId }, { unit: { inventoryItemId: target.itemId } }] }
+        : { itemId: target.itemId }
     refs.openTasks = await db.maintenanceTask.findMany({
       where: { ...OPEN_TASK, isDamageReport: true, ...taskWhere },
       select: { id: true, taskName: true },
@@ -132,6 +185,11 @@ export async function openReferences(target: ReferenceTarget, db: Db = prisma): 
         select: { quantity: true, hub: { select: { name: true } }, item: { select: { name: true } } },
       })
       refs.stock = stock.map((s) => ({ itemName: s.item.name, hubName: s.hub.name, quantity: s.quantity }))
+      refs.openRequestLines = await openRequestLinesFor(db, id)
+      if (forDelete) {
+        const sum = await db.inventoryStock.aggregate({ where: { itemId: id }, _sum: { reservedQty: true } })
+        refs.reserved = sum._sum.reservedQty ?? 0
+      }
     }
     return refs
   }
@@ -140,8 +198,9 @@ export async function openReferences(target: ReferenceTarget, db: Db = prisma): 
     const id = target.hubId
     // A stock row only references the hub while it holds something: on-hand
     // quantity or a reservation. Empty rows (0 / 0) are history and don't block.
+    // PR-3c: nor does a deleted item's stock — it is kept for Restore, seen nowhere.
     const stock = await db.inventoryStock.findMany({
-      where: { hubId: id, OR: [{ quantity: { gt: 0 } }, { reservedQty: { gt: 0 } }] },
+      where: { hubId: id, item: { deletedAt: null }, OR: [{ quantity: { gt: 0 } }, { reservedQty: { gt: 0 } }] },
       select: { quantity: true, hub: { select: { name: true } }, item: { select: { name: true } } },
     })
     refs.stock = stock.map((s) => ({ itemName: s.item.name, hubName: s.hub.name, quantity: s.quantity }))
@@ -178,7 +237,12 @@ export class ReferenceConflict extends Error {
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 const deploymentOf = (operatorName: string | null) => (operatorName ? `${operatorName}'s deployment` : 'an active deployment')
 
-export type ReferenceKind = 'vehicle' | 'unit' | 'item' | 'hub' | 'user'
+export type ReferenceKind = 'vehicle' | 'unit' | 'item' | 'item-delete' | 'hub' | 'user'
+
+const namedOnRequests = (lines: OpenReferences['openRequestLines']) =>
+  lines.length === 1 && lines[0].label
+    ? `Named on the open request "${lines[0].label}" — edit or cancel it first.`
+    : `Named on ${plural(lines.length, 'open request', 'open requests')} — edit or cancel ${lines.length === 1 ? 'it' : 'them'} first.`
 
 /**
  * Refuse when anything that blocks this kind of action still references the record.
@@ -188,8 +252,11 @@ export type ReferenceKind = 'vehicle' | 'unit' | 'item' | 'hub' | 'user'
  *   vehicle — on a live deployment, or in a pending transfer
  *   unit    — in a live kit, in a pending transfer, or Returning (active hub link)
  *   item    — any unit out / Returning / in repair (D-a); consumable stock on a
- *             deployment; unclaimed reservation holds. Stock on the shelf does NOT
- *             block — the counts stay as history.
+ *             deployment; unclaimed reservation holds; an open request naming it
+ *             (PR-3c, D-t). Stock on the shelf does NOT block — the counts stay as history.
+ *   item-delete — (refs from `openReferences(…, { scope: 'delete' })`) everything
+ *             `item` refuses, plus open damage repairs on it or its units, kit lines
+ *             left open on ended rigs, and units reserved on its stock rows (PR-3c).
  *   hub     — stock on hand, Returning units on their way to it, reservation holds
  *   user    — PRIMARY on an active deployment (D-f)
  */
@@ -216,6 +283,21 @@ export function assertNoOpenReferences(kind: ReferenceKind, name: string, refs: 
     if (refs.pendingTransfers.length > 0) refuse(`${name} is in a pending transfer — accept, decline or cancel it first.`)
     const held = refs.heldLines.reduce((n, l) => n + l.held, 0)
     if (held > 0) refuse(`${held} of ${name} ${held === 1 ? 'is' : 'are'} held for a reservation — release or fulfil it first.`)
+    if (refs.openRequestLines.length > 0) refuse(namedOnRequests(refs.openRequestLines))
+    return
+  }
+  if (kind === 'item-delete') {
+    if (refs.unitsOut.length > 0) {
+      refuse(`${plural(refs.unitsOut.length, 'unit is', 'units are')} still out or in repair — get them back first.`)
+    }
+    if (refs.openTasks.length > 0) refuse(`${plural(refs.openTasks.length, 'open repair', 'open repairs')} — close ${refs.openTasks.length === 1 ? 'it' : 'them'} first.`)
+    const onRigs = refs.kitItems.reduce((n, k) => n + k.quantity, 0)
+    if (onRigs > 0) refuse(`${onRigs} of ${name} ${onRigs === 1 ? 'is' : 'are'} still on deployments — get them back first.`)
+    if (refs.pendingTransfers.length > 0) refuse(`${name} is in a pending transfer — accept, decline or cancel it first.`)
+    const held = refs.heldLines.reduce((n, l) => n + l.held, 0)
+    if (held > 0) refuse(`${held} of ${name} ${held === 1 ? 'is' : 'are'} held for a reservation — release or fulfil it first.`)
+    if (refs.reserved > 0) refuse(`${refs.reserved} reserved on open requests — release the holds first.`)
+    if (refs.openRequestLines.length > 0) refuse(namedOnRequests(refs.openRequestLines))
     return
   }
   if (kind === 'hub') {

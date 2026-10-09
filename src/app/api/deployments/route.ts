@@ -6,7 +6,8 @@ import { getDeploymentRostersForDisplay, ensureOpenAssignment, addProjectLink, g
 import { drawFromHub, getStockAtHub, totalStock, setStockAtHub, resyncItemTotal } from '@/lib/inventory-stock'
 import { claimHeldStock, releaseAllHeldForRequest } from '@/lib/deployment-requests'
 import { withIdempotency } from '@/lib/idempotency'
-import { pickUnit, pickableFirst } from '@/lib/asset-status'
+import { pickUnit, pickableFirst, refuseDeletedItems } from '@/lib/asset-status'
+import { referenceConflictBody } from '@/lib/asset-references'
 import { PICKABLE_UNIT } from '@/lib/populations'
 import { vehicleNotActiveMessage } from '@/lib/status'
 
@@ -247,6 +248,8 @@ async function _POST(req: NextRequest) {
     const kit = await tx.kit.create({ data: { rigId: newRig.id } })
 
     if (kitItems.length > 0) {
+      // PR-3c: deleted gear is refused by name, not as "only 0 available".
+      await refuseDeletedItems(tx, kitItems.map((ki) => ki.inventoryItemId))
       for (const ki of kitItems) {
         if ('inventoryUnitId' in ki && ki.inventoryUnitId) {
           // PR-3a (D-e / D-n): `pickUnit` takes AVAILABLE or Returning (IN_TRANSIT) units —
@@ -346,6 +349,9 @@ async function _POST(req: NextRequest) {
     return tx.rig.findUniqueOrThrow({ where: { id: newRig.id }, include: RIG_INCLUDE })
   })
   } catch (err: unknown) {
+    // PR-3c: "<name> was deleted from inventory" — terminal (409), never retried.
+    const conflict = referenceConflictBody(err)
+    if (conflict) return NextResponse.json(conflict, { status: 409 })
     if (err instanceof Error && err.message === 'CONSUMABLE_NEEDS_HUB') {
       return NextResponse.json(
         { error: 'A source hub is required when checking out consumable items.' },

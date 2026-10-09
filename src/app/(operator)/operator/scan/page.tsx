@@ -99,6 +99,11 @@ export default function OperatorScanPage() {
         setReturnCondition('GOOD')
         return { status: 'ok' }
       }
+      // PR-3c (D-r): a deleted unit's sticker says what it was and how to get it back.
+      if (unitRes.status === 410) {
+        const json = await unitRes.json().catch(() => ({}))
+        return { status: 'error', message: typeof json.error === 'string' ? json.error : 'This unit was deleted from inventory.' }
+      }
       const vehRes = await fetch(`/api/vehicles/by-qr/${enc}`)
       if (vehRes.ok) {
         const json = await vehRes.json()

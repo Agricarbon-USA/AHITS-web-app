@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
 import { resolveActiveAlert } from '@/lib/alerts' // CC-34 (1c): triage clears the bell
-import { retireUnit } from '@/lib/asset-status'
+import { retireUnit, deletedItemName, restoreFirst } from '@/lib/asset-status'
 import { assertNoOpenReferences, openReferences, referenceConflictBody } from '@/lib/asset-references'
 import { openDamageTask } from '@/lib/maintenance'
 
@@ -31,6 +31,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const { unitId, decision, note, repairType, shopName, shopAddress, dateDelivered, purchaseOrder, invoiceNumber, repairHubId } = parsed.data
 
+  // PR-3c: a deleted item is read-only until it is restored.
+  const deletedName = await deletedItemName(id)
+  if (deletedName) return NextResponse.json({ error: restoreFirst(deletedName) }, { status: 409 })
   const unit = await prisma.inventoryUnit.findUnique({ where: { id: unitId } })
   if (!unit) return NextResponse.json({ error: 'Unit not found' }, { status: 404 })
   if (unit.inventoryItemId !== id) return NextResponse.json({ error: 'Unit does not belong to this item' }, { status: 400 })

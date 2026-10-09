@@ -9,6 +9,7 @@ import {
   Paper, Skeleton, Switch, FormControlLabel, Accordion, AccordionSummary,
   AccordionDetails, Divider,
   FormControl, FormLabel, RadioGroup, Radio, Link, Tabs, Tab,
+  Checkbox, Dialog, DialogTitle, DialogContent, DialogActions, List, ListItem, ListItemText,
 } from '@mui/material'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { DetailDrawer } from '@/components/ui/DetailDrawer'
@@ -27,10 +28,15 @@ import DownloadIcon from '@mui/icons-material/Download'
 import HistoryIcon from '@mui/icons-material/History'
 import ExpandLessIcon from '@mui/icons-material/ExpandLess'
 import SwapHorizIcon from '@mui/icons-material/SwapHoriz'
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
+import RestoreFromTrashIcon from '@mui/icons-material/RestoreFromTrash'
 import QRCode from 'qrcode'
 import { useToast } from '@/components/shared/useToast'
 import { QrScanField } from '@/components/shared/QrScanField'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { useMultiSelect } from '@/components/shared/useMultiSelect'
+import { BulkActionBar } from '@/components/shared/BulkActionBar'
+import { appTimezone } from '@/lib/business-date'
 import { PhotoGallery } from '@/components/shared/PhotoGallery'
 import { RepairReviewDialog } from '@/components/shared/RepairReviewDialog'
 import { EQUIPMENT_STATUS } from '@/lib/status'
@@ -111,6 +117,9 @@ interface InventoryItemRow {
   units: UnitRow[]
   derivedQuantity: number
   availableQuantity: number
+  /** PR-3c: set only in the "Show deleted" view (and a deleted item's drawer). */
+  deletedAt?: string | null
+  deletedBy?: { id: string; name: string } | null
 }
 
 interface CheckLogEntry {
@@ -858,6 +867,54 @@ function StockByHubSection({
   )
 }
 
+// ── PR-3c · Delete (and restore) ─────────────────────────────────
+// D-s, printed in the dialog: Retire is for real gear you are done with — it stays
+// in history and reports. Delete is for mistakes, duplicates and test entries — it
+// leaves every list, count and report, and can be restored.
+
+/** "Deleted 9 Oct · Max" — dated on the business day, so it reads the same for everyone. */
+function deletedLabel(item: { deletedAt?: string | null; deletedBy?: { name: string } | null }): string {
+  if (!item.deletedAt) return 'Deleted'
+  const day = new Date(item.deletedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: appTimezone() })
+  return `Deleted ${day}${item.deletedBy?.name ? ` · ${item.deletedBy.name}` : ''}`
+}
+
+/** `GET /api/inventory/<id>/references` — what the Delete dialog says before confirming. */
+interface DeleteFacts {
+  itemType: string
+  units: Record<string, number>
+  stock: { onHand: number; hubs: number }
+  history: { deployments: number; checkLogs: number; repairs: number; photos: number }
+}
+
+const countOf = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
+
+/** The dialog's detail lines: what goes with the item, what history is kept, and the way back. */
+function deleteDetailLines(f: DeleteFacts): string[] {
+  const lines: string[] = []
+  if (f.itemType === 'SERIALIZED') {
+    const total = Object.values(f.units).reduce((a, b) => a + b, 0)
+    if (total > 0) {
+      const parts = Object.entries(f.units)
+        .filter(([, n]) => n > 0)
+        .map(([status, n]) => `${n} ${(EQUIPMENT_STATUS[status]?.label ?? status).toLowerCase()}`)
+      lines.push(`${countOf(total, 'unit')} (${parts.join(', ')}) go with it; their QR labels stay bound.`)
+    }
+  } else if (f.stock.onHand > 0) {
+    lines.push(`${f.stock.onHand} on hand at ${countOf(f.stock.hubs, 'hub')} go with it.`)
+  }
+  const h = f.history
+  const kept = [
+    h.deployments > 0 && countOf(h.deployments, 'deployment'),
+    h.checkLogs > 0 && countOf(h.checkLogs, 'check-log entry', 'check-log entries'),
+    h.repairs > 0 && countOf(h.repairs, 'repair'),
+    h.photos > 0 && countOf(h.photos, 'photo'),
+  ].filter(Boolean)
+  if (kept.length > 0) lines.push(`History kept, hidden: ${kept.join(' · ')}.`)
+  lines.push('Restorable under Show deleted.')
+  return lines
+}
+
 // ── Detail Drawer ─────────────────────────────────────────────────
 
 async function downloadUnitQR(unit: { qrCodeId: string; serialNumber: string | null }, itemName: string) {
@@ -879,13 +936,15 @@ type DrawerRow = Pick<InventoryItemRow, 'id'> &
   }
 
 function ItemDetailDrawer({
-  row, hubs, onClose, onEdit, onRetire, onUpdated,
+  row, hubs, onClose, onEdit, onRetire, onDelete, onRestore, onUpdated,
 }: {
   row: DrawerRow | null
   hubs: HubOption[]
   onClose: () => void
   onEdit: (item: InventoryItemRow) => void
   onRetire: (item: InventoryItemRow) => void
+  onDelete: (item: InventoryItemRow) => void
+  onRestore: (item: InventoryItemRow) => void
   onUpdated: () => void
 }) {
   const canEdit = useCanEdit()
@@ -1006,6 +1065,9 @@ function ItemDetailDrawer({
   }
 
   const damagePhotos = detail?.photos.filter((p) => p.context === 'DAMAGE') ?? []
+  // PR-3c: a deleted item's drawer is read-only — Restore is its only action.
+  const deleted = !!detail?.deletedAt
+  const editable = canEdit && !deleted
 
   return (
     <DetailDrawer open={!!row} onClose={onClose} width={540}>
@@ -1024,6 +1086,9 @@ function ItemDetailDrawer({
                   variant="outlined" color={detail.itemType === 'SERIALIZED' ? 'primary' : 'default'} sx={{ mt: 0.5 }} />
               </Box>
             </Stack>
+            {deleted && detail && (
+              <Alert severity="info" sx={{ mt: 1 }}>{deletedLabel(detail)} — read-only until it is restored.</Alert>
+            )}
             {/* PR-2 (D-b): owned excludes retired; retired is its own number. */}
             <Typography variant="body2" color="text.secondary" mt={0.5}>
               {detail.itemCounts.retired > 0
@@ -1134,7 +1199,7 @@ function ItemDetailDrawer({
                   )}
                 </Box>
 
-                {detail.itemType === 'CONSUMABLE' && (
+                {detail.itemType === 'CONSUMABLE' && !deleted && (
                   <StockByHubSection itemId={detail.id} hubs={hubs} onUpdated={() => { loadDetail(detail.id); onUpdated() }} />
                 )}
 
@@ -1186,7 +1251,7 @@ function ItemDetailDrawer({
                                 onBlur={() => handleSerialBlur(unit.id)}
                                 sx={{ width: 120 }}
                                 inputProps={{ style: { fontSize: 13 } }}
-                                disabled={!canEdit}
+                                disabled={!editable}
                               />
                             </TableCell>
                             <TableCell>
@@ -1208,7 +1273,7 @@ function ItemDetailDrawer({
                                   }}
                                   sx={{ minWidth: 130 }}
                                   SelectProps={{ style: { fontSize: 13 } }}
-                                  disabled={!canEdit}
+                                  disabled={!editable}
                                 >
                                   {ADMIN_UNIT_STATUSES.map((v) => (
                                     <MenuItem key={v} value={v}>{EQUIPMENT_STATUS[v]?.label ?? v}</MenuItem>
@@ -1228,7 +1293,7 @@ function ItemDetailDrawer({
                                     <DownloadIcon fontSize="small" />
                                   </IconButton>
                                 </Tooltip>
-                                {unit.status === 'INOPERABLE' && (
+                                {unit.status === 'INOPERABLE' && !deleted && (
                                   <>
                                     <MutationIconButton size="small" tooltip="Retire this unit" color="error" onClick={() => setRetireUnitId(unit.id)}>
                                       <ArchiveIcon fontSize="small" />
@@ -1287,7 +1352,7 @@ function ItemDetailDrawer({
                     </TableBody>
                   </Table>
                 </TableContainer>
-                <EditGuard>
+                {!deleted && <EditGuard>
                   <Stack spacing={1.5} sx={{ mt: 1, maxWidth: 420 }}>
                     <Typography variant="caption" color="text.secondary">
                       Add a unit and (optionally) register its existing QR label by scanning
@@ -1320,7 +1385,7 @@ function ItemDetailDrawer({
                       {addingUnit ? 'Adding…' : '+ Add Unit'}
                     </Button>
                   </Stack>
-                </EditGuard>
+                </EditGuard>}
               </>
             )}
 
@@ -1351,6 +1416,18 @@ function ItemDetailDrawer({
           <Divider />
           <Stack direction="row" spacing={1} px={3} py={2} justifyContent="flex-end">
             <Button onClick={onClose}>Close</Button>
+            {deleted ? (
+              <MutationButton variant="contained" startIcon={<RestoreFromTrashIcon />}
+                onClick={() => { onClose(); onRestore(detail) }}>
+                Restore
+              </MutationButton>
+            ) : (<>
+            {/* PR-3c (D-o): Delete — for mistakes, duplicates and test entries — beside
+                Retire, for any item, retired included. Never in the edit form (D38). */}
+            <MutationButton variant="text" color="error" startIcon={<DeleteOutlineIcon />}
+              onClick={() => { onClose(); onDelete(detail) }}>
+              Delete
+            </MutationButton>
             {/* PR-3b (D-a): Retire is offered for any item not already retired — consumables
                 included (the old `available > 0` gate never showed it for them). The server
                 refuses, naming the count, while anything is out or in repair. */}
@@ -1364,6 +1441,7 @@ function ItemDetailDrawer({
               onClick={() => { onClose(); onEdit(detail) }}>
               Edit
             </MutationButton>
+            </>)}
           </Stack>
         </Box>
       )}
@@ -1451,6 +1529,19 @@ function AdminInventoryContent() {
   const [retireItem, setRetireItem] = React.useState<InventoryItemRow | null>(null)
   // The row just created, pinned above the list until the reader moves on.
   const [justAdded, setJustAdded] = React.useState<InventoryItemRow | null>(null)
+  // PR-3c (D-o): "Show deleted" replaces the list with deleted items (admin only;
+  // component state for the same reason as includeRetired).
+  const [showDeleted, setShowDeleted] = React.useState(false)
+  const [deleteTarget, setDeleteTarget] = React.useState<InventoryItemRow | null>(null)
+  const [factsFor, setFactsFor] = React.useState<{ id: string; facts: DeleteFacts } | null>(null)
+  const deleteFacts = deleteTarget && factsFor?.id === deleteTarget.id ? factsFor.facts : null
+  // PR-3c (D-p): bulk delete — select rows on this page, "Delete selected".
+  const selection = useMultiSelect()
+  const [bulkConfirm, setBulkConfirm] = React.useState(false)
+  const [refusals, setRefusals] = React.useState<{ id: string; name: string; error: string }[]>([])
+  const [refusalsOpen, setRefusalsOpen] = React.useState(false)
+  const selectable = canEdit && !showDeleted
+  const cols = selectable ? 8 : 7
 
   // PR-1a (B2/L-4): one paged read with the server's real `total`. The page used
   // to fetch 25 rows, regroup them under category headers and show them with no
@@ -1463,8 +1554,9 @@ function AdminInventoryContent() {
     hubId: hubFilter || undefined,
     operatorId: operatorFilter || undefined,
     projectId: projectFilter || undefined,
-    includeRetired: includeRetired ? '1' : undefined,
-  }), [debouncedSearch, categoryFilter, itemTypeFilter, hubFilter, operatorFilter, projectFilter, includeRetired])
+    includeRetired: includeRetired && !showDeleted ? '1' : undefined,
+    deleted: showDeleted ? '1' : undefined,
+  }), [debouncedSearch, categoryFilter, itemTypeFilter, hubFilter, operatorFilter, projectFilter, includeRetired, showDeleted])
 
   const q = useListQuery<InventoryItemRow>({ endpoint: '/api/inventory', params: listParams })
   const total = q.total
@@ -1488,7 +1580,9 @@ function AdminInventoryContent() {
   // goes — it would otherwise sit at the top of a list it does not belong to.
   const justAddedId = justAdded?.id ?? null
   // Keyed on the list query only — React bails out when it is already null.
-  React.useEffect(() => { setJustAdded(null) }, [listParams, page])
+  // A selection belongs to the page it was made on, so it goes with it (PR-3c).
+  const clearSelection = selection.clear
+  React.useEffect(() => { setJustAdded(null); clearSelection() }, [listParams, page, clearSelection])
 
   // Shown once, under the pin — never twice.
   const rows = React.useMemo(
@@ -1508,6 +1602,76 @@ function AdminInventoryContent() {
     // PR-3b: the 409 names what blocks it ("2 units are still out or in repair — …").
     const d = await res.json().catch(() => ({}))
     showToast({ message: apiErrorMessage(d, 'Failed to retire item'), severity: 'error' })
+  }
+
+  // PR-3c: what the Delete dialog lists, read when it opens.
+  React.useEffect(() => {
+    if (!deleteTarget) return
+    const id = deleteTarget.id
+    let live = true
+    fetch(`/api/inventory/${id}/references`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (live && d?.data) setFactsFor({ id, facts: d.data as DeleteFacts }) })
+      .catch(() => {})
+    return () => { live = false }
+  }, [deleteTarget])
+
+  const restoreItem = async (item: { id: string; name: string }) => {
+    const res = await fetch(`/api/inventory/${item.id}/restore`, { method: 'POST' })
+    const d = await res.json().catch(() => ({}))
+    if (!res.ok) { showToast({ message: apiErrorMessage(d, 'Could not restore the item'), severity: 'error' }); return }
+    load()
+    showToast({ message: `${item.name} restored`, severity: 'success' })
+  }
+
+  const handleDelete = async () => {
+    const item = deleteTarget
+    if (!item) return
+    const res = await fetch(`/api/inventory/${item.id}`, { method: 'DELETE' })
+    setDeleteTarget(null)
+    const d = await res.json().catch(() => ({}))
+    // The 409 names what is in the way ("2 open repairs — close them first.").
+    if (!res.ok) { showToast({ message: apiErrorMessage(d, 'Could not delete the item'), severity: 'error' }); return }
+    if (justAdded?.id === item.id) setJustAdded(null)
+    if (selection.isSelected(item.id)) selection.toggle(item.id)
+    load()
+    showToast({
+      message: `${item.name} deleted`,
+      severity: 'success',
+      action: { label: 'Undo', onClick: () => { void restoreItem(item) } },
+    })
+  }
+
+  const pageIds = rows.map((r) => r.id)
+  const selectedNames = [...(justAdded ? [justAdded] : []), ...rows]
+    .filter((r) => selection.isSelected(r.id))
+    .map((r) => r.name)
+
+  // D-p: one transaction per item on the server, so the answer is per item. Refused
+  // rows stay selected — they are what is left to deal with.
+  const handleBulkDelete = async () => {
+    const ids = [...selection.selected]
+    const res = await fetch('/api/inventory/bulk-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    })
+    setBulkConfirm(false)
+    const d = await res.json().catch(() => ({}))
+    if (!res.ok) { showToast({ message: apiErrorMessage(d, 'Could not delete the selected items'), severity: 'error' }); return }
+    const results = (d.results ?? []) as { id: string; name: string; ok: boolean; error?: string }[]
+    const deletedIds = results.filter((r) => r.ok).map((r) => r.id)
+    const refused = results.filter((r) => !r.ok).map((r) => ({ id: r.id, name: r.name, error: r.error ?? '' }))
+    selection.clear()
+    refused.forEach((r) => selection.toggle(r.id))
+    if (justAdded && deletedIds.includes(justAdded.id)) setJustAdded(null)
+    setRefusals(refused)
+    load()
+    showToast({
+      message: refused.length > 0 ? `${deletedIds.length} deleted · ${refused.length} refused` : `${deletedIds.length} deleted`,
+      severity: refused.length > 0 ? 'warning' : 'success',
+      ...(refused.length > 0 && { action: { label: 'Details', onClick: () => setRefusalsOpen(true) } }),
+    })
   }
 
   // UXP-6 (6c): "<name> added · Open" (the drawer), or — when a serialized item's
@@ -1551,10 +1715,21 @@ function AdminInventoryContent() {
       sx={{ cursor: 'pointer', ...(isNew && { bgcolor: 'action.hover' }) }}
       onClick={() => setDetailRow(item)}
     >
+      {selectable && (
+        <TableCell padding="checkbox" onClick={(e) => e.stopPropagation()}>
+          <Checkbox
+            size="small"
+            checked={selection.isSelected(item.id)}
+            onChange={() => selection.toggle(item.id)}
+            inputProps={{ 'aria-label': `Select ${item.name}` }}
+          />
+        </TableCell>
+      )}
       <TableCell>
         <Stack direction="row" spacing={1} alignItems="center">
           <Typography variant="body2" fontWeight={500}>{item.name}</Typography>
           {isNew && <Chip size="small" color="success" variant="outlined" label="New" />}
+          {item.deletedAt && <Chip size="small" variant="outlined" label={deletedLabel(item)} />}
           {item.itemType === 'SERIALIZED' && (
             <StatusChip label="S" variant="outlined" color="primary" />
           )}
@@ -1587,6 +1762,14 @@ function AdminInventoryContent() {
         <Typography variant="body2">{item.itemCounts.owned}</Typography>
       </TableCell>
       <TableCell align="right" onClick={(e) => e.stopPropagation()}>
+        {item.deletedAt ? (
+          // PR-3c: a deleted row's only action is Restore.
+          <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+            <MutationIconButton size="small" tooltip="Restore" onClick={() => { void restoreItem(item) }}>
+              <RestoreFromTrashIcon fontSize="small" />
+            </MutationIconButton>
+          </Stack>
+        ) : (
         <Stack direction="row" spacing={0.5} justifyContent="flex-end">
           <MutationIconButton size="small" tooltip="Edit" onClick={() => { setFormItem(item); setFormOpen(true) }}>
             <EditIcon fontSize="small" />
@@ -1596,7 +1779,11 @@ function AdminInventoryContent() {
               <ArchiveIcon fontSize="small" />
             </MutationIconButton>
           )}
+          <MutationIconButton size="small" tooltip="Delete" color="error" onClick={() => setDeleteTarget(item)}>
+            <DeleteOutlineIcon fontSize="small" />
+          </MutationIconButton>
         </Stack>
+        )}
       </TableCell>
     </TableRow>
   )
@@ -1699,6 +1886,7 @@ function AdminInventoryContent() {
         {/* D-a (list half): retired items are hidden, not deleted — this is the
             door to them. Retiring is real since PR-3b (units on hand retired, refused
             while any are out); Clear filters turns this back off. */}
+        {!showDeleted && (
         <FormControlLabel
           control={
             <Switch
@@ -1709,10 +1897,25 @@ function AdminInventoryContent() {
           }
           label={<Typography variant="body2">Show retired</Typography>}
         />
-        {(categoryFilter || itemTypeFilter || hubFilter || operatorFilter || projectFilter || search || includeRetired) && (
+        )}
+        {/* PR-3c (D-o): the door to deleted items — the view replaces the list. */}
+        {canEdit && (
+          <FormControlLabel
+            control={
+              <Switch
+                size="small"
+                checked={showDeleted}
+                onChange={(e) => { setShowDeleted(e.target.checked); setPage(0) }}
+              />
+            }
+            label={<Typography variant="body2">Show deleted</Typography>}
+          />
+        )}
+        {(categoryFilter || itemTypeFilter || hubFilter || operatorFilter || projectFilter || search || includeRetired || showDeleted) && (
           <Button size="small" variant="text" onClick={() => {
             setSearch('')
             setIncludeRetired(false)
+            setShowDeleted(false)
             setFilters({ categoryId: '', itemType: '', hubId: '', operatorId: '', projectId: '', page: '' })
           }}>Clear filters</Button>
         )}
@@ -1720,7 +1923,7 @@ function AdminInventoryContent() {
 
       {/* Table */}
       <PagedTable
-        colSpan={7}
+        colSpan={cols}
         total={total}
         page={q.page}
         pageSize={q.pageSize}
@@ -1729,9 +1932,21 @@ function AdminInventoryContent() {
         onPageChange={setPage}
         onPageSizeChange={q.setPageSize}
         itemNoun="items"
-        emptyMessage={`No items found${search ? ` for "${search}"` : ''}.`}
+        emptyMessage={showDeleted ? 'No deleted items.' : `No items found${search ? ` for "${search}"` : ''}.`}
         head={
           <TableRow sx={{ '& th': { fontWeight: 600, fontSize: 12, color: 'text.secondary' } }}>
+            {selectable && (
+              <TableCell padding="checkbox">
+                {/* "Select all" is this page only — the table is grouped by category. */}
+                <Checkbox
+                  size="small"
+                  checked={selection.allSelected(pageIds)}
+                  indeterminate={selection.count > 0 && !selection.allSelected(pageIds)}
+                  onChange={() => selection.toggleAll(pageIds)}
+                  inputProps={{ 'aria-label': `Select all ${pageIds.length} on this page` }}
+                />
+              </TableCell>
+            )}
             <TableCell>Name</TableCell>
             <TableCell>Category</TableCell>
             <TableCell>Hub</TableCell>
@@ -1744,7 +1959,7 @@ function AdminInventoryContent() {
       >
         {justAdded && [
           <TableRow key="__hdr__just-added">
-            <TableCell colSpan={7} sx={{ bgcolor: 'grey.50', py: 0.5, borderBottom: '1px solid', borderColor: 'divider' }}>
+            <TableCell colSpan={cols} sx={{ bgcolor: 'grey.50', py: 0.5, borderBottom: '1px solid', borderColor: 'divider' }}>
               <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1.6 }}>Just added</Typography>
             </TableCell>
           </TableRow>,
@@ -1755,7 +1970,7 @@ function AdminInventoryContent() {
           (item) => (typeof item.category === 'object' ? item.category?.name : (item.category as unknown as string)) ?? 'Uncategorized',
         ).flatMap(({ group, items: gi }) => [
           <TableRow key={`__hdr__${group}`}>
-            <TableCell colSpan={7} sx={{ bgcolor: 'grey.50', py: 0.5, borderBottom: '1px solid', borderColor: 'divider' }}>
+            <TableCell colSpan={cols} sx={{ bgcolor: 'grey.50', py: 0.5, borderBottom: '1px solid', borderColor: 'divider' }}>
               <Typography variant="overline" color="text.secondary" sx={{ lineHeight: 1.6 }}>{group}</Typography>
             </TableCell>
           </TableRow>,
@@ -1782,6 +1997,8 @@ function AdminInventoryContent() {
         onClose={() => setDetailRow(null)}
         onEdit={(item) => { setFormItem(item); setFormOpen(true) }}
         onRetire={(item) => setRetireItem(item)}
+        onDelete={(item) => setDeleteTarget(item)}
+        onRestore={(item) => { void restoreItem(item) }}
         onUpdated={load}
       />
 
@@ -1795,6 +2012,58 @@ function AdminInventoryContent() {
         onClose={() => setRetireItem(null)}
         onConfirm={handleRetire}
       />
+
+      {/* PR-3c: Delete confirm — the rule a user needs (D-s), then what goes with it. */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Delete item?"
+        message={`Delete "${deleteTarget?.name}"? Use this for mistakes, duplicates and test entries. To retire real gear use Retire instead — it stays in history and reports.`}
+        details={deleteFacts && (
+          <Stack spacing={0.5} mt={1.5}>
+            {deleteDetailLines(deleteFacts).map((line) => (
+              <Typography key={line} variant="body2" color="text.secondary">{line}</Typography>
+            ))}
+          </Stack>
+        )}
+        confirmLabel="Delete"
+        confirmColor="error"
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={handleDelete}
+      />
+
+      {/* PR-3c (D-p): bulk delete */}
+      {selectable && (
+        <BulkActionBar
+          count={selection.count}
+          noun="item"
+          onClear={selection.clear}
+          actions={[{ label: 'Delete selected', color: 'error', onClick: () => setBulkConfirm(true) }]}
+        />
+      )}
+      <ConfirmDialog
+        open={bulkConfirm}
+        title="Delete selected?"
+        message={`Delete ${countOf(selection.count, 'item')}? ${selectedNames.slice(0, 5).join(', ')}${selectedNames.length > 5 ? ` … and ${selectedNames.length - 5} more` : ''}. Use this for mistakes, duplicates and test entries. Anything still in use is refused and stays.`}
+        confirmLabel="Delete"
+        confirmColor="error"
+        onClose={() => setBulkConfirm(false)}
+        onConfirm={handleBulkDelete}
+      />
+      <Dialog open={refusalsOpen} onClose={() => setRefusalsOpen(false)} maxWidth="xs" fullWidth aria-labelledby="refusals-title">
+        <DialogTitle id="refusals-title">Not deleted</DialogTitle>
+        <DialogContent>
+          <List dense>
+            {refusals.map((r) => (
+              <ListItem key={r.id} disableGutters>
+                <ListItemText primary={r.name} secondary={r.error} />
+              </ListItem>
+            ))}
+          </List>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setRefusalsOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }

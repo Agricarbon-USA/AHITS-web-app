@@ -129,6 +129,7 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Rationale:** DNS is the one item with lead time Max doesn't fully control; binding the flip to a calendar date risked either a rushed unaudited flip or a blocked launch. Decoupling removes email from the critical path without weakening the audit-before-flip safety rule.
 - **Rollback:** flip `EMAIL_SANDBOX` back on — but sent email doesn't unsend, so **audit before every flip.**
 - **Detail:** `AHITS_LAUNCH_HANDOFF_2026-07-27.md` §1 (Wed/Thu/Mon) · charter §4.
+- **Owner note (2026-10-09):** staging email (Resend testing mode, unverified domain, `EMAIL_SANDBOX` never set) is **deliberately deferred by the owner** — copy-link invites stay the onboarding path.
 
 ### D16 · STAGING IS HOME — de-facto-production posture; every "staging is disposable" assumption is now wrong by decision
 - **Date:** 2026-07-28 · **Owner:** Max · **Status:** ACTIVE
@@ -318,6 +319,14 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Decision (D-j):** every "emailed" toast, badge and log row says **where the message actually went**: `SENT` (to the recipient), `REDIRECTED` (the sandbox inbox — the recipient did not get it), `SKIPPED` (nothing sent: sandbox with no inbox, or no address), `FAILED`. The email log records the real status and `deliveredTo`. When nothing reached the recipient, the UI offers the link to copy.
 - **Revisit triggers:** a new alert type (decide event-owned vs evaluator-owned and add it to the registry / the self-clearing list) · a resend path for HUB_RETURN or OTHER email kinds (then EMAIL_FAILED could become evaluator-owned).
 - **Rationale:** RC-5 — signals were raised by one path and assumed cleared by another that filtered the entity away or did not exist (ghost alerts for retired vehicles and ended rigs, PIN_LOCKED outliving the lock, bell rows never read), and with the sandbox on every "emailed" message was false while the log recorded the real recipient as SENT.
+
+### D46 · Delete vs Retire — Delete is a reversible soft delete for mistakes; QR labels stay bound
+- **Date:** decided 2026-10-09 (PR-3c addendum §0 **D-s** + **D-o** + **D-u**), recorded 2026-10-09 · **Owner:** Max · **Status:** ACTIVE on merge of **PR-3c #256** — *open, not merged when written; stamp the merge date/squash here at merge* · **Read-with:** D33, D-a (Retire), `src/lib/asset-status.ts` (`deleteItem`/`restoreItem`), `src/lib/asset-references.ts` (`item-delete`)
+- **Decision (D-s, the rule printed in the dialog):** *Retire is for real gear you are done with — it stays in history and reports. Delete is for mistakes, duplicates and test entries — it leaves every list, count and report, and can be restored.*
+- **Decision (D-o):** Delete is allowed even when the item has history. It is a **reversible soft delete**: the item, its units and its non-damage schedules carry one `deletedAt` stamp and are hidden from every list, count, picker and report; history rows stay; "Show deleted → Restore" (or the toast's Undo) brings back exactly the rows with that stamp. Nothing is ever hard-deleted (D33). It is refused, naming what is in the way, while anything still points at the item (units out or in repair, open repairs, kit lines open on any rig, pending transfers, holds, reserved stock, open requests).
+- **Decision (D-u):** **QR labels stay bound on delete** (unlike Retire's `::retired::` release), so Restore is exact and Undo lossless; registering a label that belongs to a deleted unit names the deleted item.
+- **Revisit triggers:** a real need to free a deleted unit's label without restoring it · a purge requirement (would supersede D33 for items) · vehicles get the same Show deleted / Restore (parked as a PR-5 point item).
+- **Rationale:** the owner asked for a way to remove an item "entirely — sensible, smooth, simple"; the API had a soft delete since CR-8 that no screen exposed. Two agents designed and adversarially reviewed the spec against the code before the owner answered the open questions.
 
 ---
 

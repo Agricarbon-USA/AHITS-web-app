@@ -62,8 +62,9 @@ describe('PR-2 · the inventory page reads itemCounts', () => {
     await renderPage()
     const row = screen.getByText('Manual Corer').closest('tr')!
     const cells = within(row).getAllByRole('cell').map((c) => c.textContent)
-    // Available, Out, Total are the three cells after name / category / hub.
-    expect(cells.slice(3, 6)).toEqual(['11', '0', '14'])
+    // Available, Out, Total are the three cells after the select checkbox (PR-3c) and
+    // name / category / hub.
+    expect(cells.slice(4, 7)).toEqual(['11', '0', '14'])
   })
 
   it('drawer: "14 owned · 1 retired", a Returning chip, and the Units tab names the retired', async () => {
