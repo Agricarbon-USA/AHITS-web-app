@@ -27,7 +27,8 @@ function mockFetch() {
   return vi.fn((input: RequestInfo | URL) => {
     const url = String(input)
     if (url.startsWith('/api/deployments')) {
-      return jsonRes([{ id: 'rig1', vehicles: [{ id: 'rv1', vehicle: { id: 'v1', name: 'Truck 1', type: 'TRUCK' } }] }])
+      // PR-5 (L-8): the page reads its rig from /api/deployments/mine ({ data: rig | null }).
+      return jsonRes({ data: { id: 'rig1', vehicles: [{ id: 'rv1', vehicle: { id: 'v1', name: 'Truck 1', type: 'TRUCK' } }] } })
     }
     if (url.startsWith('/api/checklist-templates')) return jsonRes({}) // no template → keep default all-"yes" list (pass)
     if (url.startsWith('/api/vehicles/')) return jsonRes({ data: { id: 'v1', name: 'Truck 1', type: 'TRUCK', odometer: 1000 } })

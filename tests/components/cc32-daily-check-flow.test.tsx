@@ -49,7 +49,8 @@ let templateFetchCount = 0
 function mockFetch({ deferTemplate = false, lastCheckSite = null }: FetchOpts = {}) {
   return vi.fn((input: RequestInfo | URL) => {
     const url = String(input)
-    if (url.startsWith('/api/deployments')) return jsonRes(RIG)
+    // PR-5 (L-8): the page reads its rig from /api/deployments/mine ({ data: rig | null }).
+    if (url.startsWith('/api/deployments')) return jsonRes({ data: RIG[0] })
     if (url.startsWith('/api/checklist-templates')) {
       templateFetchCount += 1
       const payload = { items: TEMPLATE_ITEMS }
@@ -229,10 +230,10 @@ describe('CC-32 (2.2) the site is pre-filled from the last check on this vehicle
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
       const url = String(input)
       if (url.startsWith('/api/deployments')) {
-        return jsonRes([{ id: 'rig1', vehicles: [
+        return jsonRes({ data: { id: 'rig1', vehicles: [
           { id: 'rv1', vehicle: { id: 'v1', name: 'Truck 1', type: 'TRUCK' } },
           { id: 'rv2', vehicle: { id: 'v2', name: 'Truck 2', type: 'TRUCK' } },
-        ] }])
+        ] } })
       }
       if (url.startsWith('/api/checklist-templates')) return jsonRes({ items: TEMPLATE_ITEMS })
       if (url.startsWith('/api/vehicles/v2')) return jsonRes({ data: { id: 'v2', lastCheckSite: 'South Pivot' } })

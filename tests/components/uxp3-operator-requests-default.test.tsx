@@ -42,7 +42,8 @@ const jsonRes = (body: unknown) => Promise.resolve({ ok: true, json: async () =>
 function mockFetch(activeRigs: unknown = []) {
   return vi.fn((input: RequestInfo | URL) => {
     const url = String(input)
-    if (url.startsWith('/api/deployments?active=true')) return jsonRes(activeRigs)
+    // PR-5 (L-8): the probe reads /api/deployments/mine ({ data: rig | null }).
+    if (url.startsWith('/api/deployments/mine')) return jsonRes({ data: Array.isArray(activeRigs) ? (activeRigs[0] ?? null) : null })
     if (url.startsWith('/api/hubs')) return jsonRes({ data: [{ id: 'h1', name: 'Toledo Hub', city: 'Toledo', state: 'OH' }] })
     if (url.startsWith('/api/categories')) return jsonRes([])
     return jsonRes({ data: [] })
@@ -104,7 +105,7 @@ describe('UXP-3 (3f): the composer opens in the common case', () => {
     vi.stubGlobal('fetch', mockFetch(ACTIVE_RIG))
     render(<RequestsPage />)
     // The probe settles on mount, before the tap.
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/deployments?active=true'))
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/deployments/mine'))
     await openComposer()
     expect(screen.getByRole('button', { name: 'Request materials' })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByLabelText('Notes (optional)')).toBeInTheDocument()
@@ -112,7 +113,7 @@ describe('UXP-3 (3f): the composer opens in the common case', () => {
 
   it('opens in RESERVATION when there is no active rig', async () => {
     render(<RequestsPage />)
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/deployments?active=true'))
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/deployments/mine'))
     await openComposer()
     expect(screen.getByRole('button', { name: 'Reserve a rig' })).toHaveAttribute('aria-pressed', 'true')
   })
@@ -120,7 +121,7 @@ describe('UXP-3 (3f): the composer opens in the common case', () => {
   it('falls back to RESERVATION when the probe fails (offline)', async () => {
     const base = mockFetch()
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) =>
-      String(input).startsWith('/api/deployments?active=true') ? Promise.reject(new Error('offline')) : base(input)))
+      String(input).startsWith('/api/deployments') ? Promise.reject(new Error('offline')) : base(input)))
     render(<RequestsPage />)
     await openComposer()
     expect(screen.getByRole('button', { name: 'Reserve a rig' })).toHaveAttribute('aria-pressed', 'true')
@@ -130,7 +131,7 @@ describe('UXP-3 (3f): the composer opens in the common case', () => {
     window.localStorage.setItem('ahits_request_mode', 'RESERVATION')
     vi.stubGlobal('fetch', mockFetch(ACTIVE_RIG))
     render(<RequestsPage />)
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/deployments?active=true'))
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/deployments/mine'))
     await openComposer()
     expect(screen.getByRole('button', { name: 'Reserve a rig' })).toHaveAttribute('aria-pressed', 'true')
   })
