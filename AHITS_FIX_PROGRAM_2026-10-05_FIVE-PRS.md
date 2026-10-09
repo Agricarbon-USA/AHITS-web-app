@@ -181,3 +181,24 @@ PR-2: Manual Corer row 11 · 0 · 14. A unit awaiting hub confirmation shows "Re
 PR-3: Report damage, remove the vehicle → still In Maintenance. Scan → Log fixed issue → Active immediately, repair closed. Retire an item → gone, units Retired; one unit out → refused with the count. Deactivate someone on a deployment → refused, deployment named.
 PR-4: End a rig → its missed-check alert clears overnight. Resolve a repair → bell item read. Shop work order toast says where the email actually went.
 PR-5: Do an action offline, go online → the screen updates by itself. Failed hub receive is red, not green.
+
+## PR-5c · Today shows the crew rig
+
+**Owner decision, final (2026-10-09):** crews often run two or more operators per rig, so every operator on a rig sees it on Today, not just the PRIMARY. This closes L-8 fully. PR-5a closed it for a PRIMARY and left a SECONDARY-only operator's Today deferred.
+
+1. **One resolver.** Today resolves the rig through `/api/deployments/mine` and `getActiveRigForOperator`, exactly as My Deployment, Scan and Daily check do. One resolver, no second path.
+2. **Shared due checks.** The due-check list is per rig per business day, and shared by everyone on the rig.
+   - A SECONDARY sees the same due checks.
+   - Once any crew member completes one, it shows as done for all, with who did it and when.
+   - Server side, a second check for the same rig and vehicle on the same business day is refused with 409 "Already checked today by <name> at <time>". This is done in code: no migration, no new unique constraint.
+3. **Today card actions.** Offer only what the server already lets a SECONDARY do. Anything that is primary-only server-side is hidden for a secondary with a one-line reason, never shown as a button that fails. **Do not change any server permission in this PR.**
+4. **Tests:**
+   - `getActiveRigForOperator` returns the rig for a SECONDARY.
+   - Today renders the rig and its checks for a secondary.
+   - The done state is shared.
+   - A duplicate check is refused by name.
+5. **Register and STATUS.** Close L-8 fully in the register. Note in STATUS whether the data model lets one operator be on two active rigs at once. That is a parked question; change nothing.
+
+Named files only. D21 holds. Run `npm run test:ui` locally. Session close as usual. Open the PR when CI is green and do not merge it (the owner merges).
+
+Owner smoke after merge: put two operators on one test rig. Each sees the rig on Today, with the same due checks. One completes a check, and the other's Today shows it done with that name and time. The other then tries the same vehicle's check and is refused by name.
