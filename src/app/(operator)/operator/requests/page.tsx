@@ -32,6 +32,7 @@ import {
   type VehicleOption,
 } from '@/components/shared/RequestComposer'
 import { fetchPickerOptions } from '@/lib/inventory-options'
+import { fetchMyRig } from '@/lib/my-rig'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -134,10 +135,8 @@ export default function RequestsPage() {
   const [hasActiveRig, setHasActiveRig] = React.useState<boolean | null>(null)
   React.useEffect(() => {
     let cancelled = false
-    fetch('/api/deployments?active=true')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (!cancelled && d !== null) setHasActiveRig(Array.isArray(d) && d.length > 0) })
-      .catch(() => {})
+    // PR-5 (L-8): the one "my active rig" read.
+    void fetchMyRig().then(({ ok, rig }) => { if (!cancelled && ok) setHasActiveRig(rig !== null) })
     return () => { cancelled = true }
   }, [])
 
@@ -174,6 +173,7 @@ export default function RequestsPage() {
       method: 'PATCH',
       body: { action: 'cancel' },
       label: 'Cancel request',
+      invalidates: ['requests', 'today'],
     })
     setCancellingId(null)
     if (result.ok && result.queued) {
@@ -339,6 +339,7 @@ export default function RequestsPage() {
               method: 'POST',
               body,
               label: body.requestType === 'RESERVATION' ? 'Reserve rig' : 'Material request',
+              invalidates: ['requests', 'today'],
             })
             if (r.ok && r.queued) {
               showToast({ message: 'Request queued — will sync when online.', severity: 'info' })

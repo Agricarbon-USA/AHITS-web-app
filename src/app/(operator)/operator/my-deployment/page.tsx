@@ -30,6 +30,8 @@ import {
 import { RentalVehicleForm, RentalVehicleFields, rentalFieldsToVehiclePayload, isRentalFormValid } from '@/components/shared/RentalVehicleForm'
 import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
+import { useInvalidation } from '@/hooks/useInvalidation' // PR-5 (U-9): re-read after a queued action applies
+import { fetchMyRig } from '@/lib/my-rig' // PR-5 (L-8): the one "my active rig" read
 import { useHistoryGuard } from '@/hooks/useHistoryGuard' // UXP-1e: Back closes the respond dialogs
 import { notifyIncomingPendingChanged } from '@/hooks/useIncomingPendingCount' // UXP-3 (F-06): badges recount now
 import { useAuth } from '@/hooks/useAuth'
@@ -233,10 +235,9 @@ export default function MyRigPage() {
   }, [])
 
   const load = React.useCallback(async () => {
-    const res = await fetch('/api/deployments?active=true')
+    const res = await fetchMyRig<Rig>()
     if (res.ok) {
-      const data: Rig[] = await res.json()
-      const activeRig = data[0] ?? null
+      const activeRig = res.rig
       setRig(activeRig)
       // CC-34 (3d): pull open maintenance tasks for the rig so kit/vehicle rows can show
       // "In repair" read-only. Best-effort — a failure just leaves no captions.
@@ -263,15 +264,18 @@ export default function MyRigPage() {
     }
     prevPendingDeployRef.current = pendingDeployCreate
   }, [pendingDeployCreate, load])
+  useInvalidation(['deployments', 'transfers'], () => { void load() }) // PR-5 (U-9): End/Add/Remove applied from the queue
 
+  // PR-1b (L-2): the complete pickable set; PR-5 (L-10): re-read on Add items and after a 409, as admin's refetchPickers.
+  const refetchPickers = React.useCallback(() => fetchPickerOptions().then((pk) => setInventoryItems(pk.options as unknown as InventoryOption[])), [])
   React.useEffect(() => {
     load()
     fetch('/api/vehicles').then((r) => r.json()).then((d) => setVehicles(d.data ?? d ?? [])).catch(() => {})
-    fetchPickerOptions().then((pk) => setInventoryItems(pk.options as unknown as InventoryOption[])) // PR-1b (L-2): complete pickable set, not the first 100
+    void refetchPickers()
     // Operator-readable roster (/api/users is admin-only → 403, which emptied the transfer picker).
     fetch('/api/operators').then((r) => r.json()).then((d) => setOperators(d.data ?? [])).catch(() => {})
     fetch('/api/hubs').then((r) => r.json()).then((d) => setHubs(Array.isArray(d) ? d : (d?.data ?? []))).catch(() => {})
-  }, [load])
+  }, [load, refetchPickers])
 
   // CC-09: when navigated from an AwaitingPickupCard (/operator/my-deployment?fromRequestId=xxx),
   // fetch the pickup data and auto-open the dialog pre-seeded. window.location.search is used
@@ -447,10 +451,11 @@ export default function MyRigPage() {
   const onRemoveVehiclesSelected = React.useCallback(() => setNoteDialog('removeVehicles'), [])
   const onAddItems = React.useCallback(() => {
     setAddItemOpen(true)
+    void refetchPickers()
     if (!addItemSourceHubId) {
       setAddItemSourceHubId((user?.homeHubId && hubs.some((h) => h.id === user.homeHubId) ? user.homeHubId : hubs[0]?.id) ?? '')
     }
-  }, [addItemSourceHubId, user, hubs])
+  }, [addItemSourceHubId, user, hubs, refetchPickers])
   const onRemoveItemsSelected = React.useCallback(() => setNoteDialog('removeItems'), [])
 
   const handleLogUsage = async () => {
@@ -465,7 +470,7 @@ export default function MyRigPage() {
         consumed: true, // used in the field, not returned — do not restore stock
         notes: `Daily usage log — ${logUsageQty} used`,
       },
-      label: 'Log usage',
+      label: 'Log usage', invalidates: ['deployments', 'inventory'],
     })
     if (result.ok && result.queued) {
       showToast({ message: 'Usage queued — will sync when online.', severity: 'info' })
@@ -518,7 +523,7 @@ export default function MyRigPage() {
           endpoint: `/api/deployments/${rig.id}/vehicles`,
           method: 'POST',
           body: { vehicleIds: Array.from(pendingVehicles), note, photoUrls },
-          label: 'Add vehicles',
+          label: 'Add vehicles', invalidates: ['deployments', 'vehicles'],
         })
         setPendingVehicles(new Set())
         setAddVehicleOpen(false)
@@ -534,7 +539,7 @@ export default function MyRigPage() {
             })),
             note,
           },
-          label: 'Remove vehicles',
+          label: 'Remove vehicles', invalidates: ['deployments', 'vehicles'],
         })
         setSelVehicles(new Set())
         setRemovingVehicles(false)
@@ -553,7 +558,7 @@ export default function MyRigPage() {
             photoUrls,
             ...(addItemSourceHubId && { sourceHubId: addItemSourceHubId }),
           },
-          label: 'Add items',
+          label: 'Add items', invalidates: ['deployments', 'inventory'],
         })
         // Online conflict: a unit was taken between selection and submit — reselect.
         if (!result.ok && result.status === 409) {
@@ -564,7 +569,7 @@ export default function MyRigPage() {
             }
           })
           setPendingItems(m)
-          await load()
+          await Promise.all([load(), refetchPickers()])
           setActionLoading(false)
           setNoteDialog(null)
           setAddItemOpen(true)
@@ -576,12 +581,7 @@ export default function MyRigPage() {
         break
       }
       case 'end':
-        result = await mutate({
-          endpoint: `/api/deployments/${rig.id}/end`,
-          method: 'POST',
-          body: { note },
-          label: 'End deployment',
-        })
+        result = await mutate({ endpoint: `/api/deployments/${rig.id}/end`, method: 'POST', body: { note }, label: 'End deployment', invalidates: ['deployments', 'vehicles', 'inventory', 'today'] })
         break
     }
     setActionLoading(false)

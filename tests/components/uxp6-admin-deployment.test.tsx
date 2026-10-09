@@ -1,3 +1,5 @@
+// PR-5: the page's useMutation mounts the real offline queue, which opens IndexedDB.
+import 'fake-indexeddb/auto'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ToastProvider } from '@/components/shared/useToast'

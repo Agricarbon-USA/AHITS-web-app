@@ -48,7 +48,8 @@ let releaseChecks: (() => void) | null = null
 function mockFetch({ checked = [], checksReject = false, deferChecks = false }: FetchOpts = {}) {
   return vi.fn((input: RequestInfo | URL) => {
     const url = String(input)
-    if (url.startsWith('/api/deployments')) return jsonRes([{ id: 'rig1', vehicles: VEHICLES }])
+    // PR-5 (L-8): the page reads its rig from /api/deployments/mine ({ data: rig | null }).
+    if (url.startsWith('/api/deployments')) return jsonRes({ data: { id: 'rig1', vehicles: VEHICLES } })
     if (url.startsWith('/api/daily-check?')) {
       if (checksReject) return Promise.reject(new Error('offline'))
       const body = { data: checked.map((vehicleId) => ({ id: `c-${vehicleId}`, vehicleId })), total: checked.length, page: 1, pageSize: 100 }

@@ -10,37 +10,10 @@ import { pickUnit, pickableFirst, refuseDeletedItems } from '@/lib/asset-status'
 import { referenceConflictBody } from '@/lib/asset-references'
 import { PICKABLE_UNIT } from '@/lib/populations'
 import { vehicleNotActiveMessage } from '@/lib/status'
+import { RIG_LIST_INCLUDE, serializeRigsForList } from '@/lib/rig-list'
 
 const RIG_INCLUDE = {
   project: { select: { id: true, name: true } },
-  vehicles: {
-    where: { removedAt: null },
-    include: { vehicle: { select: { id: true, name: true, type: true, status: true, isRental: true, rentalAgreementUrl: true } } },
-  },
-  kits: {
-    include: {
-      items: {
-        where: { removedAt: null },
-        include: {
-          item: {
-            select: {
-              id: true,
-              name: true,
-              itemType: true,
-              categoryRef: { select: { name: true } },
-            },
-          },
-          inventoryUnit: {
-            select: { id: true, qrCodeId: true, serialNumber: true, status: true },
-          },
-        },
-      },
-    },
-  },
-} as const
-
-// Trimmed include for GET list — operator/project/secondaryOperators sourced from roster helpers
-const RIG_LIST_INCLUDE = {
   vehicles: {
     where: { removedAt: null },
     include: { vehicle: { select: { id: true, name: true, type: true, status: true, isRental: true, rentalAgreementUrl: true } } },
@@ -137,28 +110,7 @@ export async function GET(req: NextRequest) {
     include: RIG_LIST_INCLUDE,
     orderBy: { startedAt: 'desc' },
   })
-
-  // UR-032: display roster so ENDED deployments (active=false / history) keep
-  // their operator attribution instead of serializing operator: null. Identical
-  // to the open roster for active deployments.
-  const rosters = await getDeploymentRostersForDisplay(rigs.map((r) => r.id))
-
-  // W0-10 PR-4: the display roster is the sole source of operator attribution. It returns
-  // the FINAL roster for ended deployments too (max_ended CTE), so historical attribution
-  // still shows. A rig with no PRIMARY assignment (should be impossible under PR-2 index B +
-  // the §6 Q1/Q2 drop gate) serializes operator:null rather than crashing.
-  const out = rigs.map((r) => {
-    const ro = rosters.get(r.id) ?? { operator: null, operatorId: null, secondaryOperators: [], projects: [] }
-    const operator = ro.operator ? { id: ro.operator.id, name: ro.operator.name } : { id: 'unknown', name: 'Unknown operator' }
-    return {
-      ...r,
-      operatorId: ro.operatorId ?? null,
-      operator,
-      project: ro.projects[0] ?? null,
-      secondaryOperators: ro.secondaryOperators,
-    }
-  })
-  return NextResponse.json(out)
+  return NextResponse.json(await serializeRigsForList(rigs))
 }
 
 // UR-010 (C1): wrap create in withIdempotency so a replayed offline checkout

@@ -2,6 +2,8 @@
 
 import * as React from 'react'
 import { usePathname, useRouter } from 'next/navigation'
+import { keysForEndpoint, type EntityKey } from '@/lib/invalidation'
+import { useInvalidation } from '@/hooks/useInvalidation'
 
 /**
  * PR-1a (RC-2 / D-h): the one list-read hook. A page that uses it cannot
@@ -53,6 +55,11 @@ export interface ListQueryOptions {
   enabled?: boolean
   /** Message surfaced on a failed read. */
   errorMessage?: string
+  /**
+   * PR-5: entity keys whose invalidation re-reads this list (bypassing the SW
+   * cache). Default: the keys the endpoint shows (`keysForEndpoint`).
+   */
+  invalidatedBy?: EntityKey[]
 }
 
 export interface ListQueryResult<T> {
@@ -88,6 +95,7 @@ export function useListQuery<T = unknown>(opts: ListQueryOptions): ListQueryResu
     pageParam = 'page',
     enabled = true,
     errorMessage = 'Could not load the list.',
+    invalidatedBy,
   } = opts
 
   const router = useRouter()
@@ -210,6 +218,10 @@ export function useListQuery<T = unknown>(opts: ListQueryOptions): ListQueryResu
     (o?: { bypassCache?: boolean }) => fetchList(o?.bypassCache === true),
     [fetchList],
   )
+
+  // PR-5: a mutation anywhere on screen (or a queued one applied on drain) that
+  // changes what this list shows re-reads it, past the service worker's cache.
+  useInvalidation(invalidatedBy ?? keysForEndpoint(endpoint), () => { void fetchList(true) })
 
   return {
     rows, total, truncated, loading, error,

@@ -13,6 +13,7 @@ import SendIcon from '@mui/icons-material/Send'
 import AddIcon from '@mui/icons-material/Add'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { useToast } from '@/components/shared/useToast'
+import { useInvalidation } from '@/hooks/useInvalidation'
 import { useUrlFilters } from '@/hooks/useUrlFilters'
 import { MutationButton } from '@/components/shared/ReadOnly'
 import { FulfillmentChecklist, type ChecklistLine, type LineActionData } from '@/components/shared/FulfillmentChecklist'
@@ -575,6 +576,8 @@ function AdminRequestsContent() {
       showToast({ message: 'Failed to load requests.', severity: 'error' })
     }
   }, [showToast])
+
+  useInvalidation(['requests'], () => { void load() }) // PR-5
 
   React.useEffect(() => {
     void load()

@@ -15,6 +15,7 @@ import { fetchPickerOptions } from '@/lib/inventory-options'
 import BuildIcon from '@mui/icons-material/Build'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import { useToast } from '@/components/shared/useToast'
+import { useInvalidation } from '@/hooks/useInvalidation'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { RepairReviewDialog } from '@/components/shared/RepairReviewDialog'
 import { PhotoGallery } from '@/components/shared/PhotoGallery'
@@ -258,6 +259,9 @@ export default function AdminMaintenancePage() {
       /* non-fatal — the column simply shows no link state */
     }
   }, [])
+
+  // PR-5: the task list re-reads through useListQuery; the side panels re-read here.
+  useInvalidation(['maintenance', 'inventory'], () => { void loadInoperable(); void loadLinks() })
 
   React.useEffect(() => {
     // No `load()` here — useListQuery owns the task read and fetches on mount.

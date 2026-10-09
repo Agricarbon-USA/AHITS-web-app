@@ -8,6 +8,7 @@ import {
 } from '@mui/material'
 import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
+import { fetchMyRig } from '@/lib/my-rig'
 import { useHistoryGuard } from '@/hooks/useHistoryGuard'
 import { businessDate } from '@/lib/business-date'
 import { DEFAULT_DAILY_CHECKLIST } from '@/types'
@@ -303,13 +304,11 @@ export default function OperatorDailyCheckPage() {
     // UXP-3 (3j): the rig renders as soon as it lands (as before); the PRESELECT is
     // decided once, when both the rig and today's checks have settled. Either failing
     // keeps its old default (no rig / empty set).
-    const rigPromise = fetch('/api/deployments')
-      .then((r) => r.json())
-      .then((json): ActiveRig | null => {
-        const active: ActiveRig | null = json?.[0] ?? null
-        setRig(active)
-        return active
-      })
+    // PR-5 (L-8): the one "my active rig" read (was this page's own `[0]` pick).
+    const rigPromise = fetchMyRig<ActiveRig>().then(({ rig: active }): ActiveRig | null => {
+      setRig(active)
+      return active
+    })
     Promise.allSettled([rigPromise, fetchCheckedToday(today)]).then(([rigResult, checkedResult]) => {
       const checked = checkedResult.status === 'fulfilled' ? checkedResult.value : new Set<string>()
       setCheckedToday(checked)
@@ -546,6 +545,7 @@ export default function OperatorDailyCheckPage() {
       method: 'POST',
       body: buildPayload(coords, durationMs),
       label: 'Daily check',
+      invalidates: ['today'],
     })
     setSubmitting(false)
     if (result.ok) {

@@ -37,6 +37,8 @@ import { SearchableSelect } from '@/components/shared/SearchableSelect'
 import { useCanEdit, EditGuard, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 import { ConditionSelect } from '@/components/shared/ConditionSelect'
 import { useToast } from '@/components/shared/useToast'
+import { useMutation } from '@/hooks/useMutation'
+import { useInvalidation } from '@/hooks/useInvalidation'
 import { apiErrorMessage } from '@/lib/api-error-shape'
 import { fetchPickerOptions } from '@/lib/inventory-options'
 import { useUrlFilters } from '@/hooks/useUrlFilters'
@@ -252,6 +254,9 @@ function DeploymentDrawer({
   }, [])
 
   React.useEffect(() => { loadTransfers() }, [loadTransfers])
+  // PR-5 (U-10): a transfer created/cancelled/answered anywhere re-reads this list.
+  useInvalidation(['transfers'], () => { void loadTransfers() })
+  const { run } = useMutation()
 
   const outgoingTransfers = pendingTransfers.filter((t) => t.fromRig.id === rig.id)
   const kitItems = rig.kits.flatMap((k) => k.items)
@@ -376,21 +381,14 @@ function DeploymentDrawer({
   const handleCancelTransfer = async () => {
     if (!cancelTransferId) return
     setCancelLoading(true)
-    try {
-      const res = await fetch(`/api/transfers/${cancelTransferId}`, { method: 'DELETE' })
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}))
-        showToast(typeof d.error === 'string' ? d.error : 'Could not cancel the transfer.', 'error')
-        return
-      }
-      showToast('Transfer cancelled.')
-      setCancelTransferId(null)
-      await loadTransfers()
-    } catch {
-      showToast('Network error. Please try again.', 'error')
-    } finally {
-      setCancelLoading(false)
-    }
+    // PR-5 (U-10): the page's pending-transfer list re-reads too (was the drawer's only).
+    const result = await run({
+      endpoint: `/api/transfers/${cancelTransferId}`, method: 'DELETE', label: 'Cancel transfer',
+      invalidates: ['transfers', 'deployments'],
+      success: 'Transfer cancelled.', errorFallback: 'Could not cancel the transfer.',
+    })
+    setCancelLoading(false)
+    if (result.ok) setCancelTransferId(null)
   }
 
   const handleAddVehicles = async (note: string, photoUrls: string[]) => {
@@ -1263,6 +1261,10 @@ function AdminDeploymentsContent() {
 
   React.useEffect(() => { load() }, [load])
   React.useEffect(() => { loadTransfers() }, [loadTransfers])
+  // PR-5 (U-10): a drawer transfer create/cancel (or any deployment write) re-reads these.
+  useInvalidation(['deployments'], () => { void load() })
+  useInvalidation(['transfers'], () => { void loadTransfers() })
+  const { run } = useMutation()
 
   // CC-26: a missed-check alert deep-links to /admin/deployments?operator=<operatorId>
   // (a MISSED alert has no vehicle/check record). Once the rig list has loaded, open that
@@ -1340,25 +1342,18 @@ function AdminDeploymentsContent() {
     if (!respondDialog) return
     setRespondLoading(true)
     const { transfer, action } = respondDialog
-    try {
-      const res = await fetch(`/api/transfers/${transfer.id}/${action}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ responseNote: responseNote || undefined }),
-      })
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}))
-        showToast(typeof d.error === 'string' ? d.error : `Could not ${action} the transfer.`, 'error')
-        return
-      }
+    const result = await run({
+      endpoint: `/api/transfers/${transfer.id}/${action}`, method: 'POST',
+      body: { responseNote: responseNote || undefined },
+      label: action === 'accept' ? 'Accept transfer' : 'Decline transfer',
+      invalidates: ['transfers', 'deployments', 'inventory', 'vehicles', 'notifications'],
+      success: action === 'accept' ? 'Transfer accepted' : 'Transfer declined',
+      errorFallback: `Could not ${action} the transfer.`,
+    })
+    setRespondLoading(false)
+    if (result.ok) {
       setRespondDialog(null)
       setResponseNote('')
-      showToast(action === 'accept' ? 'Transfer accepted' : 'Transfer declined')
-      await Promise.all([load(), loadTransfers()])
-    } catch {
-      showToast('Network error. Please try again.', 'error')
-    } finally {
-      setRespondLoading(false)
     }
   }
 

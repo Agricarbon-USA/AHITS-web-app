@@ -15,6 +15,8 @@ import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
 import { useRouter } from 'next/navigation'
 import { useToast } from '@/components/shared/useToast'
+import { useMutation } from '@/hooks/useMutation'
+import { useInvalidation } from '@/hooks/useInvalidation'
 import { alertLabel, alertLink, clearsItself } from '@/lib/alert-display'
 import { useCanEdit, MutationButton } from '@/components/shared/ReadOnly'
 import type { DashboardStats } from '@/types'
@@ -73,30 +75,37 @@ export default function AdminDashboardPage() {
       .finally(() => setAlertsLoading(false))
   }, [showToast])
 
-  React.useEffect(() => {
-    fetch('/api/dashboard')
+  const loadStats = React.useCallback(() => {
+    fetch('/api/dashboard', { cache: 'reload' })
       .then((r) => { if (!r.ok) throw new Error(r.statusText); return r.json() })
       .then((d) => setStats(d.data))
       .catch(() => showToast({ message: 'Could not load dashboard stats.', severity: 'error' }))
       .finally(() => setStatsLoading(false))
-    fetch('/api/dashboard/feeds')
+    fetch('/api/dashboard/feeds', { cache: 'reload' })
       .then((r) => r.json())
       .then((d) => setFeeds(d.data))
       .catch(() => { /* feeds are supplementary — fail quietly */ })
+  }, [showToast])
+
+  React.useEffect(() => {
+    loadStats()
     loadAlerts()
-  }, [loadAlerts, showToast])
+  }, [loadStats, loadAlerts])
+
+  // PR-5 (U-10): the stat cards and feeds re-read when what they count changes —
+  // e.g. Resolve drops "Open alerts" by one without a reload.
+  useInvalidation(['alerts', 'deployments', 'vehicles', 'inventory', 'maintenance'], loadStats)
+  useInvalidation(['alerts'], loadAlerts)
+  const { run } = useMutation()
 
   const handleResolve = async (alertId: string) => {
     setResolving(alertId)
-    try {
-      const res = await fetch(`/api/admin/alerts/${alertId}/resolve`, { method: 'POST' })
-      if (!res.ok) throw new Error()
-      loadAlerts()
-    } catch {
-      showToast({ message: 'Could not resolve the alert. Please try again.', severity: 'error' })
-    } finally {
-      setResolving(null)
-    }
+    await run({
+      endpoint: `/api/admin/alerts/${alertId}/resolve`, method: 'POST', label: 'Resolve alert',
+      invalidates: ['alerts', 'notifications'],
+      errorFallback: 'Could not resolve the alert. Please try again.',
+    })
+    setResolving(null)
   }
 
   return (

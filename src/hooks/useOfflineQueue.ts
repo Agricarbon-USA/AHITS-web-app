@@ -8,6 +8,7 @@ import { extractCreatedId, itemReferencesPlaceholder, remapPlaceholderId } from 
 import { ensurePersistentStorage, getStorageEstimate, probeIdbWritable } from '@/lib/storage-health'
 import { requestSignature } from '@/lib/request-signature'
 import { IDEMPOTENCY_IN_FLIGHT_ERROR } from '@/lib/shared-errors'
+import { dispatchInvalidate, type EntityKey } from '@/lib/invalidation'
 
 const DB_NAME = 'ahits_offline'
 const STORE = 'queue'
@@ -450,6 +451,8 @@ export function useOfflineQueue() {
           }
           await deleteItem(db, item.id)
           flushedThisSessionRef.current = true
+          // PR-5 (U-9): the queued action is now applied — tell open screens to re-read.
+          if (work.invalidates?.length) dispatchInvalidate(work.invalidates)
           // CC-12 PR1: a successful send means the session is valid again — clear
           // any parked-session prompt.
           setSessionExpired(false)
@@ -605,6 +608,8 @@ export function useOfflineQueue() {
        * On offline replay the real id is read from the response and remapped.
        */
       placeholderId?: string
+      /** PR-5: entity keys persisted on a queued item and dispatched when it applies. */
+      invalidates?: EntityKey[]
     }): Promise<MutateResult<T>> => {
       const method = args.method ?? 'POST'
       // Q1: coalesce an accidental concurrent double-tap onto the first call's promise
@@ -626,7 +631,7 @@ export function useOfflineQueue() {
         try {
           body = await resolvePhotoRefs(args.body)
         } catch {
-          const stored = await enqueue({ endpoint: args.endpoint, method, body: args.body, idempotencyKey, label: args.label, placeholderId: args.placeholderId })
+          const stored = await enqueue({ endpoint: args.endpoint, method, body: args.body, idempotencyKey, label: args.label, placeholderId: args.placeholderId, invalidates: args.invalidates })
           if (!stored) {
             return { ok: false, queued: false, error: STORAGE_FAILURE_ERROR, status: 0, reason: 'storage' as const }
           }
@@ -657,7 +662,7 @@ export function useOfflineQueue() {
           // sign-in banner, and return a distinguishable queued success so the caller
           // says "check saved — sign in to send it" instead of an error.
           if (res.status === 401) {
-            const stored = await enqueue({ endpoint: args.endpoint, method, body, idempotencyKey, label: args.label, placeholderId: args.placeholderId })
+            const stored = await enqueue({ endpoint: args.endpoint, method, body, idempotencyKey, label: args.label, placeholderId: args.placeholderId, invalidates: args.invalidates })
             if (stored) {
               setSessionExpired(true)
               return { ok: true, queued: true, data: null, reason: 'auth' as const }
@@ -668,7 +673,7 @@ export function useOfflineQueue() {
           const errBody = await res.json().catch(() => ({}))
           return { ok: false, queued: false, error: extractError(errBody), status: res.status }
         } catch {
-          const stored = await enqueue({ endpoint: args.endpoint, method, body, idempotencyKey, label: args.label, placeholderId: args.placeholderId })
+          const stored = await enqueue({ endpoint: args.endpoint, method, body, idempotencyKey, label: args.label, placeholderId: args.placeholderId, invalidates: args.invalidates })
           if (!stored) {
             return { ok: false, queued: false, error: STORAGE_FAILURE_ERROR, status: 0, reason: 'storage' as const }
           }

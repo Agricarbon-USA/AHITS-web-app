@@ -67,6 +67,7 @@ export function ReportProblemDialog({
       // URLs before sending, and the route rejects any that slip through (422).
       body: { notes: notes.trim(), photoUrls, stillUsable },
       label: `Report a problem — ${subject.name}`,
+      invalidates: ['maintenance', isUnit ? 'inventory' : 'vehicles', 'deployments'],
     })
     setSaving(false)
     if (!result.ok) {

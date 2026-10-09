@@ -32,7 +32,7 @@ const VEHICLES = [
 function mockFetch() {
   return vi.fn((input: RequestInfo | URL) => {
     const url = String(input)
-    if (url.startsWith('/api/deployments?active=true')) return jsonRes([])       // no active rig
+    if (url.startsWith('/api/deployments/mine')) return jsonRes({ data: null })  // no active rig (PR-5: the one rig read)
     // transfers/handoffs are consumed as bare arrays, not {data}
     if (url.startsWith('/api/transfers') || url.startsWith('/api/handoffs')) return jsonRes([])
     if (url.startsWith('/api/vehicles')) return jsonRes({ data: VEHICLES })

@@ -10,6 +10,8 @@ import DirectionsCarIcon from '@mui/icons-material/DirectionsCar'
 import { useRouter } from 'next/navigation'
 import { useToast } from '@/components/shared/useToast'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
+import { useInvalidation } from '@/hooks/useInvalidation'
+import { fetchMyRig } from '@/lib/my-rig'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { ConditionSelect } from '@/components/shared/ConditionSelect'
 import { QrScannerDialog, type QrResolveResult } from '@/components/shared/QrScannerDialog'
@@ -68,19 +70,15 @@ export default function OperatorScanPage() {
   // CC-34 (2a): the one "Report a problem" verb, shared for units and vehicles.
   const [report, setReport] = React.useState<ReportProblemSubject | null>(null)
 
-  React.useEffect(() => {
-    fetch('/api/deployments')
-      .then((r) => r.json())
-      .then((json) => {
-        const active = json[0] ?? null
-        if (active) {
-          setActiveRigId(active.id)
-          const items: KitItemStub[] = active.kits?.flatMap((k: { items: KitItemStub[] }) => k.items) ?? []
-          setActiveKitItems(items)
-        }
-      })
-      .catch(() => {})
+  // PR-5 (L-8): the one "my active rig" read; re-read when a queued add/return applies (U-9).
+  const loadActive = React.useCallback(async () => {
+    const { ok, rig: active } = await fetchMyRig<{ id: string; kits?: { items: KitItemStub[] }[] }>()
+    if (!ok) return
+    setActiveRigId(active?.id ?? null)
+    setActiveKitItems(active?.kits?.flatMap((k) => k.items) ?? [])
   }, [])
+  React.useEffect(() => { void loadActive() }, [loadActive])
+  useInvalidation(['deployments'], () => { void loadActive() })
 
   // CC-25: the live QrScannerDialog decodes; this only does the lookup. A label is
   // either an inventory unit or a vehicle (PRD §7.7) — try the unit first, then the
@@ -130,6 +128,7 @@ export default function OperatorScanPage() {
       method: 'POST',
       body,
       label: `Log fixed issue — ${subjectName ?? 'item'}`,
+      invalidates: ['maintenance', 'vehicles', 'inventory', 'deployments'],
     })
     setFieldFixSaving(false)
     if (!result.ok) {
@@ -164,14 +163,7 @@ export default function OperatorScanPage() {
   // accept. A lookup cached before the flag existed falls back to the old AVAILABLE rule.
   const canAdd = (unit?.pickable ?? unit?.status === 'AVAILABLE') && !!activeRigId && !kitItemForUnit
 
-  const refetchActive = async () => {
-    const updated = await fetch('/api/deployments').then((r) => r.json())
-    const active = updated[0] ?? null
-    if (active) {
-      setActiveRigId(active.id)
-      setActiveKitItems(active.kits?.flatMap((k: { items: KitItemStub[] }) => k.items) ?? [])
-    }
-  }
+  const refetchActive = loadActive
 
   const handleReturn = async () => {
     if (!activeRigId || !kitItemForUnit || !unit) return
@@ -184,6 +176,7 @@ export default function OperatorScanPage() {
       method: 'DELETE',
       body: { returnCondition },
       label: `Return ${itemName} to hub`,
+      invalidates: ['deployments', 'inventory'],
     })
     if (result.ok && result.queued) {
       // Offline: optimistically drop it from the kit so the UI is consistent.
@@ -216,6 +209,7 @@ export default function OperatorScanPage() {
         note: 'Added via scan',
       },
       label: `Add ${itemName} to kit`,
+      invalidates: ['deployments', 'inventory'],
     })
     if (result.ok && result.queued) {
       // Offline: optimistically reflect the unit in the active kit.
