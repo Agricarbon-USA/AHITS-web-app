@@ -6,6 +6,7 @@ import { withIdempotency } from '@/lib/idempotency'
 import { writeAudit } from '@/lib/audit'
 import { getActivePrimaryForRig, getRequiredPrimaryForRig, getActiveRigForOperator } from '@/lib/deployment-assignments'
 import { reassignPrimary, createHandoff } from '@/lib/deployment-handoffs'
+import { recordLink } from '@/lib/alerts'
 
 // CC-32 (2.3): the handoff note is OPTIONAL — mandatory typing at every end-of-day
 // handoff bought nothing the roster already records. Relaxed server-side in the same
@@ -90,7 +91,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
         type: 'HANDOFF_REQUESTED',
         title: 'Deployment handoff requested',
         body: `${session.name} wants to hand off a deployment to you.`,
-        link: '/operator/my-deployment',
+        // PR-4 (P-8): the id in the link lets accept/decline/cancel mark this read.
+        link: recordLink('/operator/my-deployment', 'deployment_handoffs', handoffId),
       },
     }).catch(() => {})
   }

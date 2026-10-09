@@ -8,6 +8,7 @@ import { OPEN_TASK } from '@/lib/populations'
 import { retireVehicle, setVehicleServiceStatus } from '@/lib/asset-status'
 import { assertNoOpenReferences, openReferences, referenceConflictBody } from '@/lib/asset-references'
 import { writeOr404 } from '@/lib/api-errors'
+import { resolveAlertsFor } from '@/lib/alerts'
 
 // Whitelist of admin-editable fields. Excludes id/createdAt/updatedAt and
 // qrCodeId (QR association is set on create, not via a generic edit) to prevent
@@ -166,5 +167,7 @@ export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id:
     'Vehicle not found',
   )
   if (notFound) return notFound
+  // PR-4 (D-i): the record is gone — every alert raised for it resolves (and its bell rows are read).
+  await resolveAlertsFor('vehicles', id).catch(() => {})
   return NextResponse.json({ ok: true })
 }

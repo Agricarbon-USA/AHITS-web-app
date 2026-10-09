@@ -7,6 +7,7 @@ import { withIdempotency } from '@/lib/idempotency'
 import { writeAudit } from '@/lib/audit'
 import { getHandoff, reassignPrimary } from '@/lib/deployment-handoffs'
 import { isUniqueViolationAnywhere } from '@/lib/api-errors'
+import { resolveAlertsFor } from '@/lib/alerts'
 
 const schema = z.object({
   responseNote: z.string().optional(),
@@ -76,6 +77,9 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   }
 
   await writeAudit(session.userId, 'DEPLOYMENT_HANDOFF', handoff.fromOperatorId, { rigId: handoff.rigId, toOperatorId: handoff.toOperatorId })
+
+  // PR-4 (D-i · P-8): the request is answered — its bell row for the recipient is read.
+  await resolveAlertsFor('deployment_handoffs', id).catch(() => {})
 
   if (handoff.initiatedById && handoff.initiatedById !== session.userId) {
     await prisma.notification.create({

@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
 import { restoreToHub, resyncItemTotal } from '@/lib/inventory-stock'
 import { releaseFromEndedRig } from '@/lib/asset-status'
+import { resolveAlertsFor } from '@/lib/alerts'
 
 export async function DELETE(
   _req: Request,
@@ -122,6 +123,9 @@ export async function DELETE(
     const msg = err instanceof Error ? err.message : 'Cancel failed'
     return NextResponse.json({ error: msg }, { status: 409 })
   }
+
+  // PR-4 (D-i · P-8): the request is answered — its bell row for the recipient is read.
+  await resolveAlertsFor('transfer_requests', id).catch(() => {})
 
   return NextResponse.json({ ok: true })
 }

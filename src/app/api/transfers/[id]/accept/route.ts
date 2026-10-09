@@ -5,6 +5,7 @@ import { requireAuth } from '@/lib/auth/session'
 import { withIdempotency } from '@/lib/idempotency'
 import { ensureOpenAssignment, endAllAssignmentsForRig, removeAllProjectLinks , getActivePrimaryForRig, getRequiredPrimaryForRig, getActiveRigForOperator, getDeploymentRosterForDisplay } from '@/lib/deployment-assignments'
 import { isUniqueViolationAnywhere } from '@/lib/api-errors'
+import { resolveAlertsFor } from '@/lib/alerts'
 
 const schema = z.object({
   responseNote: z.string().optional(),
@@ -250,6 +251,9 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     const msg = err instanceof Error ? err.message : 'Transfer failed'
     return NextResponse.json({ error: msg }, { status: 409 })
   }
+
+  // PR-4 (D-i · P-8): the request is answered — its bell row for the recipient is read.
+  await resolveAlertsFor('transfer_requests', id).catch(() => {})
 
   // Notify the initiator their transfer was accepted (best-effort, non-fatal).
   if (transfer.initiatedById && transfer.initiatedById !== session.userId) {

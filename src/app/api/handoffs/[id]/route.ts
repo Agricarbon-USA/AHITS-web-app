@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
 import { getHandoff } from '@/lib/deployment-handoffs'
+import { resolveAlertsFor } from '@/lib/alerts'
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAuth()
@@ -25,6 +26,9 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   if (Number(cancelled) === 0) {
     return NextResponse.json({ error: 'Handoff is no longer pending' }, { status: 409 })
   }
+
+  // PR-4 (D-i · P-8): the request is answered — its bell row for the recipient is read.
+  await resolveAlertsFor('deployment_handoffs', id).catch(() => {})
 
   return NextResponse.json({ ok: true })
 }

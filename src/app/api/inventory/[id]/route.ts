@@ -10,6 +10,7 @@ import { listItemStock } from '@/lib/inventory-stock'
 import { money } from '@/lib/validation'
 import { retireUnit } from '@/lib/asset-status'
 import { assertNoOpenReferences, openReferences, referenceConflictBody } from '@/lib/asset-references'
+import { resolveAlertsFor } from '@/lib/alerts'
 
 // Whitelist of admin-editable fields. Excludes id/qrCodeId/deletedAt/timestamps
 // and the unitId helper to prevent mass-assignment. categoryId/hubId are kept
@@ -190,5 +191,7 @@ export async function DELETE(_: NextRequest, { params }: { params: Promise<{ id:
     'Item not found',
   )
   if (notFound) return notFound
+  // PR-4 (D-i): the record is gone — every alert raised for it resolves (and its bell rows are read).
+  await resolveAlertsFor('inventory_items', id).catch(() => {})
   return NextResponse.json({ ok: true })
 }

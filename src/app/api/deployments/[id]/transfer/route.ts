@@ -6,6 +6,7 @@ import { isAuthorizedForRig } from '@/lib/deployment-auth'
 import { getActivePrimaryForRig, getRequiredPrimaryForRig, hydrateTransfersFromRig } from '@/lib/deployment-assignments'
 import { requireAuth } from '@/lib/auth/session'
 import { withIdempotency } from '@/lib/idempotency'
+import { recordLink } from '@/lib/alerts'
 
 const schema = z.object({
   toOperatorId: z.string().min(1, 'Destination operator is required'),
@@ -142,7 +143,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
         type: 'TRANSFER_REQUESTED',
         title: 'Incoming equipment transfer',
         body: `${session.name} wants to transfer ${counts.join(' and ')} to you. Tap to review.`,
-        link: '/operator/my-deployment',
+        // PR-4 (P-8): the id in the link lets accept/decline/cancel mark this read.
+        link: recordLink('/operator/my-deployment', 'transfer_requests', created.id),
       },
     })
 
