@@ -135,7 +135,9 @@ async function optionsResponse(req: NextRequest) {
       name: item.name,
       itemType: item.itemType,
       categoryId: item.categoryId ?? null,
-      categoryName: item.categoryRef?.name ?? categoryDisplay(item),
+      // A string always: an item with no categoryRef (API-created, or legacy enum-only)
+      // returned the whole {id,name} here and crashed every picker that sorts by name.
+      categoryName: categoryDisplay(item).name,
       pickableUnits: item.units.map((u) => ({
         id: u.id,
         serialNumber: u.serialNumber,

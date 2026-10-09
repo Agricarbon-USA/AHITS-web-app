@@ -72,6 +72,16 @@ describe('GET /api/inventory?mode=options — the complete pickable set (PR-1b)'
     expect(names).not.toContain('Dead item')
   })
 
+  it('categoryName is a string for an item with no category row (2026-10-09 staging crash)', async () => {
+    // An item created through the API without categoryId has only the legacy enum.
+    // categoryName came back as {id,name}, and My Deployment's picker sort threw.
+    const bare = await createInventoryItem(categoryId, { name: 'Bare item', quantity: 1 })
+    await prisma.inventoryItem.update({ where: { id: bare.id }, data: { categoryId: null } })
+    const row = (await options()).data.find((i: { name: string }) => i.name === 'Bare item')
+    expect(typeof row.categoryName).toBe('string')
+    expect(row.categoryId).toBeNull()
+  })
+
   it('excludes soft-deleted items', async () => {
     const gone = await createInventoryItem(categoryId, { name: 'Deleted item', quantity: 1 })
     await prisma.inventoryItem.update({ where: { id: gone.id }, data: { deletedAt: new Date() } })
