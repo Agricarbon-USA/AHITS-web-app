@@ -211,6 +211,8 @@ model User {
   transfersInitiated TransferRequest[] @relation("TransferBy")
   auditActions       AccountAuditLog[] @relation("AuditActor")
   auditTargets       AccountAuditLog[] @relation("AuditTarget")
+  // PR-3c (D-q): items this user deleted (soft delete — "Deleted 9 Oct · Max").
+  deletedItems       InventoryItem[]   @relation("ItemDeletedBy")
 
   @@index([homeHubId])
   @@map("users")
@@ -428,11 +430,14 @@ model InventoryItem {
   categoryId        String?
   hubId             String?
   deletedAt         DateTime?
+  // PR-3c (D-q): who deleted it; cleared on Restore.
+  deletedById       String?
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
   categoryRef      Category?          @relation(fields: [categoryId], references: [id])
   hub              Hub?               @relation(fields: [hubId], references: [id])
+  deletedBy        User?              @relation("ItemDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
   units            InventoryUnit[]
   checkLogs        CheckLog[]
   photos           Photo[]
