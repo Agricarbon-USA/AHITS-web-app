@@ -6,6 +6,7 @@ import type {
   MaintenanceStatus, ProjectStatus, ProjectType, AlertType,
   PhotoContext, IntervalType,
 } from '@prisma/client'
+import type { EntityKey } from '@/lib/invalidation'
 
 // Re-export prisma types
 export type {
@@ -105,6 +106,12 @@ export interface OfflineQueueItem {
    * (e.g. create deployment → add items) survive sync.
    */
   placeholderId?: string
+  /**
+   * PR-5 (U-9): entity keys this write changes (src/lib/invalidation.ts). When a
+   * queued item is applied on drain, flush() dispatches them so open screens
+   * re-read. Optional: items queued before PR-5 have none and replay as before.
+   */
+  invalidates?: EntityKey[]
 }
 
 // Snapshot of the offline queue for honest UI indicators.

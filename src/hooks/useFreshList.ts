@@ -2,6 +2,8 @@
 
 import * as React from 'react'
 import useSWR, { type SWRConfiguration } from 'swr'
+import { keysForEndpoint } from '@/lib/invalidation'
+import { useInvalidation } from '@/hooks/useInvalidation'
 
 // CC-12 PR2: the query-cache wrapper for list reads. Uses SWR (already a dep) with
 // revalidateOnReconnect so a reconnecting field device refreshes its cached lists,
@@ -27,5 +29,8 @@ export function useFreshList<T = unknown>(key: string | null, config?: SWRConfig
       config?.onSuccess?.(data, k, cfg)
     },
   })
+  // PR-5: re-read when a mutation (or a drained queued one) changes what this shows.
+  const { mutate } = swr
+  useInvalidation(key ? keysForEndpoint(key) : [], () => { void mutate() })
   return { ...swr, updatedAt }
 }

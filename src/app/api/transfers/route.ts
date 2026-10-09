@@ -27,17 +27,16 @@ export async function GET(req: NextRequest) {
   const where: Record<string, unknown> = {}
   if (status) where.status = status
 
-  // W0-10 PR-1: the rigs where this operator is the open PRIMARY, from the
+  // W0-10 PR-1: the rigs where this user is the open PRIMARY, from the
   // assignment table (successor to Rig.operatorId). Unioned with the legacy
   // relation filter below so visibility is non-revoking until the PR-4 drop.
-  const myPrimaryRigs =
-    session.role === 'ADMIN'
-      ? []
-      : (
-          await prisma.$queryRaw<{ rigId: string }[]>`
-            SELECT "rigId" FROM "deployment_assignments"
-            WHERE "operatorId" = ${session.userId} AND "role" = 'PRIMARY' AND "endedAt" IS NULL`
-        ).map((r) => r.rigId)
+  // PR-5 (L-9): computed for admins too — an admin holding a rig (CC-11) must see
+  // their own outgoing transfers. An admin with no direction still sees them all.
+  const myPrimaryRigs = (
+    await prisma.$queryRaw<{ rigId: string }[]>`
+      SELECT "rigId" FROM "deployment_assignments"
+      WHERE "operatorId" = ${session.userId} AND "role" = 'PRIMARY' AND "endedAt" IS NULL`
+  ).map((r) => r.rigId)
 
   // Direction filters relative to the current user so the operator's
   // "incoming" (Accept/Decline) and "outgoing" (Waiting/Cancel) banners stay

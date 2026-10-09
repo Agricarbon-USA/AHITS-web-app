@@ -255,11 +255,30 @@ export async function hydrateTransfersFromRig<T extends { fromRigId: string; fro
   }))
 }
 
-export async function getActiveRigForOperator(operatorId: string, db: RawClient = prisma): Promise<string | null> {
+/**
+ * The operator's active rig — the one rule (PR-5, L-8). PRIMARY first, then the
+ * newest rig, then id, so the answer is deterministic when there are several.
+ *
+ * Default (PRIMARY only) is the WRITE-GUARD reading — "does this person already
+ * hold a deployment": deployments POST, transfer/handoff accept, handoff create,
+ * the daily-check alert and report-problem attribution all keep it, and Today
+ * keeps it too (its done/due checks are per-operator; the secondary-operator
+ * Today view is its own deferred packet). `includeSecondary` is the READER
+ * reading behind `/api/deployments/mine` — "which rig am I on": a crewmate
+ * riding as SECONDARY sees their rig, and PRIMARY on an older rig still wins
+ * over SECONDARY on a newer one.
+ */
+export async function getActiveRigForOperator(
+  operatorId: string,
+  db: RawClient = prisma,
+  opts: { includeSecondary?: boolean } = {},
+): Promise<string | null> {
+  const roleFilter = opts.includeSecondary ? Prisma.empty : Prisma.sql`AND a."role" = 'PRIMARY'`
   const rows = await db.$queryRaw<{ rigId: string }[]>`
     SELECT a."rigId" FROM "deployment_assignments" a
     JOIN "rigs" r ON r."id" = a."rigId" AND r."endedAt" IS NULL
-    WHERE a."operatorId" = ${operatorId} AND a."role" = 'PRIMARY' AND a."endedAt" IS NULL
+    WHERE a."operatorId" = ${operatorId} AND a."endedAt" IS NULL ${roleFilter}
+    ORDER BY (a."role" = 'PRIMARY') DESC, r."startedAt" DESC, r."id" ASC
     LIMIT 1`
   return rows[0]?.rigId ?? null
 }

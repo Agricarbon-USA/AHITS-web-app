@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { useInvalidation } from '@/hooks/useInvalidation'
 
 // CC-14: the count of incoming PENDING transfers + handoffs waiting on the operator's
 // Accept/Decline. Extracted from OperatorNav so the drawer item AND the bottom-bar tab
@@ -23,6 +24,10 @@ export function notifyIncomingPendingChanged(): void {
 
 export function useIncomingPendingCount(): number {
   const [pendingCount, setPendingCount] = React.useState(0)
+  const [recount, setRecount] = React.useState(0)
+  // PR-5: the generalised event — a transfer/handoff written anywhere (or applied
+  // from the offline queue) recounts too. Not dispatched by this hook, so no loop.
+  useInvalidation(['transfers'], () => setRecount((n) => n + 1))
 
   React.useEffect(() => {
     let active = true
@@ -57,7 +62,7 @@ export function useIncomingPendingCount(): number {
       document.removeEventListener('visibilitychange', onVis)
       window.removeEventListener(INCOMING_PENDING_CHANGED, onChanged)
     }
-  }, [])
+  }, [recount])
 
   return pendingCount
 }
