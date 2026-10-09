@@ -57,7 +57,9 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        # Same official image via AWS's public mirror: Docker Hub rate-limits
+        # unauthenticated pulls from shared runners (2026-10-09, #258's deploy).
+        image: public.ecr.aws/docker/library/postgres:16
         env:
           POSTGRES_USER: test
           POSTGRES_PASSWORD: test
