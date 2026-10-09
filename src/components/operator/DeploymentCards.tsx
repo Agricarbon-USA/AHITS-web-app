@@ -186,7 +186,7 @@ export const DeploymentKitCard = React.memo(function DeploymentKitCard({
                   {/* CC-34 (2a): report a problem on this unit — LEFT of the ⊖ so the two
                       icons aren't same-weight adjacent (RIDER C 2a-b). Units only. */}
                   {!removingItems && ki.inventoryUnit && (
-                    <ReportProblemButton subject={{ kind: 'unit', id: ki.inventoryUnit.id, name: ki.item.name }} />
+                    <ReportProblemButton subject={{ kind: 'unit', id: ki.inventoryUnit.id, name: ki.item.name, inMyKit: true }} />
                   )}
                   {!removingItems && ki.item.itemType === 'CONSUMABLE' && (
                     <Tooltip title="Log daily usage">

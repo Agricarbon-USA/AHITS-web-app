@@ -14,6 +14,8 @@ import { useRouter } from 'next/navigation'
 import { PhotoGallery } from '@/components/shared/PhotoGallery'
 import { useToast } from '@/components/shared/useToast'
 import { formatDate } from '@/lib/utils'
+import { apiErrorMessage } from '@/lib/api-error-shape'
+import { copy } from '@/lib/copy/admin-actions'
 
 // CC-26: read-only daily-check viewer — the surface that shows a submitted check's FULL
 // contents so a diligent check and a pencil-whipped one are distinguishable (the
@@ -186,9 +188,10 @@ export function DailyCheckViewer({ checkId, open, onClose }: { checkId: string |
       })
       const d = await res.json().catch(() => ({}))
       if (!res.ok) {
-        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not open a repair task.', severity: 'error' })
+        showToast({ message: apiErrorMessage(d, 'Could not open a repair task.'), severity: 'error' })
         return
       }
+      if (d.created === false) showToast({ message: copy('repair.openFromCheck').joined, severity: 'info' })
       onClose()
       router.push(`/admin/maintenance?task=${d.data.id}`)
     } catch {

@@ -16,6 +16,8 @@ import BuildIcon from '@mui/icons-material/Build'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import { useToast } from '@/components/shared/useToast'
 import { useInvalidation } from '@/hooks/useInvalidation'
+import { copy } from '@/lib/copy/admin-actions'
+import { apiErrorMessage } from '@/lib/api-error-shape'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { RepairReviewDialog } from '@/components/shared/RepairReviewDialog'
 import { PhotoGallery } from '@/components/shared/PhotoGallery'
@@ -235,7 +237,7 @@ export default function AdminMaintenancePage() {
         showToast({ message: typeof d.error === 'string' ? d.error : 'Retire failed', severity: 'error' })
         return
       }
-      showToast({ message: `${retireUnit.label} retired`, severity: 'success' })
+      showToast({ message: copy('unit.retireInoperable').success(retireUnit.label), severity: 'success' })
       setRetireUnit(null); setRetireNote('')
       loadInoperable()
     } catch {
@@ -336,7 +338,7 @@ export default function AdminMaintenancePage() {
   async function copyLink(url: string) {
     try {
       await navigator.clipboard.writeText(url)
-      showToast({ message: 'Link copied to clipboard.', severity: 'success' })
+      showToast({ message: copy('repair.copyLink').success, severity: 'success' })
     } catch {
       showToast({ message: 'Could not copy automatically — select the link and copy it.', severity: 'error' })
     }
@@ -352,7 +354,7 @@ export default function AdminMaintenancePage() {
       })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
-        showToast({ message: typeof d.error === 'string' ? d.error : 'Update failed.', severity: 'error' })
+        showToast({ message: apiErrorMessage(d, 'Update failed.'), severity: 'error' })
         return false
       }
       const d = await res.json()
@@ -412,7 +414,7 @@ export default function AdminMaintenancePage() {
       actualCost: draft.actualCost === '' ? null : Number(draft.actualCost),
       locationNote: draft.locationNote || null,
       notes: draft.notes || null,
-    }, 'Repair details saved.')
+    }, copy('repair.saveDetails').success)
   }
 
   async function completeTask(
@@ -440,9 +442,7 @@ export default function AdminMaintenancePage() {
       load()
       setCompletionOdo('')
       showToast({
-        message: t.isDamageReport
-          ? (t.vehicle && !t.unit ? 'Repair completed — vehicle returned to service.' : 'Repair completed — unit returned to service.')
-          : 'Completed — next service scheduled.',
+        message: copy('repair.complete').success(t.isDamageReport ? (t.vehicle && !t.unit ? 'vehicle' : 'unit') : 'scheduled'),
         severity: 'success',
       })
     } catch {
@@ -456,8 +456,7 @@ export default function AdminMaintenancePage() {
     const body: Record<string, unknown> = { status }
     if (status === 'COMPLETED') body.completedAt = new Date().toISOString()
     if (status === 'IN_PROGRESS') body.completedAt = null
-    await patch(t.id, body,
-      status === 'COMPLETED' ? 'Marked complete.' : status === 'IN_PROGRESS' ? 'Repair started.' : 'Status updated.')
+    await patch(t.id, body, copy('repair.setStatus').success(status))
   }
 
   const setD = (patchObj: Partial<Draft>) => setDraft((d) => (d ? { ...d, ...patchObj } : d))
@@ -501,7 +500,7 @@ export default function AdminMaintenancePage() {
         showToast({ message: typeof d.error === 'string' ? d.error : 'Could not log fix.', severity: 'error' })
         return
       }
-      showToast({ message: 'Field fix logged.', severity: 'success' })
+      showToast({ message: copy('repair.fieldFix').success, severity: 'success' })
       setFieldFixOpen(false)
       load()
     } catch {
@@ -565,7 +564,7 @@ export default function AdminMaintenancePage() {
         showToast({ message: typeof d.error === 'string' ? d.error : 'Could not add scheduled task.', severity: 'error' })
         return
       }
-      showToast({ message: 'Scheduled task added.', severity: 'success' })
+      showToast({ message: copy('repair.addSchedule').success, severity: 'success' })
       setSchedOpen(false)
       load()
     } catch {
@@ -752,7 +751,7 @@ export default function AdminMaintenancePage() {
                     clickable
                     disabled={saving}
                     label="Delivered to shop today"
-                    onClick={() => patch(selected.id, { dateDelivered: new Date().toISOString() }, 'Marked delivered to shop.')}
+                    onClick={() => patch(selected.id, { dateDelivered: new Date().toISOString() }, copy('repair.markDelivered').success)}
                   />
                   {selected.status !== 'IN_PROGRESS' && (
                     <Chip

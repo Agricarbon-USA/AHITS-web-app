@@ -32,9 +32,9 @@ interface AlertRow {
 
 interface Feeds {
   counts: { missedChecks: number; maintenanceDueSoon: number; longRunning: number; maintenanceWatch?: number }
-  missedChecks: { rigId: string; operator: string; isAdminHeld?: boolean; label: string | null; startedAt: string }[]
+  missedChecks: { rigId: string; operatorId?: string | null; operator: string; isAdminHeld?: boolean; label: string | null; startedAt: string }[]
   maintenanceDueSoon: { id: string; taskName: string; target: string; nextDue: string | null; status: string; overdue: boolean }[]
-  longRunning: { rigId: string; operator: string; label: string | null; startedAt: string; daysOut: number }[]
+  longRunning: { rigId: string; operatorId?: string | null; operator: string; label: string | null; startedAt: string; daysOut: number }[]
   recentActivity: { id: string; action: string; item: string; unit: string | null; operator: string | null; at: string }[]
   maintenanceWatch?: { name: string; href: string; spend: number; events: number; windowDays: number }[]
 }
@@ -141,10 +141,11 @@ export default function AdminDashboardPage() {
           <StatCard title="Active Deployments" value={stats?.activeDeployments} icon={LocalShippingIcon} loading={statsLoading} href="/admin/deployments" subtitle="View all →" />
         </Grid>
         <Grid item xs={12} sm={6} md={4}>
-          <StatCard title="Active Vehicles" value={stats?.vehiclesActive} icon={DirectionsCarIcon} loading={statsLoading} href="/admin/vehicles" subtitle="View all →" />
+          <StatCard title="Active Vehicles" value={stats?.vehiclesActive} icon={DirectionsCarIcon} loading={statsLoading} href="/admin/vehicles?status=ACTIVE" subtitle="View all →" />
         </Grid>
         <Grid item xs={12} sm={6} md={4}>
-          <StatCard title="In Maintenance" value={stats?.vehiclesInMaintenance} icon={BuildIcon} color="warning.main" loading={statsLoading} href="/admin/vehicles" subtitle="View all →" />
+          {/* PR-5 (U-14): the card lands on the list it counts, already filtered. */}
+          <StatCard title="In Maintenance" value={stats?.vehiclesInMaintenance} icon={BuildIcon} color="warning.main" loading={statsLoading} href="/admin/vehicles?status=IN_MAINTENANCE" subtitle="View all →" />
         </Grid>
         <Grid item xs={12} sm={6} md={4}>
           <StatCard title="Items Checked Out" value={stats?.itemsCheckedOut} icon={InventoryIcon} loading={statsLoading} href="/admin/deployments" subtitle="View all →" />
@@ -165,7 +166,7 @@ export default function AdminDashboardPage() {
         <Grid item xs={12} md={6}>
           <FeedPanel title="Missed checks today" count={feeds?.missedChecks.length} emptyText="All active operators have checked in today.">
             {feeds?.missedChecks.map((m) => (
-              <FeedItem key={m.rigId} primary={m.operator} secondary={`${m.label ? m.label + ' · ' : ''}deployed ${fmtDate(m.startedAt)}`} chip={m.isAdminHeld ? { label: 'Admin-held', color: 'default' } : undefined} onClick={() => router.push('/admin/deployments')} />
+              <FeedItem key={m.rigId} primary={m.operator} secondary={`${m.label ? m.label + ' · ' : ''}deployed ${fmtDate(m.startedAt)}`} chip={m.isAdminHeld ? { label: 'Admin-held', color: 'default' } : undefined} onClick={() => router.push(m.operatorId ? `/admin/deployments?operator=${m.operatorId}` : '/admin/deployments')} />
             ))}
           </FeedPanel>
         </Grid>
@@ -185,7 +186,7 @@ export default function AdminDashboardPage() {
         <Grid item xs={12} md={6}>
           <FeedPanel title="Long-running deployments (30d+)" count={feeds?.longRunning.length} emptyText="No deployments older than 30 days.">
             {feeds?.longRunning.map((r) => (
-              <FeedItem key={r.rigId} primary={r.operator} secondary={`${r.label ? r.label + ' · ' : ''}${r.daysOut} days out`} chip={{ label: `${r.daysOut}d`, color: 'warning' }} onClick={() => router.push('/admin/deployments')} />
+              <FeedItem key={r.rigId} primary={r.operator} secondary={`${r.label ? r.label + ' · ' : ''}${r.daysOut} days out`} chip={{ label: `${r.daysOut}d`, color: 'warning' }} onClick={() => router.push(r.operatorId ? `/admin/deployments?operator=${r.operatorId}` : '/admin/deployments')} />
             ))}
           </FeedPanel>
         </Grid>

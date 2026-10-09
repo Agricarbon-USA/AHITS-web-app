@@ -13,6 +13,7 @@ import EditIcon from '@mui/icons-material/Edit'
 import DeleteIcon from '@mui/icons-material/Delete'
 import { useToast } from '@/components/shared/useToast'
 import { useInvalidation } from '@/hooks/useInvalidation'
+import { copy } from '@/lib/copy/admin-actions'
 import { useCanEdit, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 
 const PROJECT_TYPES = ['CROPLAND', 'RANGELAND', 'FORESTRY', 'OTHER']
@@ -101,7 +102,7 @@ export default function AdminProjectsPage() {
     if (!confirmDelete) return
     const res = await fetch(`/api/projects/${confirmDelete.id}`, { method: 'DELETE' })
     if (res.ok) {
-      showToast({ message: `${confirmDelete.name} deleted`, severity: 'success' })
+      showToast({ message: copy('project.delete').success(confirmDelete.name), severity: 'success' })
       setConfirmDelete(null)
       setDetail(null)
       load()
@@ -325,7 +326,7 @@ function ProjectFormDialog({ project, onClose, onSaved, showToast }: {
         showToast({ message: typeof d.error === 'string' ? d.error : 'Save failed', severity: 'error' })
         return
       }
-      showToast({ message: isEdit ? 'Project updated' : 'Project added', severity: 'success' })
+      showToast({ message: copy('project.save').success(isEdit), severity: 'success' })
       onSaved()
     } catch {
       showToast({ message: 'Save failed', severity: 'error' })

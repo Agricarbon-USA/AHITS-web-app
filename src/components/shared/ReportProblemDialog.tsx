@@ -20,6 +20,10 @@ export interface ReportProblemSubject {
   kind: 'unit' | 'vehicle'
   id: string
   name: string
+  /** PR-5 (U-15): the unit sits in the reporter's own kit. Only then do the kit lines
+   *  ("Stays in your kit", "use Return to Hub") apply — never for a vehicle, a
+   *  crewmate's unit or a unit scanned at the hub. */
+  inMyKit?: boolean
 }
 
 const TOUCH_SX = { minHeight: 44, fontSize: 16 } as const // CC-23 field-target discipline
@@ -47,6 +51,7 @@ export function ReportProblemDialog({
 
   if (!subject) return null
   const isUnit = subject.kind === 'unit'
+  const inMyKit = isUnit && subject.inMyKit === true
   // UXP-3 (3g) / D36: a photo is NEVER required to submit — a denied/missing camera must
   // not block a report. Units used to hard-require ≥1 photo (§11.10, client AND server);
   // now the photo is a strong nudge and a photo-less unit report is labelled as such on
@@ -119,13 +124,15 @@ export function ReportProblemDialog({
           </ToggleButtonGroup>
           <Typography variant="caption" color="text.secondary">
             {stillUsable
-              ? 'Stays in your kit. An admin will follow up.'
+              ? (inMyKit ? 'Stays in your kit. An admin will follow up.' : 'Stays in use. An admin will follow up.')
               : 'Marked In Maintenance — unusable until repaired.'}
           </Typography>
 
-          <Typography variant="caption" color="text.secondary">
-            Reporting keeps it in your kit — use Return to Hub to send it back.
-          </Typography>
+          {inMyKit && (
+            <Typography variant="caption" color="text.secondary">
+              Reporting keeps it in your kit — use Return to Hub to send it back.
+            </Typography>
+          )}
         </Stack>
       </DialogContent>
       <DialogActions>

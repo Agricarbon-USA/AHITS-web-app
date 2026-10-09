@@ -19,13 +19,15 @@ import QrCode2Icon from '@mui/icons-material/QrCode2'
 import WarningAmberIcon from '@mui/icons-material/WarningAmber'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { copy, deletedLabel } from '@/lib/copy/admin-actions'
+import RestoreFromTrashIcon from '@mui/icons-material/RestoreFromTrash'
 import { useToast } from '@/components/shared/useToast'
 import { useInvalidation } from '@/hooks/useInvalidation'
 import { useCanEdit, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 import { SearchableSelect } from '@/components/shared/SearchableSelect'
 import { QrScanField } from '@/components/shared/QrScanField'
 import { useDirtyState } from '@/hooks/useDirtyState'
-import { parseApiError } from '@/lib/api-error-shape'
+import { parseApiError, apiErrorMessage } from '@/lib/api-error-shape'
 import { downloadQrLabel } from '@/lib/qr-label'
 import { groupBy, formatDate } from '@/lib/utils'
 import { uploadDocument } from '@/lib/photoStore'
@@ -45,6 +47,7 @@ const ADMIN_VEHICLE_STATUSES = ['ACTIVE', 'OUT_OF_SERVICE', 'RETIRED']
 interface VehicleRow {
   id: string
   name: string
+  deletedAt?: string | null
   type: string
   makeModel: string | null
   year: number | null
@@ -154,7 +157,7 @@ export default function AdminVehiclesPage() {
   // null = not known (fetch failed / not admin) → the Setup block shows "—", never a guess.
   const [templates, setTemplates] = React.useState<ChecklistTemplateSummary[] | null>(null)
   const [confirmDelete, setConfirmDelete] = React.useState<VehicleRow | null>(null)
-  // PR-3b (D-g): drawer "Return to service" / "Take out of service" confirmation.
+  // PR-3b (D-g): the drawer confirmation for Return to service / Take out of service.
   const [serviceChange, setServiceChange] = React.useState<'ACTIVE' | 'OUT_OF_SERVICE' | null>(null)
   // CC-10: field-fix dialog
   const [fieldFixOpen, setFieldFixOpen] = React.useState(false)
@@ -177,11 +180,13 @@ export default function AdminVehiclesPage() {
   const [sortKey, setSortKey] = React.useState<SortKey>('name')
   const [sortDir, setSortDir] = React.useState<'asc' | 'desc'>('asc')
   const [groupByType, setGroupByType] = React.useState(true)
+  // PR-5: the vehicle twin of PR-3c's items — the deleted view replaces the list (admins).
+  const [showDeleted, setShowDeleted] = React.useState(false)
 
   const load = React.useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/vehicles')
+      const res = await fetch(showDeleted ? '/api/vehicles?deleted=1' : '/api/vehicles')
       if (!res.ok) { showToast({ message: 'Failed to load vehicles', severity: 'error' }); return }
       const d = await res.json()
       setVehicles(d.data ?? [])
@@ -190,7 +195,7 @@ export default function AdminVehiclesPage() {
     } finally {
       setLoading(false)
     }
-  }, [showToast])
+  }, [showToast, showDeleted])
 
   const loadHubs = React.useCallback(async () => {
     try {
@@ -279,6 +284,9 @@ export default function AdminVehiclesPage() {
     if (check) setViewerCheckId(check)
     const vehicle = params.get('vehicle')
     if (vehicle) void openDetail(vehicle)
+    // PR-5 (U-14): the dashboard's "In Maintenance" card lands on the filtered list.
+    const status = params.get('status')
+    if (status && (VEHICLE_STATUSES as readonly string[]).includes(status)) setFilterStatus(status)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -308,31 +316,43 @@ export default function AdminVehiclesPage() {
     setFormReturnTo(null)
     load()
     if (saved.isEdit) {
-      showToast({ message: `${saved.name} updated`, severity: 'success' })
+      showToast({ message: copy('vehicle.save').success(saved.name, true), severity: 'success' })
       // Edited from the drawer → bring the (refreshed) drawer back.
       if (back) void openDetail(back)
     } else {
       // Added (or duplicated): the toast's Open lands on the NEW vehicle's drawer.
       showToast({
-        message: `${saved.name} added`,
+        message: copy('vehicle.save').success(saved.name, false),
         severity: 'success',
         action: { label: 'Open', onClick: () => { void openDetail(saved.id) } },
       })
     }
   }
 
+  const restoreVehicle = async (v: { id: string; name: string }) => {
+    const res = await fetch(`/api/vehicles/${v.id}/restore`, { method: 'POST' })
+    const d = await res.json().catch(() => ({}))
+    if (!res.ok) { showToast({ message: apiErrorMessage(d, 'Could not restore the vehicle'), severity: 'error' }); return }
+    load()
+    showToast({ message: copy('vehicle.restore').success(v.name), severity: 'success' })
+  }
+
+  // PR-5 (point fix): the dialog closes on a refusal too — the red toast names what is
+  // in the way, as item Delete does (it used to stay open behind the toast).
   const doDelete = async () => {
-    if (!confirmDelete) return
-    const res = await fetch(`/api/vehicles/${confirmDelete.id}`, { method: 'DELETE' })
-    if (res.ok) {
-      showToast({ message: `${confirmDelete.name} deleted`, severity: 'success' })
-      setConfirmDelete(null)
-      setDetail(null)
-      load()
-    } else {
-      const d = await res.json().catch(() => ({}))
-      showToast({ message: typeof d.error === 'string' ? d.error : 'Delete failed (vehicle may have history)', severity: 'error' })
-    }
+    const v = confirmDelete
+    if (!v) return
+    const res = await fetch(`/api/vehicles/${v.id}`, { method: 'DELETE' })
+    setConfirmDelete(null)
+    const d = await res.json().catch(() => ({}))
+    if (!res.ok) { showToast({ message: apiErrorMessage(d, 'Could not delete the vehicle'), severity: 'error' }); return }
+    setDetail(null)
+    load()
+    showToast({
+      message: copy('vehicle.delete').success(v.name),
+      severity: 'success',
+      action: { label: copy('vehicle.delete').undo, onClick: () => { void restoreVehicle(v) } },
+    })
   }
 
   const doServiceChange = async () => {
@@ -345,16 +365,14 @@ export default function AdminVehiclesPage() {
     const d = await res.json().catch(() => ({}))
     setServiceChange(null)
     if (!res.ok) {
-      showToast({ message: typeof d.error === 'string' ? d.error : 'Could not change the vehicle status.', severity: 'error' })
+      showToast({ message: apiErrorMessage(d, 'Could not change the vehicle status.'), severity: 'error' })
       return
     }
     const landed = (d as { data?: { status?: string } }).data?.status
     showToast({
       message: serviceChange === 'OUT_OF_SERVICE'
-        ? `${detail.name} is out of service`
-        : landed === 'IN_MAINTENANCE'
-          ? `${detail.name} is back in service — In Maintenance until its repair is closed`
-          : `${detail.name} is back in service`,
+        ? copy('vehicle.takeOutOfService').success(detail.name)
+        : copy('vehicle.returnToService').success(detail.name, landed === 'IN_MAINTENANCE'),
       severity: 'success',
     })
     load()
@@ -372,10 +390,10 @@ export default function AdminVehiclesPage() {
       })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
-        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not log fix.', severity: 'error' })
+        showToast({ message: apiErrorMessage(d, 'Could not log fix.'), severity: 'error' })
         return
       }
-      showToast({ message: 'Field fix logged.', severity: 'success' })
+      showToast({ message: copy('vehicle.fieldFix').success, severity: 'success' })
       setFieldFixOpen(false)
       // PR-3b (U-8): the fix may have closed repairs and put the vehicle back in
       // service — refresh the list as well as the drawer.
@@ -402,10 +420,10 @@ export default function AdminVehiclesPage() {
       })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
-        showToast({ message: typeof d.error === 'string' ? d.error : 'Could not report damage.', severity: 'error' })
+        showToast({ message: apiErrorMessage(d, 'Could not report damage.'), severity: 'error' })
         return
       }
-      showToast({ message: 'Damage reported — vehicle is now IN MAINTENANCE.', severity: 'success' })
+      showToast({ message: copy('vehicle.reportDamage').success, severity: 'success' })
       setReportDamageOpen(false)
       load()
       openDetail(detail.id)
@@ -415,6 +433,17 @@ export default function AdminVehiclesPage() {
       setReportDamageSaving(false)
     }
   }
+
+  // A deleted row's only action is Restore (PR-3c's twin); live rows keep Edit · Duplicate · Delete.
+  const rowActions = (v: VehicleRow) => v.deletedAt ? (
+    <MutationIconButton tooltip="Restore" size="small" onClick={() => { void restoreVehicle(v) }}><RestoreFromTrashIcon fontSize="small" /></MutationIconButton>
+  ) : (
+    <>
+      <MutationIconButton tooltip="Edit" size="small" onClick={() => openForm({ vehicle: v })}><EditIcon fontSize="small" /></MutationIconButton>
+      <MutationIconButton tooltip="Duplicate" size="small" onClick={() => openForm({ duplicateOf: v })}><ContentCopyIcon fontSize="small" /></MutationIconButton>
+      <MutationIconButton tooltip="Delete" size="small" onClick={() => setConfirmDelete(v)}><DeleteIcon fontSize="small" /></MutationIconButton>
+    </>
+  )
 
   const expiringCount = vehicles.filter((v) => {
     const i = expiryMeta(v.insuranceExpires).color
@@ -450,7 +479,7 @@ export default function AdminVehiclesPage() {
         </Paper>
       )}
 
-      {!loading && vehicles.length > 0 && (
+      {!loading && (vehicles.length > 0 || showDeleted) && (
         <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap mb={1.5} alignItems="center">
           <TextField
             size="small" label="Search" value={search} onChange={(e) => setSearch(e.target.value)}
@@ -483,6 +512,13 @@ export default function AdminVehiclesPage() {
             <Button size="small" onClick={() => { setSearch(''); setFilterType(''); setFilterStatus(''); setFilterHub(''); setFilterProject(''); setFilterRental('') }}>Clear</Button>
           )}
           <Box flexGrow={1} />
+          {/* PR-5: the door to deleted vehicles (twin of Inventory's) — the view replaces the list. */}
+          {canEdit && (
+            <FormControlLabel
+              control={<Switch size="small" checked={showDeleted} onChange={(e) => { setShowDeleted(e.target.checked); setDetail(null) }} />}
+              label={<Typography variant="caption">Show deleted</Typography>}
+            />
+          )}
           <FormControlLabel
             control={<Switch size="small" checked={groupByType} onChange={(e) => setGroupByType(e.target.checked)} />}
             label={<Typography variant="caption">Group by type</Typography>}
@@ -495,7 +531,7 @@ export default function AdminVehiclesPage() {
         {loading ? (
           <Box sx={{ p: 4, textAlign: 'center' }}><CircularProgress size={28} /></Box>
         ) : vehicles.length === 0 ? (
-          <Box sx={{ p: 4 }}><Typography color="text.secondary" align="center">No vehicles yet. Add your first vehicle to start tracking.</Typography></Box>
+          <Box sx={{ p: 4 }}><Typography color="text.secondary" align="center">{showDeleted ? 'No deleted vehicles.' : 'No vehicles yet. Add your first vehicle to start tracking.'}</Typography></Box>
         ) : visibleVehicles.length === 0 ? (
           <Box sx={{ p: 4 }}><Typography color="text.secondary" align="center">No vehicles match these filters.</Typography></Box>
         ) : (
@@ -556,10 +592,11 @@ export default function AdminVehiclesPage() {
                         const ins = expiryMeta(v.insuranceExpires)
                         const reg = expiryMeta(v.registrationExpires)
                         return (
-                          <TableRow key={v.id} hover sx={{ cursor: 'pointer' }} onClick={() => openDetail(v.id)}>
+                          <TableRow key={v.id} hover sx={{ cursor: v.deletedAt ? 'default' : 'pointer' }} onClick={v.deletedAt ? undefined : () => openDetail(v.id)}>
                             <TableCell>
                               <Stack direction="row" spacing={0.5} alignItems="center">
                                 <Typography variant="body2" fontWeight={500}>{v.name}</Typography>
+                                {v.deletedAt && <Chip size="small" variant="outlined" label={deletedLabel(v)} />}
                                 {v.isRental && <StatusChip label="Rental" color="warning" variant="outlined" />}
                                 {v.isRental && !v.rentalAgreementUrl && <StatusChip label="Agreement needed" color="error" variant="outlined" />}
                               </Stack>
@@ -581,11 +618,7 @@ export default function AdminVehiclesPage() {
                             <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}><Chip size="small" label={reg.label} color={reg.color} variant={reg.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
                             <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{v._count?.dailyChecks ?? 0}</TableCell>
                             <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{v._count?.maintenanceTasks ?? 0}</TableCell>
-                            <TableCell align="right" onClick={(e) => e.stopPropagation()}>
-                              <MutationIconButton tooltip="Edit" size="small" onClick={() => openForm({ vehicle: v })}><EditIcon fontSize="small" /></MutationIconButton>
-                              <MutationIconButton tooltip="Duplicate" size="small" onClick={() => openForm({ duplicateOf: v })}><ContentCopyIcon fontSize="small" /></MutationIconButton>
-                              <MutationIconButton tooltip="Delete" size="small" onClick={() => setConfirmDelete(v)}><DeleteIcon fontSize="small" /></MutationIconButton>
-                            </TableCell>
+                            <TableCell align="right" onClick={(e) => e.stopPropagation()}>{rowActions(v)}</TableCell>
                           </TableRow>
                         )
                       }),
@@ -594,9 +627,10 @@ export default function AdminVehiclesPage() {
                       const ins = expiryMeta(v.insuranceExpires)
                       const reg = expiryMeta(v.registrationExpires)
                       return (
-                        <TableRow key={v.id} hover sx={{ cursor: 'pointer' }} onClick={() => openDetail(v.id)}>
+                        <TableRow key={v.id} hover sx={{ cursor: v.deletedAt ? 'default' : 'pointer' }} onClick={v.deletedAt ? undefined : () => openDetail(v.id)}>
                           <TableCell>
                             <Typography variant="body2" fontWeight={500}>{v.name}</Typography>
+                            {v.deletedAt && <Chip size="small" variant="outlined" label={deletedLabel(v)} />}
                             {v.makeModel && <Typography variant="caption" color="text.secondary">{v.makeModel}{v.year ? ` · ${v.year}` : ''}</Typography>}
                           </TableCell>
                           <TableCell>{vehicleTypeLabel(v.type)}</TableCell>
@@ -615,11 +649,7 @@ export default function AdminVehiclesPage() {
                           <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}><Chip size="small" label={reg.label} color={reg.color} variant={reg.color === 'default' ? 'outlined' : 'filled'} /></TableCell>
                           <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{v._count?.dailyChecks ?? 0}</TableCell>
                           <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{v._count?.maintenanceTasks ?? 0}</TableCell>
-                          <TableCell align="right" onClick={(e) => e.stopPropagation()}>
-                            <MutationIconButton tooltip="Edit" size="small" onClick={() => openForm({ vehicle: v })}><EditIcon fontSize="small" /></MutationIconButton>
-                            <MutationIconButton tooltip="Duplicate" size="small" onClick={() => openForm({ duplicateOf: v })}><ContentCopyIcon fontSize="small" /></MutationIconButton>
-                            <MutationIconButton tooltip="Delete" size="small" onClick={() => setConfirmDelete(v)}><DeleteIcon fontSize="small" /></MutationIconButton>
-                          </TableCell>
+                          <TableCell align="right" onClick={(e) => e.stopPropagation()}>{rowActions(v)}</TableCell>
                         </TableRow>
                       )
                     })
@@ -955,28 +985,25 @@ export default function AdminVehiclesPage() {
 
       <ConfirmDialog
         open={!!serviceChange}
-        title={serviceChange === 'ACTIVE' ? 'Return to service?' : 'Take out of service?'}
+        title={copy(serviceChange === 'ACTIVE' ? 'vehicle.returnToService' : 'vehicle.takeOutOfService').title}
         message={serviceChange === 'ACTIVE'
-          ? (detail?.maintenanceTasks.some((t) => t.isDamageReport)
-            ? "A repair is still open — it will show as In Maintenance until that's closed"
-            : `${detail?.name ?? 'This vehicle'} goes back to Active and can be put on a deployment.`)
-          : `${detail?.name ?? 'This vehicle'} is taken out of service until an admin returns it. Repairs and field fixes won't put it back on their own.`}
-        confirmLabel={serviceChange === 'ACTIVE' ? 'Return to service' : 'Take out of service'}
+          ? copy('vehicle.returnToService').message(detail?.name ?? 'This vehicle', !!detail?.maintenanceTasks.some((t) => t.isDamageReport))
+          : copy('vehicle.takeOutOfService').message(detail?.name ?? 'This vehicle')}
+        confirmLabel={copy(serviceChange === 'ACTIVE' ? 'vehicle.returnToService' : 'vehicle.takeOutOfService').confirm}
         confirmColor={serviceChange === 'ACTIVE' ? 'primary' : 'warning'}
         onClose={() => setServiceChange(null)}
         onConfirm={doServiceChange}
       />
 
-      <Dialog open={!!confirmDelete} onClose={() => setConfirmDelete(null)} maxWidth="xs" fullWidth>
-        <DialogTitle>Delete vehicle</DialogTitle>
-        <DialogContent>
-          <Typography>Delete <strong>{confirmDelete?.name}</strong>? This can&rsquo;t be undone. Vehicles with maintenance or check history may need to be retired instead.</Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setConfirmDelete(null)}>Cancel</Button>
-          <Button color="error" variant="contained" onClick={doDelete}>Delete</Button>
-        </DialogActions>
-      </Dialog>
+      <ConfirmDialog
+        open={!!confirmDelete}
+        title={copy('vehicle.delete').title}
+        message={copy('vehicle.delete').message(confirmDelete?.name ?? '')}
+        confirmLabel={copy('vehicle.delete').confirm}
+        confirmColor="error"
+        onClose={() => setConfirmDelete(null)}
+        onConfirm={doDelete}
+      />
     </Box>
   )
 }

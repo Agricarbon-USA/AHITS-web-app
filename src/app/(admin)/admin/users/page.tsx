@@ -10,6 +10,7 @@ import {
 } from '@mui/material'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { useToast } from '@/components/shared/useToast'
+import { copy } from '@/lib/copy/admin-actions'
 import { EntityFormDialog, RequiredLegend } from '@/components/ui/EntityFormDialog'
 import { useDirtyState } from '@/hooks/useDirtyState'
 import { parseApiError } from '@/lib/api-error-shape'
@@ -99,10 +100,10 @@ function InviteDialog({ open, onClose, onSuccess, onLink }: {
       } else if (data.setupUrl) {
         // PR-4 (D-j · U-13): the email did NOT reach them (sandbox redirect / skip) —
         // say so, and hand over the setup link to copy, as LINK delivery does.
-        onSuccess(typeof data.message === 'string' ? data.message : 'Invite not emailed — copy the link.')
+        onSuccess(typeof data.message === 'string' ? data.message : copy('invite.send').notEmailed)
         onLink({ url: data.setupUrl, expiresAt: data.expiresAt })
       } else {
-        onSuccess(typeof data.message === 'string' ? data.message : `Invite sent to ${email}`)
+        onSuccess(typeof data.message === 'string' ? data.message : copy('invite.send').success(email))
       }
       handleClose()
     } catch {
@@ -287,7 +288,7 @@ function AccountDialog({
       hourlyRate: hourlyRate === '' ? null : Number(hourlyRate),
     }
     if (resetPin) body.pin = resetPin
-    const ok = await patch(body, `${name} updated`)
+    const ok = await patch(body, copy('user.update').success(name))
     if (ok) onClose()
     else return false
   }
@@ -334,7 +335,7 @@ function AccountDialog({
           helperText={fieldErrors.resetPin ?? 'Leave blank to keep the current PIN. The operator is asked to change it on next login.'}
           inputProps={{ inputMode: 'numeric' }} />
         <Button variant="outlined" color="warning" startIcon={<LogoutIcon />} disabled={loading}
-          onClick={() => patch({ forceLogout: true }, `${user?.name}'s sessions revoked`)}>
+          onClick={() => patch({ forceLogout: true }, copy('user.revokeSessions').success(user?.name ?? ''))}>
           Log out of all devices
         </Button>
       </Stack>
@@ -466,12 +467,12 @@ export default function AdminUsersPage() {
   }
 
   const revokeInvite = (inv: InviteRow) => setConfirmAction({
-    title: 'Revoke invite',
-    message: `Revoke the invite for ${inv.email}? Their setup link will stop working immediately.`,
-    label: 'Revoke', color: 'error',
+    title: copy('invite.revoke').title,
+    message: copy('invite.revoke').message(inv.email),
+    label: copy('invite.revoke').confirm, color: 'error',
     action: async () => {
       const res = await fetch(`/api/users/invite/${inv.id}`, { method: 'DELETE' })
-      if (res.ok) { showToast('Invite revoked'); await loadInvites() }
+      if (res.ok) { showToast(copy('invite.revoke').success); await loadInvites() }
       else showToast('Could not revoke the invite', 'error')
     },
   })
@@ -614,10 +615,10 @@ export default function AdminUsersPage() {
                           <Tooltip title="Unlock PIN">
                             <IconButton size="small" color="warning"
                               onClick={() => setConfirmAction({
-                                title: 'Unlock PIN',
-                                message: `Unlock ${user.name}'s PIN so they can log in again?`,
-                                label: 'Unlock', color: 'warning',
-                                action: async () => { if (await patchUser(user.id, { unlockPin: true })) showToast(`${user.name}'s PIN unlocked`) },
+                                title: copy('user.unlockPin').title,
+                                message: copy('user.unlockPin').message(user.name),
+                                label: copy('user.unlockPin').confirm, color: 'warning',
+                                action: async () => { if (await patchUser(user.id, { unlockPin: true })) showToast(copy('user.unlockPin').success(user.name)) },
                               })}>
                               <LockOpenIcon fontSize="small" />
                             </IconButton>
@@ -628,10 +629,10 @@ export default function AdminUsersPage() {
                           <Tooltip title="Deactivate account">
                             <IconButton size="small" color="error"
                               onClick={() => setConfirmAction({
-                                title: 'Deactivate Account',
-                                message: `${user.name} will be logged out immediately and unable to log in. Their history is preserved; you can reactivate them any time.`,
-                                label: 'Deactivate', color: 'error',
-                                action: async () => { if (await patchUser(user.id, { isActive: false })) showToast(`${user.name} deactivated`) },
+                                title: copy('user.deactivate').title,
+                                message: copy('user.deactivate').message(user.name),
+                                label: copy('user.deactivate').confirm, color: 'error',
+                                action: async () => { if (await patchUser(user.id, { isActive: false })) showToast(copy('user.deactivate').success(user.name)) },
                               })}>
                               <BlockIcon fontSize="small" />
                             </IconButton>
@@ -640,10 +641,10 @@ export default function AdminUsersPage() {
                           <Tooltip title="Reactivate account">
                             <IconButton size="small" color="success"
                               onClick={() => setConfirmAction({
-                                title: 'Reactivate Account',
-                                message: `Reactivate ${user.name}'s account so they can log in again?`,
-                                label: 'Reactivate', color: 'primary',
-                                action: async () => { if (await patchUser(user.id, { isActive: true })) showToast(`${user.name} reactivated`) },
+                                title: copy('user.reactivate').title,
+                                message: copy('user.reactivate').message(user.name),
+                                label: copy('user.reactivate').confirm, color: 'primary',
+                                action: async () => { if (await patchUser(user.id, { isActive: true })) showToast(copy('user.reactivate').success(user.name)) },
                               })}>
                               <CheckCircleIcon fontSize="small" />
                             </IconButton>
