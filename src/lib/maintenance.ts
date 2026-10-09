@@ -204,6 +204,18 @@ export async function openDamageTask(
 
 export type CloseReason = 'COMPLETED' | 'FIELD_FIX' | 'DELETED' | 'RETIRED' | 'REOPEN'
 
+/**
+ * PR-5 (U-15): Reopen refused because the asset already has another open repair —
+ * reopening would leave two, against `openDamageTask`'s one-open-task-per-asset rule.
+ * Routes answer it with a 409 carrying `message`.
+ */
+export class OpenRepairExists extends Error {
+  constructor(public readonly openTask: { id: string; taskName: string }, kind: 'vehicle' | 'unit') {
+    super(`"${openTask.taskName}" is already open for this ${kind} — add to it or close it before reopening this one.`)
+    this.name = 'OpenRepairExists'
+  }
+}
+
 export interface CloseExtra {
   actualCost?: Prisma.Decimal | number | null
   notes?: string | null
@@ -259,6 +271,12 @@ export async function closeDamageTask(
   const now = new Date()
 
   if (reason === 'REOPEN') {
+    // PR-5 (U-15): one open repair per asset — Reopen must not make a second.
+    const openWhere = asset ? openTaskWhere(asset) : null
+    const other = openWhere
+      ? await tx.maintenanceTask.findFirst({ where: { ...openWhere, id: { not: taskId } }, select: { id: true, taskName: true } })
+      : null
+    if (other && asset) throw new OpenRepairExists(other, asset.kind)
     const reopened = await tx.maintenanceTask.update({
       where: { id: taskId },
       data: { status: 'IN_PROGRESS', completedAt: null },

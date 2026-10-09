@@ -27,6 +27,8 @@ import {
 import { fetchPickerOptions } from '@/lib/inventory-options'
 import { VEHICLE_TYPE_LABELS, type VehicleTypeValue } from '@/lib/vehicle-types'
 import { emailOutcomeToast, type EmailReport } from '@/lib/email-outcome'
+import { apiErrorMessage } from '@/lib/api-error-shape'
+import { copy } from '@/lib/copy/admin-actions'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -98,7 +100,7 @@ async function patchRequest(id: string, body: Record<string, unknown>): Promise<
     body: JSON.stringify(body),
   })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) return { ok: false, error: data.error ?? 'Action failed.' }
+  if (!res.ok) return { ok: false, error: apiErrorMessage(data, 'Action failed.') } // PR-5 (U-15): never a zod object
   return { ok: true, data }
 }
 
@@ -128,7 +130,7 @@ async function patchLine(
     body: JSON.stringify(body),
   })
   const data = await res.json().catch(() => ({}))
-  if (!res.ok) return { ok: false, error: data.error ?? 'Action failed.' }
+  if (!res.ok) return { ok: false, error: apiErrorMessage(data, 'Action failed.') }
   return { ok: true }
 }
 
@@ -148,7 +150,7 @@ function ForwardHubDialog({ requestId, hubs, onClose, onSuccess }: {
     const r = await patchRequest(requestId, { action: 'forward', fulfillerHubId: hubId })
     setBusy(false)
     if (r.ok) {
-      showToast(r.data && 'emailed' in r.data ? hubLinkToast(r.data, 'Forward') : { message: 'Forwarded to hub.', severity: 'success' })
+      showToast(r.data && 'emailed' in r.data ? hubLinkToast(r.data, 'Forward') : { message: copy('request.forward').success, severity: 'success' })
       onSuccess()
     }
     else setError(r.error ?? 'Failed.')
@@ -191,7 +193,7 @@ function DeclineDialog({ requestId, onClose, onSuccess }: {
     setBusy(true)
     const r = await patchRequest(requestId, { action: 'decline', decisionNote: note.trim() || null })
     setBusy(false)
-    if (r.ok) { showToast({ message: 'Request declined.', severity: 'success' }); onSuccess() }
+    if (r.ok) { showToast({ message: copy('request.decline').success, severity: 'success' }); onSuccess() }
     else setError(r.error ?? 'Failed.')
   }
 
@@ -259,7 +261,7 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
     const r = await patchRequest(req.id, { action: act, ...extra })
     setBusy(null)
     if (r.ok) {
-      showToast({ message: successMessage ?? 'Done.', severity: 'success' })
+      showToast({ message: successMessage ?? copy('request.action').success, severity: 'success' })
       onRefresh()
     } else {
       showToast({ message: r.error ?? 'Action failed.', severity: 'error' })
@@ -268,7 +270,7 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
 
   // UXP-3 (3c / F-04): both admin closes of a MATERIAL request (REQUESTED→fulfill,
   // FORWARDED→complete) now notify the requester server-side — say so, by name.
-  const handledMessage = `Marked handled — ${req.requestedByName ?? 'requester'} notified`
+  const handledMessage = copy('request.markHandled').success(req.requestedByName ?? null)
 
   const resendLink = async () => {
     setBusy('resend')
@@ -276,7 +278,7 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
     const d = await res.json().catch(() => ({}))
     setBusy(null)
     if (res.ok) showToast(hubLinkToast(d, 'Hub link'))
-    else showToast({ message: d.error ?? 'Resend failed.', severity: 'error' })
+    else showToast({ message: apiErrorMessage(d, 'Resend failed.'), severity: 'error' })
   }
 
   const hubName = req.fulfillerHubId ? (hubs.find((h) => h.id === req.fulfillerHubId)?.name ?? req.fulfillerHubId) : null
@@ -311,7 +313,7 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
   const onStage = async () => {
     const r = await patchRequest(req.id, { action: 'confirm' })
     if (r.ok) {
-      showToast({ message: 'Reservation staged.', severity: 'success' })
+      showToast({ message: copy('request.stage').success, severity: 'success' })
       onRefresh()
     } else {
       // Q4: surface the failure instead of silently returning — a rejected stage
@@ -701,7 +703,7 @@ function AdminRequestsContent() {
               body: JSON.stringify(body),
             })
             if (res.ok) {
-              showToast({ message: 'Request created.', severity: 'success' })
+              showToast({ message: copy('request.create').success, severity: 'success' })
               await load()
               return { ok: true }
             }

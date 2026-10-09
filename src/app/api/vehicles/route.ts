@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getVehicleOperators } from '@/lib/deployment-assignments'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
@@ -13,10 +14,13 @@ export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl
   const status = searchParams.get('status')
   const type = searchParams.get('type')
+  // PR-5 (twin of PR-3c's items): "Show deleted" — only deleted vehicles, admins only.
+  const deletedView = searchParams.get('deleted') === '1'
+  if (deletedView && session.role !== 'ADMIN') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const vehicles = await prisma.vehicle.findMany({
     where: {
-      deletedAt: null,
+      deletedAt: deletedView ? { not: null } : null,
       ...(status && { status: status as never }),
       ...(type && { type: type as never }),
     },
@@ -37,7 +41,7 @@ export async function GET(req: NextRequest) {
       SELECT v."id", v."hubId", h."name" AS "hubName"
       FROM "vehicles" v
       LEFT JOIN "hubs" h ON h."id" = v."hubId"
-      WHERE v."deletedAt" IS NULL
+      WHERE ${deletedView ? Prisma.sql`v."deletedAt" IS NOT NULL` : Prisma.sql`v."deletedAt" IS NULL`}
     `
     for (const r of rows) meta.set(r.id, { hubId: r.hubId, hubName: r.hubName })
   } catch { /* hubId column missing pre-migration */ }

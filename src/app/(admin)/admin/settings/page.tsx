@@ -9,6 +9,8 @@ import {
   Paper, Card, CardContent, Switch, FormControlLabel,
 } from '@mui/material'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { apiErrorMessage } from '@/lib/api-error-shape'
+import { copy } from '@/lib/copy/admin-actions'
 import { useToast } from '@/components/shared/useToast'
 import { ChecklistTemplatesSection } from '@/components/admin/ChecklistTemplatesSection'
 import EmailDeliverySection from '@/components/admin/EmailDeliverySection'
@@ -65,8 +67,11 @@ export default function SettingsPage() {
   // Alert). Thin adapters keep the existing call sites and the ChecklistTemplatesSection
   // onToast/onError props unchanged.
   const pushToast = useToast()
-  const showToast = (msg: string) => pushToast({ message: msg })
+  // PR-5 (U-6/U-15): explicit severity; a failure body goes through apiErrorMessage so a
+  // zod error object never reaches the toast.
+  const showToast = (msg: string) => pushToast({ message: msg, severity: 'success' })
   const showError = (msg: string) => pushToast({ message: msg, severity: 'error' })
+  const showFailure = (body: unknown, fallback: string) => showError(apiErrorMessage(body, fallback))
 
   const loadCategories = React.useCallback(async () => {
     const res = await fetch('/api/categories')
@@ -101,7 +106,7 @@ export default function SettingsPage() {
         body: JSON.stringify({ dailyCheckCutoff: notifCutoff, disabledAlertTypes: notifDisabled }),
       })
       if (!res.ok) { showError('Could not save notification settings.'); return }
-      showToast('Notification settings saved')
+      showToast(copy('settings.saveNotifications').success)
     } catch {
       showError('Could not save notification settings.')
     } finally {
@@ -126,11 +131,11 @@ export default function SettingsPage() {
     setSavingCatId(null)
     if (res.ok) {
       setEditingCatId(null)
-      showToast('Category updated')
+      showToast(copy('category.update').success)
       loadCategories()
     } else {
-      const d = await res.json()
-      showError(d.error ?? 'Failed to update')
+      const d = await res.json().catch(() => ({}))
+      showFailure(d, 'Failed to update')
     }
   }
 
@@ -146,11 +151,11 @@ export default function SettingsPage() {
     if (res.ok) {
       setAddCatOpen(false)
       setNewCatName('')
-      showToast('Category added')
+      showToast(copy('category.add').success)
       loadCategories()
     } else {
-      const d = await res.json()
-      showError(d.error ?? 'Failed to add')
+      const d = await res.json().catch(() => ({}))
+      showFailure(d, 'Failed to add')
     }
   }
 
@@ -159,12 +164,12 @@ export default function SettingsPage() {
     const res = await fetch(`/api/categories/${deleteCat.id}`, { method: 'DELETE' })
     if (res.ok) {
       setDeleteCat(null)
-      showToast('Category deleted')
+      showToast(copy('category.delete').success)
       loadCategories()
     } else {
-      const d = await res.json()
+      const d = await res.json().catch(() => ({}))
       setDeleteCat(null)
-      showError(d.error ?? 'Failed to delete')
+      showFailure(d, 'Failed to delete')
     }
   }
 
@@ -352,9 +357,9 @@ export default function SettingsPage() {
       {/* Delete Category Confirm */}
       <ConfirmDialog
         open={!!deleteCat}
-        title={`Delete "${deleteCat?.name ?? ''}"?`}
-        message="This will permanently delete this category. Any items using it must be reassigned first."
-        confirmLabel="Delete"
+        title={copy('category.delete').title(deleteCat?.name ?? '')}
+        message={copy('category.delete').message}
+        confirmLabel={copy('category.delete').confirm}
         confirmColor="error"
         onClose={() => setDeleteCat(null)}
         onConfirm={deleteCatConfirm}

@@ -91,6 +91,33 @@ export interface PickupPreset {
   lines: Array<{ itemId: string; qty: number }>
 }
 
+/** CC-09: the awaiting-pickup reservation `requestId` as a preset, or null when it is gone. */
+export async function fetchPickupPreset(requestId: string): Promise<PickupPreset | null> {
+  try {
+    const r = await fetch('/api/deployment-requests/awaiting-pickup')
+    const d = r.ok ? await r.json() : null
+    const req = (d?.data ?? []).find((x: { id: string }) => x.id === requestId)
+    if (!req) return null
+    return {
+      requestId: req.id,
+      label: req.label ?? null,
+      hubId: req.hubId ?? null,
+      lines: (req.lines ?? []).map((l: { heldItemId: string; remainingQty: number }) => ({ itemId: l.heldItemId, qty: l.remainingQty })),
+    }
+  } catch {
+    return null
+  }
+}
+
+/** The held lines as picker entries (held stock is consumable stock at the request's hub). */
+export function presetItems(preset: PickupPreset | null | undefined): Map<string, PendingItemEntry> {
+  const m = new Map<string, PendingItemEntry>()
+  for (const line of preset?.lines ?? []) {
+    m.set(line.itemId, { itemType: 'CONSUMABLE', quantity: line.qty, inventoryUnitId: null, unitLabel: null })
+  }
+  return m
+}
+
 export function NewDeploymentDialog({
   vehicles,
   inventoryItems,
@@ -131,14 +158,7 @@ export function NewDeploymentDialog({
     return () => { cancelled = true }
   }, [])
   const [selVehicles, setSelVehicles] = React.useState<Set<string>>(new Set())
-  const [kitItems, setKitItems] = React.useState<Map<string, PendingItemEntry>>(() => {
-    if (!pickupPreset?.lines.length) return new Map()
-    const m = new Map<string, PendingItemEntry>()
-    for (const line of pickupPreset.lines) {
-      m.set(line.itemId, { itemType: 'CONSUMABLE', quantity: line.qty, inventoryUnitId: null, unitLabel: null })
-    }
-    return m
-  })
+  const [kitItems, setKitItems] = React.useState<Map<string, PendingItemEntry>>(() => presetItems(pickupPreset))
   // CC-25: which item slot the shared QrScannerDialog is scanning (null = closed).
   const [scanTargetId, setScanTargetId] = React.useState<string | null>(null)
   const [note, setNote] = React.useState('')

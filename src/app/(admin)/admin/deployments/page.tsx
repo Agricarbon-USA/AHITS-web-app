@@ -40,6 +40,7 @@ import { useToast } from '@/components/shared/useToast'
 import { useMutation } from '@/hooks/useMutation'
 import { useInvalidation } from '@/hooks/useInvalidation'
 import { apiErrorMessage } from '@/lib/api-error-shape'
+import { copy } from '@/lib/copy/admin-actions'
 import { fetchPickerOptions } from '@/lib/inventory-options'
 import { useUrlFilters } from '@/hooks/useUrlFilters'
 import {
@@ -327,7 +328,7 @@ function DeploymentDrawer({
       setReassignOpen(false)
       setReassignTargetId('')
       setReassignNote('')
-      showToast('Primary operator reassigned.')
+      showToast(copy('deployment.reassignPrimary').success)
       await refresh()
     } catch {
       showToast('Network error. Please try again.', 'error')
@@ -350,7 +351,7 @@ function DeploymentDrawer({
         return
       }
       setOperatorToAdd('')
-      showToast('Operator added.')
+      showToast(copy('deployment.addOperator').success)
       await refresh()
     } catch {
       showToast('Network error. Please try again.', 'error')
@@ -371,7 +372,7 @@ function DeploymentDrawer({
         showToast(typeof d.error === 'string' ? d.error : 'Could not remove operator.', 'error')
         return
       }
-      showToast('Operator removed.')
+      showToast(copy('deployment.removeOperator').success)
       await refresh()
     } catch {
       showToast('Network error. Please try again.', 'error')
@@ -385,7 +386,7 @@ function DeploymentDrawer({
     const result = await run({
       endpoint: `/api/transfers/${cancelTransferId}`, method: 'DELETE', label: 'Cancel transfer',
       invalidates: ['transfers', 'deployments'],
-      success: 'Transfer cancelled.', errorFallback: 'Could not cancel the transfer.',
+      success: copy('transfer.cancel').success, errorFallback: 'Could not cancel the transfer.',
     })
     setCancelLoading(false)
     if (result.ok) setCancelTransferId(null)
@@ -539,7 +540,7 @@ function DeploymentDrawer({
     })
     if (res.ok) {
       setRemoveDialog({ open: false, kitItem: null })
-      showToast('Item returned.')
+      showToast(copy('deployment.returnItem').success)
       await refresh()
     } else {
       // Q4: surface the failure — a swallowed error here looked like a successful return.
@@ -1347,7 +1348,7 @@ function AdminDeploymentsContent() {
       body: { responseNote: responseNote || undefined },
       label: action === 'accept' ? 'Accept transfer' : 'Decline transfer',
       invalidates: ['transfers', 'deployments', 'inventory', 'vehicles', 'notifications'],
-      success: action === 'accept' ? 'Transfer accepted' : 'Transfer declined',
+      success: copy(action === 'accept' ? 'transfer.accept' : 'transfer.decline').success,
       errorFallback: `Could not ${action} the transfer.`,
     })
     setRespondLoading(false)
@@ -1556,7 +1557,7 @@ function AdminDeploymentsContent() {
             // Open lands in the new rig's drawer, the same one a row tap opens.
             const rig = toRig(started)
             toast({
-              message: `Deployment started for ${started.operatorName}`,
+              message: copy('deployment.start').success(started.operatorName),
               action: rig ? { label: 'Open', onClick: () => { setDrawerAction(null); setDrawerRig(rig) } } : undefined,
             })
             void load()

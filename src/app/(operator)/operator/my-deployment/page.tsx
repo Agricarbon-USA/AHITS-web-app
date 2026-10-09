@@ -25,7 +25,7 @@ import { TransferEntryDialog } from '@/components/operator/TransferEntryDialog' 
 import { EntireRigTransferDialog } from '@/components/operator/EntireRigTransferDialog' // CC-33 (D22)
 import {
   NewDeploymentDialog, availFor,
-  type VehicleOption, type InventoryOption, type PendingItemEntry, type UserOption, type HubOption, type PickupPreset,
+  type VehicleOption, type InventoryOption, type PendingItemEntry, type UserOption, type HubOption, type PickupPreset, fetchPickupPreset, presetItems,
 } from '@/components/operator/NewDeploymentDialog' // UXP-3 (3d, D21)
 import { RentalVehicleForm, RentalVehicleFields, rentalFieldsToVehiclePayload, isRentalFormValid } from '@/components/shared/RentalVehicleForm'
 import { useToast } from '@/components/shared/useToast'
@@ -280,30 +280,22 @@ export default function MyRigPage() {
   // CC-09: when navigated from an AwaitingPickupCard (/operator/my-deployment?fromRequestId=xxx),
   // fetch the pickup data and auto-open the dialog pre-seeded. window.location.search is used
   // (not useSearchParams) to avoid the Suspense requirement on this large client component.
+  // PR-5 (U-11): waits for the rig read. Already deployed → Add items on the current rig,
+  // seeded with the held lines (add-items claims the PRIMARY's holds) — was a dead end.
+  const pickupHandled = React.useRef(false)
   React.useEffect(() => {
-    if (typeof window === 'undefined') return
-    const params = new URLSearchParams(window.location.search)
-    const fromRequestId = params.get('fromRequestId')
-    if (!fromRequestId) return
-    fetch('/api/deployment-requests/awaiting-pickup')
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        const req = (d?.data ?? []).find((r: { id: string }) => r.id === fromRequestId)
-        if (!req) return
-        setPickupPreset({
-          requestId: req.id,
-          label: req.label ?? null,
-          hubId: req.hubId ?? null,
-          lines: (req.lines ?? []).map((l: { heldItemId: string; remainingQty: number }) => ({
-            itemId: l.heldItemId,
-            qty: l.remainingQty,
-          })),
-        })
-        setNewOpen(true)
-      })
-      .catch(() => {})
-  // Run once on mount — URL params don't change during the page lifecycle.
-  }, [])
+    const fromRequestId = new URLSearchParams(window.location.search).get('fromRequestId')
+    if (!fromRequestId || rig === undefined || pickupHandled.current) return
+    pickupHandled.current = true
+    void fetchPickupPreset(fromRequestId).then((preset) => {
+      if (!preset) return
+      if (!rig) { setPickupPreset(preset); setNewOpen(true); return }
+      setPendingItems(presetItems(preset))
+      if (preset.hubId) setAddItemSourceHubId(preset.hubId)
+      setAddItemOpen(true)
+      void refetchPickers()
+    })
+  }, [rig, refetchPickers])
 
   const handleRespond = async () => {
     if (!respondDialog) return

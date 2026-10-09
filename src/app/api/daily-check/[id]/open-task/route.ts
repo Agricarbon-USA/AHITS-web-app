@@ -58,8 +58,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   // PR-3a: through `openDamageTask` with source DAILY_CHECK — no DAMAGE_REPORTED bell (see
   // above), and a vehicle that already has an open repair gets these notes appended to it
   // instead of a second task. `flipVehicle` is the admin's "take it out of use" choice.
-  const task = await prisma.$transaction(async (tx) => {
-    const { task: t } = await openDamageTask(tx, { kind: 'vehicle', id: check.vehicleId }, {
+  const { task, created } = await prisma.$transaction(async (tx) => {
+    const { task: t, created: isNew } = await openDamageTask(tx, { kind: 'vehicle', id: check.vehicleId }, {
       taskName: 'Repair from failed daily check',
       notes,
       rigId,
@@ -70,11 +70,13 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     // Re-link the check's photos to the task WITHOUT dropping dailyCheckId — one photo, two
     // contexts (it still belongs to the check; it now also documents the repair).
     await tx.photo.updateMany({ where: { dailyCheckId: check.id }, data: { maintenanceId: t.id } })
-    return tx.maintenanceTask.findUniqueOrThrow({ where: { id: t.id } })
+    return { task: await tx.maintenanceTask.findUniqueOrThrow({ where: { id: t.id } }), created: isNew }
   })
 
   // Triaged = resolved: the failed-check bell clears now that the task is the live object.
   await resolveActiveAlert('DAILY_CHECK_FAILED', 'vehicles', check.vehicleId)
 
-  return NextResponse.json({ data: task }, { status: 201 })
+  // PR-5 (U-15): `created: false` when the check joined the vehicle's open repair, so the
+  // viewer says so instead of implying a second task.
+  return NextResponse.json({ data: task, created }, { status: created ? 201 : 200 })
 }

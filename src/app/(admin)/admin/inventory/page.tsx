@@ -37,7 +37,7 @@ import { QrScanField } from '@/components/shared/QrScanField'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { useMultiSelect } from '@/components/shared/useMultiSelect'
 import { BulkActionBar } from '@/components/shared/BulkActionBar'
-import { appTimezone } from '@/lib/business-date'
+import { copy, deletedLabel } from '@/lib/copy/admin-actions'
 import { PhotoGallery } from '@/components/shared/PhotoGallery'
 import { RepairReviewDialog } from '@/components/shared/RepairReviewDialog'
 import { EQUIPMENT_STATUS } from '@/lib/status'
@@ -873,12 +873,6 @@ function StockByHubSection({
 // in history and reports. Delete is for mistakes, duplicates and test entries — it
 // leaves every list, count and report, and can be restored.
 
-/** "Deleted 9 Oct · Max" — dated on the business day, so it reads the same for everyone. */
-function deletedLabel(item: { deletedAt?: string | null; deletedBy?: { name: string } | null }): string {
-  if (!item.deletedAt) return 'Deleted'
-  const day = new Date(item.deletedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: appTimezone() })
-  return `Deleted ${day}${item.deletedBy?.name ? ` · ${item.deletedBy.name}` : ''}`
-}
 
 /** `GET /api/inventory/<id>/references` — what the Delete dialog says before confirming. */
 interface DeleteFacts {
@@ -890,6 +884,10 @@ interface DeleteFacts {
 
 const countOf = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
+// The Delete dialog's details are at most three body2 lines (units/stock · history ·
+// restorable) with 4px gaps — reserved before they load (1.43 × 14px ≈ 20px a line).
+const DELETE_DETAILS_MIN_HEIGHT = 3 * 20 + 2 * 4
+
 /** The dialog's detail lines: what goes with the item, what history is kept, and the way back. */
 function deleteDetailLines(f: DeleteFacts): string[] {
   const lines: string[] = []
@@ -899,10 +897,10 @@ function deleteDetailLines(f: DeleteFacts): string[] {
       const parts = Object.entries(f.units)
         .filter(([, n]) => n > 0)
         .map(([status, n]) => `${n} ${(EQUIPMENT_STATUS[status]?.label ?? status).toLowerCase()}`)
-      lines.push(`${countOf(total, 'unit')} (${parts.join(', ')}) go with it; their QR labels stay bound.`)
+      lines.push(copy('item.delete').unitsGo(total, parts.join(', ')))
     }
   } else if (f.stock.onHand > 0) {
-    lines.push(`${f.stock.onHand} on hand at ${countOf(f.stock.hubs, 'hub')} go with it.`)
+    lines.push(copy('item.delete').stockGoes(f.stock.onHand, f.stock.hubs))
   }
   const h = f.history
   const kept = [
@@ -911,8 +909,8 @@ function deleteDetailLines(f: DeleteFacts): string[] {
     h.repairs > 0 && countOf(h.repairs, 'repair'),
     h.photos > 0 && countOf(h.photos, 'photo'),
   ].filter(Boolean)
-  if (kept.length > 0) lines.push(`History kept, hidden: ${kept.join(' · ')}.`)
-  lines.push('Restorable under Show deleted.')
+  if (kept.length > 0) lines.push(copy('item.delete').historyKept(kept as string[]))
+  lines.push(copy('item.delete').restorable)
   return lines
 }
 
@@ -1056,7 +1054,7 @@ function ItemDetailDrawer({
       body: JSON.stringify({ unitId: retireUnitId, decision: 'RETIRE', note: 'Approved for retirement by admin' }),
     })
     if (res.ok) {
-      showToast({ message: 'Unit retired.', severity: 'success' })
+      showToast({ message: copy('unit.approveRetirement').success, severity: 'success' })
     } else {
       // Q4: surface the failure instead of silently closing + reverting on reload.
       const d = await res.json().catch(() => ({}))
@@ -1453,9 +1451,9 @@ function ItemDetailDrawer({
       {/* Units-tab dropdown → Retired (PR-3b): the same retire as the review queue. */}
       <ConfirmDialog
         open={!!confirmUnitRetireId}
-        title="Retire this unit?"
-        message="Its QR label is released and any open repair on it is closed. Units that are out or Returning can't be retired. History is preserved."
-        confirmLabel="Retire Unit"
+        title={copy('unit.retire').title}
+        message={copy('unit.retire').message}
+        confirmLabel={copy('unit.retire').confirm}
         confirmColor="error"
         onClose={() => setConfirmUnitRetireId(null)}
         onConfirm={async () => {
@@ -1468,9 +1466,9 @@ function ItemDetailDrawer({
       {/* Per-unit retire confirmation */}
       <ConfirmDialog
         open={!!retireUnitId}
-        title="Retire this unit?"
-        message="This will permanently retire this unit. History is preserved."
-        confirmLabel="Retire Unit"
+        title={copy('unit.approveRetirement').title}
+        message={copy('unit.approveRetirement').message}
+        confirmLabel={copy('unit.approveRetirement').confirm}
         confirmColor="error"
         onClose={() => setRetireUnitId(null)}
         onConfirm={handleApproveRetirement}
@@ -1602,7 +1600,7 @@ function AdminInventoryContent() {
       body: JSON.stringify({ status: 'RETIRED' }),
     })
     setRetireItem(null)
-    if (res.ok) { showToast({ message: `${retireItem.name} retired`, severity: 'success' }); load(); return }
+    if (res.ok) { showToast({ message: copy('item.retire').success(retireItem.name), severity: 'success' }); load(); return }
     // PR-3b: the 409 names what blocks it ("2 units are still out or in repair — …").
     const d = await res.json().catch(() => ({}))
     showToast({ message: apiErrorMessage(d, 'Failed to retire item'), severity: 'error' })
@@ -1625,7 +1623,7 @@ function AdminInventoryContent() {
     const d = await res.json().catch(() => ({}))
     if (!res.ok) { showToast({ message: apiErrorMessage(d, 'Could not restore the item'), severity: 'error' }); return }
     load()
-    showToast({ message: `${item.name} restored`, severity: 'success' })
+    showToast({ message: copy('item.restore').success(item.name), severity: 'success' })
   }
 
   const handleDelete = async () => {
@@ -1640,9 +1638,9 @@ function AdminInventoryContent() {
     if (selection.isSelected(item.id)) selection.toggle(item.id)
     load()
     showToast({
-      message: `${item.name} deleted`,
+      message: copy('item.delete').success(item.name),
       severity: 'success',
-      action: { label: 'Undo', onClick: () => { void restoreItem(item) } },
+      action: { label: copy('item.delete').undo, onClick: () => { void restoreItem(item) } },
     })
   }
 
@@ -1672,9 +1670,9 @@ function AdminInventoryContent() {
     setRefusals(refused)
     load()
     showToast({
-      message: refused.length > 0 ? `${deletedIds.length} deleted · ${refused.length} refused` : `${deletedIds.length} deleted`,
+      message: copy('item.bulkDelete').success(deletedIds.length, refused.length),
       severity: refused.length > 0 ? 'warning' : 'success',
-      ...(refused.length > 0 && { action: { label: 'Details', onClick: () => setRefusalsOpen(true) } }),
+      ...(refused.length > 0 && { action: { label: copy('item.bulkDelete').details, onClick: () => setRefusalsOpen(true) } }),
     })
   }
 
@@ -1704,7 +1702,7 @@ function AdminInventoryContent() {
       return
     }
     showToast({
-      message: `${saved.name} ${isEdit ? 'updated' : 'added'}`,
+      message: copy('item.save').success(saved.name, isEdit),
       severity: 'success',
       action: { label: 'Open', onClick: () => setDetailRow({ id: saved.id }) },
     })
@@ -2009,9 +2007,9 @@ function AdminInventoryContent() {
       {/* Retire confirm */}
       <ConfirmDialog
         open={!!retireItem}
-        title="Retire item?"
-        message={`Retire "${retireItem?.name}"? Units on hand will be retired and their QR labels released. Units that are out or in repair block this. History is preserved.`}
-        confirmLabel="Retire"
+        title={copy('item.retire').title}
+        message={copy('item.retire').message(retireItem?.name ?? '')}
+        confirmLabel={copy('item.retire').confirm}
         confirmColor="error"
         onClose={() => setRetireItem(null)}
         onConfirm={handleRetire}
@@ -2020,16 +2018,19 @@ function AdminInventoryContent() {
       {/* PR-3c: Delete confirm — the rule a user needs (D-s), then what goes with it. */}
       <ConfirmDialog
         open={!!deleteTarget}
-        title="Delete item?"
-        message={`Delete "${deleteTarget?.name}"? Use this for mistakes, duplicates and test entries. To retire real gear use Retire instead — it stays in history and reports.`}
-        details={deleteFacts && (
-          <Stack spacing={0.5} mt={1.5}>
-            {deleteDetailLines(deleteFacts).map((line) => (
+        title={copy('item.delete').title}
+        message={copy('item.delete').message(deleteTarget?.name ?? '')}
+        details={(
+          // PR-5 (point fix): the details read lands after the dialog opens; the space for
+          // its (at most three) lines is reserved up front so the Delete button never moves
+          // under the cursor.
+          <Stack spacing={0.5} mt={1.5} sx={{ minHeight: DELETE_DETAILS_MIN_HEIGHT }} data-testid="delete-details">
+            {(deleteFacts ? deleteDetailLines(deleteFacts) : []).map((line) => (
               <Typography key={line} variant="body2" color="text.secondary">{line}</Typography>
             ))}
           </Stack>
         )}
-        confirmLabel="Delete"
+        confirmLabel={copy('item.delete').confirm}
         confirmColor="error"
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
@@ -2041,20 +2042,20 @@ function AdminInventoryContent() {
           count={selection.count}
           noun="item"
           onClear={selection.clear}
-          actions={[{ label: 'Delete selected', color: 'error', onClick: () => setBulkConfirm(true) }]}
+          actions={[{ label: copy('item.bulkDelete').action, color: 'error', onClick: () => setBulkConfirm(true) }]}
         />
       )}
       <ConfirmDialog
         open={bulkConfirm}
-        title="Delete selected?"
-        message={`Delete ${countOf(selection.count, 'item')}? ${selectedNames.slice(0, 5).join(', ')}${selectedNames.length > 5 ? ` … and ${selectedNames.length - 5} more` : ''}. Use this for mistakes, duplicates and test entries. Anything still in use is refused and stays.`}
-        confirmLabel="Delete"
+        title={copy('item.bulkDelete').title}
+        message={copy('item.bulkDelete').message(selection.count, selectedNames)}
+        confirmLabel={copy('item.bulkDelete').confirm}
         confirmColor="error"
         onClose={() => setBulkConfirm(false)}
         onConfirm={handleBulkDelete}
       />
       <Dialog open={refusalsOpen} onClose={() => setRefusalsOpen(false)} maxWidth="xs" fullWidth aria-labelledby="refusals-title">
-        <DialogTitle id="refusals-title">Not deleted</DialogTitle>
+        <DialogTitle id="refusals-title">{copy('item.bulkDelete').refusalsTitle}</DialogTitle>
         <DialogContent>
           <List dense>
             {refusals.map((r) => (

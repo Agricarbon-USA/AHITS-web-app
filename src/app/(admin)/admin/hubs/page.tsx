@@ -16,6 +16,8 @@ import DeleteIcon from '@mui/icons-material/Delete'
 import CheckBoxOutlineBlankIcon from '@mui/icons-material/CheckBoxOutlineBlank'
 import CheckBoxIcon from '@mui/icons-material/CheckBox'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { apiErrorMessage } from '@/lib/api-error-shape'
+import { copy } from '@/lib/copy/admin-actions'
 import { useToast } from '@/components/shared/useToast'
 import { useInvalidation } from '@/hooks/useInvalidation'
 import { useCanEdit, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
@@ -138,8 +140,9 @@ export default function AdminHubsPage() {
   // CC-23: route through the single shared Snackbar host (was two inline
   // top-of-page Alerts). Adapters preserve the existing call-site signatures.
   const pushToast = useToast()
-  const showToast = (msg: string) => pushToast({ message: msg })
-  const showError = (msg: string) => pushToast({ message: msg, severity: 'error' })
+  // PR-5 (U-6): every toast states its severity — failures used to render green.
+  const showToast = (msg: string) => pushToast({ message: msg, severity: 'success' })
+  const showError = (body: unknown, fallback: string) => pushToast({ message: apiErrorMessage(body, fallback), severity: 'error' })
 
   const loadHubs = React.useCallback(async () => {
     setHubsLoading(true)
@@ -187,7 +190,8 @@ export default function AdminHubsPage() {
   const markReceived = async (statusLinkId: string) => {
     const res = await fetch(`/api/status-links/${statusLinkId}/receive`, { method: 'POST' })
     const d = await res.json().catch(() => ({}))
-    showToast(res.ok ? 'Marked received.' : typeof d.error === 'string' ? d.error : 'Could not mark received.')
+    if (res.ok) showToast(copy('hubReturn.receive').success)
+    else showError(d, 'Could not mark received.')
     await loadInbound(inboundFilter)
   }
 
@@ -210,9 +214,8 @@ export default function AdminHubsPage() {
         ),
       )
       const allOk = results.every((r) => r.ok)
-      showToast(allOk
-        ? dismissTarget.length === 1 ? 'Dismissed.' : `${dismissTarget.length} items dismissed.`
-        : 'Some items could not be dismissed.')
+      if (allOk) showToast(copy('hubReturn.dismiss').success(dismissTarget.length))
+      else pushToast({ message: copy('hubReturn.dismiss').partial, severity: 'warning' })
       setDismissTarget(null)
       await loadInbound(inboundFilter)
     } finally {
@@ -226,12 +229,12 @@ export default function AdminHubsPage() {
     if (res.ok && d.url) {
       try {
         await navigator.clipboard.writeText(d.url)
-        showToast('New link copied to clipboard.')
+        showToast(copy('hubReturn.reissueLink').success)
       } catch {
-        showToast(`New link: ${d.url}`)
+        pushToast({ message: copy('hubReturn.reissueLink').successNoClipboard(d.url), severity: 'info' })
       }
     } else {
-      showToast(typeof d.error === 'string' ? d.error : 'Could not reissue link.')
+      showError(d, 'Could not reissue link.')
     }
     await loadInbound(inboundFilter)
   }
@@ -244,7 +247,8 @@ export default function AdminHubsPage() {
     try {
       const res = await fetch(`/api/status-links/${resolveUnit.statusLinkId}/receive`, { method: 'POST' })
       const d = await res.json().catch(() => ({}))
-      showToast(res.ok ? 'Marked received — discrepancy closed.' : typeof d.error === 'string' ? d.error : 'Could not mark received.')
+      if (res.ok) showToast(copy('hubReturn.resolveDiscrepancy').success)
+      else showError(d, 'Could not mark received.')
       setResolveUnit(null)
       await loadInbound(inboundFilter)
     } finally {
@@ -280,11 +284,11 @@ export default function AdminHubsPage() {
     if (res.ok) {
       setAddHubOpen(false)
       setEditHub(null)
-      showToast(editHub ? 'Hub updated' : 'Hub added')
+      showToast(copy(editHub ? 'hub.update' : 'hub.add').success)
       loadHubs()
     } else {
-      const d = await res.json()
-      showError(d.error ?? 'Failed to save hub')
+      const d = await res.json().catch(() => ({}))
+      showError(d, 'Failed to save hub') // PR-5 (U-15): a zod error object never reaches the toast
     }
   }
 
@@ -293,12 +297,12 @@ export default function AdminHubsPage() {
     const res = await fetch(`/api/hubs/${deleteHub.id}`, { method: 'DELETE' })
     if (res.ok) {
       setDeleteHub(null)
-      showToast('Hub deactivated')
+      showToast(copy('hub.deactivate').success)
       loadHubs()
     } else {
-      const d = await res.json()
+      const d = await res.json().catch(() => ({}))
       setDeleteHub(null)
-      showError(d.error ?? 'Failed to deactivate')
+      showError(d, 'Failed to deactivate')
     }
   }
 
@@ -809,9 +813,9 @@ export default function AdminHubsPage() {
       {/* ── Hub deactivate confirm ── */}
       <ConfirmDialog
         open={!!deleteHub}
-        title={`Deactivate "${deleteHub?.name ?? ''}"?`}
-        message="This hub will be hidden from the hub list. Items assigned to it will retain their assignment."
-        confirmLabel="Delete"
+        title={copy('hub.deactivate').title(deleteHub?.name ?? '')}
+        message={copy('hub.deactivate').message}
+        confirmLabel={copy('hub.deactivate').confirm}
         confirmColor="error"
         onClose={() => setDeleteHub(null)}
         onConfirm={deleteHubConfirm}
@@ -830,10 +834,13 @@ export default function AdminHubsPage() {
               onClick: async () => {
                 const ids = [...bulkSelectedInView]
                 multiSelect.clear()
-                await Promise.all(ids.map((id) =>
-                  fetch(`/api/status-links/${id}/receive`, { method: 'POST' }),
+                // PR-5 (U-6): read every result — a failed receive is red, not counted as done.
+                const results = await Promise.all(ids.map((id) =>
+                  fetch(`/api/status-links/${id}/receive`, { method: 'POST' }).then((r) => r.ok).catch(() => false),
                 ))
-                showToast(`${ids.length} item${ids.length !== 1 ? 's' : ''} marked received.`)
+                const ok = results.filter(Boolean).length
+                if (ok === ids.length) showToast(copy('hubReturn.receiveBulk').success(ok))
+                else pushToast({ message: copy('hubReturn.receiveBulk').partial(ok, ids.length - ok), severity: ok === 0 ? 'error' : 'warning' })
                 await loadInbound('active')
               },
             },

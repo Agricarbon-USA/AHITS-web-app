@@ -338,7 +338,7 @@ export default function OperatorScanPage() {
                 <Button
                   variant="outlined" color="warning" size="small"
                   sx={{ minHeight: 44, fontSize: 16 }}
-                  onClick={() => setReport({ kind: 'unit', id: unit.id, name: unit.inventoryItem.name })}
+                  onClick={() => setReport({ kind: 'unit', id: unit.id, name: unit.inventoryItem.name, inMyKit: !!kitItemForUnit })}
                 >
                   Report a problem
                 </Button>
