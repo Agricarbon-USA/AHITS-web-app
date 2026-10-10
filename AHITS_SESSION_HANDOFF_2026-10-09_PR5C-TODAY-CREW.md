@@ -34,3 +34,13 @@
    - **The owner should say whether the 16:01–17:51 code merges count as D31 deviations, and set the evening hour.**
 4. **Untracked files not committed:** `AHITS_WHATS_CHANGED_2026-10.md` and `AHITS_Whats_Changed_2026-10.pdf` appeared in the working tree during the session. They weren't written by this session and aren't named for this PR, so they were left untouched for the owner.
 5. **Parked (STATUS §4):** one operator can be SECONDARY on several active rigs at once. The schema and code allow it, and every reader shows one rig (PRIMARY first, then newest).
+
+## Evening update · #264 merged and deployed; smoke not run
+- **Owner rulings (this session's last instruction):**
+  - The four afternoon code merges (#258 16:01, #260 16:29, #261 17:18, #259 17:51 Central) are D31 deviations. They are recorded under D31 with the active-deployment count at each, taken from the Deployments history: 0, 0, 1, 1. The 1 was the session's own throwaway smoke rig, so no operator's rig was active at any of them.
+  - The merge window is set: **D48**, after 20:00 Central or whenever the dashboard shows 0 Active Deployments; every merge report states the count. It is now item 3 of the STATUS §4 merge checklist.
+  - The two untracked files are committed (`AHITS_WHATS_CHANGED_2026-10.md` + its PDF), with routing rows in `00_START_HERE.md`. There was no Operator Start Sheet row to sit next to, so one was added beside it.
+- **#264 merged** at 20:32:29 Central. Active Deployments read 0 just before. Squash `1b5d459`; run 38013573234 green (verify, migration-safety, migrate, deploy, env-drift); revision `ahits-web-app-staging-00446-6v5`; `/api/health` 200. **D47 ACTIVE; L-8 CLOSED.**
+- **Smoke not run.** It needs two operator logins, and the session may not create accounts or enter PINs on staging. Asked to create two test operators, the owner chose to skip the smoke tonight. A read-only check passed: the admin dashboard renders after the deploy, `/api/dashboard/feeds` 200, Active Deployments 0. No test data was created, so there is nothing to clean up.
+- **Resume:** run the PR-5c smoke (STATUS §3 lists the rows). The owner creates two test operators and does the sign-ins; the session does the rest through the admin screens and cleans up.
+- **Docs PR:** carries a PDF, so it is not docs-only under CLAUDE.md. The session merged it on the owner's explicit go.
