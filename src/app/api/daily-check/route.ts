@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
-import { getActiveRigForOperator } from '@/lib/deployment-assignments'
+import { getActiveRigForOperator, getActivePrimaryForRig } from '@/lib/deployment-assignments'
+import { findCrewCheckByOther, alreadyCheckedMessage, getVehicleActiveRigId, getRigChecksForDay } from '@/lib/rig-daily-checks'
 import { requireAuth } from '@/lib/auth/session'
 import { createAlert, resolveActiveAlert } from '@/lib/alerts'
 import { applyOdometerReading } from '@/lib/maintenance'
@@ -132,64 +133,76 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Vehicle not found.' }, { status: 404 })
   }
 
-  // CC-29 item 4c: a late replay must never SILENTLY overwrite (or be overwritten by)
-  // an existing check via the upsert. If this is a PAST date (≠ today) and a check
-  // already exists for (vehicle, date, operator), surface a 409 — the queue marks it
-  // 'failed' (409 ∈ TERMINAL_STATUSES) with this message, discard-able in the Outbox,
-  // never merged. Same-day (date === today) keeps the upsert-update below: same-day
-  // edit/resubmit is a feature, and withIdempotency already dedupes exact replays.
-  if (!isToday) {
-    const existing = await prisma.dailyCheck.findUnique({
-      where: { vehicleId_date_operatorId: { vehicleId, date: new Date(date), operatorId: session.userId } },
-      select: { id: true },
-    })
-    if (existing) {
-      return NextResponse.json({ error: `A check for ${date} already exists for this vehicle.` }, { status: 409 })
-    }
-  }
+  // PR-5c (L-8): a rig's checks are shared by its crew — a second crew check of the
+  // same vehicle on the same business day is refused by name. The lookup and the write
+  // run under a transaction-scoped advisory lock on (vehicle, date), so two crew phones
+  // flushing their queues at once can't both land (code only — no unique constraint).
+  type Outcome = { conflict: string } | { check: Awaited<ReturnType<typeof prisma.dailyCheck.upsert>> }
+  const outcome: Outcome = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`daily-check:${vehicleId}:${date}`}))`
+    const crewCheck = await findCrewCheckByOther(vehicleId, new Date(date), session.userId, tx)
+    if (crewCheck) return { conflict: alreadyCheckedMessage(crewCheck, isToday, date) }
 
-  const check = await prisma.dailyCheck.upsert({
-    where: {
-      vehicleId_date_operatorId: {
-        vehicleId,
-        date: new Date(date),
-        operatorId: session.userId,
+    // CC-29 item 4c: a late replay must never SILENTLY overwrite (or be overwritten by)
+    // an existing check via the upsert. If this is a PAST date (≠ today) and a check
+    // already exists for (vehicle, date, operator), surface a 409 — the queue marks it
+    // 'failed' (409 ∈ TERMINAL_STATUSES) with this message, discard-able in the Outbox,
+    // never merged. Same-day (date === today) keeps the upsert-update below: same-day
+    // edit/resubmit is a feature, and withIdempotency already dedupes exact replays.
+    if (!isToday) {
+      const existing = await tx.dailyCheck.findUnique({
+        where: { vehicleId_date_operatorId: { vehicleId, date: new Date(date), operatorId: session.userId } },
+        select: { id: true },
+      })
+      if (existing) return { conflict: `A check for ${date} already exists for this vehicle.` }
+    }
+
+    const check = await tx.dailyCheck.upsert({
+      where: {
+        vehicleId_date_operatorId: {
+          vehicleId,
+          date: new Date(date),
+          operatorId: session.userId,
+        },
       },
-    },
-    create: {
-      vehicleId,
-      operatorId: session.userId,
-      date: new Date(date),
-      checklistJson: checklistJson as never,
-      passFail,
-      issues,
-      odometer,
-      site,
-      // CC-14: recorded on first completion only — a later edit (the update branch)
-      // preserves the original time-to-complete rather than overwriting it.
-      durationMs,
-      // CC-15 (D2): the check's attestation GPS. Undefined when the operator denied /
-      // dismissed / timed out — the row stores NULL and the check succeeds regardless.
-      gpsLat,
-      gpsLng,
-      gpsAccuracy,
-      syncedAt: new Date(),
-    },
-    update: {
-      checklistJson: checklistJson as never,
-      passFail,
-      issues,
-      odometer,
-      site,
-      // CC-15 (D2): best-available-fix-wins. Prisma skips `undefined`, so a re-submit
-      // that denied/timed-out location PRESERVES a prior good fix instead of wiping it;
-      // a re-submit that DID capture updates the point. Denial never destroys location.
-      gpsLat,
-      gpsLng,
-      gpsAccuracy,
-      syncedAt: new Date(),
-    },
+      create: {
+        vehicleId,
+        operatorId: session.userId,
+        date: new Date(date),
+        checklistJson: checklistJson as never,
+        passFail,
+        issues,
+        odometer,
+        site,
+        // CC-14: recorded on first completion only — a later edit (the update branch)
+        // preserves the original time-to-complete rather than overwriting it.
+        durationMs,
+        // CC-15 (D2): the check's attestation GPS. Undefined when the operator denied /
+        // dismissed / timed out — the row stores NULL and the check succeeds regardless.
+        gpsLat,
+        gpsLng,
+        gpsAccuracy,
+        syncedAt: new Date(),
+      },
+      update: {
+        checklistJson: checklistJson as never,
+        passFail,
+        issues,
+        odometer,
+        site,
+        // CC-15 (D2): best-available-fix-wins. Prisma skips `undefined`, so a re-submit
+        // that denied/timed-out location PRESERVES a prior good fix instead of wiping it;
+        // a re-submit that DID capture updates the point. Denial never destroys location.
+        gpsLat,
+        gpsLng,
+        gpsAccuracy,
+        syncedAt: new Date(),
+      },
+    })
+    return { check }
   })
+  if ('conflict' in outcome) return NextResponse.json({ error: outcome.conflict }, { status: 409 })
+  const { check } = outcome
 
   // Mileage trigger (Wave G): advance the vehicle odometer and flag any
   // mileage-based maintenance that's now due. Best-effort, never blocks the check.
@@ -262,6 +275,14 @@ export async function POST(req: NextRequest) {
     // late replay of yesterday's check must not mark today as covered.
     if (isToday) {
       await resolveActiveAlert('DAILY_CHECK_MISSED', 'operators', session.userId)
+      // PR-5c: a crew check covers the rig — clear its PRIMARY's missed-check alert too
+      // (the evaluator agrees on its next pass: rig-daily-checks is the one definition).
+      const rigId = await getVehicleActiveRigId(vehicleId)
+      const crewCovered = rigId ? (await getRigChecksForDay(rigId, new Date(date))).has(vehicleId) : false
+      const primaryId = rigId && crewCovered ? await getActivePrimaryForRig(rigId) : null
+      if (primaryId && primaryId !== session.userId) {
+        await resolveActiveAlert('DAILY_CHECK_MISSED', 'operators', primaryId)
+      }
     }
   } catch (err) {
     console.error('[POST /api/daily-check] daily-check-failed alert failed', err)

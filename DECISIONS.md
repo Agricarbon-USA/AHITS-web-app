@@ -328,6 +328,15 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Revisit triggers:** a real need to free a deleted unit's label without restoring it · a purge requirement (would supersede D33 for items) · vehicles get the same Show deleted / Restore (parked as a PR-5 point item).
 - **Rationale:** the owner asked for a way to remove an item "entirely — sensible, smooth, simple"; the API had a soft delete since CR-8 that no screen exposed. Two agents designed and adversarially reviewed the spec against the code before the owner answered the open questions.
 
+### D47 · Every operator on a rig sees it on Today; the rig's daily checks are shared by its crew
+- **Date:** decided 2026-10-09 (owner, final, in the PR-5c request), recorded 2026-10-09 · **Owner:** Max · **Status:** **PROPOSED → ACTIVE on merge of PR-5c #264** (built 2026-10-09, not merged) · **Read-with:** D16, `src/lib/rig-list.ts` (`resolveMyRigId`), `src/lib/rig-daily-checks.ts`, AHITS_FIX_PROGRAM_2026-10-05_FIVE-PRS.md § PR-5c
+- **Decision:** crews often run two or more operators per rig, so **every operator on a rig — PRIMARY or SECONDARY — sees it on Today**. Today uses the same resolver as `/api/deployments/mine`. **The due-check list is per rig per business day and shared by the crew.** When any crew member completes a check it shows done for all, with who and when. A second crew check of the same vehicle on the same business day is refused: 409 "Already checked today by <name> at <time>". This is enforced in code, with no migration and no unique constraint. **Server permissions are unchanged:** the write guards stay PRIMARY-only, and anything primary-only is hidden on Today with a one-line reason.
+- **Supersedes:** the PR-5a interpretation (#258 interpretation 1) and the CC-14/CC-32 "secondary-operator Today is deferred" scope note (STATUS §3). Neither was a numbered decision.
+- **Revisit triggers:**
+  - A crew that needs per-person checks of the same vehicle on the same day.
+  - The parked question of one operator on two active rigs at once (STATUS §4) becoming a real case.
+- **Rationale:** L-8. My Deployment, Scan and Daily check already showed a crew member their rig (#258); Today alone did not, so a second operator saw "No deployment" on the screen that plans their day.
+
 ---
 
 _To add a decision: copy the D-format above, give it the next Dn id, fill in date/owner/status/decision/rationale, and set any superseded prior decision's `Superseded-by: Dn`. Reference decisions by id (`D1`) in handoffs and workplans instead of re-explaining them._

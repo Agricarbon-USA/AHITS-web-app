@@ -5,6 +5,7 @@ import { getDeploymentRostersForDisplay } from '@/lib/deployment-assignments'
 import { businessDateTime } from '@/lib/business-date'
 import { LIVE_KIT_ITEM, LIVE_VEHICLE } from '@/lib/populations'
 import { LOCK_DURATION_MS } from '@/lib/auth/pin'
+import { getRigChecksForDay } from '@/lib/rig-daily-checks'
 
 /**
  * PR-4 (RC-5 · D-i): an alert exists iff its condition holds for a live entity, and
@@ -187,7 +188,11 @@ async function operatorEntities(rigIds: string[], ctx: EvalContext): Promise<Ope
     const roster = rosters.get(rigId)
     const operatorId = roster?.operatorId ?? null
     if (!operatorId) continue
-    const checked = await prisma.dailyCheck.findFirst({ where: { operatorId, date: new Date(ctx.today) }, select: { id: true } })
+    // PR-5c: the rig's checks are shared — a crewmate's check of a rig vehicle today
+    // covers the PRIMARY (rig-daily-checks is the one definition; the POST refuses the
+    // PRIMARY a second check of that vehicle, so their own row may never exist).
+    const own = await prisma.dailyCheck.findFirst({ where: { operatorId, date: new Date(ctx.today) }, select: { id: true } })
+    const checked = own ?? ((await getRigChecksForDay(rigId, new Date(ctx.today))).size > 0 ? { id: 'crew' } : null)
     out.push({
       operatorId,
       operatorName: roster?.operator?.name ?? 'Operator',

@@ -59,10 +59,16 @@ export async function serializeRigsForList(rigs: ListRig[]) {
   })
 }
 
+/** PR-5 (L-8): "which rig am I on" — the ONE resolver behind `/api/deployments/mine`
+ *  and Today (PR-5c). PRIMARY first, then newest; a SECONDARY sees their crew rig. */
+export async function resolveMyRigId(userId: string): Promise<string | null> {
+  return getActiveRigForOperator(userId, prisma, { includeSecondary: true })
+}
+
 /** PR-5 (L-8/L-9): the caller's own active rig — PRIMARY first, then newest; any role,
  *  admins included (an admin covering a rig sees theirs, not everyone's newest). */
 export async function getMyActiveRig(userId: string) {
-  const rigId = await getActiveRigForOperator(userId, prisma, { includeSecondary: true })
+  const rigId = await resolveMyRigId(userId)
   if (!rigId) return null
   const rig = await prisma.rig.findFirst({ where: { id: rigId, endedAt: null }, include: RIG_LIST_INCLUDE })
   if (!rig) return null
