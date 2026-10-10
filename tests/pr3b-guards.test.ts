@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 import { prisma } from '../src/lib/prisma'
 import { openReferences, assertNoOpenReferences, ReferenceConflict } from '../src/lib/asset-references'
-import { allHubStockForScan } from '../src/lib/inventory-stock'
+import { consumableMessage } from '../src/lib/item-rules'
 import { PATCH as patchItem, DELETE as deleteItem } from '../src/app/api/inventory/[id]/route'
 import { PATCH as patchUnit } from '../src/app/api/inventory/units/[unitId]/route'
 import { PATCH as patchVehicle, DELETE as deleteVehicle } from '../src/app/api/vehicles/[id]/route'
@@ -153,19 +153,19 @@ describe('item retire (D-a)', () => {
     expect(after?.deletedAt).toBeNull()
   })
 
-  it('consumable: stock rows and quantity untouched, LOW_INVENTORY resolved, the scan skips it', async () => {
+  // PR-6 (D-w): Retire is for serialized gear — a consumable is refused, nothing written.
+  // (LOW_INVENTORY clearing on a removed consumable is covered by PR-3c's delete tests.)
+  it('consumable: Retire is refused (409, D-w) and nothing is written', async () => {
     const hub = await createHub()
     const bags = await createInventoryItem(catId, { name: 'Bags', quantity: 3 })
     await seedInventoryStock(bags.id, hub.id, 3)
-    await prisma.inventoryItem.update({ where: { id: bags.id }, data: { lowStockThreshold: 5 } })
-    const key = `LOW_INVENTORY:inventory_items:${bags.id}:${hub.id}`
-    await prisma.alert.create({ data: { type: 'LOW_INVENTORY', sourceTable: 'inventory_items', sourceId: `${bags.id}:${hub.id}`, activeKey: key } })
-
-    expect((await patchItem(req(`/api/inventory/${bags.id}`, 'PATCH', { status: 'RETIRED' }), p({ id: bags.id }))).status).toBe(200)
+    const res = await patchItem(req(`/api/inventory/${bags.id}`, 'PATCH', { status: 'RETIRED' }), p({ id: bags.id }))
+    expect(res.status).toBe(409)
+    expect((await res.json()).error).toBe(consumableMessage('Bags', 'retire'))
+    const after = await prisma.inventoryItem.findUnique({ where: { id: bags.id } })
+    expect(after?.status).toBe('AVAILABLE')
+    expect(after?.quantity).toBe(3)
     expect((await prisma.inventoryStock.findFirst({ where: { itemId: bags.id } }))?.quantity).toBe(3)
-    expect((await prisma.inventoryItem.findUnique({ where: { id: bags.id } }))?.quantity).toBe(3)
-    expect(await prisma.alert.count({ where: { sourceId: `${bags.id}:${hub.id}`, resolved: false } })).toBe(0)
-    expect((await allHubStockForScan()).some((r) => r.itemId === bags.id)).toBe(false)
   })
 
   it('item DELETE is refused while units are out', async () => {

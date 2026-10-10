@@ -49,6 +49,12 @@ import {
 } from '@/components/shared/RentalVehicleForm'
 import type { ReturnCondition } from '@/lib/status'
 
+// PR-6 (D-x): the admin Return Item choices for a consumable line.
+const CONSUMABLE_RETURN_CONDITIONS = [
+  { value: 'GOOD', label: 'Good' },
+  { value: 'INOPERABLE', label: 'Write off' },
+] as const
+
 // ── Types ─────────────────────────────────────────────────────────
 
 const VEHICLE_ICON: Record<string, React.ElementType> = {
@@ -1066,7 +1072,9 @@ function DeploymentDrawer({
               sx={{ mb: 2 }}
             />
           )}
-          <ConditionSelect label="Condition" value={removeCondition} onChange={setRemoveCondition} />
+          {/* PR-6 (D-x): a damaged consumable is written off, not repaired — Good · Write off. */}
+          <ConditionSelect label="Condition" value={removeCondition} onChange={setRemoveCondition}
+            options={removeDialog.kitItem?.item.itemType === 'CONSUMABLE' ? CONSUMABLE_RETURN_CONDITIONS : undefined} />
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => setRemoveDialog({ open: false, kitItem: null })}>Cancel</Button>

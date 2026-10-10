@@ -68,8 +68,10 @@ interface DispositionDialogProps {
  * "can be fixed", so it is returned into repair rather than defaulted back to a hub
  * shelf as if it were fine. Everything else starts on "Return to Hub".
  */
-function initialDisposition(item: { kitItemId: string; inventoryUnit: { status: string } | null }, hubId?: string): ItemDisposition {
-  if (item.inventoryUnit && item.inventoryUnit.status !== 'CHECKED_OUT') {
+function initialDisposition(item: { kitItemId: string; itemType: string; inventoryUnit: { status: string } | null }, hubId?: string): ItemDisposition {
+  // PR-6 (D-x): a consumable line (even one carrying a legacy unit, D-z) is never
+  // pre-set to a damage disposition — for it that is a write-off.
+  if (item.itemType !== 'CONSUMABLE' && item.inventoryUnit && item.inventoryUnit.status !== 'CHECKED_OUT') {
     return { kitItemId: item.kitItemId, type: 'INOPERABLE', canBeFixed: true, photoUrls: [] }
   }
   return { kitItemId: item.kitItemId, type: 'HUB', hubId, photoUrls: [] }
@@ -139,7 +141,15 @@ export function DispositionDialog({
   async function handleSubmit() {
     setLoading(true)
     setError(null)
-    const itemDispositions = Array.from(dispositions.values())
+    // PR-6 (D-x): a consumable's Write off goes as `type: 'INOPERABLE'` with no
+    // `canBeFixed` — the wire format is unchanged; the server writes it off.
+    const consumableLines = new Set(items.filter((i) => i.itemType === 'CONSUMABLE').map((i) => i.kitItemId))
+    const itemDispositions = Array.from(dispositions.values()).map((d) => {
+      if (d.type !== 'INOPERABLE' || !consumableLines.has(d.kitItemId)) return d
+      const { canBeFixed, ...rest } = d
+      void canBeFixed
+      return rest
+    })
     const url = mode === 'end-deployment'
       ? `/api/deployments/${deploymentId}/end`
       : `/api/deployments/${deploymentId}/items`
@@ -237,7 +247,8 @@ export function DispositionDialog({
                 >
                   <MenuItem value="HUB">Return to Hub</MenuItem>
                   <MenuItem value="TRANSFER">Transfer to Operator</MenuItem>
-                  <MenuItem value="INOPERABLE">Mark Inoperable / Damaged</MenuItem>
+                  {/* PR-6 (D-x): a damaged consumable is written off, not repaired. */}
+                  <MenuItem value="INOPERABLE">{isConsumable ? 'Write off' : 'Mark Inoperable / Damaged'}</MenuItem>
                 </TextField>
                 {/* Partial quantity for consumables */}
                 {isConsumable && item.quantity > 1 && (
@@ -284,17 +295,19 @@ export function DispositionDialog({
                 )}
                 {disp.type === 'INOPERABLE' && (
                   <Stack spacing={1}>
-                    <TextField
-                      select
-                      label="Can it be fixed?"
-                      size="small"
-                      value={disp.canBeFixed === true ? 'yes' : disp.canBeFixed === false ? 'no' : ''}
-                      onChange={(e) => setDisp(item.kitItemId, { canBeFixed: e.target.value === 'yes' })}
-                    >
-                      {FIXABLE_OPTIONS.map((o) => (
-                        <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>
-                      ))}
-                    </TextField>
+                    {!isConsumable && (
+                      <TextField
+                        select
+                        label="Can it be fixed?"
+                        size="small"
+                        value={disp.canBeFixed === true ? 'yes' : disp.canBeFixed === false ? 'no' : ''}
+                        onChange={(e) => setDisp(item.kitItemId, { canBeFixed: e.target.value === 'yes' })}
+                      >
+                        {FIXABLE_OPTIONS.map((o) => (
+                          <MenuItem key={o.value} value={o.value}>{o.label}</MenuItem>
+                        ))}
+                      </TextField>
+                    )}
                     <TextField
                       label="Notes"
                       size="small"

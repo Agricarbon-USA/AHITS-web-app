@@ -5,6 +5,8 @@ import { deletedItemName, restoreFirst } from '@/lib/asset-status'
 import { requireAuth, requireAdmin } from '@/lib/auth/session'
 import { money, parsePagination, listResponse } from '@/lib/validation'
 import { nextDueFromInterval } from '@/lib/maintenance'
+import { assertSerialized } from '@/lib/item-rules'
+import { referenceConflictBody } from '@/lib/asset-references'
 
 /**
  * PR-1a: the maintenance tabs, defined once on the server. `null` (no `tab`
@@ -146,6 +148,14 @@ export async function POST(req: NextRequest) {
   if (input.itemId) {
     const deletedName = await deletedItemName(input.itemId)
     if (deletedName) return NextResponse.json({ error: restoreFirst(deletedName) }, { status: 409 })
+    // PR-6 (D-v): repairs and service are for serialized gear.
+    try {
+      await assertSerialized(prisma, input.itemId, 'repair')
+    } catch (err) {
+      const conflict = referenceConflictBody(err)
+      if (conflict) return NextResponse.json(conflict, { status: 409 })
+      throw err
+    }
   }
 
   // CC-34 (3a): a schedulable task must never be born unschedulable. A DAYS/MONTHS task
