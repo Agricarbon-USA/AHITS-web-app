@@ -202,3 +202,5 @@ PR-5: Do an action offline, go online → the screen updates by itself. Failed h
 Named files only. D21 holds. Run `npm run test:ui` locally. Session close as usual. Open the PR when CI is green and do not merge it (the owner merges).
 
 Owner smoke after merge: put two operators on one test rig. Each sees the rig on Today, with the same due checks. One completes a check, and the other's Today shows it done with that name and time. The other then tries the same vehicle's check and is refused by name.
+
+**Status (2026-10-09):** merged as #264 (squash `1b5d459`) at 20:32 Central and deployed (revision `ahits-web-app-staging-00446-6v5`). The smoke above has not been run yet (STATUS §3).

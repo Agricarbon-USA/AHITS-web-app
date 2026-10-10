@@ -51,6 +51,8 @@ Before writing code, also read `CLAUDE.md` + `AGENTS.md` (deploy flow + the DB/m
 | ask **"what about production?"** | `AHITS_PROD_CUTOVER_DEFERRED.md` — short answer: deferred, not a gate |
 | read the **product spec** | `AHITS_PRD_v2.md` + `AHITS_PRD_v2.1_ADDENDUM.md` |
 | run the **pilot device gate** | `AHITS_A6_TESTER_CHECKLIST.md` |
+| hand an operator the **start-up sheet** (first day on the app) | `AHITS_OPERATOR_START_SHEET.md` (printable: `AHITS_Operator_Start_Sheet.pdf`) |
+| tell operators and admins **what changed** in the October 2026 fix round (one page) | `AHITS_WHATS_CHANGED_2026-10.md` (printable: `AHITS_Whats_Changed_2026-10.pdf`) — written before PR-5c; its "Next up" line about the second operator on a rig shipped in #264 (D47) |
 | run the **pilot / launch week** | `AHITS_PILOT_CHARTER.md` (the signed contract) + `AHITS_LAUNCH_HANDOFF_2026-07-27.md` (day-by-day; **the fixed 07-27 date is void — rolling start per D17**) |
 | see the **2026-07-28 six-seat review** (findings, file:line evidence) | `AHITS_SIX_SEAT_REVIEW_2026-07-28.md` |
 | run the **pilot-floor build queue** (CC-29/30/31/16S/33/34 — gates the first operator) | `AHITS_CC29-31_PILOT_FLOOR_PACKETS.md` **+ paste-along riders in `AHITS_PACKET_ERRATA_2026-07-29.md`** + workplan §15 |

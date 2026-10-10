@@ -224,6 +224,7 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Revisit triggers:** a mid-shift chunk-swap incident, or an operator reporting a missed critical update.
 - **Rationale:** UXP-1 finding 1.2 — the old prompt fired on fresh installs (trust-killer for a new operator's first minute) and sat under the tab bar where thumbs dismissed it accidentally.
 - **Dated deviation note (2026-10-07, Max asked for the deploy; recorded per CLAUDE.md's never-act-against-an-ACTIVE-decision rule):** PR-1b (#244) and its two follow-ups were merged at **08:30–09:50 Central — morning, not evening**. The evening rule exists because `sw.ts` auto-applies on next launch and a mid-shift chunk swap costs an operator their task; **the pilot is stalled, so no operator was on shift and the guardrail's purpose did not bite.** The rule stands unchanged for the pilot restart. Worth knowing: the update prompt ("A new version of AHITS is available · Reload") was observed firing on staging during this session, so the swap mechanism is live and the rule is not theoretical.
+- **Dated deviation note (2026-10-09, recorded on the owner's ruling):** four fix-program code PRs were merged in the afternoon, **not evening**: #258 at 16:01, #260 at 16:29, #261 at 17:18 and #259 at 17:51 Central. **The owner rules all four D31 deviations.** Active deployments at each merge, established from the Deployments history (rig start/end times; none were active at the time of recording): **0** at #258 and #260; **1** at #261 and #259. That one rig was the session's own throwaway smoke rig ("ZZ PR-5 smoke rig (throwaway)", PRIMARY Ops Admin, 22:08–23:09 UTC), so **no operator's rig was active at any of the four**. (#261 was the fix for a smoke-caused crash, merged under incident conditions.) The docs-only #262 and #263 are outside the rule. **From 2026-10-09 the window is set by D48.**
 
 ### D32 · The operator shell keys on DEVICE CLASS, not viewport width
 - **Date:** 2026-07-30 (recorded 2026-08-20) · **Owner:** Max · **Status:** ACTIVE · **Shipped:** UXP-1 PR-2 #233 (tip `9d0ee18`), merged 2026-07-30
@@ -329,13 +330,20 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Rationale:** the owner asked for a way to remove an item "entirely — sensible, smooth, simple"; the API had a soft delete since CR-8 that no screen exposed. Two agents designed and adversarially reviewed the spec against the code before the owner answered the open questions.
 
 ### D47 · Every operator on a rig sees it on Today; the rig's daily checks are shared by its crew
-- **Date:** decided 2026-10-09 (owner, final, in the PR-5c request), recorded 2026-10-09 · **Owner:** Max · **Status:** **PROPOSED → ACTIVE on merge of PR-5c #264** (built 2026-10-09, not merged) · **Read-with:** D16, `src/lib/rig-list.ts` (`resolveMyRigId`), `src/lib/rig-daily-checks.ts`, AHITS_FIX_PROGRAM_2026-10-05_FIVE-PRS.md § PR-5c
+- **Date:** decided 2026-10-09 (owner, final, in the PR-5c request), recorded 2026-10-09 · **Owner:** Max · **Status:** **ACTIVE** (PR-5c #264 merged 2026-10-09 20:32 Central, squash `1b5d459`; deployed, revision `ahits-web-app-staging-00446-6v5`) · **Read-with:** D16, `src/lib/rig-list.ts` (`resolveMyRigId`), `src/lib/rig-daily-checks.ts`, AHITS_FIX_PROGRAM_2026-10-05_FIVE-PRS.md § PR-5c
 - **Decision:** crews often run two or more operators per rig, so **every operator on a rig — PRIMARY or SECONDARY — sees it on Today**. Today uses the same resolver as `/api/deployments/mine`. **The due-check list is per rig per business day and shared by the crew.** When any crew member completes a check it shows done for all, with who and when. A second crew check of the same vehicle on the same business day is refused: 409 "Already checked today by <name> at <time>". This is enforced in code, with no migration and no unique constraint. **Server permissions are unchanged:** the write guards stay PRIMARY-only, and anything primary-only is hidden on Today with a one-line reason.
 - **Supersedes:** the PR-5a interpretation (#258 interpretation 1) and the CC-14/CC-32 "secondary-operator Today is deferred" scope note (STATUS §3). Neither was a numbered decision.
 - **Revisit triggers:**
   - A crew that needs per-person checks of the same vehicle on the same day.
   - The parked question of one operator on two active rigs at once (STATUS §4) becoming a real case.
 - **Rationale:** L-8. My Deployment, Scan and Daily check already showed a crew member their rig (#258); Today alone did not, so a second operator saw "No deployment" on the screen that plans their day.
+
+### D48 · The merge window: after 8 pm Central, or whenever the dashboard shows 0 active deployments
+- **Date:** 2026-10-09 (owner, in chat, ruling on D31's unstated hour) · **Owner:** Max · **Status:** ACTIVE · **Read-with:** D16, D31, STATUS §4 merge checklist
+- **Decision:** a code PR to `development` (a deploy to the fleet's app, D16) is merged **after 20:00 US Central, or at any time the admin dashboard's Active Deployments reads 0**. **Every merge report states the Active Deployments count** read just before the merge, with the time it was read. A merge outside both conditions is a dated deviation under D31. Docs-only PRs are outside the window.
+- **Amends:** D31, which named "the evening-deploy rule (D16)" with no hour. D31 otherwise stands.
+- **Revisit triggers:** crews working past 20:00 Central; a mid-shift chunk-swap incident.
+- **Rationale:** `sw.ts` auto-applies a new version on next launch, so a merge mid-shift can swap an operator's app mid-task. With 0 active deployments, no operator is on a rig to be affected. First use: #264, merged 20:32 Central with Active Deployments 0 (read at about 20:32).
 
 ---
 
