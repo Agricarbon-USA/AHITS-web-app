@@ -72,12 +72,19 @@ beforeEach(async () => {
 const serialized = (name = 'GPS rover') => createInventoryItem(catId, { itemType: 'SERIALIZED', quantity: 0, name })
 const consumable = (name = 'Sample bags', quantity = 10) => createInventoryItem(catId, { itemType: 'CONSUMABLE', quantity, name })
 
+/** A fresh operator per rig (one open PRIMARY per operator), signed in as them. */
+async function rigForNewOperator() {
+  const owner = await createOperator()
+  mockSession = operatorSession(owner.id)
+  return createRig(owner.id)
+}
+
 /** A consumable line drawn from a hub: 5 out of 10, the hub left with 5. */
 async function consumableOnRig() {
   const hub = await createHub()
   const item = await consumable()
   await seedInventoryStock(item.id, hub.id, 5)
-  const { rig, kit } = await createRig(op.id)
+  const { rig, kit } = await rigForNewOperator()
   const kitItem = await prisma.kitItem.create({
     data: { kitId: kit.id, inventoryItemId: item.id, quantity: 5, drawnQuantity: 5, drawnHubId: hub.id },
   })
@@ -89,7 +96,7 @@ async function unitOnRig() {
   const hub = await createHub()
   const item = await serialized()
   const unit = await createInventoryUnit(item.id, { status: 'CHECKED_OUT' })
-  const { rig, kit } = await createRig(op.id)
+  const { rig, kit } = await rigForNewOperator()
   const kitItem = await prisma.kitItem.create({ data: { kitId: kit.id, inventoryItemId: item.id, quantity: 1, inventoryUnitId: unit.id } })
   return { hub, item, unit, rig, kitItem }
 }
@@ -362,9 +369,11 @@ describe('Send for repair (D-g′) — POST /api/inventory/[id]/review-inoperabl
 
   it('refuses a unit that is out (naming the deployment), Returning, or already in repair', async () => {
     const { item, unit, rig } = await unitOnRig()
+    mockSession = adminSession(admin.id)
     const out = await sendForRepair(item.id, unit.id)
     expect(out.status).toBe(409)
-    const opName = (await prisma.user.findUnique({ where: { id: op.id } }))!.name
+    const primary = await prisma.deploymentAssignment.findFirst({ where: { rigId: rig.id, role: 'PRIMARY' }, select: { operatorId: true } })
+    const opName = (await prisma.user.findUnique({ where: { id: primary!.operatorId } }))!.name
     expect(await errorOf(out)).toBe(`Out on ${opName}'s deployment — report it from the deployment, or send it for repair when it returns.`)
     await prisma.rig.update({ where: { id: rig.id }, data: { label: 'North block' } })
     expect(await errorOf(await sendForRepair(item.id, unit.id))).toBe('Out on North block — report it from the deployment, or send it for repair when it returns.')
