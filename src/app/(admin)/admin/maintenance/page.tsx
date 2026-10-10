@@ -474,7 +474,8 @@ export default function AdminMaintenancePage() {
       const [vRes, picker] = await Promise.all([fetch('/api/vehicles'), fetchPickerOptions()])
       const vd = await vRes.json()
       setFieldFixVehicles((vd.data ?? []).map((v: { id: string; name: string }) => ({ id: v.id, name: v.name })))
-      setFieldFixItems(picker.options.map((i) => ({ id: i.id, name: i.name })))
+      // PR-6 (D-v): repairs and service are for serialized gear — consumables aren't offered.
+      setFieldFixItems(picker.options.filter((o) => o.itemType === 'SERIALIZED').map((i) => ({ id: i.id, name: i.name })))
     } catch {
       setFieldFixVehicles([])
       setFieldFixItems([])
@@ -530,7 +531,11 @@ export default function AdminMaintenancePage() {
       const [vRes, picker] = await Promise.all([fetch('/api/vehicles'), fetchPickerOptions()])
       const vd = await vRes.json()
       setSchedVehicles((vd.data ?? []).map((v: { id: string; name: string }) => ({ id: v.id, name: v.name })))
-      setSchedItems(picker.options.map((i) => ({ id: i.id, name: i.name })))
+      // PR-6 (D-v): serialized items only. A `?sched=item:<id>` deep link to a consumable
+      // opens with no item selected (the server is the one place that says why).
+      setSchedItems(picker.options.filter((o) => o.itemType === 'SERIALIZED').map((i) => ({ id: i.id, name: i.name })))
+      const consumableIds = new Set(picker.options.filter((o) => o.itemType !== 'SERIALIZED').map((o) => o.id))
+      setSchedItemId((cur) => (consumableIds.has(cur) ? '' : cur))
     } catch {
       setSchedVehicles([])
       setSchedItems([])

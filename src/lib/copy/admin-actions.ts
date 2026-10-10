@@ -78,6 +78,13 @@ export const ADMIN_ACTIONS = {
     historyKept: (kept: string[]) => `History kept, hidden: ${kept.join(' · ')}.`,
     restorable: 'Restorable under Show deleted.',
   },
+  // PR-6 (D-w): a consumable is never retired — the Delete dialog says so. Its details
+  // lines ("40 on hand at 2 hubs go with it.") are item.delete's, unchanged.
+  'item.deleteConsumable': {
+    title: 'Delete item?',
+    message: (name: string) => `Delete "${name}"? Consumables aren't retired — delete one you've stopped stocking (liquidate the stock first) or added by mistake. It leaves every list, count and alert, and can be restored under Show deleted.`,
+    confirm: 'Delete',
+  },
   'item.restore': { success: (name: string) => `${name} restored` },
   'item.bulkDelete': {
     title: 'Delete selected?',

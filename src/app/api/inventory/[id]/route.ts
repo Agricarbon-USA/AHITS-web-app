@@ -9,6 +9,7 @@ import { listItemStock } from '@/lib/inventory-stock'
 import { money } from '@/lib/validation'
 import { deleteItem, restoreFirst, retireUnit } from '@/lib/asset-status'
 import { assertNoOpenReferences, openReferences, referenceConflictBody } from '@/lib/asset-references'
+import { assertSerialized, assertTypeUnlocked } from '@/lib/item-rules'
 
 // Whitelist of admin-editable fields. Excludes id/qrCodeId/deletedAt/timestamps
 // and the unitId helper to prevent mass-assignment. categoryId/hubId are kept
@@ -138,15 +139,27 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (categoryId && !/^[A-Z_]+$/.test(categoryId)) updateData.categoryId = categoryId
   if (hubId && !/^[A-Z_]+$/.test(hubId)) updateData.hubId = hubId
 
-  const current = await prisma.inventoryItem.findFirst({ where: { id }, select: { status: true, name: true, deletedAt: true } })
+  const current = await prisma.inventoryItem.findFirst({ where: { id }, select: { status: true, name: true, deletedAt: true, itemType: true } })
   if (!current) return NextResponse.json({ error: 'Item not found or update failed' }, { status: 400 })
   // PR-3c: a deleted item is read-only until it is restored.
   if (current.deletedAt) return NextResponse.json({ error: restoreFirst(current.name) }, { status: 409 })
+  // PR-6: only Available and Retired mean anything on an item (the unit PATCH rule);
+  // the other statuses belong to units.
+  if (rest.status && rest.status !== current.status && !['AVAILABLE', 'RETIRED'].includes(rest.status)) {
+    return NextResponse.json({ error: 'Only Available and Retired can be set on an item.' }, { status: 400 })
+  }
   const retiring = rest.status === 'RETIRED' && current.status !== 'RETIRED'
+  const retyping = rest.itemType !== undefined && rest.itemType !== current.itemType
 
   try {
     const item = await prisma.$transaction(async (tx) => {
+      // PR-6 (D-y): an item's type is fixed once it has any history. Re-sending the
+      // same type (the edit form always sends it) is not a change.
+      if (retyping) await assertTypeUnlocked(tx, id)
       if (retiring) {
+        // PR-6 (D-w): Retire is for serialized gear — checked before the references, so
+        // the message names the real reason. Nothing is written.
+        await assertSerialized(tx, id, 'retire')
         // PR-3b (D-a · B1): retiring an item retires every unit on hand (AVAILABLE /
         // INOPERABLE) with its QR label released, and is refused — nothing written —
         // while any unit is out, Returning or in repair, any of it is still on a

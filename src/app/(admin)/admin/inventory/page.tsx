@@ -8,7 +8,7 @@ import {
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Paper, Skeleton, Switch, FormControlLabel, Accordion, AccordionSummary,
   AccordionDetails, Divider,
-  FormControl, FormLabel, RadioGroup, Radio, Link, Tabs, Tab,
+  FormControl, FormLabel, FormHelperText, RadioGroup, Radio, Link, Tabs, Tab,
   Checkbox, Dialog, DialogTitle, DialogContent, DialogActions, List, ListItem, ListItemText,
 } from '@mui/material'
 import { StatusChip } from '@/components/shared/StatusChip'
@@ -60,7 +60,7 @@ const ADMIN_UNIT_STATUSES = ['AVAILABLE', 'RETIRED']
 const UNIT_STATUS_SOURCE: Record<string, string> = {
   CHECKED_OUT: 'via a deployment',
   IN_TRANSIT: 'via a return to hub',
-  IN_MAINTENANCE: 'via Report a problem',
+  IN_MAINTENANCE: 'via Report a problem or Send for repair',
   INOPERABLE: 'via Report a problem',
 }
 
@@ -277,6 +277,9 @@ function ItemFormDialog({
   const dirty = useDirtyState(true, values, initial)
 
   const isSerialized = values.itemType === 'SERIALIZED'
+  // PR-6 (D-y): the type is fixed once the item has units or stock. The disabled field
+  // still submits its value (the server's type-lock guard is the truth).
+  const typeLocked = isEdit && !!item && (item.unitCounts.totalUnits > 0 || item.itemCounts.owned > 0)
   const serials = React.useMemo(() => parseSerialLines(values.serialNumbers), [values.serialNumbers])
   // A blank quantity means 0 (as the old form's `parseInt(v) || 0` did) — not an error.
   const qty = values.quantity.trim() === '' ? 0 : parseInt(values.quantity, 10)
@@ -447,9 +450,12 @@ function ItemFormDialog({
         <FormControl error={!!err('itemType')}>
           <FormLabel>Item Type</FormLabel>
           <RadioGroup row value={values.itemType} onChange={(e) => setField('itemType', e.target.value)}>
-            <FormControlLabel value="CONSUMABLE" control={<Radio />} label="Consumable" />
-            <FormControlLabel value="SERIALIZED" control={<Radio />} label="Serialized Item" />
+            <FormControlLabel value="CONSUMABLE" control={<Radio />} label="Consumable" disabled={typeLocked} />
+            <FormControlLabel value="SERIALIZED" control={<Radio />} label="Serialized Item" disabled={typeLocked} />
           </RadioGroup>
+          {(err('itemType') || typeLocked) && (
+            <FormHelperText>{err('itemType') ?? 'Type is fixed once an item has units or stock.'}</FormHelperText>
+          )}
         </FormControl>
         {isSerialized && (
           <TextField label="Unit / Serial Number" value={values.unitId} onChange={(e) => setField('unitId', e.target.value)} fullWidth
@@ -928,6 +934,8 @@ async function downloadUnitQR(unit: { qrCodeId: string; serialNumber: string | n
 // UXP-6 (6c): what opens the drawer. A list row (with its current-status extras), or
 // just an id from the success toast's Open action — plus, after a create whose units
 // call failed (T4), the tab to land on and the notice to show there.
+type DrawerTab = 'info' | 'units' | 'history'
+
 type DrawerRow = Pick<InventoryItemRow, 'id'> &
   Partial<Pick<InventoryItemRow, 'currentOperator' | 'currentProject' | 'activeProjects'>> & {
     openOn?: 'units'
@@ -950,7 +958,7 @@ function ItemDetailDrawer({
   const showToast = useToast()
   const [detail, setDetail] = React.useState<ItemDetail | null>(null)
   const [loading, setLoading] = React.useState(false)
-  const [activeTab, setActiveTab] = React.useState(0)
+  const [activeTab, setActiveTab] = React.useState<DrawerTab>('info')
   // Per-open intent (tab + Units notice), applied on the row transition with React's
   // "information from previous renders" pattern rather than an effect.
   const [seenRow, setSeenRow] = React.useState<DrawerRow | null>(null)
@@ -958,7 +966,7 @@ function ItemDetailDrawer({
   if (seenRow !== row) {
     setSeenRow(row)
     setUnitsNotice(row?.unitsError ?? null)
-    setActiveTab(row?.openOn === 'units' ? 1 : 0)
+    setActiveTab(row?.openOn === 'units' ? 'units' : 'info')
   }
   const [serialEdits, setSerialEdits] = React.useState<Record<string, string>>({})
   const [addingUnit, setAddingUnit] = React.useState(false)
@@ -1068,7 +1076,13 @@ function ItemDetailDrawer({
   const damagePhotos = detail?.photos.filter((p) => p.context === 'DAMAGE') ?? []
   // PR-3c: a deleted item's drawer is read-only — Restore is its only action.
   const deleted = !!detail?.deletedAt
-  const editable = canEdit && !deleted
+  // PR-6 (D-y/D-z): a consumable has no Units tab — unless it carries legacy units,
+  // which are shown read-only. Retire is for serialized gear (D-w).
+  const serialized = detail?.itemType === 'SERIALIZED'
+  const legacyUnits = !serialized && (detail?.unitCounts.totalUnits ?? 0) > 0
+  const showUnitsTab = serialized || legacyUnits
+  const tab: DrawerTab = activeTab === 'units' && !showUnitsTab ? 'info' : activeTab
+  const editable = canEdit && !deleted && !legacyUnits
 
   return (
     <DetailDrawer open={!!row} onClose={onClose} width={540}>
@@ -1124,19 +1138,21 @@ function ItemDetailDrawer({
             </Stack>
           </Box>
 
-          <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)} sx={{ px: 2, borderBottom: 1, borderColor: 'divider' }}>
-            <Tab label="Info" />
+          <Tabs value={tab} onChange={(_, v: DrawerTab) => setActiveTab(v)} sx={{ px: 2, borderBottom: 1, borderColor: 'divider' }}>
+            <Tab label="Info" value="info" />
             {/* The Units tab lists every row, retired included — so it says how many are retired. */}
-            <Tab label={detail.itemCounts.retired > 0
-              ? `Units (${detail.unitCounts.totalUnits} · ${detail.itemCounts.retired} retired)`
-              : `Units (${detail.unitCounts.totalUnits})`} />
-            <Tab label="History" />
+            {showUnitsTab && (
+              <Tab value="units" label={detail.itemCounts.retired > 0
+                ? `Units (${detail.unitCounts.totalUnits} · ${detail.itemCounts.retired} retired)`
+                : `Units (${detail.unitCounts.totalUnits})`} />
+            )}
+            <Tab label="History" value="history" />
           </Tabs>
 
           <Box sx={{ flex: 1, overflow: 'auto', px: 3, py: 2 }}>
 
             {/* ── Info Tab ── */}
-            {activeTab === 0 && (
+            {tab === 'info' && (
               <>
                 {detail.unitCounts.inoperable > 0 && (
                   <Alert severity="warning" icon={<WarningAmberIcon />} sx={{ mb: 2 }}>
@@ -1221,8 +1237,11 @@ function ItemDetailDrawer({
             )}
 
             {/* ── Units Tab ── */}
-            {activeTab === 1 && (
+            {tab === 'units' && (
               <>
+                {legacyUnits && (
+                  <Alert severity="info" sx={{ mb: 2 }}>Legacy units — this item is a consumable, so no more can be added.</Alert>
+                )}
                 {/* T4 hand-off: the item was created but its units were not. */}
                 {unitsNotice && (
                   <Alert severity="error" onClose={() => setUnitsNotice(null)} sx={{ mb: 2 }}>{unitsNotice}</Alert>
@@ -1295,15 +1314,17 @@ function ItemDetailDrawer({
                                     <DownloadIcon fontSize="small" />
                                   </IconButton>
                                 </Tooltip>
-                                {unit.status === 'INOPERABLE' && !deleted && (
-                                  <>
-                                    <MutationIconButton size="small" tooltip="Retire this unit" color="error" onClick={() => setRetireUnitId(unit.id)}>
-                                      <ArchiveIcon fontSize="small" />
-                                    </MutationIconButton>
-                                    <MutationIconButton size="small" tooltip="Send for repair" onClick={() => setRepairUnitId(unit.id)}>
-                                      <EditIcon fontSize="small" />
-                                    </MutationIconButton>
-                                  </>
+                                {unit.status === 'INOPERABLE' && !deleted && !legacyUnits && (
+                                  <MutationIconButton size="small" tooltip="Retire this unit" color="error" onClick={() => setRetireUnitId(unit.id)}>
+                                    <ArchiveIcon fontSize="small" />
+                                  </MutationIconButton>
+                                )}
+                                {/* PR-6 (D-g′): an admin starts a repair from here on any unit at
+                                    the hub — Available as well as Inoperable. */}
+                                {(unit.status === 'INOPERABLE' || unit.status === 'AVAILABLE') && !deleted && !legacyUnits && (
+                                  <MutationIconButton size="small" tooltip="Send for repair" onClick={() => setRepairUnitId(unit.id)}>
+                                    <EditIcon fontSize="small" />
+                                  </MutationIconButton>
                                 )}
                               </Stack>
                             </TableCell>
@@ -1354,7 +1375,7 @@ function ItemDetailDrawer({
                     </TableBody>
                   </Table>
                 </TableContainer>
-                {!deleted && <EditGuard>
+                {!deleted && !legacyUnits && <EditGuard>
                   <Stack spacing={1.5} sx={{ mt: 1, maxWidth: 420 }}>
                     <Typography variant="caption" color="text.secondary">
                       Add a unit and (optionally) register its existing QR label by scanning
@@ -1392,7 +1413,7 @@ function ItemDetailDrawer({
             )}
 
             {/* ── History Tab ── */}
-            {activeTab === 2 && (
+            {tab === 'history' && (
               <>
                 {detail.checkLogs.length === 0 ? (
                   <Typography variant="body2" color="text.secondary">No check logs yet.</Typography>
@@ -1430,10 +1451,10 @@ function ItemDetailDrawer({
               onClick={() => { onClose(); onDelete(detail) }}>
               Delete
             </MutationButton>
-            {/* PR-3b (D-a): Retire is offered for any item not already retired — consumables
-                included (the old `available > 0` gate never showed it for them). The server
-                refuses, naming the count, while anything is out or in repair. */}
-            {detail.status !== 'RETIRED' && (
+            {/* PR-3b (D-a): Retire for an item not already retired; the server refuses, naming
+                the count, while anything is out or in repair. PR-6 (D-w): serialized gear
+                only — a consumable is Edit · Delete; the absence is the rule. */}
+            {serialized && detail.status !== 'RETIRED' && (
               <MutationButton variant="outlined" color="error" startIcon={<ArchiveIcon />}
                 onClick={() => { onClose(); onRetire(detail) }}>
                 Retire
@@ -1776,7 +1797,7 @@ function AdminInventoryContent() {
           <MutationIconButton size="small" tooltip="Edit" onClick={() => { setFormItem(item); setFormOpen(true) }}>
             <EditIcon fontSize="small" />
           </MutationIconButton>
-          {item.status !== 'RETIRED' && (
+          {item.itemType === 'SERIALIZED' && item.status !== 'RETIRED' && (
             <MutationIconButton size="small" tooltip="Retire" color="error" onClick={() => setRetireItem(item)}>
               <ArchiveIcon fontSize="small" />
             </MutationIconButton>
@@ -2018,8 +2039,8 @@ function AdminInventoryContent() {
       {/* PR-3c: Delete confirm — the rule a user needs (D-s), then what goes with it. */}
       <ConfirmDialog
         open={!!deleteTarget}
-        title={copy('item.delete').title}
-        message={copy('item.delete').message(deleteTarget?.name ?? '')}
+        title={copy(deleteTarget?.itemType === 'CONSUMABLE' ? 'item.deleteConsumable' : 'item.delete').title}
+        message={copy(deleteTarget?.itemType === 'CONSUMABLE' ? 'item.deleteConsumable' : 'item.delete').message(deleteTarget?.name ?? '')}
         details={(
           // PR-5 (point fix): the details read lands after the dialog opens; the space for
           // its (at most three) lines is reserved up front so the Delete button never moves
@@ -2030,7 +2051,7 @@ function AdminInventoryContent() {
             ))}
           </Stack>
         )}
-        confirmLabel={copy('item.delete').confirm}
+        confirmLabel={copy(deleteTarget?.itemType === 'CONSUMABLE' ? 'item.deleteConsumable' : 'item.delete').confirm}
         confirmColor="error"
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}

@@ -6,6 +6,8 @@ import { withIdempotency } from '@/lib/idempotency'
 import { OPEN_TASK } from '@/lib/populations'
 import { closeDamageTask } from '@/lib/maintenance'
 import { restoreIfClear, type AssetRef } from '@/lib/asset-status'
+import { assertSerialized } from '@/lib/item-rules'
+import { referenceConflictBody } from '@/lib/asset-references'
 
 const schema = z
   .object({
@@ -50,6 +52,16 @@ async function _POST(req: NextRequest) {
     : vehicleId
       ? { kind: 'vehicle', id: vehicleId }
       : null
+
+  // PR-6 (D-v): an item-only fix (no unit) is refused on a consumable; with a unit it
+  // stays unit-keyed (D-z). A 409 is terminal for the offline queue, message shown.
+  try {
+    if (itemId && !inventoryUnitId) await assertSerialized(prisma, itemId, 'repair')
+  } catch (err) {
+    const conflict = referenceConflictBody(err)
+    if (conflict) return NextResponse.json(conflict, { status: 409 })
+    throw err
+  }
 
   const task = await prisma.$transaction(async (tx) => {
     if (asset) {
