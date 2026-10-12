@@ -29,7 +29,7 @@
 | 3 | `AHITS_STATE_OF_THE_APP_2026-07-10.md` | 4 | The honest, code-grounded snapshot: what's solid, what's broken, the corrections to the roadmap. |
 | 4 | `DECISIONS.md` | 1 | The settled questions (prod deferred, Map scope, admin exclusion, W0-10). Don't re-open these. |
 | 5 | `AHITS_PHASE3_WORKPLAN_2026-07-10.md` (§0–§2) | 3 | The current executable sequence + the three locked decisions. |
-| 6 | the newest `AHITS_LAUNCH_HANDOFF_*` / `AHITS_SESSION_HANDOFF_*` file (now `AHITS_SESSION_HANDOFF_2026-09-03_UXP3-UXP6.md`; prior: `_2026-08-21_CI-PINS.md`, `_2026-07-30_UXP1e.md`, `_2026-07-29_UXP1.md`) | 2 | What last shipped + exact resume points. During launch week the LAUNCH_HANDOFF is canonical. |
+| 6 | the newest `AHITS_LAUNCH_HANDOFF_*` / `AHITS_SESSION_HANDOFF_*` file (now `AHITS_SESSION_HANDOFF_2026-10-12_PR6-MERGED-SMOKED.md`; prior: `_2026-10-09_PR6-SERIALIZED.md`, `_2026-10-09_PR5C-TODAY-CREW.md`, `_2026-09-03_UXP3-UXP6.md`, `_2026-08-21_CI-PINS.md`, `_2026-07-30_UXP1e.md`, `_2026-07-29_UXP1.md`) | 2 | What last shipped + exact resume points. During launch week the LAUNCH_HANDOFF is canonical. |
 | 7 | `AHITS_PHASE3PLUS_NORTH_STAR_v3.md` (§1–§2) | 4 | *Why* the plan is shaped this way: the two loops, the friction budget. |
 
 Before writing code, also read `CLAUDE.md` + `AGENTS.md` (deploy flow + the DB/migration non-negotiables + this Next.js is not the one you know).
@@ -58,7 +58,7 @@ Before writing code, also read `CLAUDE.md` + `AGENTS.md` (deploy flow + the DB/m
 | run the **pilot-floor build queue** (CC-29/30/31/16S/33/34 — gates the first operator) | `AHITS_CC29-31_PILOT_FLOOR_PACKETS.md` **+ paste-along riders in `AHITS_PACKET_ERRATA_2026-07-29.md`** + workplan §15 |
 | **build the current fix program** (the seven PRs from the 2026-10-05 owner test: 1a·1b·2·3a·3b·4·5, in order) | `AHITS_FIX_PROGRAM_2026-10-05_FIVE-PRS.md` — the build spec; **§0's owner decisions D-a…D-n are final, apply them** |
 | **build PR-3c — delete items (and restore them)** (the fix-program addendum, after 3b) | `AHITS_FIX_PROGRAM_ADDENDUM_PR-3C_DELETE-ITEMS_2026-10-09.md` — read with the program file; **its §0 owner decisions D-o…D-u are final** (built as #256; D46) |
-| **build PR-6 — Repair and Retire are for serialized gear** (the fix-program addendum, after PR-5c) | `AHITS_ADDENDUM_PR-6_SERIALIZED-ONLY-REPAIR-RETIRE_2026-10-10.md` — read with the program file; **its §0 owner decisions are D49** |
+| **build PR-6 — Repair and Retire are for serialized gear** (the fix-program addendum, after PR-5c) | `AHITS_ADDENDUM_PR-6_SERIALIZED-ONLY-REPAIR-RETIRE_2026-10-10.md` — read with the program file; **its §0 owner decisions are D49** (ACTIVE; merged #266 2026-10-12) |
 | see the **evidence** behind a fix-program line (the five root causes, ~40 findings, file:line) | `AHITS_SCREENING_REPORT_2026-10-05_ROOT-CAUSES.md` |
 
 ---
