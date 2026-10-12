@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { createAlert, resolveAlertsFor } from '@/lib/alerts'
 import { OPEN_TASK } from '@/lib/populations'
 import { pullForRepair, restoreIfClear, type AssetRef } from '@/lib/asset-status'
+import { assertSerialized } from '@/lib/item-rules'
 
 // ─────────────────────────────────────────────────────────────────────────
 // Maintenance recurrence & mileage triggers (Wave G)
@@ -140,6 +141,9 @@ export async function openDamageTask(
   asset: DamageAsset,
   f: DamageTaskFields,
 ): Promise<{ task: { id: string }; created: boolean }> {
+  // PR-6 (D-v): the backstop — no disposition, offline replay or future caller opens a
+  // task on a consumable, whatever the client sent. A unit task stays unit-keyed (D-z).
+  if (asset.kind === 'item') await assertSerialized(tx, asset.itemId, 'repair')
   const where = openTaskWhere(asset)
   const existing = where
     ? await tx.maintenanceTask.findFirst({ where, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }], select: { id: true, notes: true } })

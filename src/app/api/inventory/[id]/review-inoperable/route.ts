@@ -37,7 +37,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const unit = await prisma.inventoryUnit.findUnique({ where: { id: unitId } })
   if (!unit) return NextResponse.json({ error: 'Unit not found' }, { status: 404 })
   if (unit.inventoryItemId !== id) return NextResponse.json({ error: 'Unit does not belong to this item' }, { status: 400 })
-  if (unit.status !== 'INOPERABLE') {
+  // PR-6 (D-g′): Send for repair works on a unit at the hub — AVAILABLE as well as
+  // INOPERABLE — so an admin can start a repair from Inventory. A unit that is out,
+  // Returning or already in repair is refused with what to do instead. RETIRE stays
+  // INOPERABLE-only.
+  if (decision === 'REPAIR' && unit.status === 'CHECKED_OUT') {
+    const ref = (await openReferences({ unitId }, prisma)).kitItems[0]
+    const rig = ref ? await prisma.rig.findUnique({ where: { id: ref.rigId }, select: { label: true } }) : null
+    const where = rig?.label || (ref?.operatorName ? `${ref.operatorName}'s deployment` : 'an active deployment')
+    return NextResponse.json({ error: `Out on ${where} — report it from the deployment, or send it for repair when it returns.` }, { status: 409 })
+  }
+  if (decision === 'REPAIR' && unit.status === 'IN_TRANSIT') {
+    return NextResponse.json({ error: 'Receive it at the hub first (Hubs → Inbound).' }, { status: 409 })
+  }
+  if (decision === 'REPAIR' && unit.status === 'IN_MAINTENANCE') {
+    return NextResponse.json({ error: 'Already in repair.' }, { status: 409 })
+  }
+  const repairable = decision === 'REPAIR' && unit.status === 'AVAILABLE' && !unit.deletedAt
+  if (unit.status !== 'INOPERABLE' && !repairable) {
     return NextResponse.json({ error: 'Unit is not in INOPERABLE status' }, { status: 409 })
   }
 

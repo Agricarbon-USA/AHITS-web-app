@@ -13,6 +13,8 @@ import { endAllAssignmentsForRig, removeAllProjectLinks } from '@/lib/deployment
 import { restoreToHub, resyncItemTotal } from '@/lib/inventory-stock'
 import { markInoperable, releaseUnlinkedReturns, returnUnit } from '@/lib/asset-status'
 import { openDamageTask } from '@/lib/maintenance'
+import { isConsumableWriteOff, recordWriteOff, writeOffNotes } from '@/lib/item-rules'
+import { referenceConflictBody } from '@/lib/asset-references'
 
 const dispositionSchema = z.object({
   kitItemId: z.string(),
@@ -112,6 +114,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   // repair, not on its way to a hub shelf (C-2: Inbound counted phantom returns).
   const returning: { kitItemId: string; unitId: string; hubId: string }[] = []
 
+  try {
   await prisma.$transaction(async (tx) => {
     await tx.rig.update({ where: { id }, data: { endedAt: now, notes: note } })
     await endAllAssignmentsForRig(id, tx)
@@ -125,6 +128,40 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       // TRANSFER items keep removedAt: null until the transfer is accepted/declined
       if (disp.type !== 'TRANSFER') {
         await tx.kitItem.update({ where: { id: disp.kitItemId }, data: { removedAt: now } })
+      }
+
+      // PR-6 (D-x): a damaged consumable is written off — decided on the item type
+      // before `canBeFixed` or the repair fields are read, so a payload already queued
+      // with `canBeFixed: true` lands as a write-off. Stock not restored, no task, no
+      // bell. A legacy unit on the line (D-z) comes home AVAILABLE first, no task.
+      if (isConsumableWriteOff(kitItem.item.itemType, disp.type, disp.returnCondition)) {
+        const homeAsGood = {
+          condition: 'GOOD' as const, hubId: disp.hubId, linked: false,
+          task: { itemId: inventoryItemId, taskName: `Damage repair: ${kitItem.item.name}`, notes: null, reportedById: session.userId },
+        }
+        if (kitItem.inventoryUnit) {
+          await returnUnit(tx, kitItem.inventoryUnit.id, homeAsGood)
+        } else {
+          const excludeUnitIds = await getUnitsInOtherRigs(tx, inventoryItemId, id)
+          const units = await tx.inventoryUnit.findMany({
+            where: { inventoryItemId, status: 'CHECKED_OUT', ...(excludeUnitIds.length > 0 && { id: { notIn: excludeUnitIds } }) },
+            take: kitItem.quantity,
+          })
+          for (const u of units) await returnUnit(tx, u.id, homeAsGood)
+        }
+        await recordWriteOff(tx, {
+          itemId: inventoryItemId,
+          unitId: kitItem.inventoryUnit?.id,
+          operatorId: session.userId,
+          rigId: id,
+          notes: writeOffNotes(disp.inoperableNotes ?? note),
+          photoUrls: filterAllowedPhotoUrls(disp.photoUrls),
+          uploadedById: session.userId,
+        })
+        if (disp.type === 'HUB' && disp.hubId) {
+          await tx.inventoryItem.update({ where: { id: inventoryItemId }, data: { hubId: disp.hubId } })
+        }
+        continue
       }
 
       if (disp.type === 'HUB') {
@@ -333,6 +370,13 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       SET "status" = 'CANCELLED', "updatedAt" = ${now}
       WHERE "rigId" = ${id} AND "status" = 'PENDING'`
   })
+  } catch (err) {
+    // PR-6: a ReferenceConflict (e.g. the openDamageTask backstop) is a 409 — terminal
+    // for the offline queue, message shown — never a 5xx retry loop.
+    const conflict = referenceConflictBody(err)
+    if (conflict) return NextResponse.json(conflict, { status: 409 })
+    throw err
+  }
 
   // CC-31 item 2c: ending the deployment returns its equipment, so any per-kit-item
   // EQUIPMENT_NOT_RETURNED alert (raised at /api/daily-check when kit has been out >90d)

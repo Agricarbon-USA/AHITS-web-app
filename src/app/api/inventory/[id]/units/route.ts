@@ -4,6 +4,8 @@ import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
 import { computeUnitCounts, itemCounts, withPositions } from '@/lib/inventory'
 import { restoreFirst } from '@/lib/asset-status'
+import { referenceConflictBody } from '@/lib/asset-references'
+import { assertSerialized } from '@/lib/item-rules'
 
 const bodySchema = z.object({
   count: z.number().int().min(1).max(200).default(1),
@@ -37,6 +39,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     })
     if (!item) return NextResponse.json({ error: 'Item not found' }, { status: 404 })
     if (item.deletedAt) return NextResponse.json({ error: restoreFirst(item.name) }, { status: 409 })
+    // PR-6 (D-y): a consumable never has units. Item birth's T4 call lands here too.
+    await assertSerialized(prisma, id, 'units')
 
     await prisma.inventoryUnit.createMany({
       data: Array.from({ length: count }, (_, i) => {
@@ -68,6 +72,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       { status: 201 },
     )
   } catch (err: unknown) {
+    const conflict = referenceConflictBody(err)
+    if (conflict) return NextResponse.json(conflict, { status: 409 })
     // Duplicate QR label code.
     if ((err as { code?: string }).code === 'P2002') {
       // PR-3c (D-u): a deleted unit keeps its label bound (so Restore is exact) — say so.

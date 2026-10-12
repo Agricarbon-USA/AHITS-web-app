@@ -33,6 +33,7 @@ const EFFECTS: Record<AdminActionKey, Effect> = {
   'item.save': { route: 'POST /api/inventory', effect: 'Creates the item (edit: PATCH /api/inventory/[id] saves its fields).' },
   'item.retire': { route: 'PATCH /api/inventory/[id]', effect: 'D-a: units on hand RETIRED, QR labels released, item RETIRED; refused 409 while any unit is out or in repair.' },
   'item.delete': { route: 'DELETE /api/inventory/[id]', effect: 'D-o: soft delete of the item, its units and schedules (one stamp); QR stays bound; reversible.' },
+  'item.deleteConsumable': { route: 'DELETE /api/inventory/[id]', effect: 'PR-6 D-w: consumable soft delete, same guards as item.delete' },
   'item.restore': { route: 'POST /api/inventory/[id]/restore', effect: 'Clears the same-stamp deletedAt on the item, units and schedules.' },
   'item.bulkDelete': { route: 'POST /api/inventory/bulk-delete', effect: 'deleteItem per item in its own transaction; per-item results.' },
   'unit.retire': { route: 'PATCH /api/inventory/units/[unitId]', effect: 'retireUnit: RETIRED, QR released, open repair closed; refused while out or Returning.' },

@@ -292,7 +292,7 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Decision:** every count of assets (inventory **Total**, the drawer's owned figure, the edit form, the equipment report's `assetCount` and average utilization) is over assets **in circulation** — not retired, not deleted — with **retired shown as its own number** where it matters ("14 owned · 1 retired"). **Money is the exception:** the equipment report's `totalMaintenanceSpend` (and event, downtime and rental totals) sum every in-window task on **every** asset, retired and deleted included, because spend on gear later retired is still money spent and is what the repair-spend metric measures. Mechanically: each population is defined once in `src/lib/populations.ts` (with SQL twins built from the same constants); item numbers come only from `itemCounts()` on the server and clients render them, never recount; the only "today" is `businessDate()`.
 - **Revisit triggers:** a report that needs "everything ever owned" as an asset count (add it as a named second number, never by widening the default).
 - **Rationale:** B3 — the inventory Total counted retired units while the right number was already on the wire; the same concept had a different population on every page (RC-3).
-
+- **PR-6 qualifier (D49, 2026-10-09):** repairs and service are for serialized gear and vehicles. Item-level tasks (no unit) are **not in the equipment report today**; that is noted here, not fixed (STATUS §4, parked).
 
 ### D42 · Asset status is derived and has one writer (`asset-status.ts`); pickable widens only with `pickUnit`
 - **Date:** decided 2026-10-05 (fix program §0 **D-g** + **D-n**), recorded 2026-10-07 · **Owner:** Max · **Status:** ACTIVE since **PR-3a #250** — **merged 2026-10-08 17:32 UTC, squash `fad9e37`, deployed to staging by deploy run 37817431916 (all jobs green); smoked 2026-10-08 — all seven admin-side acceptance rows passed** · **Read-with:** D29 (Still usable), D40, D43, `AHITS_SCREENING_REPORT_2026-10-05_ROOT-CAUSES.md` (RC-1), `src/lib/asset-status.ts`, `tests/pr3a-status-writers-guard.test.ts`
@@ -305,14 +305,14 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Decision:** when a unit that is **In Maintenance** comes back to a hub (end of deployment, bulk return or single return), the return is **never refused** for it: the unit stays IN_MAINTENANCE, its repair stays open, and the hub is recorded on the open task as its return destination (`returnDestinationType = HUB`). A unit returned *damaged* gets an open repair task that pulls it, so a damaged return is never task-less; a good return becomes Returning with its HUB_RETURN link.
 - **Revisit triggers:** a hub that cannot take repairs (then the destination is chosen per-case, not refused).
 - **Rationale:** refusing the return blocks a truck in the field on an admin's attention (screening §6 Q1); before PR-3a the bulk return wrote AVAILABLE for every condition, freeing out-of-service units (S-2).
-
+- **PR-6 qualifier (D49, 2026-10-09):** "a damaged return is never task-less" holds for **serialized gear**. A damaged consumable is **written off**, task-less by design (D-x).
 
 ### D44 · Deactivating a user who is the operator on an active deployment is refused, naming the deployment
 - **Date:** decided 2026-10-05 (fix program §0 **D-f**), recorded 2026-10-08 · **Owner:** Max · **Status:** ACTIVE since **PR-3b #252** — **merged 2026-10-08 18:45 UTC, squash `48ffc96`, deployed to staging by deploy run 37826735084 (all jobs green); smoked 2026-10-08 — all eight admin-side rows passed** · **Read-with:** D42, `src/lib/asset-references.ts`
 - **Decision:** a user who is the **PRIMARY** operator on a deployment that has not ended cannot be deactivated: the request is refused with a 409 naming the deployment ("Brett Hill is the operator on "North field run" — end or transfer it first."). The admin ends or transfers the deployment, then deactivates. A deployment is never ended automatically as a side effect of deactivation. The same guard family (`assertNoOpenReferences`) refuses retiring/deleting a vehicle, item or unit and deactivating a hub while something live still references it, and Start Deployment / add-operator refuse a user who is already deactivated.
 - **Revisit triggers:** a real need to deactivate someone mid-deployment urgently (e.g. a security incident) — then an explicit admin "end and deactivate" action, recorded here, not a silent auto-end.
 - **Rationale:** screening §6 Q5 — auto-ending a rig would strand its gear and its daily-check obligations without anyone deciding where they go; refusing with the deployment named makes the admin decide.
-
+- **PR-6 qualifier (D49, 2026-10-09):** retiring an item means a **serialized item**. A consumable is never retired (D-w); it is deleted (D46).
 
 ### D45 · Signals clear themselves; email outcomes are reported truthfully
 - **Date:** decided 2026-10-05 (fix program §0 **D-i** + **D-j**), recorded 2026-10-09 · **Owner:** Max · **Status:** **ACTIVE** — PR-4 **#254** merged 2026-10-09 (squash `b7fb07e`; deploy run 37939679548, migrate applied `20261009120000_pr4_alert_active_key_check_email_outcome`); staging smoke passed 2026-10-09 · **Read-with:** D42, `src/lib/alert-evaluators.ts`, `src/lib/alerts.ts`, `src/lib/email/resend.ts`, `src/lib/email-outcome.ts`
@@ -328,6 +328,7 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Decision (D-u):** **QR labels stay bound on delete** (unlike Retire's `::retired::` release), so Restore is exact and Undo lossless; registering a label that belongs to a deleted unit names the deleted item.
 - **Revisit triggers:** a real need to free a deleted unit's label without restoring it · a purge requirement (would supersede D33 for items) · vehicles get the same Show deleted / Restore (parked as a PR-5 point item).
 - **Rationale:** the owner asked for a way to remove an item "entirely — sensible, smooth, simple"; the API had a soft delete since CR-8 that no screen exposed. Two agents designed and adversarially reviewed the spec against the code before the owner answered the open questions.
+- **PR-6 qualifier (D49, 2026-10-09):** *Consumables aren't retired — delete one you've stopped stocking* (liquidate the stock first). The Delete dialog says so for a consumable (`item.deleteConsumable`).
 
 ### D47 · Every operator on a rig sees it on Today; the rig's daily checks are shared by its crew
 - **Date:** decided 2026-10-09 (owner, final, in the PR-5c request), recorded 2026-10-09 · **Owner:** Max · **Status:** **ACTIVE** (PR-5c #264 merged 2026-10-09 20:32 Central, squash `1b5d459`; deployed, revision `ahits-web-app-staging-00446-6v5`) · **Read-with:** D16, `src/lib/rig-list.ts` (`resolveMyRigId`), `src/lib/rig-daily-checks.ts`, AHITS_FIX_PROGRAM_2026-10-05_FIVE-PRS.md § PR-5c
@@ -344,6 +345,18 @@ Never delete or rewrite a decision. To change one, add a NEW entry and set the o
 - **Amends:** D31, which named "the evening-deploy rule (D16)" with no hour. D31 otherwise stands.
 - **Revisit triggers:** crews working past 20:00 Central; a mid-shift chunk-swap incident.
 - **Rationale:** `sw.ts` auto-applies a new version on next launch, so a merge mid-shift can swap an operator's app mid-task. With 0 active deployments, no operator is on a rig to be affected. First use: #264, merged 20:32 Central with Active Deployments 0 (read at about 20:32).
+
+### D49 · Repair and Retire are for serialized gear; a damaged consumable is written off; admins send a unit for repair from Inventory
+- **Date:** decided 2026-10-10 (PR-6 addendum §0 **D-v · D-w · D-x · D-y · D-z · D-g′**; owner answered the open questions 2026-10-10), recorded 2026-10-09 · **Owner:** Max · **Status:** **PROPOSED → ACTIVE on merge of PR-6 #266** (built 2026-10-09, not merged) · **Read-with:** D42, D43, D46, `src/lib/item-rules.ts`, `AHITS_ADDENDUM_PR-6_SERIALIZED-ONLY-REPAIR-RETIRE_2026-10-10.md`
+- **Decision (D-v):** repairs and service are for serialized gear and vehicles. A consumable never gets a maintenance task, neither a damage repair nor a scheduled service: `"<name>" is a consumable — repairs and service are for serialized gear.`
+- **Decision (D-w):** Retire is for serialized gear; "Retired" means equipment that has fallen out of repair. A consumable is used up, or liquidated and then **Deleted** (D46). The UI never offers Retire on a consumable and the server refuses it: `"<name>" is a consumable — consumables are used up or deleted, not retired.`
+- **Decision (D-x):** a damaged consumable is **written off**, not repaired. On return, a consumable line offers Return to hub, Transfer to operator, or Write off. A write-off doesn't restore stock and is recorded as a check-in marked Missing parts with the notes, plus the damage photos. No task, no bell; low-stock alerts fire as normal.
+- **Decision (D-y):** a consumable never has units, and an item's type is fixed once it has any unit, stock row, kit line, check log or task: `Type is fixed once an item has units or stock — add a new item instead.` A bare, just-created item can still be corrected.
+- **Decision (D-z):** legacy rows stay as history. Retired consumables, units on consumables and tasks on consumables are not migrated or closed; unit-keyed routes keep keying on the unit. The owner cleans them up later with Delete.
+- **Decision (D-g′, amends D42's D-g):** admins start a repair from Inventory. The Units tab offers **Send for repair** on every AVAILABLE unit as well as INOPERABLE ones. It uses the same dialog and the same damage task, and status is still written only by `asset-status.ts`.
+- **Qualifies:** the program's D-a (Retire item → **serialized items**), D41, D43, D44, D46 (one-line notes on each).
+- **Revisit triggers:** a consumable that genuinely needs per-piece tracking (then it is a serialized item; add a new item) · a write-off that needs approval or a cost line.
+- **Rationale:** the owner's two rules (only serialized items are repaired or serviced; only serialized items are retired) plus the gap PR-3b left: an admin had no way to start a repair on a unit sitting at the hub. One agent mapped every path by which a consumable could reach Retire or a maintenance task (26 files); a second reviewed the spec against the code.
 
 ---
 

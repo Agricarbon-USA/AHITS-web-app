@@ -8,6 +8,8 @@ import { withIdempotency } from '@/lib/idempotency'
 import { restoreToHub, resyncItemTotal } from '@/lib/inventory-stock'
 import { issueHubReturnLinks } from '@/lib/status-links'
 import { releaseUnlinkedReturns, returnUnit } from '@/lib/asset-status'
+import { referenceConflictBody } from '@/lib/asset-references'
+import { isConsumableWriteOff, recordWriteOff, writeOffNotes } from '@/lib/item-rules'
 
 const bodySchema = z.object({
   quantity: z.number().int().min(1).optional(),
@@ -85,7 +87,10 @@ async function _DELETE(
     alertMeta: { itemName: kitItem.item.name, operatorId: session.userId },
   }
   let returningUnitId: string | null = null
+  // PR-6 (D-x): a consumable returned IN_MAINTENANCE / INOPERABLE is written off.
+  const writeOff = isConsumableWriteOff(kitItem.item.itemType, 'HUB', returnCondition)
 
+  try {
   await prisma.$transaction(async (tx) => {
     if (isSerialized) {
       // Claim the removal conditionally (CR-17): if a concurrent return already
@@ -168,21 +173,39 @@ async function _DELETE(
         take: removeQty,
         orderBy: { createdAt: 'asc' },
       })
+      // PR-6 (D-z): the sweep still runs for a consumable whatever was declared, but a
+      // legacy unit always comes home GOOD → AVAILABLE and never gets a task.
       for (const u of units) {
-        await returnUnit(tx, u.id, { condition: returnCondition, hubId: resolvedHub, linked: false, task: damageTask })
+        await returnUnit(tx, u.id, { condition: 'GOOD', hubId: resolvedHub, linked: false, task: damageTask })
       }
-      await tx.checkLog.create({
-        data: {
-          action: 'CHECK_IN',
+      if (writeOff) {
+        await recordWriteOff(tx, {
           itemId: kitItem.inventoryItemId,
           operatorId: session.userId,
           rigId,
-          notes: body.data.notes,
-          condition: returnConditionToLogCondition(returnCondition),
-        },
-      })
+          notes: writeOffNotes(body.data.notes),
+          uploadedById: session.userId,
+        })
+      } else {
+        await tx.checkLog.create({
+          data: {
+            action: 'CHECK_IN',
+            itemId: kitItem.inventoryItemId,
+            operatorId: session.userId,
+            rigId,
+            notes: body.data.notes,
+            condition: returnConditionToLogCondition(returnCondition),
+          },
+        })
+      }
     }
   })
+  } catch (err) {
+    // PR-6: a ReferenceConflict is a 409 (terminal for the offline queue, message shown).
+    const conflict = referenceConflictBody(err)
+    if (conflict) return NextResponse.json(conflict, { status: 409 })
+    throw err
+  }
 
   // Best-effort, after commit: the Returning unit's HUB_RETURN link; if it can't be issued
   // the unit falls back to AVAILABLE rather than sit Returning with nothing to confirm.

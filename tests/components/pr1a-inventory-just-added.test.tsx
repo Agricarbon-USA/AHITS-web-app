@@ -174,6 +174,8 @@ describe('PR-1a · Inventory list truth', () => {
   })
 
   it('offers row-level Retire again now that retiring an item is real (PR-3b) — Edit stays', async () => {
+    // PR-6 (D-w): Retire is for serialized gear, so the row here is a serialized one.
+    listRows = [row('i-1', 'Manual Corer', { itemType: 'SERIALIZED' })]
     await renderPage()
     expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Retire' })).toBeInTheDocument()

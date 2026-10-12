@@ -131,14 +131,17 @@ describe('cron populations (S-9/P-4, C-9)', () => {
     expect(await prisma.alert.count({ where: { type: 'LOW_INVENTORY', sourceId, resolved: false } })).toBe(0)
   })
 
-  it('consumable low stock skips a deactivated hub and a retired item', async () => {
+  it('consumable low stock skips a deactivated hub, a retired item and a deleted item', async () => {
     const cat = await createCategory()
     const closed = await createHub({ name: 'Closed Hub' })
     await prisma.hub.update({ where: { id: closed.id }, data: { isActive: false } })
     const open = await createHub({ name: 'Open Hub' })
     const bags = await createInventoryItem(cat.id, { name: 'Sample bags', quantity: 2 })
+    // A legacy retired consumable (PR-6 D-z: kept as history) and a deleted one (PR-3c).
     const old = await createInventoryItem(cat.id, { name: 'Old bags', quantity: 1, status: 'RETIRED' })
-    for (const it of [bags, old]) {
+    const gone = await createInventoryItem(cat.id, { name: 'Deleted bags', quantity: 1 })
+    await prisma.inventoryItem.update({ where: { id: gone.id }, data: { deletedAt: new Date() } })
+    for (const it of [bags, old, gone]) {
       await prisma.inventoryItem.update({ where: { id: it.id }, data: { lowStockThreshold: 5 } })
     }
     await prisma.inventoryStock.createMany({
@@ -146,6 +149,7 @@ describe('cron populations (S-9/P-4, C-9)', () => {
         { itemId: bags.id, hubId: closed.id, quantity: 1 },
         { itemId: bags.id, hubId: open.id, quantity: 1 },
         { itemId: old.id, hubId: open.id, quantity: 1 },
+        { itemId: gone.id, hubId: open.id, quantity: 1 },
       ],
     })
 

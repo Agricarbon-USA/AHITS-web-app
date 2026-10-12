@@ -16,6 +16,7 @@ import { referenceConflictBody } from '@/lib/asset-references'
 import { markInoperable, pickUnit, pickableFirst, refuseDeletedItems, releaseUnlinkedReturns, returnUnit } from '@/lib/asset-status'
 import { PICKABLE_UNIT } from '@/lib/populations'
 import { openDamageTask } from '@/lib/maintenance'
+import { isConsumableWriteOff, recordWriteOff, writeOffNotes } from '@/lib/item-rules'
 
 const RIG_INCLUDE = {
   project: { select: { id: true, name: true } },
@@ -365,6 +366,41 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
         }
       }
 
+      // PR-6 (D-x): a damaged consumable is written off — decided on the item type
+      // before `canBeFixed` or the repair fields are read (a queued payload with
+      // `canBeFixed: true` lands as a write-off). The line is closed or decremented as
+      // above; stock not restored, no task, no bell. A legacy unit (D-z) comes home
+      // AVAILABLE first, no task.
+      if (isConsumableWriteOff(kitItem.item.itemType, disp.type, disp.returnCondition)) {
+        const homeAsGood = {
+          condition: 'GOOD' as const, hubId: disp.hubId, linked: false,
+          task: { itemId: inventoryItemId, taskName: `Damage repair: ${kitItem.item.name}`, notes: null, reportedById: session.userId },
+        }
+        if (kitItem.inventoryUnit) {
+          await returnUnit(tx, kitItem.inventoryUnit.id, homeAsGood)
+        } else {
+          const excludeUnitIds = await getUnitsInOtherRigs(tx, inventoryItemId, id)
+          const units = await tx.inventoryUnit.findMany({
+            where: { inventoryItemId, status: 'CHECKED_OUT', ...(excludeUnitIds.length > 0 && { id: { notIn: excludeUnitIds } }) },
+            take: removeQty,
+          })
+          for (const u of units) await returnUnit(tx, u.id, homeAsGood)
+        }
+        await recordWriteOff(tx, {
+          itemId: inventoryItemId,
+          unitId: kitItem.inventoryUnitId,
+          operatorId: primaryId,
+          rigId: id,
+          notes: writeOffNotes(disp.inoperableNotes ?? note),
+          photoUrls: filterAllowedPhotoUrls(disp.photoUrls),
+          uploadedById: session.userId,
+        })
+        if (disp.type === 'HUB' && disp.hubId) {
+          await tx.inventoryItem.update({ where: { id: inventoryItemId }, data: { hubId: disp.hubId } })
+        }
+        continue
+      }
+
       if (disp.type === 'HUB') {
         if (kitItem.item.itemType === 'CONSUMABLE' && (disp.returnCondition ?? 'GOOD') === 'GOOD') {
           // Consumable returned to the hub in usable condition → restore exactly
@@ -545,6 +581,9 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
     }
     }) // end transaction
   } catch (err: unknown) {
+    // PR-6: a ReferenceConflict is a 409 (terminal for the offline queue, message shown).
+    const conflict = referenceConflictBody(err)
+    if (conflict) return NextResponse.json(conflict, { status: 409 })
     const msg = err instanceof Error ? err.message : 'Failed to process items'
     console.error('[DELETE /api/deployments/[id]/items]', err)
     return NextResponse.json({ error: msg }, { status: 500 })
