@@ -3,7 +3,7 @@
 > Read with `STATUS.md` (resume line) and the packet `AHITS_HOTFIX_2026-10-22_VEHICLE-CHECKER-FIELDS.md` (decisions H-a, H-b, H-c; no new D number). D16: merging is the deploy. D48: the merge window.
 
 ## What was built (PR open, not merged)
-- **Branch** `feature/20261022/Agricarbon-USA-hotfix-checker-fields`, PR to `development`. No migration.
+- **Branch** `feature/20261022/Agricarbon-USA-hotfix-checker-fields`, **PR #268** to `development`. No migration.
 - **One line of app code** in `src/app/api/vehicles/[id]/route.ts` (GET): `include: { operator: true }` becomes `include: { operator: { select: { id: true, name: true } } }`. Before this, the route sent the full user row of each of the last 10 checkers, including `pinHash`, `email`, `hourlyRate`, lockout state and `tokenVersion`, to any signed-in user. The only reader, `admin/vehicles/page.tsx`, uses `operator.name`.
 - **Tests:**
   - `tests/hotfix-vehicle-detail-user-fields.test.ts` (DB, CI only): an operator calls GET and gets 200. `dailyChecks[0].operator` has only the keys `id` and `name`. The response contains none of `pinHash`, `email`, `hourlyRate`, `failedPinAttempts` or `tokenVersion`, and neither the hash value nor the email value.
