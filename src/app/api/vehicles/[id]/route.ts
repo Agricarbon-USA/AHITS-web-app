@@ -52,7 +52,7 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
   const vehicle = await prisma.vehicle.findFirst({
     where: { id, deletedAt: null },
     include: {
-      dailyChecks: { orderBy: { date: 'desc' }, take: 10, include: { operator: true } },
+      dailyChecks: { orderBy: { date: 'desc' }, take: 10, include: { operator: { select: { id: true, name: true } } } },
       // PR-2 (C-11): open tasks only, so the drawer's count matches the list's.
       maintenanceTasks: { where: OPEN_TASK, orderBy: [{ nextDue: 'asc' }, { id: 'asc' }] },
       photos: { orderBy: { takenAt: 'desc' }, take: 6 },
