@@ -54,27 +54,21 @@ jobs:
 
   test:
     name: Tests
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        # Same official image via AWS's public mirror: Docker Hub rate-limits
-        # unauthenticated pulls from shared runners (2026-10-09, #258's deploy).
-        image: public.ecr.aws/docker/library/postgres:16
-        env:
-          POSTGRES_USER: test
-          POSTGRES_PASSWORD: test
-          POSTGRES_DB: ahits_test
-        ports:
-          # Map to 5433 to match .env.test / the local `make test` workflow.
-          - 5433:5432
-        options: >-
-          --health-cmd "pg_isready -U test -d ahits_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+    # Pinned so the preinstalled PostgreSQL 16 stays; ubuntu-latest can move.
+    runs-on: ubuntu-24.04
+    # Uses the runner's own Postgres instead of a service container: pulling the
+    # image (Docker Hub, then public.ecr.aws) kept hitting registry rate/data limits.
     env:
-      TEST_DB_URL: postgresql://test:test@localhost:5433/ahits_test
+      TEST_DB_URL: postgresql://test:test@localhost:5432/ahits_test
     steps:
+      - name: Start the runner's PostgreSQL 16
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql -c "CREATE ROLE test WITH LOGIN SUPERUSER PASSWORD 'test';"
+          sudo -u postgres createdb -O test ahits_test
+          pg_isready -h localhost -p 5432
+          psql "postgresql://test:test@localhost:5432/ahits_test" -c "SHOW server_version; SHOW timezone;"
+
       - uses: actions/checkout@v5
 
       - uses: actions/setup-node@v5
