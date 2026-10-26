@@ -36,9 +36,9 @@ const nextConfig: NextConfig = {
   ...(allowedOrigins.length > 0 && {
     experimental: { serverActions: { allowedOrigins } },
   }),
-  images: {
-    remotePatterns: [{ protocol: 'https', hostname: '*.supabase.co' }],
-  },
+  // next/image is imported nowhere; this turns the /_next/image optimizer off (it 404s)
+  // and closes GHSA-2464-fhr4-w9xw and GHSA-2xp9-vwfh-vxw4.
+  images: { unoptimized: true },
   async headers() {
     return [{ source: '/:path*', headers: securityHeaders }]
   },
