@@ -125,7 +125,12 @@ export function DispositionDialog({
     })
   }
 
-  const missingHub = Array.from(dispositions.values()).some((d) => d.type === 'HUB' && !d.hubId)
+  // Hotfix 2026-10-25: a re-read can change the kit while this dialog is open (signal
+  // returning, a drained queue). A line added since opening gets its default; a line
+  // that has left is not sent.
+  const current = items.map((i) => dispositions.get(i.kitItemId) ?? initialDisposition(i, finalHubId || undefined))
+
+  const missingHub = current.some((d) => d.type === 'HUB' && !d.hubId)
   // UXP-3 (3g) / D36: an INOPERABLE disposition used to REQUIRE ≥1 damage photo (§11.10,
   // client + server). A denied/missing camera must never block a submit, so the photo is
   // now a nudge — the server-side clauses in /items and /end are gone too.
@@ -133,7 +138,7 @@ export function DispositionDialog({
   function setDisp(kitItemId: string, patch: Partial<ItemDisposition>) {
     setDispositions((prev) => {
       const next = new Map(prev)
-      next.set(kitItemId, { ...prev.get(kitItemId)!, ...patch })
+      next.set(kitItemId, { ...(prev.get(kitItemId) ?? current.find((d) => d.kitItemId === kitItemId)!), ...patch })
       return next
     })
   }
@@ -144,7 +149,7 @@ export function DispositionDialog({
     // PR-6 (D-x): a consumable's Write off goes as `type: 'INOPERABLE'` with no
     // `canBeFixed` — the wire format is unchanged; the server writes it off.
     const consumableLines = new Set(items.filter((i) => i.itemType === 'CONSUMABLE').map((i) => i.kitItemId))
-    const itemDispositions = Array.from(dispositions.values()).map((d) => {
+    const itemDispositions = current.map((d) => {
       if (d.type !== 'INOPERABLE' || !consumableLines.has(d.kitItemId)) return d
       const { canBeFixed, ...rest } = d
       void canBeFixed
@@ -221,7 +226,7 @@ export function DispositionDialog({
         </TextField>
         <Stack spacing={2} divider={<Divider />}>
           {items.map((item) => {
-            const disp = dispositions.get(item.kitItemId)!
+            const disp = current.find((d) => d.kitItemId === item.kitItemId)!
             const isConsumable = item.itemType === 'CONSUMABLE'
             const currentQty = disp.quantity ?? item.quantity
             return (

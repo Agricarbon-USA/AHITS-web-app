@@ -318,7 +318,7 @@ export function useOfflineQueue() {
     try {
       const probeDb = await openDB()
       const hasDrainable = (await getAllItems(probeDb)).some((i) => i.status !== 'failed')
-      if (!hasDrainable) return
+      if (!hasDrainable) { await refresh(); return }
     } catch { /* couldn't read the queue — let the full path try and handle it */ }
     syncingRef.current = true
     setSyncing(true)

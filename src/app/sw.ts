@@ -19,10 +19,14 @@ declare const self: ServiceWorkerGlobalScope
 // page under the operator URL (the offline→/login bug). Those routes are instead
 // RSC-prefetched while online (RoutePrefetcher) and runtime-cached below.
 const STATIC_PRECACHE = ['/~offline']
+// Hotfix 2026-10-25: a revision, not null. With null the precache keeps the copy from
+// the phone's FIRST install forever, so a change to ~offline/page.tsx never reaches it.
+// Bump this whenever src/app/~offline/page.tsx changes.
+const OFFLINE_PAGE_REVISION = '2026-10-25'
 
 const precacheEntries = [
   ...(self.__SW_MANIFEST ?? []),
-  ...STATIC_PRECACHE.map((url) => ({ url, revision: null })),
+  ...STATIC_PRECACHE.map((url) => ({ url, revision: OFFLINE_PAGE_REVISION })),
 ]
 
 const serwist = new Serwist({
