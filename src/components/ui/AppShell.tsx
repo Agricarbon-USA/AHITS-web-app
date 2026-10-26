@@ -11,6 +11,7 @@ import CloudSyncIcon from '@mui/icons-material/CloudSync'
 import AgricultureIcon from '@mui/icons-material/Agriculture'
 import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 import { ServiceWorkerUpdater } from '@/components/shared/ServiceWorkerUpdater'
+import { RefreshOnReconnect } from '@/components/shared/RefreshOnReconnect'
 
 const DRAWER_WIDTH = 240
 
@@ -161,6 +162,7 @@ export function AppShell({ nav, children, title = 'AHITS', headerActions, bottom
       </Box>
       {effectiveIsMobile && bottomNav}
       <ServiceWorkerUpdater />
+      <RefreshOnReconnect />
     </Box>
   )
 }

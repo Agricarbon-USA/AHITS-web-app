@@ -308,4 +308,40 @@ describe('useOfflineQueue — CC-29 flush lifecycle', () => {
       expect(q[0].lastError).toMatch(/already exists/i)
     }
   })
+  // (g) Hotfix 2026-10-25 (H2-d): with no reload on reconnect, a second reader must
+  // re-count from IndexedDB once another reader has drained the queue — its own
+  // flush finds nothing drainable and used to return without refreshing.
+  it('(g) a reader that skipped the drain re-counts once another reader has sent the queue', async () => {
+    setOnline(false)
+    const a = renderHook(() => useOfflineQueue())
+    const b = renderHook(() => useOfflineQueue())
+    await act(async () => {
+      await a.result.current.enqueue({ endpoint: '/api/deployments', method: 'POST', body: { n: 1 }, label: 'Start deployment', placeholderId: 'ph-1' })
+    })
+
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    const fetchMock = vi.fn(async () => { await gate; return res(409, { error: 'This rig already has an active deployment.' }) })
+    vi.stubGlobal('fetch', fetchMock)
+    setOnline(true)
+
+    let aDone!: Promise<void>
+    await act(async () => {
+      aDone = a.result.current.flush()
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+      await b.result.current.flush()
+    })
+    expect(b.result.current.pending).toBe(1)
+    expect(b.result.current.pendingDeployCreate).toBe(true)
+
+    await act(async () => { release(); await aDone })
+    expect(a.result.current.pending).toBe(0)
+    expect(a.result.current.failed).toBe(1)
+
+    await act(async () => { await b.result.current.flush() })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(b.result.current.pending).toBe(0)
+    expect(b.result.current.failed).toBe(1)
+    expect(b.result.current.pendingDeployCreate).toBe(false)
+  })
 })

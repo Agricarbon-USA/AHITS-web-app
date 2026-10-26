@@ -6,6 +6,8 @@ const withSerwist = withSerwistInit({
   swDest: 'public/sw.js',
   disable: process.env.NODE_ENV === 'development' || process.env.DISABLE_SW === 'true',
   register: true,
+  // Hotfix 2026-10-25: the package default (true) reloads every page when signal returns and wipes unsaved work.
+  reloadOnOnline: false,
 })
 
 // Server Actions are not used in this app (all mutations are API routes), so we

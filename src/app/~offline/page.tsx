@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { headers } from 'next/headers'
 import { color, font } from '@/theme/tokens'
 
 // CC-23: this offline fallback is served by the service worker and rendered
@@ -14,7 +15,11 @@ const linkStyle: React.CSSProperties = {
   fontWeight: font.weight.medium,
 }
 
-export default function OfflinePage() {
+// Hotfix 2026-10-25 (H2-c): this page has nothing to lose, so it reloads itself when signal returns. An inline script, not a client component: the service worker can serve this HTML after a deploy has removed its JS chunks. The nonce lets it pass the CSP.
+const RELOAD_WHEN_ONLINE = "window.addEventListener('online',function(){location.reload()})"
+
+export default async function OfflinePage() {
+  const nonce = (await headers()).get('x-nonce') ?? undefined
   return (
     <main
       style={{
@@ -24,6 +29,7 @@ export default function OfflinePage() {
         padding: 'max(24px, env(safe-area-inset-top)) 24px',
       }}
     >
+      <script nonce={nonce} suppressHydrationWarning dangerouslySetInnerHTML={{ __html: RELOAD_WHEN_ONLINE }} />
       <section style={{ maxWidth: 520, width: '100%', textAlign: 'center' }}>
         <h1 style={{ marginBottom: 8 }}>You&apos;re offline</h1>
         <p style={{ marginBottom: 20, color: color.inkSoft }}>
