@@ -190,6 +190,7 @@ AHITS is at the pilot doorstep, running on **staging**. The hard architecture is
   1. The owner's explicit go in chat. Docs-only PRs are the exception: the session merges those once CI is green.
   2. CI is green.
   3. **Merge inside the window (D48, owner 2026-10-09): after 20:00 US Central, or at any time the admin dashboard shows 0 Active Deployments.** Read the count just before merging and **state it, with the time read, in every merge report**. A merge outside both conditions is a dated deviation under D31 (as the 2026-10-07 merges and the 2026-10-09 afternoon merges #258/#260/#261/#259 were). Why: `sw.ts` auto-applies on next launch, so a mid-shift merge can swap an operator's app mid-task.
+     - **D48 amendment (owner, 2026-10-26):** up to two merges per window, and only when they touch different areas. Each one deploys and passes its smoke before the next merges. A service-worker change or a migration always merges alone. Deviations stay case by case and are recorded in D48.
   4. Watch the deploy through env-drift and `/api/health`.
   5. Smoke with the tab visible. State the Active Deployments count first (CLAUDE.md), and create throwaway data through the app's screens.
 - **PARKED (2026-10-09, owner) — can one operator be on two active rigs at once? Yes, as a SECONDARY; no change made.**
