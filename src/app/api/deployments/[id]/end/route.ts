@@ -2,19 +2,21 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { photoUrlsField, isPhotoNotUploadedError } from '@/lib/validation'
 import { prisma } from '@/lib/prisma'
-import { isAuthorizedForRig } from '@/lib/deployment-auth'
+import { claimActiveRig, isAuthorizedForRig } from '@/lib/deployment-auth'
 import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { createAlert, resolveAlertsFor } from '@/lib/alerts'
 import { withIdempotency } from '@/lib/idempotency'
 import { issueHubReturnLinks } from '@/lib/status-links'
 import { filterAllowedPhotoUrls } from '@/lib/photo-security'
-import { endAllAssignmentsForRig, removeAllProjectLinks } from '@/lib/deployment-assignments'
+import { endAllAssignmentsForRig, getActivePrimaryForRig, removeAllProjectLinks } from '@/lib/deployment-assignments'
+import { cancelPendingHandoffs } from '@/lib/deployment-handoffs'
+import { deploymentWriteConflict, transferRecipientProblem, waitingTransfersForRig, WaitingConflict } from '@/lib/dispositions'
 import { restoreToHub, resyncItemTotal } from '@/lib/inventory-stock'
 import { markInoperable, releaseUnlinkedReturns, returnUnit } from '@/lib/asset-status'
 import { openDamageTask } from '@/lib/maintenance'
 import { isConsumableWriteOff, recordWriteOff, writeOffNotes } from '@/lib/item-rules'
-import { referenceConflictBody } from '@/lib/asset-references'
+import { ReferenceConflict } from '@/lib/asset-references'
 
 const dispositionSchema = z.object({
   kitItemId: z.string(),
@@ -49,6 +51,11 @@ const schema = z.object({
   itemDispositions: z.array(dispositionSchema).default([]),
 })
 
+/** End's auto-fill found a line with no disposition and no home hub (400; the end rolls back). */
+class NoDisposition extends Error {
+  constructor(name: string) { super(`Item "${name}" has no disposition and no home hub — provide an explicit disposition.`) }
+}
+
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   return withIdempotency(req, 'deployments.end.POST', () => _POST(req, ctx))
 }
@@ -79,34 +86,32 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   if (!(await isAuthorizedForRig(rig, session))) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
-  if (rig.endedAt) return NextResponse.json({ error: 'Deployment already ended' }, { status: 409 })
+  if (rig.endedAt) return NextResponse.json({ error: 'This deployment has already ended.' }, { status: 409 })
 
   const body = await req.json()
   const parsed = schema.safeParse(body)
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: isPhotoNotUploadedError(parsed.error) ? 422 : 400 }) // CC-29 item 7b: localphoto ref -> 422
 
   const { note } = parsed.data
-  let { itemDispositions } = parsed.data
+  const itemDispositions = parsed.data.itemDispositions
   const now = new Date()
+  // The pre-read stays for 2.2's names and the after-commit alert resolve; everything the
+  // transaction does is decided on lines it reads itself (P1-1a 2.5).
   const allKitItems = rig.kits.flatMap((k) => k.items)
 
-  // Auto-fill items with no explicit disposition: default to returning to the item's
-  // home hub in GOOD condition. If an item has no home hub, we can't safely route it —
-  // return 400 so the client can provide an explicit disposition rather than losing stock.
-  const dispMap = new Map(itemDispositions.map((d) => [d.kitItemId, d]))
-  const autoDispositions: typeof itemDispositions = []
-  for (const ki of allKitItems) {
-    if (dispMap.has(ki.id)) continue
-    const hubId = ki.item.hubId
-    if (!hubId) {
-      return NextResponse.json(
-        { error: `Item "${ki.item.name}" has no disposition and no home hub — provide an explicit disposition.` },
-        { status: 400 },
-      )
-    }
-    autoDispositions.push({ kitItemId: ki.id, type: 'HUB', hubId, returnCondition: 'GOOD', photoUrls: [] })
+  // P1-1a (2.2, §0-b): every "Transfer to a person" line names a real, active person who
+  // isn't the deployment's own operator — before anything is written. The primary is read
+  // only when a TRANSFER line exists.
+  const transferLines = itemDispositions
+    .filter((d) => d.type === 'TRANSFER')
+    .flatMap((d) => {
+      const ki = allKitItems.find((k) => k.id === d.kitItemId)
+      return ki ? [{ toOperatorId: d.toOperatorId, name: ki.item.name }] : []
+    })
+  if (transferLines.length > 0) {
+    const problem = await transferRecipientProblem(transferLines, await getActivePrimaryForRig(id))
+    if (problem) return NextResponse.json({ error: problem.error }, { status: problem.status })
   }
-  if (autoDispositions.length > 0) itemDispositions = [...itemDispositions, ...autoDispositions]
 
   // Serialized units that went Returning (IN_TRANSIT) inside the transaction: their
   // HUB_RETURN links are issued after it commits, and if that fails they fall back to
@@ -116,18 +121,72 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
   try {
   await prisma.$transaction(async (tx) => {
-    await tx.rig.update({ where: { id }, data: { endedAt: now, notes: note } })
+    // P1-1a (2.5): 1. take the deployment (two Ends at once: the second gets 409).
+    await claimActiveRig(tx, id, { endedAt: now, notes: note })
+    // 2. What is waiting on a transfer stays with it (2.8, §0-s).
+    const waiting = await waitingTransfersForRig(id, tx)
+    // 3. The open lines, read once inside the transaction.
+    const lines = await tx.kitItem.findMany({
+      where: { kit: { rigId: id }, removedAt: null },
+      include: {
+        item: { select: { id: true, name: true, itemType: true, hubId: true } },
+        inventoryUnit: true,
+      },
+    })
+    const preRead = new Set(allKitItems.map((ki) => ki.id))
+    if (lines.some((ki) => !preRead.has(ki.id) && !waiting.items.has(ki.id))) {
+      throw new ReferenceConflict('Equipment was added to this deployment while it was ending. Open End deployment again.')
+    }
+    const whollyWaiting = (ki: { id: string; quantity: number }) => {
+      const w = waiting.items.get(ki.id)
+      return !!w && (w.qty == null || w.qty >= ki.quantity)
+    }
+    // 4. Auto-fill: an open line with no disposition that isn't wholly waiting goes back to
+    // the item's home hub in GOOD condition. With no home hub the end rolls back (400).
+    const dispMap = new Map(itemDispositions.map((d) => [d.kitItemId, d]))
+    const dispositions = [...itemDispositions]
+    for (const ki of lines) {
+      if (dispMap.has(ki.id) || whollyWaiting(ki)) continue
+      if (!ki.item.hubId) throw new NoDisposition(ki.item.name)
+      dispositions.push({ kitItemId: ki.id, type: 'HUB', hubId: ki.item.hubId, returnCondition: 'GOOD', photoUrls: [] })
+    }
+    // 5.
     await endAllAssignmentsForRig(id, tx)
     await removeAllProjectLinks(id, tx)
 
-    for (const disp of itemDispositions) {
-      const kitItem = allKitItems.find((ki) => ki.id === disp.kitItemId)
+    // 6. Each disposition, against the in-transaction lines (one whose line isn't there is ignored).
+    for (const disp of dispositions) {
+      const kitItem = lines.find((ki) => ki.id === disp.kitItemId)
       if (!kitItem) continue
       const inventoryItemId = kitItem.inventoryItemId
+      let endedQty: number, restoreQty: number
 
-      // TRANSFER items keep removedAt: null until the transfer is accepted/declined
-      if (disp.type !== 'TRANSFER') {
-        await tx.kitItem.update({ where: { id: disp.kitItemId }, data: { removedAt: now } })
+      const w = waiting.items.get(disp.kitItemId)
+      // A wholly waiting line is skipped, whatever its disposition, and stays open for its transfer.
+      if (w && (w.qty == null || w.qty >= kitItem.quantity)) continue
+      if (w && w.qty != null) {
+        // Partly waiting: the rest ends normally.
+        if (disp.type === 'TRANSFER') {
+          throw new WaitingConflict(`"${kitItem.item.name}" is partly waiting on transfer to ${w.toName}. Return the rest to a hub, or cancel that transfer first.`)
+        }
+        if (kitItem.item.itemType === 'SERIALIZED') {
+          throw new WaitingConflict(`"${kitItem.item.name}" is partly waiting on transfer to ${w.toName}. Cancel that transfer first.`)
+        }
+        const [row] = await tx.$queryRaw<{ quantity: number; drawnQuantity: number }[]>`
+          SELECT "quantity", "drawnQuantity" FROM "kit_items" WHERE "id" = ${disp.kitItemId} AND "removedAt" IS NULL FOR UPDATE`
+        if (!row) continue
+        endedQty = row.quantity - w.qty; restoreQty = Math.min(Math.max(endedQty, 0), row.drawnQuantity)
+        if (endedQty <= 0) continue
+        await tx.kitItem.update({ where: { id: disp.kitItemId }, data: { quantity: w.qty, drawnQuantity: row.drawnQuantity - restoreQty } })
+      } else if (disp.type === 'TRANSFER') {
+        // TRANSFER lines keep removedAt: null until the transfer is accepted/declined (step 7).
+        continue
+      } else {
+        const [claim] = await tx.$queryRaw<{ quantity: number; drawnQuantity: number }[]>`
+          UPDATE "kit_items" SET "removedAt" = ${now} WHERE "id" = ${disp.kitItemId} AND "removedAt" IS NULL
+          RETURNING "quantity", "drawnQuantity"`
+        if (!claim) continue
+        endedQty = claim.quantity; restoreQty = claim.drawnQuantity
       }
 
       // PR-6 (D-x): a damaged consumable is written off — decided on the item type
@@ -145,7 +204,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           const excludeUnitIds = await getUnitsInOtherRigs(tx, inventoryItemId, id)
           const units = await tx.inventoryUnit.findMany({
             where: { inventoryItemId, status: 'CHECKED_OUT', ...(excludeUnitIds.length > 0 && { id: { notIn: excludeUnitIds } }) },
-            take: kitItem.quantity,
+            take: endedQty,
           })
           for (const u of units) await returnUnit(tx, u.id, homeAsGood)
         }
@@ -171,8 +230,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           // then the item's home hub. hubId is required for HUB (schema refine),
           // so this is never null and the per-hub credit always lands somewhere.
           const hubForRestore = disp.hubId ?? kitItem.drawnHubId ?? kitItem.item.hubId
-          if (hubForRestore && kitItem.drawnQuantity > 0) {
-            await restoreToHub(inventoryItemId, hubForRestore, kitItem.drawnQuantity, tx)
+          if (hubForRestore && restoreQty > 0) {
+            await restoreToHub(inventoryItemId, hubForRestore, restoreQty, tx)
             // #106: recompute the cross-hub total from the stock rows (one discipline for
             // every return path) instead of a blind increment — self-heals any drift and
             // can't credit the total without a backing per-hub row (A-2/A-3).
@@ -225,7 +284,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
               status: 'CHECKED_OUT',
               ...(excludeUnitIds.length > 0 && { id: { notIn: excludeUnitIds } }),
             },
-            take: kitItem.quantity,
+            take: endedQty,
           })
           for (const u of units) {
             await returnUnit(tx, u.id, { condition, hubId: disp.hubId, linked: false, task: damageTask })
@@ -318,8 +377,11 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       // TRANSFER: handled below after all items processed
     }
 
-    // Group TRANSFER dispositions by toOperatorId → one TransferRequest per operator
-    const transferDisps = itemDispositions.filter((d) => d.type === 'TRANSFER' && d.toOperatorId)
+    // 7. TRANSFER rows, from the in-transaction lines that aren't waiting (2.6: never from
+    // the payload alone). One TransferRequest per person.
+    const transferDisps = dispositions.filter(
+      (d) => d.type === 'TRANSFER' && d.toOperatorId && lines.some((ki) => ki.id === d.kitItemId) && !waiting.items.has(d.kitItemId),
+    )
     const byOperator = new Map<string, typeof transferDisps>()
     for (const d of transferDisps) {
       const key = d.toOperatorId!
@@ -338,43 +400,29 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       })
     }
 
-    const vehicleIds = rig.vehicles.map((rv) => rv.vehicleId)
-    if (vehicleIds.length > 0) {
-      await tx.vehicle.updateMany({
-        where: { id: { in: vehicleIds } },
-        data: { assignedOperatorId: null },
+    // 8. Vehicles: close the open RigVehicle rows (W0-10 PR-2b — each vehicle is freed for
+    // its next deployment) except those waiting on a transfer, which stay open for it (the
+    // accept path needs removedAt IS NULL), and unassign exactly the ones closed.
+    const openVehicles = await tx.rigVehicle.findMany({ where: { rigId: id, removedAt: null }, select: { vehicleId: true } })
+    const closeIds = openVehicles.map((rv) => rv.vehicleId).filter((vid) => !waiting.vehicles.has(vid))
+    if (closeIds.length > 0) {
+      await tx.rigVehicle.updateMany({
+        where: { rigId: id, removedAt: null, vehicleId: { in: closeIds } },
+        data: { removedAt: now },
       })
+      await tx.vehicle.updateMany({ where: { id: { in: closeIds } }, data: { assignedOperatorId: null } })
     }
-    // W0-10 PR-2b: close the rig's open RigVehicle rows so each vehicle is freed for its
-    // next deployment. Previously these were left open on an ended rig and no path could
-    // ever close them (the vehicles DELETE route rejects ended rigs), stranding the row
-    // forever — which breaks the one-open-RigVehicle-per-vehicle invariant index C (PR-2c)
-    // enforces and blocks the routine "reuse this vehicle next time".
-    // EXCEPTION: a vehicle with a still-PENDING outbound transfer must keep its source row
-    // OPEN — the accept path's stillPresent guard requires removedAt IS NULL to move it to
-    // the recipient (mirrors how end skips removedAt for TRANSFER kit items). Closing it
-    // would brick the transfer and orphan the vehicle.
-    const pendingXfer = await tx.transferRequest.findMany({
-      where: { fromRigId: id, status: 'PENDING' },
-      select: { vehicles: { select: { vehicleId: true } } },
-    })
-    const keepOpenVehicleIds = pendingXfer.flatMap((t) => t.vehicles.map((v) => v.vehicleId))
-    await tx.rigVehicle.updateMany({
-      where: { rigId: id, removedAt: null, vehicleId: { notIn: keepOpenVehicleIds } },
-      data: { removedAt: now },
-    })
-    // PR-3a (S-10): an ended deployment can no longer change hands — cancel its pending
-    // operator handoffs (same raw write as the handoff cancel route).
-    await tx.$executeRaw`
-      UPDATE "deployment_handoffs"
-      SET "status" = 'CANCELLED', "updatedAt" = ${now}
-      WHERE "rigId" = ${id} AND "status" = 'PENDING'`
+    // 9. PR-3a (S-10): an ended deployment can no longer change hands — cancel its waiting
+    // transfers of the whole deployment, and mark their bells read.
+    await cancelPendingHandoffs(id, tx)
   })
   } catch (err) {
-    // PR-6: a ReferenceConflict (e.g. the openDamageTask backstop) is a 409 — terminal
-    // for the offline queue, message shown — never a 5xx retry loop.
-    const conflict = referenceConflictBody(err)
+    // PR-6 / P1-1a: an ended deployment, waiting gear or a ReferenceConflict (e.g. the
+    // openDamageTask backstop) is a 409 — terminal for the offline queue, message shown —
+    // never a 5xx retry loop.
+    const conflict = deploymentWriteConflict(err)
     if (conflict) return NextResponse.json(conflict, { status: 409 })
+    if (err instanceof NoDisposition) return NextResponse.json({ error: err.message }, { status: 400 })
     throw err
   }
 

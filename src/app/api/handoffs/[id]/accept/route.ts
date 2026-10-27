@@ -8,6 +8,8 @@ import { writeAudit } from '@/lib/audit'
 import { getHandoff, reassignPrimary } from '@/lib/deployment-handoffs'
 import { isUniqueViolationAnywhere } from '@/lib/api-errors'
 import { resolveAlertsFor } from '@/lib/alerts'
+import { claimActiveRig } from '@/lib/deployment-auth'
+import { deploymentWriteConflict } from '@/lib/dispositions'
 
 const schema = z.object({
   responseNote: z.string().optional(),
@@ -24,7 +26,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
   const handoff = await getHandoff(id)
   if (!handoff) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (handoff.status !== 'PENDING') return NextResponse.json({ error: 'Handoff is no longer pending' }, { status: 409 })
+  if (handoff.status !== 'PENDING') return NextResponse.json({ error: 'Transfer is no longer pending' }, { status: 409 })
 
   const isRecipient = handoff.toOperatorId === session.userId
   const isAdmin = session.role === 'ADMIN'
@@ -39,25 +41,25 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
   try {
     await prisma.$transaction(async (tx) => {
+      // P1-1a (2.5): the deployment first, before the handoff row — and a deployment that
+      // has ended can't change hands (this replaces the separate endedAt read).
+      await claimActiveRig(tx, handoff.rigId)
       const claim = await tx.$executeRaw`
         UPDATE "deployment_handoffs"
         SET "status" = 'ACCEPTED', "respondedAt" = ${now}, "responseNote" = ${responseNote ?? null}, "updatedAt" = ${now}
         WHERE "id" = ${id} AND "status" = 'PENDING'`
-      if (Number(claim) === 0) throw new Error('Handoff is no longer pending')
-
-      const rig = await tx.rig.findUnique({
-        where: { id: handoff.rigId },
-        select: { id: true, endedAt: true },
-      })
-      if (!rig || rig.endedAt) throw new Error('Deployment has ended')
+      if (Number(claim) === 0) throw new Error('Transfer is no longer pending')
 
       const targetConflict = await getActiveRigForOperator(handoff.toOperatorId, tx)
       if (targetConflict && targetConflict !== handoff.rigId) throw new Error('TARGET_HAS_ACTIVE_RIG')
 
-      await reassignPrimary(tx, rig, handoff.toOperatorId, session.userId, handoff.note)
+      await reassignPrimary(tx, { id: handoff.rigId }, handoff.toOperatorId, session.userId, handoff.note)
     })
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Accept failed'
+    const conflict = deploymentWriteConflict(err)
+    if (conflict) return NextResponse.json(conflict, { status: 409 })
+    const msg = err instanceof Error ? err.message : ''
+    if (msg === 'Transfer is no longer pending') return NextResponse.json({ error: msg }, { status: 409 })
     if (msg === 'TARGET_HAS_ACTIVE_RIG') {
       return NextResponse.json({ error: 'That operator already has an active deployment' }, { status: 409 })
     }
@@ -73,7 +75,9 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
         { status: 409 },
       )
     }
-    return NextResponse.json({ error: msg }, { status: 409 })
+    // P1-1a (2.5): anything else is a 500 (the queue retries it) — never Prisma's raw text.
+    console.error('[POST /api/handoffs/[id]/accept]', err)
+    return NextResponse.json({ error: 'Transfer failed. Try again.' }, { status: 500 })
   }
 
   await writeAudit(session.userId, 'DEPLOYMENT_HANDOFF', handoff.fromOperatorId, { rigId: handoff.rigId, toOperatorId: handoff.toOperatorId })
@@ -86,8 +90,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       data: {
         userId: handoff.initiatedById,
         type: 'HANDOFF_ACCEPTED',
-        title: 'Deployment handoff accepted',
-        body: `${session.name} accepted the deployment handoff.`,
+        title: 'Transfer accepted',
+        body: `${session.name} accepted the deployment transfer.`,
         link: '/operator/my-deployment',
       },
     }).catch(() => {})

@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
-import { isAuthorizedForRig } from '@/lib/deployment-auth'
+import { claimActiveRig, isAuthorizedForRig } from '@/lib/deployment-auth'
+import { deploymentWriteConflict, lockKitItems, partlyFreeMessage, waitingMessage, waitingTransfersForRig, WaitingConflict } from '@/lib/dispositions'
 import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { withIdempotency } from '@/lib/idempotency'
 import { restoreToHub, resyncItemTotal } from '@/lib/inventory-stock'
 import { issueHubReturnLinks } from '@/lib/status-links'
 import { releaseUnlinkedReturns, returnUnit } from '@/lib/asset-status'
-import { referenceConflictBody } from '@/lib/asset-references'
 import { isConsumableWriteOff, recordWriteOff, writeOffNotes } from '@/lib/item-rules'
 
 const bodySchema = z.object({
@@ -43,7 +43,7 @@ async function _DELETE(
 
   const rig = await prisma.rig.findUnique({ where: { id: rigId } })
   if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (rig.endedAt) return NextResponse.json({ error: 'Deployment has ended' }, { status: 409 })
+  if (rig.endedAt) return NextResponse.json({ error: 'This deployment has already ended.' }, { status: 409 })
   if (!(await isAuthorizedForRig(rig, session))) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
@@ -92,6 +92,23 @@ async function _DELETE(
 
   try {
   await prisma.$transaction(async (tx) => {
+    // P1-1a (2.5, 2.8): the deployment first, then the line. A line a racing return just
+    // closed is skipped, as today (CR-17).
+    await claimActiveRig(tx, rigId)
+    const [line] = await lockKitItems(tx, [kitItemId], { skipClosed: true })
+    if (!line) return
+    // §0-s: gear waiting on a transfer stays with it; a partly waiting consumable line
+    // gives up only its free part (so Log usage of the free part still works).
+    const w = (await waitingTransfersForRig(rigId, tx)).items.get(kitItemId)
+    if (w) {
+      if (isSerialized || w.qty == null || w.qty >= line.quantity) {
+        throw new WaitingConflict(waitingMessage(kitItem.item.name, w.toName))
+      }
+      const free = line.quantity - w.qty
+      if ((body.data.quantity ?? line.quantity) > free) {
+        throw new WaitingConflict(partlyFreeMessage(kitItem.item.name, free, w.qty, w.toName))
+      }
+    }
     if (isSerialized) {
       // Claim the removal conditionally (CR-17): if a concurrent return already
       // flipped removedAt, this matches 0 rows and we skip — no double unit flip.
@@ -121,7 +138,7 @@ async function _DELETE(
         })
       }
     } else {
-      const removeQty = body.data.quantity ?? kitItem.quantity
+      const removeQty = body.data.quantity ?? line.quantity
       const drawn = kitItem.drawnQuantity ?? 0
       // Restore exactly what was drawn at check-out, never more (CR-1a / N-2):
       // a full return gives back all remaining drawn stock; a partial return
@@ -130,7 +147,7 @@ async function _DELETE(
       // Claim the removal/decrement conditionally (CR-17): two concurrent returns
       // of the same consumable kit item must not BOTH restore stock. The loser
       // matches 0 rows and bails before the increment below.
-      if (removeQty >= kitItem.quantity) {
+      if (removeQty >= line.quantity) {
         const claimed = await tx.kitItem.updateMany({
           where: { id: kitItemId, removedAt: null },
           data: { removedAt: new Date() },
@@ -201,8 +218,9 @@ async function _DELETE(
     }
   })
   } catch (err) {
-    // PR-6: a ReferenceConflict is a 409 (terminal for the offline queue, message shown).
-    const conflict = referenceConflictBody(err)
+    // PR-6 / P1-1a: a ReferenceConflict, an ended deployment or waiting gear is a 409
+    // (terminal for the offline queue, message shown).
+    const conflict = deploymentWriteConflict(err)
     if (conflict) return NextResponse.json(conflict, { status: 409 })
     throw err
   }

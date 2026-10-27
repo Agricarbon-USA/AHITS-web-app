@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
+import { isUniqueViolationAnywhere } from '@/lib/api-errors'
 import { requireAuth } from '@/lib/auth/session'
 import { getDeploymentRostersForDisplay, ensureOpenAssignment, addProjectLink, getActiveRigForOperator, hydrateRigOperator } from '@/lib/deployment-assignments'
 import { drawFromHub, getStockAtHub, totalStock, setStockAtHub, resyncItemTotal } from '@/lib/inventory-stock'
@@ -348,8 +349,8 @@ async function _POST(req: NextRequest) {
     // W0-10 PR-2b: a partial-unique violation (index A one-open-PRIMARY-per-operator, or
     // index C once live) that slipped the app guards under a concurrent race surfaces as
     // Prisma P2002 / PG 23505 — translate to a friendly 409 rather than a raw 500.
-    const code = (err as { code?: string }).code
-    if (code === 'P2002' || code === '23505') {
+    // P1-1a (2.4): a raw insert's violation is P2010 with the code nested — check both.
+    if (isUniqueViolationAnywhere(err)) {
       return NextResponse.json(
         { error: "Can't start this deployment — the operator or one of the vehicles is already on another active deployment. End or free it there first, then try again." },
         { status: 409 }

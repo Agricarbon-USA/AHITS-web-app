@@ -3,7 +3,11 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { requireAuth } from '@/lib/auth/session'
 import { withIdempotency } from '@/lib/idempotency'
-import { ensureOpenAssignment, endAllAssignmentsForRig, removeAllProjectLinks , getActivePrimaryForRig, getRequiredPrimaryForRig, getActiveRigForOperator, getDeploymentRosterForDisplay } from '@/lib/deployment-assignments'
+import { ensureOpenAssignment, endAllAssignmentsForRig, removeAllProjectLinks, getActiveRigForOperator, getDeploymentRosterForDisplay } from '@/lib/deployment-assignments'
+import { cancelPendingHandoffs } from '@/lib/deployment-handoffs'
+import { lockRigs } from '@/lib/deployment-auth'
+import { deploymentWriteConflict } from '@/lib/dispositions'
+import { ReferenceConflict } from '@/lib/asset-references'
 import { isUniqueViolationAnywhere } from '@/lib/api-errors'
 import { resolveAlertsFor } from '@/lib/alerts'
 
@@ -63,6 +67,9 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   let updatedTransfer
   try {
     updatedTransfer = await prisma.$transaction(async (tx) => {
+    // P1-1a (2.5): lock the source and destination deployments first (id order), before
+    // the transfer row.
+    await lockRigs(tx, [transfer.fromRig.id, await getActiveRigForOperator(toOperatorId, tx)])
     // Claim-first: atomically flip PENDING → ACCEPTED before doing any moves.
     // Two concurrent accepts (e.g. the destination operator and an admin) both
     // pass the pre-transaction status check at line 38; this conditional UPDATE
@@ -80,7 +87,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       },
     })
     if (claim.count === 0) {
-      throw new Error('Transfer is no longer pending')
+      throw new ReferenceConflict('Transfer is no longer pending')
     }
 
     // NOTE: We intentionally do NOT block on sourceRig.endedAt — end-of-deployment
@@ -92,7 +99,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
         where: { rigId: transfer.fromRig.id, vehicleId: tv.vehicleId, removedAt: null },
       })
       if (!stillPresent) {
-        throw new Error(`Vehicle is no longer in the source deployment`)
+        throw new ReferenceConflict('Vehicle is no longer in the source deployment')
       }
     }
 
@@ -102,20 +109,22 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     // whether the source rig ended (the previous OR-ended-rig exception was too broad
     // and allowed double-transfer of items already moved to a different recipient).
     for (const ti of transfer.items) {
+      // P1-1a (2.6): and still on THIS source deployment.
       const stillPresent = await tx.kitItem.findFirst({
-        where: { id: ti.kitItemId, removedAt: null },
+        where: { id: ti.kitItemId, removedAt: null, kit: { rigId: transfer.fromRig.id } },
       })
       if (!stillPresent) {
-        throw new Error(`Kit item is no longer in the source deployment`)
+        throw new ReferenceConflict('Kit item is no longer in the source deployment')
       }
       if (ti.quantity != null && stillPresent.quantity < ti.quantity) {
-        throw new Error(`Insufficient quantity remaining for a kit item`)
+        throw new ReferenceConflict('Insufficient quantity remaining for a kit item')
       }
     }
 
     // Find or create destination rig (source rig stays active regardless)
+    // Read again after the lock, live only: if it ended in between, a new one is created.
     const destRigId = await getActiveRigForOperator(toOperatorId, tx)
-    let destRig = destRigId ? await tx.rig.findUnique({ where: { id: destRigId } }) : null
+    let destRig = destRigId ? await tx.rig.findFirst({ where: { id: destRigId, endedAt: null } }) : null
     if (!destRig) {
       destRig = await tx.rig.create({
         data: { operatorId: toOperatorId, startedAt: now },
@@ -152,7 +161,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     // Transfer kit items (partial or full — remaining items stay in source rig)
     for (const ti of transfer.items) {
       const transferQty = ti.quantity ?? ti.kitItem.quantity
-      const currentKitItem = await tx.kitItem.findUnique({ where: { id: ti.kitItemId } })
+      const currentKitItem = await tx.kitItem.findFirst({ where: { id: ti.kitItemId, removedAt: null, kit: { rigId: transfer.fromRig.id } } })
+      if (!currentKitItem) throw new ReferenceConflict('Kit item is no longer in the source deployment')
       const currentQty = currentKitItem?.quantity ?? ti.kitItem.quantity
 
       // Carry the drawn-from-hub accounting onto the destination kit item (FND-2).
@@ -175,7 +185,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           where: { id: ti.kitItemId, removedAt: null },
           data: { removedAt: now },
         })
-        if (kitClaim.count === 0) throw new Error('Kit item was already transferred')
+        if (kitClaim.count === 0) throw new ReferenceConflict('Kit item was already transferred')
       } else {
         const kitClaim = await tx.kitItem.updateMany({
           where: { id: ti.kitItemId, quantity: { gte: transferQty }, removedAt: null },
@@ -183,7 +193,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
           // over-restore stock it no longer holds.
           data: { quantity: { decrement: transferQty }, drawnQuantity: { decrement: destDrawnQuantity } },
         })
-        if (kitClaim.count === 0) throw new Error('Insufficient quantity remaining for kit item transfer')
+        if (kitClaim.count === 0) throw new ReferenceConflict('Insufficient quantity remaining for kit item transfer')
       }
       await tx.kitItem.create({
         data: {
@@ -226,10 +236,15 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       select: { items: { where: { removedAt: null }, select: { id: true } } },
     })
     const remainingItems = sourceKits.reduce((sum, k) => sum + k.items.length, 0)
-    if (remainingVehicles === 0 && remainingItems === 0 && !transfer.fromRig.endedAt) {
-      await tx.rig.update({ where: { id: transfer.fromRig.id }, data: { endedAt: now } })
-      await endAllAssignmentsForRig(transfer.fromRig.id, tx)
-      await removeAllProjectLinks(transfer.fromRig.id, tx)
+    // P1-1a (2.5): conditional, so an End that already ended the source keeps its endedAt,
+    // and an ended source also loses its waiting transfer of the whole deployment.
+    if (remainingVehicles === 0 && remainingItems === 0) {
+      const ended = await tx.rig.updateMany({ where: { id: transfer.fromRig.id, endedAt: null }, data: { endedAt: now } })
+      if (ended.count === 1) {
+        await endAllAssignmentsForRig(transfer.fromRig.id, tx)
+        await removeAllProjectLinks(transfer.fromRig.id, tx)
+        await cancelPendingHandoffs(transfer.fromRig.id, tx)
+      }
     }
 
       // Status/respondedAt/responseNote were already written by the claim above.
@@ -248,8 +263,12 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
         { status: 409 },
       )
     }
-    const msg = err instanceof Error ? err.message : 'Transfer failed'
-    return NextResponse.json({ error: msg }, { status: 409 })
+    // P1-1a (2.5): known conflicts are 409s with their own words; anything else is a 500
+    // (the queue retries it) — never Prisma's raw text.
+    const conflict = deploymentWriteConflict(err)
+    if (conflict) return NextResponse.json(conflict, { status: 409 })
+    console.error('[POST /api/transfers/[id]/accept]', err)
+    return NextResponse.json({ error: 'Transfer failed. Try again.' }, { status: 500 })
   }
 
   // PR-4 (D-i · P-8): the request is answered — its bell row for the recipient is read.

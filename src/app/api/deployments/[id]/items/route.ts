@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { photoUrlsField, isPhotoNotUploadedError } from '@/lib/validation'
 import { prisma } from '@/lib/prisma'
-import { getAuthorizedActiveRig } from '@/lib/deployment-auth'
-import { getActivePrimaryForRig, getRequiredPrimaryForRig, hydrateRigOperator } from '@/lib/deployment-assignments'
+import { claimActiveRig, getAuthorizedActiveRig } from '@/lib/deployment-auth'
+import { getActivePrimaryForRig, hydrateRigOperator } from '@/lib/deployment-assignments'
+import { deploymentWriteConflict, lockKitItems, partlyFreeMessage, transferRecipientProblem, waitingMessage, waitingTransfersForRig, WaitingConflict } from '@/lib/dispositions'
 import { requireAuth } from '@/lib/auth/session'
 import { returnConditionToLogCondition, getUnitsInOtherRigs } from '@/lib/check-log-helpers'
 import { createAlert } from '@/lib/alerts'
@@ -12,7 +13,6 @@ import { issueHubReturnLinks } from '@/lib/status-links'
 import { filterAllowedPhotoUrls } from '@/lib/photo-security'
 import { drawFromHub, getStockAtHub, restoreToHub, resyncItemTotal } from '@/lib/inventory-stock'
 import { claimHeldStock } from '@/lib/deployment-requests'
-import { referenceConflictBody } from '@/lib/asset-references'
 import { markInoperable, pickUnit, pickableFirst, refuseDeletedItems, releaseUnlinkedReturns, returnUnit } from '@/lib/asset-status'
 import { PICKABLE_UNIT } from '@/lib/populations'
 import { openDamageTask } from '@/lib/maintenance'
@@ -114,7 +114,9 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   // W0-10 PR-1: attribution operator = the deployment's PRIMARY (roster) with legacy
   // fallback — behavior-preserving (legacy used rig.operatorId = the primary). Whether
   // CheckLog should instead record the ACTING user is a separate product question.
-  const primaryId = await getRequiredPrimaryForRig(id)
+  // P1-1a (2.2): read nullable — a racing End may have closed the roster.
+  const primaryId = await getActivePrimaryForRig(id)
+  if (!primaryId) return NextResponse.json({ error: 'This deployment has already ended.' }, { status: 409 })
 
   const body = await req.json()
   const parsed = addSchema.safeParse(body)
@@ -126,6 +128,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
   try {
     await prisma.$transaction(async (tx) => {
+      // P1-1a (2.5): the deployment first.
+      await claimActiveRig(tx, id)
       // PR-3c: deleted gear is refused by name, not as "only 0 available".
       await refuseDeletedItems(tx, items.map((e) => e.inventoryItemId))
       for (const entry of items) {
@@ -251,8 +255,9 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     })
   } catch (err: unknown) {
     // PR-3c: "<name> was deleted from inventory" is terminal (409) — mapped before the
-    // 500 fallback below, or the offline queue would retry it forever.
-    const conflict = referenceConflictBody(err)
+    // 500 fallback below, or the offline queue would retry it forever. P1-1a: so is an
+    // ended deployment.
+    const conflict = deploymentWriteConflict(err)
     if (conflict) return NextResponse.json(conflict, { status: 409 })
     if (err instanceof Error && err.message === 'CONSUMABLE_NEEDS_HUB') {
       return NextResponse.json(
@@ -304,7 +309,9 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
   // W0-10 PR-1: attribution operator = the deployment's PRIMARY (roster) with legacy
   // fallback — behavior-preserving (legacy used rig.operatorId = the primary). Whether
   // CheckLog should instead record the ACTING user is a separate product question.
-  const primaryId = await getRequiredPrimaryForRig(id)
+  // P1-1a (2.2): read nullable — a racing End may have closed the roster.
+  const primaryId = await getActivePrimaryForRig(id)
+  if (!primaryId) return NextResponse.json({ error: 'This deployment has already ended.' }, { status: 409 })
 
   const body = await req.json()
   const parsed = removeSchema.safeParse(body)
@@ -314,13 +321,34 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
   const now = new Date()
 
   const kitItemIds = itemDispositions.map((d) => d.kitItemId)
-  const kitItems = await prisma.kitItem.findMany({
-    where: { id: { in: kitItemIds }, removedAt: null },
+  // P1-1a (2.6, §0-t): only this deployment's lines. No removedAt filter: a line a double
+  // tap or a crewmate already returned is skipped below (CR-17), but a line that was never
+  // on this deployment is refused.
+  const found = await prisma.kitItem.findMany({
+    where: { id: { in: kitItemIds }, kit: { rigId: id } },
     include: {
       item: { select: { id: true, name: true, itemType: true, hubId: true } },
       inventoryUnit: true,
     },
   })
+  const foundIds = new Set(found.map((ki) => ki.id))
+  if (kitItemIds.some((kid) => !foundIds.has(kid))) {
+    return NextResponse.json({ error: "Some of this equipment isn't on this deployment any more. Refresh and try again." }, { status: 400 })
+  }
+  const kitItems = found.filter((ki) => !ki.removedAt)
+
+  // P1-1a (2.2): every "Transfer to a person" line names a real, active person who isn't
+  // the deployment's own operator.
+  const problem = await transferRecipientProblem(
+    itemDispositions
+      .filter((d) => d.type === 'TRANSFER')
+      .flatMap((d) => {
+        const ki = kitItems.find((k) => k.id === d.kitItemId)
+        return ki ? [{ toOperatorId: d.toOperatorId, name: ki.item.name }] : []
+      }),
+    primaryId,
+  )
+  if (problem) return NextResponse.json({ error: problem.error }, { status: problem.status })
 
   // Serialized units that went Returning inside the transaction — their HUB_RETURN links
   // are issued after commit (with a fallback to AVAILABLE if that fails).
@@ -328,15 +356,35 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
 
   try {
     await prisma.$transaction(async (tx) => {
+    // P1-1a (2.5, 2.8): the deployment first, then its lines; a line a racing return just
+    // closed is skipped, as today (CR-17).
+    await claimActiveRig(tx, id)
+    const locked = new Map((await lockKitItems(tx, kitItemIds, { skipClosed: true })).map((r) => [r.id, r.quantity]))
+    const waiting = await waitingTransfersForRig(id, tx)
     for (const disp of itemDispositions) {
       const kitItem = kitItems.find((ki) => ki.id === disp.kitItemId)
       if (!kitItem) continue
+      const lineQty = locked.get(disp.kitItemId)
+      if (lineQty == null) continue
       const inventoryItemId = kitItem.inventoryItemId
       const isSerialized = kitItem.item.itemType === 'SERIALIZED'
 
+      // P1-1a (2.8, §0-s): gear waiting on a transfer stays with that transfer. A partly
+      // waiting consumable line gives up only its free part (counted on the locked row).
+      const w = waiting.items.get(disp.kitItemId)
+      if (w) {
+        if (disp.type === 'TRANSFER' || isSerialized || w.qty == null || w.qty >= lineQty) {
+          throw new WaitingConflict(waitingMessage(kitItem.item.name, w.toName))
+        }
+        const free = lineQty - w.qty
+        if ((disp.quantity ?? lineQty) > free) {
+          throw new WaitingConflict(partlyFreeMessage(kitItem.item.name, free, w.qty, w.toName))
+        }
+      }
+
       // Partial removal: consumables can return a subset of quantity
-      const removeQty = isSerialized ? 1 : Math.min(disp.quantity ?? kitItem.quantity, kitItem.quantity)
-      const fullRemoval = isSerialized || removeQty >= kitItem.quantity
+      const removeQty = isSerialized ? 1 : Math.min(disp.quantity ?? lineQty, lineQty)
+      const fullRemoval = isSerialized || removeQty >= lineQty
 
       // A-1 / CR-17: claim the removal conditionally so two concurrent bulk returns
       // of the SAME kit item can't both restore stock. The loser matches 0 rows and
@@ -560,8 +608,11 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
       }
     }
 
-    // TRANSFER: group by toOperatorId
-    const transferDisps = itemDispositions.filter((d) => d.type === 'TRANSFER' && d.toOperatorId)
+    // TRANSFER: group by toOperatorId — from the open lines found on this deployment,
+    // never from the payload alone (P1-1a 2.6).
+    const transferDisps = itemDispositions.filter(
+      (d) => d.type === 'TRANSFER' && d.toOperatorId && kitItems.some((ki) => ki.id === d.kitItemId) && locked.has(d.kitItemId),
+    )
     const byOperator = new Map<string, typeof transferDisps>()
     for (const d of transferDisps) {
       const key = d.toOperatorId!
@@ -581,8 +632,9 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
     }
     }) // end transaction
   } catch (err: unknown) {
-    // PR-6: a ReferenceConflict is a 409 (terminal for the offline queue, message shown).
-    const conflict = referenceConflictBody(err)
+    // PR-6 / P1-1a: a ReferenceConflict, an ended deployment or waiting gear is a 409
+    // (terminal for the offline queue, message shown).
+    const conflict = deploymentWriteConflict(err)
     if (conflict) return NextResponse.json(conflict, { status: 409 })
     const msg = err instanceof Error ? err.message : 'Failed to process items'
     console.error('[DELETE /api/deployments/[id]/items]', err)

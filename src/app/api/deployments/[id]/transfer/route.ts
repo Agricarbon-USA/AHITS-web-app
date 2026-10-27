@@ -2,15 +2,18 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { photoUrlsField, isPhotoNotUploadedError } from '@/lib/validation'
 import { prisma } from '@/lib/prisma'
-import { isAuthorizedForRig } from '@/lib/deployment-auth'
-import { getActivePrimaryForRig, getRequiredPrimaryForRig, hydrateTransfersFromRig } from '@/lib/deployment-assignments'
+import { claimActiveRig, isAuthorizedForRig } from '@/lib/deployment-auth'
+import { getActivePrimaryForRig, hydrateTransfersFromRig } from '@/lib/deployment-assignments'
+import { deploymentWriteConflict, lockKitItems, transferRecipientProblem, waitingMessage, waitingTransfersForRig, WaitingConflict } from '@/lib/dispositions'
 import { requireAuth } from '@/lib/auth/session'
 import { withIdempotency } from '@/lib/idempotency'
 import { recordLink } from '@/lib/alerts'
 
 const schema = z.object({
-  toOperatorId: z.string().min(1, 'Destination operator is required'),
-  note: z.string().min(1, 'Note is required'),
+  // P1-1a (2.1, D52 §0-a/b): the note is optional (the column stays NOT NULL, so a
+  // missing note is stored as ''), and a missing person is a plain 400 from 2.2's rule.
+  toOperatorId: z.string().optional(),
+  note: z.string().optional().default(''),
   photoUrls: photoUrlsField(), // CC-29 item 7b: reject unresolved localphoto: refs (422)
   vehicleIds: z.array(z.string()).default([]),
   items: z.array(z.object({
@@ -46,15 +49,15 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   const rig = await prisma.rig.findUnique({
     where: { id },
     include: {
-      vehicles: { where: { removedAt: null } },
-      kits: { include: { items: { where: { removedAt: null } } } },
+      vehicles: { where: { removedAt: null }, include: { vehicle: { select: { name: true } } } },
+      kits: { include: { items: { where: { removedAt: null }, include: { item: { select: { name: true } } } } } },
     },
   })
   if (!rig) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (!(await isAuthorizedForRig(rig, session))) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
-  if (rig.endedAt) return NextResponse.json({ error: 'Deployment has ended' }, { status: 409 })
+  if (rig.endedAt) return NextResponse.json({ error: 'This deployment has already ended.' }, { status: 409 })
 
   const body = await req.json()
   const parsed = schema.safeParse(body)
@@ -66,29 +69,13 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     return NextResponse.json({ error: 'Select at least one vehicle or item to transfer' }, { status: 400 })
   }
 
-  // W0-10 PR-1: self-transfer guard vs the deployment's PRIMARY (roster + legacy fallback).
-  const primaryId = await getRequiredPrimaryForRig(id)
-  if (toOperatorId === primaryId) {
-    return NextResponse.json({ error: 'Cannot transfer to the same operator' }, { status: 400 })
-  }
+  // P1-1a (2.2): one recipient rule for every transfer path. The primary is read
+  // nullable — a racing End may have closed the roster (the helper then says so).
+  const problem = await transferRecipientProblem([{ toOperatorId, name: null }], await getActivePrimaryForRig(id))
+  if (problem) return NextResponse.json({ error: problem.error }, { status: problem.status })
+  const recipientId = toOperatorId as string
 
-  // Validate the destination operator exists and is active. Without this a
-  // transfer to a nonexistent id throws an FK error (unhandled 500) and a
-  // transfer to a deactivated user strands the items in a ghost rig that user
-  // can never log in to end.
-  const toOperator = await prisma.user.findUnique({
-    where: { id: toOperatorId },
-    select: { id: true, isActive: true, role: true },
-  })
-  if (!toOperator || !toOperator.isActive) {
-    return NextResponse.json({ error: 'Destination operator not found or inactive' }, { status: 400 })
-  }
-  // D3: an admin may hold a rig (admin-as-operator), so admins are a valid transfer
-  // destination alongside operators; the admin-held rig is excluded from the money
-  // loop downstream (attribution + missed-check cron), not gated out here.
-  if (toOperator.role !== 'OPERATOR' && toOperator.role !== 'ADMIN') {
-    return NextResponse.json({ error: 'Transfers can only be sent to an operator or admin' }, { status: 400 })
-  }
+  const lines = new Map(rig.kits.flatMap((k) => k.items).map((ki) => [ki.id, ki]))
 
   // Verify all vehicleIds belong to this rig's active vehicles
   if (vehicleIds.length > 0) {
@@ -106,13 +93,38 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     if (invalid.length > 0) {
       return NextResponse.json({ error: 'One or more items are not in this rig\'s kit' }, { status: 400 })
     }
+    // P1-1a (2.1): a line's quantity can't exceed what is on the line.
+    for (const i of items) {
+      const line = lines.get(i.kitItemId)!
+      if (i.quantity != null && i.quantity > line.quantity) {
+        return NextResponse.json({ error: `Only ${line.quantity} of "${line.item.name}" are on this deployment.` }, { status: 400 })
+      }
+    }
   }
 
-  const transferRequest = await prisma.$transaction(async (tx) => {
+  let transferRequest
+  try {
+  transferRequest = await prisma.$transaction(async (tx) => {
+    // P1-1a (2.5): the deployment first, then its lines (2.8's lock orders the writes).
+    await claimActiveRig(tx, id)
+    await lockKitItems(tx, items.map((i) => i.kitItemId), { skipClosed: false })
+    // P1-1a (2.8, §0-s): gear already waiting on a transfer stays with that transfer.
+    const waiting = await waitingTransfersForRig(id, tx)
+    for (const i of items) {
+      const w = waiting.items.get(i.kitItemId)
+      if (w) throw new WaitingConflict(waitingMessage(lines.get(i.kitItemId)?.item.name ?? 'This equipment', w.toName))
+    }
+    for (const vehicleId of vehicleIds) {
+      const w = waiting.vehicles.get(vehicleId)
+      if (w) {
+        const name = rig.vehicles.find((rv) => rv.vehicleId === vehicleId)?.vehicle.name ?? 'This vehicle'
+        throw new WaitingConflict(waitingMessage(name, w.toName))
+      }
+    }
     const created = await tx.transferRequest.create({
       data: {
         fromRigId: id,
-        toOperatorId,
+        toOperatorId: recipientId,
         initiatedById: session.userId,
         note,
         photoUrls,
@@ -139,7 +151,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     if (items.length > 0) counts.push(`${items.length} item${items.length > 1 ? 's' : ''}`)
     await tx.notification.create({
       data: {
-        userId: toOperatorId,
+        userId: recipientId,
         type: 'TRANSFER_REQUESTED',
         title: 'Incoming equipment transfer',
         body: `${session.name} wants to transfer ${counts.join(' and ')} to you. Tap to review.`,
@@ -150,6 +162,12 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
     return created
   })
+  } catch (err) {
+    const conflict = deploymentWriteConflict(err)
+    if (conflict) return NextResponse.json(conflict, { status: 409 })
+    console.error('[POST /api/deployments/[id]/transfer]', err)
+    return NextResponse.json({ error: 'Transfer failed. Try again.' }, { status: 500 })
+  }
 
   // W0-10 PR-4: hydrate the source-rig operator (successor to the dropped fromRig.operator include).
   return NextResponse.json((await hydrateTransfersFromRig([transferRequest]))[0], { status: 201 })

@@ -45,7 +45,15 @@ export async function GET(req: NextRequest) {
   if (direction === 'incoming') {
     where.toOperatorId = session.userId
   } else if (direction === 'outgoing') {
-    where.fromRigId = { in: myPrimaryRigs }
+    // P1-1a (2.8): the whole crew sees its outgoing transfers — every deployment where this
+    // user has an open assignment of any role — so a crew member's End shows waiting gear
+    // too. Cancel stays initiator-or-admin on the server.
+    const myCrewRigs = (
+      await prisma.$queryRaw<{ rigId: string }[]>`
+        SELECT "rigId" FROM "deployment_assignments"
+        WHERE "operatorId" = ${session.userId} AND "endedAt" IS NULL`
+    ).map((r) => r.rigId)
+    where.fromRigId = { in: myCrewRigs }
   } else if (session.role !== 'ADMIN') {
     // No direction given: non-admins still only see transfers involving them.
     where.OR = [

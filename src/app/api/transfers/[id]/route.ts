@@ -4,6 +4,9 @@ import { requireAuth } from '@/lib/auth/session'
 import { restoreToHub, resyncItemTotal } from '@/lib/inventory-stock'
 import { releaseFromEndedRig } from '@/lib/asset-status'
 import { resolveAlertsFor } from '@/lib/alerts'
+import { lockRigs } from '@/lib/deployment-auth'
+import { deploymentWriteConflict } from '@/lib/dispositions'
+import { ReferenceConflict } from '@/lib/asset-references'
 
 export async function DELETE(
   _req: Request,
@@ -50,13 +53,15 @@ export async function DELETE(
 
   try {
     await prisma.$transaction(async (tx) => {
+      // P1-1a (2.5): the source deployment first, before the transfer row.
+      await lockRigs(tx, [transfer.fromRigId])
       // Conditional flip — cancel racing an accept/decline loses and throws.
       const cancelled = await tx.transferRequest.updateMany({
         where: { id, status: 'PENDING' },
         data: { status: 'CANCELLED' },
       })
       if (cancelled.count === 0) {
-        throw new Error('Transfer is no longer pending')
+        throw new ReferenceConflict('Transfer is no longer pending')
       }
 
       // If the source deployment already ended, restore kit items and close vehicle rows.
@@ -67,8 +72,16 @@ export async function DELETE(
       })
       if (sourceRig?.endedAt) {
         for (const ti of transfer.items) {
-          const kitItem = ti.kitItem
-          if (kitItem.removedAt) continue
+          // P1-1a (2.5): read the line again inside the transaction, after the lock and the
+          // claim, and use those values — not the pre-transaction read.
+          const kitItem = await tx.kitItem.findUnique({
+            where: { id: ti.kitItemId },
+            select: {
+              id: true, removedAt: true, quantity: true, drawnQuantity: true, drawnHubId: true,
+              inventoryUnitId: true, inventoryItemId: true, item: { select: { itemType: true, hubId: true } },
+            },
+          })
+          if (!kitItem || kitItem.removedAt) continue
 
           if (kitItem.item.itemType === 'CONSUMABLE' && (kitItem.drawnQuantity ?? 0) > 0) {
             const hubForRestore = kitItem.drawnHubId ?? kitItem.item.hubId
@@ -120,8 +133,11 @@ export async function DELETE(
       }
     })
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Cancel failed'
-    return NextResponse.json({ error: msg }, { status: 409 })
+    // P1-1a (2.5): known conflicts are 409s; anything else a 500 — never Prisma's raw text.
+    const conflict = deploymentWriteConflict(err)
+    if (conflict) return NextResponse.json(conflict, { status: 409 })
+    console.error('[DELETE /api/transfers/[id]]', err)
+    return NextResponse.json({ error: 'Transfer failed. Try again.' }, { status: 500 })
   }
 
   // PR-4 (D-i · P-8): the request is answered — its bell row for the recipient is read.
