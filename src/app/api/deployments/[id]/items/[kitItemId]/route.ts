@@ -139,7 +139,8 @@ async function _DELETE(
       }
     } else {
       const removeQty = body.data.quantity ?? line.quantity
-      const drawn = kitItem.drawnQuantity ?? 0
+      // P1-1a: the drawn stock from the locked row, not the pre-transaction read.
+      const drawn = line.drawnQuantity ?? 0
       // Restore exactly what was drawn at check-out, never more (CR-1a / N-2):
       // a full return gives back all remaining drawn stock; a partial return
       // gives back its proportional share, capped at what's left to restore.

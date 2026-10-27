@@ -359,13 +359,14 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
     // P1-1a (2.5, 2.8): the deployment first, then its lines; a line a racing return just
     // closed is skipped, as today (CR-17).
     await claimActiveRig(tx, id)
-    const locked = new Map((await lockKitItems(tx, kitItemIds, { skipClosed: true })).map((r) => [r.id, r.quantity]))
+    const locked = new Map((await lockKitItems(tx, kitItemIds, { skipClosed: true })).map((r) => [r.id, r]))
     const waiting = await waitingTransfersForRig(id, tx)
     for (const disp of itemDispositions) {
       const kitItem = kitItems.find((ki) => ki.id === disp.kitItemId)
       if (!kitItem) continue
-      const lineQty = locked.get(disp.kitItemId)
-      if (lineQty == null) continue
+      const lockedLine = locked.get(disp.kitItemId)
+      if (!lockedLine) continue
+      const lineQty = lockedLine.quantity
       const inventoryItemId = kitItem.inventoryItemId
       const isSerialized = kitItem.item.itemType === 'SERIALIZED'
 
@@ -394,7 +395,9 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
       // transfer/accept route decrements the source kit item then). Mutating it here
       // too would double-decrement — so, exactly like end/route.ts, skip the kit-item
       // mutation (and the claim) for TRANSFER dispositions.
-      const drawn = kitItem.drawnQuantity ?? 0
+      // P1-1a: the drawn stock from the locked row, so a racing partial return can't make
+      // this one restore what the other already gave back.
+      const drawn = lockedLine.drawnQuantity ?? 0
       let restoreQty = 0
       if (disp.type !== 'TRANSFER') {
         if (fullRemoval) {

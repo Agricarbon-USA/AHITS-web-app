@@ -106,7 +106,8 @@ export async function waitingTransfersForRig(rigId: string, db: Prisma.Transacti
 }
 
 /**
- * Lock this request's open kit lines (after the deployment claim). Returns the open rows.
+ * Lock this request's open kit lines (after the deployment claim). Returns the open rows,
+ * with the quantity and drawn stock to use — never a pre-transaction read of them.
  * `skipClosed` (bulk and single return): a line a racing return just closed is skipped,
  * as today (CR-17). Without it (the selected-equipment transfer), a missing line is a 409.
  */
@@ -114,11 +115,11 @@ export async function lockKitItems(
   tx: Prisma.TransactionClient,
   ids: string[],
   opts: { skipClosed: boolean },
-): Promise<{ id: string; quantity: number }[]> {
+): Promise<{ id: string; quantity: number; drawnQuantity: number }[]> {
   const list = [...new Set(ids)].sort()
   if (list.length === 0) return []
-  const rows = await tx.$queryRaw<{ id: string; quantity: number }[]>`
-    SELECT "id", "quantity" FROM "kit_items"
+  const rows = await tx.$queryRaw<{ id: string; quantity: number; drawnQuantity: number }[]>`
+    SELECT "id", "quantity", "drawnQuantity" FROM "kit_items"
     WHERE "id" IN (${Prisma.join(list)}) AND "removedAt" IS NULL
     ORDER BY "id" FOR UPDATE`
   if (!opts.skipClosed && rows.length < list.length) {

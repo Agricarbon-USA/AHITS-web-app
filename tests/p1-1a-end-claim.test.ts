@@ -22,6 +22,7 @@ const hook = vi.hoisted(() => ({
   auth: null as null | ((rigId: string) => Promise<void>),
   active: null as null | ((rigId: string) => Promise<void>),
   claim: null as null | ((rigId: string) => Promise<void>),
+  lock: null as null | ((ids: (string | null | undefined)[]) => Promise<void>),
 }))
 vi.mock('../src/lib/deployment-auth', async (orig) => {
   const a = await orig<typeof import('../src/lib/deployment-auth')>()
@@ -29,6 +30,7 @@ vi.mock('../src/lib/deployment-auth', async (orig) => {
     isAuthorizedForRig: async (r: Parameters<typeof a.isAuthorizedForRig>[0], s: Parameters<typeof a.isAuthorizedForRig>[1]) => { await hook.auth?.(r.id); return a.isAuthorizedForRig(r, s) },
     getAuthorizedActiveRig: async (id: string, s: Parameters<typeof a.getAuthorizedActiveRig>[1]) => { const r = await a.getAuthorizedActiveRig(id, s); await hook.active?.(id); return r },
     claimActiveRig: async (...args: Parameters<typeof a.claimActiveRig>) => { await hook.claim?.(args[1]); return a.claimActiveRig(...args) },
+    lockRigs: async (...args: Parameters<typeof a.lockRigs>) => { await hook.lock?.(args[1]); return a.lockRigs(...args) },
   }
 })
 
@@ -98,6 +100,7 @@ afterEach(() => {
   hook.auth = null
   hook.active = null
   hook.claim = null
+  hook.lock = null
 })
 
 async function deploymentWithStock(qty = 5) {
@@ -221,26 +224,40 @@ describe('2.5 · transfer answers and Reassign race without a 500', () => {
     }
   })
 
-  it('Reassign then accept, and accept then Reassign → the second is a named 409', async () => {
-    const a = await deploymentWithStock(3)
-    const xa = await createOperator()
-    const ta = await prisma.transferRequest.create({
-      data: { fromRigId: a.rig.id, toOperatorId: xa.id, initiatedById: admin.id, note: '', status: 'PENDING', items: { create: [{ kitItemId: a.line.id }] } },
+  it('hook-staged, accept wins: the accept commits inside Reassign\'s first statement → Reassign gets 409', async () => {
+    const { rig, line } = await deploymentWithStock(3)
+    const x = await createOperator()
+    const t = await prisma.transferRequest.create({
+      data: { fromRigId: rig.id, toOperatorId: x.id, initiatedById: admin.id, note: '', status: 'PENDING', items: { create: [{ kitItemId: line.id }] } },
     })
-    expect((await reassign(a.rig.id, (await createOperator()).id)).status).toBe(201)
-    const late = await accept(ta.id)
-    expect(late.status).toBe(409)
-    expect((await late.json()).error).toBe('Transfer is no longer pending')
+    let staged: Response | null = null
+    hook.claim = async (id) => {
+      if (id !== rig.id || staged) return
+      hook.claim = null
+      staged = await accept(t.id)
+    }
+    const res = await reassign(rig.id, (await createOperator()).id)
+    expect(staged!.status).toBe(200)
+    expect(res.status).toBe(409)
+    expect((await res.json()).error).toBe('This deployment has already ended.')
+  })
 
-    const b = await deploymentWithStock(3)
-    const xb = await createOperator()
-    const tb = await prisma.transferRequest.create({
-      data: { fromRigId: b.rig.id, toOperatorId: xb.id, initiatedById: admin.id, note: '', status: 'PENDING', items: { create: [{ kitItemId: b.line.id }] } },
+  it('hook-staged, Reassign wins: Reassign commits inside accept\'s first statement → accept gets 409', async () => {
+    const { rig, line } = await deploymentWithStock(3)
+    const x = await createOperator()
+    const t = await prisma.transferRequest.create({
+      data: { fromRigId: rig.id, toOperatorId: x.id, initiatedById: admin.id, note: '', status: 'PENDING', items: { create: [{ kitItemId: line.id }] } },
     })
-    expect((await accept(tb.id)).status).toBe(200)
-    const lateReassign = await reassign(b.rig.id, (await createOperator()).id)
-    expect(lateReassign.status).toBe(409)
-    expect((await lateReassign.json()).error).toBe('This deployment has already ended.')
+    let staged: Response | null = null
+    hook.lock = async (ids) => {
+      if (!ids.includes(rig.id) || staged) return
+      hook.lock = null
+      staged = await reassign(rig.id, (await createOperator()).id)
+    }
+    const res = await accept(t.id)
+    expect(staged!.status).toBe(201)
+    expect(res.status).toBe(409)
+    expect((await res.json()).error).toBe('Transfer is no longer pending')
   })
 
   it('Reassign vs handoff accept, 20 runs → never a 500; any 409 is "Transfer is no longer pending"; one open PRIMARY', async () => {

@@ -506,6 +506,25 @@ describe('2.8 · gear waiting on a transfer stays with it', () => {
     expect(statuses).toEqual([200, 200])
   })
 
+  it('two partial returns of 5 of 10 at once → stock 10, the line closed (bulk and single)', async () => {
+    const bulk = await consumableLine(op.id, 10)
+    const body = { itemDispositions: [{ kitItemId: bulk.line.id, type: 'HUB', hubId: hub.id, quantity: 5 }] }
+    expect((await Promise.all([bulkReturn(bulk.rig.id, body), bulkReturn(bulk.rig.id, body)])).map((r) => r.status)).toEqual([200, 200])
+    expect(await stockAt(bulk.item.id, hub.id)).toBe(10)
+    expect((await prisma.kitItem.findUniqueOrThrow({ where: { id: bulk.line.id } })).removedAt).not.toBeNull()
+
+    const other = await createOperator()
+    const one = await consumableLine(other.id, 10)
+    mockSession = operatorSession(other.id)
+    const r = await Promise.all([
+      oneReturn(one.rig.id, one.line.id, { quantity: 5, hubId: hub.id }),
+      oneReturn(one.rig.id, one.line.id, { quantity: 5, hubId: hub.id }),
+    ])
+    expect(r.map((x) => x.status)).toEqual([200, 200])
+    expect(await stockAt(one.item.id, hub.id)).toBe(10)
+    expect((await prisma.kitItem.findUniqueOrThrow({ where: { id: one.line.id } })).removedAt).not.toBeNull()
+  })
+
   it('a second transfer of a waiting line or vehicle → 409', async () => {
     const { rig, line } = await serializedLine(op.id)
     const v = await createVehicle({ name: 'Truck 5' })
