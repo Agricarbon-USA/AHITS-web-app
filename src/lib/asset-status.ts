@@ -276,10 +276,15 @@ export async function removeVehicleFromRig(
     reportedById: string
   },
 ): Promise<void> {
-  await tx.rigVehicle.updateMany({
+  const closed = await tx.rigVehicle.updateMany({
     where: { rigId: input.rigId, vehicleId: input.vehicleId, removedAt: null },
     data: { removedAt: new Date(), removeNote: input.note },
   })
+  // P1-1a (2.7) backstop: the vehicle must be on this deployment, or nothing changes.
+  if (closed.count === 0) {
+    const v = await tx.vehicle.findUnique({ where: { id: input.vehicleId }, select: { name: true } })
+    throw new ReferenceConflict(v ? `${v.name} isn't on this deployment any more.` : "This vehicle isn't on this deployment any more.")
+  }
   await tx.vehicle.updateMany({ where: { id: input.vehicleId }, data: { assignedOperatorId: null } })
 
   if (input.disposition === 'IN_MAINTENANCE') {

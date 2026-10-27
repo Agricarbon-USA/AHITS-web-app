@@ -1,7 +1,8 @@
 import { randomUUID } from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { endAssignmentByRole, ensureOpenAssignment , getActivePrimaryForRig, getRequiredPrimaryForRig } from '@/lib/deployment-assignments'
-import type { PrismaClient } from '@prisma/client'
+import type { Prisma, PrismaClient } from '@prisma/client'
+import { resolveAlertsFor } from '@/lib/alerts'
 
 type Tx = Parameters<Parameters<PrismaClient['$transaction']>[0]>[0]
 
@@ -54,17 +55,52 @@ export async function createHandoff(input: {
   note: string
   status?: HandoffStatus
   respondedAt?: Date | null
-}): Promise<string> {
+}, db: Pick<typeof prisma, '$executeRaw'> = prisma): Promise<string> {
   const id = randomUUID()
   const status = input.status ?? 'PENDING'
   const respondedAt = input.respondedAt ?? null
-  await prisma.$executeRaw`
+  // P1-1a (2.3): written on the caller's client, so the route's transaction holds it.
+  await db.$executeRaw`
     INSERT INTO "deployment_handoffs"
       ("id", "rigId", "fromOperatorId", "toOperatorId", "initiatedById", "status", "note", "respondedAt")
     VALUES
       (${id}, ${input.rigId}, ${input.fromOperatorId}, ${input.toOperatorId}, ${input.initiatedById},
        ${status}::"DeploymentHandoffStatus", ${input.note}, ${respondedAt})`
   return id
+}
+
+/** P1-1a (2.3): the deployment's waiting transfer (earliest first), with who it waits on. */
+export async function getPendingHandoffForRig(
+  rigId: string,
+  db: Prisma.TransactionClient = prisma,
+): Promise<{ id: string; toOperatorName: string } | null> {
+  const rows = await db.$queryRaw<{ id: string; toOperatorName: string | null }[]>`
+    SELECT h."id", u."name" AS "toOperatorName"
+    FROM "deployment_handoffs" h
+    LEFT JOIN "users" u ON u."id" = h."toOperatorId"
+    WHERE h."rigId" = ${rigId} AND h."status" = 'PENDING'
+    ORDER BY h."createdAt" ASC
+    LIMIT 1`
+  const r = rows[0]
+  return r ? { id: r.id, toOperatorName: r.toOperatorName ?? 'someone' } : null
+}
+
+/**
+ * P1-1a (2.3): cancel the deployment's waiting transfers and mark their bells read.
+ * Raw `RETURNING`, so only the rows this statement cancelled are reported.
+ */
+export async function cancelPendingHandoffs(
+  rigId: string,
+  db: Prisma.TransactionClient = prisma,
+): Promise<{ id: string; toOperatorId: string; toOperatorName: string }[]> {
+  const rows = await db.$queryRaw<{ id: string; toOperatorId: string; toOperatorName: string }[]>`
+    WITH c AS (
+      UPDATE "deployment_handoffs" SET "status" = 'CANCELLED', "updatedAt" = now()
+      WHERE "rigId" = ${rigId} AND "status" = 'PENDING'
+      RETURNING "id", "toOperatorId")
+    SELECT c.*, u."name" AS "toOperatorName" FROM c JOIN "users" u ON u."id" = c."toOperatorId"`
+  for (const row of rows) await resolveAlertsFor('deployment_handoffs', row.id, db)
+  return rows
 }
 
 export async function getHandoff(id: string): Promise<HandoffRow | null> {
