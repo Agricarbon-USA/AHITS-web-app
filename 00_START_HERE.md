@@ -59,6 +59,8 @@ Before writing code, also read `CLAUDE.md` + `AGENTS.md` (deploy flow + the DB/m
 | **build the current fix program** (the seven PRs from the 2026-10-05 owner test: 1a·1b·2·3a·3b·4·5, in order) | `AHITS_FIX_PROGRAM_2026-10-05_FIVE-PRS.md` — the build spec; **§0's owner decisions D-a…D-n are final, apply them** |
 | **build PR-3c — delete items (and restore them)** (the fix-program addendum, after 3b) | `AHITS_FIX_PROGRAM_ADDENDUM_PR-3C_DELETE-ITEMS_2026-10-09.md` — read with the program file; **its §0 owner decisions D-o…D-u are final** (built as #256; D46) |
 | **build PR-6 — Repair and Retire are for serialized gear** (the fix-program addendum, after PR-5c) | `AHITS_ADDENDUM_PR-6_SERIALIZED-ONLY-REPAIR-RETIRE_2026-10-10.md` — read with the program file; **its §0 owner decisions are D49** (ACTIVE; merged #266 2026-10-12) |
+| **build P1-1a/b/c** (Phase 1 "field flows tell the truth": transfers and End, screens, where things are — in order) | `AHITS_PACKET_P1-1_FIELD-FLOWS_2026-10-23.md` (rev 4.1) |
+| **build P1-1d/e** (reservations: staged means ready; expired holds wait for an admin — after P1-1c) | `AHITS_PACKET_P1-1de_RESERVATIONS_2026-10-25.md` |
 | see the **evidence** behind a fix-program line (the five root causes, ~40 findings, file:line) | `AHITS_SCREENING_REPORT_2026-10-05_ROOT-CAUSES.md` |
 
 ---

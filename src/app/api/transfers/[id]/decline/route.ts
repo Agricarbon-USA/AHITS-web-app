@@ -6,6 +6,9 @@ import { withIdempotency } from '@/lib/idempotency'
 import { restoreToHub, resyncItemTotal } from '@/lib/inventory-stock'
 import { releaseFromEndedRig } from '@/lib/asset-status'
 import { resolveAlertsFor } from '@/lib/alerts'
+import { lockRigs } from '@/lib/deployment-auth'
+import { deploymentWriteConflict } from '@/lib/dispositions'
+import { ReferenceConflict } from '@/lib/asset-references'
 
 const schema = z.object({
   responseNote: z.string().optional(),
@@ -64,13 +67,15 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
   try {
     await prisma.$transaction(async (tx) => {
+    // P1-1a (2.5): the source deployment first, before the transfer row.
+    await lockRigs(tx, [transfer.fromRigId])
     // Claim-first: only one concurrent decline/accept/cancel may win the flip.
     const claim = await tx.transferRequest.updateMany({
       where: { id, status: 'PENDING' },
       data: { status: 'DECLINED', respondedAt: now, responseNote: responseNote ?? null },
     })
     if (claim.count === 0) {
-      throw new Error('Transfer is no longer pending')
+      throw new ReferenceConflict('Transfer is no longer pending')
     }
 
     // For end-of-deployment transfers (source rig ended), restore units and mark kit items removed.
@@ -81,8 +86,16 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     })
     if (sourceRig?.endedAt) {
       for (const ti of transfer.items) {
-        const kitItem = ti.kitItem
-        if (kitItem.removedAt) continue
+        // P1-1a (2.5): read the line again inside the transaction, after the lock and the
+        // claim, and use those values — not the pre-transaction read.
+        const kitItem = await tx.kitItem.findUnique({
+          where: { id: ti.kitItemId },
+          select: {
+            id: true, removedAt: true, quantity: true, drawnQuantity: true, drawnHubId: true,
+            inventoryUnitId: true, inventoryItemId: true, item: { select: { itemType: true, hubId: true } },
+          },
+        })
+        if (!kitItem || kitItem.removedAt) continue
 
         await tx.kitItem.update({ where: { id: kitItem.id }, data: { removedAt: now } })
 
@@ -134,8 +147,11 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     }
     })
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Decline failed'
-    return NextResponse.json({ error: msg }, { status: 409 })
+    // P1-1a (2.5): known conflicts are 409s; anything else a 500 — never Prisma's raw text.
+    const conflict = deploymentWriteConflict(err)
+    if (conflict) return NextResponse.json(conflict, { status: 409 })
+    console.error('[POST /api/transfers/[id]/decline]', err)
+    return NextResponse.json({ error: 'Transfer failed. Try again.' }, { status: 500 })
   }
 
   // PR-4 (D-i · P-8): the request is answered — its bell row for the recipient is read.

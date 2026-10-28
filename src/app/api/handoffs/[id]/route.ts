@@ -11,7 +11,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
 
   const handoff = await getHandoff(id)
   if (!handoff) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (handoff.status !== 'PENDING') return NextResponse.json({ error: 'Handoff is no longer pending' }, { status: 409 })
+  if (handoff.status !== 'PENDING') return NextResponse.json({ error: 'Transfer is no longer pending' }, { status: 409 })
 
   const isInitiator = handoff.initiatedById === session.userId
   const isAdmin = session.role === 'ADMIN'
@@ -24,7 +24,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     WHERE "id" = ${id} AND "status" = 'PENDING'`
 
   if (Number(cancelled) === 0) {
-    return NextResponse.json({ error: 'Handoff is no longer pending' }, { status: 409 })
+    return NextResponse.json({ error: 'Transfer is no longer pending' }, { status: 409 })
   }
 
   // PR-4 (D-i · P-8): the request is answered — its bell row for the recipient is read.

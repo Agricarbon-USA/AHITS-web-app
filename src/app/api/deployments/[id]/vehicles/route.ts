@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
-import { hydrateRigOperator } from '@/lib/deployment-assignments'
-import { getAuthorizedActiveRig } from '@/lib/deployment-auth'
+import { getActivePrimaryForRig, hydrateRigOperator } from '@/lib/deployment-assignments'
+import { claimActiveRig, getAuthorizedActiveRig } from '@/lib/deployment-auth'
+import { deploymentWriteConflict, transferRecipientProblem, waitingMessage, waitingTransfersForRig, WaitingConflict } from '@/lib/dispositions'
+import { isUniqueViolationAnywhere } from '@/lib/api-errors'
 import { requireAuth } from '@/lib/auth/session'
 import { withIdempotency } from '@/lib/idempotency'
 import { removeVehicleFromRig } from '@/lib/asset-status'
-import { referenceConflictBody } from '@/lib/asset-references'
+import { ReferenceConflict } from '@/lib/asset-references'
 import { vehicleNotActiveMessage } from '@/lib/status'
 
 const RIG_INCLUDE = {
@@ -93,17 +95,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     },
     include: { vehicle: { select: { name: true } } },
   })
+  const activeElsewhere = (names: string) => `Already assigned to another active deployment: ${names}. Remove it there first.`
   if (vehicleConflicts.length > 0) {
     const names = [...new Set(vehicleConflicts.map((c) => c.vehicle.name))].join(', ')
     return NextResponse.json(
-      { error: `Already assigned to another active deployment: ${names}. Remove it there first.` },
+      { error: activeElsewhere(names) },
       { status: 409 }
     )
   }
 
   try {
     await prisma.$transaction(async (tx) => {
-      await tx.rigVehicle.createMany({
+      // P1-1a (2.5): the deployment first.
+      await claimActiveRig(tx, id)
+      const created = await tx.rigVehicle.createMany({
         data: vehicleIds.map((vehicleId) => ({
           rigId: id,
           vehicleId,
@@ -111,17 +116,41 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         })),
         skipDuplicates: true,
       })
+      // P1-1a (2.4): skipDuplicates also skips a vehicle another deployment just took (the
+      // one-open-row index), so a short count is checked, not trusted. An id open here
+      // already counts as added; any other id rolls the whole add back (409).
+      const wanted = new Set(vehicleIds)
+      let hereIds = vehicleIds
+      if (created.count < wanted.size) {
+        const open = await tx.rigVehicle.findMany({
+          where: { vehicleId: { in: vehicleIds }, removedAt: null },
+          select: { vehicleId: true, rigId: true, rig: { select: { endedAt: true } }, vehicle: { select: { name: true } } },
+        })
+        hereIds = open.filter((o) => o.rigId === id).map((o) => o.vehicleId)
+        const missing = [...wanted].filter((vid) => !hereIds.includes(vid))
+        if (missing.length > 0) {
+          const elsewhere = open.filter((o) => missing.includes(o.vehicleId))
+          const onEnded = [...new Set(elsewhere.filter((o) => o.rig.endedAt).map((o) => o.vehicle.name))]
+          const onActive = [...new Set(elsewhere.filter((o) => !o.rig.endedAt).map((o) => o.vehicle.name))]
+          if (onActive.length > 0) throw new ReferenceConflict(activeElsewhere(onActive.join(', ')))
+          if (onEnded.length > 0) {
+            throw new ReferenceConflict(`${onEnded.join(', ')} is waiting on transfer from an ended deployment — answer that transfer first.`)
+          }
+          throw new ReferenceConflict('One or more of those vehicles is already on an active deployment. Remove it there first.')
+        }
+      }
       await tx.vehicle.updateMany({
-        where: { id: { in: vehicleIds } },
+        where: { id: { in: hereIds } },
         data: { assignedOperatorId: rig.operatorId },
       })
     })
   } catch (err: unknown) {
+    const conflict = deploymentWriteConflict(err)
+    if (conflict) return NextResponse.json(conflict, { status: 409 })
     // W0-10 PR-2b: a partial-unique violation (index C, one open RigVehicle per vehicle,
-    // or the concurrent-add race the pre-check can slip) surfaces as Prisma P2002 / PG
-    // 23505 — translate to a friendly 409 instead of a raw 500.
-    const code = (err as { code?: string }).code
-    if (code === 'P2002' || code === '23505') {
+    // or the concurrent-add race the pre-check can slip) — raw or ORM, P1-1a 2.4 —
+    // translates to a friendly 409 instead of a raw 500.
+    if (isUniqueViolationAnywhere(err)) {
       return NextResponse.json(
         { error: 'One or more of those vehicles is already on an active deployment. Remove it there first.' },
         { status: 409 }
@@ -153,17 +182,46 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
 
   const { vehicles, note } = parsed.data
 
-  for (const disp of vehicles) {
-    if (disp.dispositionType === 'TRANSFER' && !disp.toOperatorId) {
-      return NextResponse.json(
-        { error: 'toOperatorId is required when dispositionType is TRANSFER' },
-        { status: 400 }
-      )
-    }
+  // P1-1a (2.7, §0-t): only an admin can retire a vehicle. Checked first.
+  if (session.role !== 'ADMIN' && vehicles.some((d) => d.dispositionType === 'RETIRED')) {
+    return NextResponse.json({ error: 'Only an admin can retire a vehicle.' }, { status: 403 })
+  }
+
+  const vehicleIds = [...new Set(vehicles.map((d) => d.vehicleId))]
+  const names = new Map(
+    (await prisma.vehicle.findMany({ where: { id: { in: vehicleIds } }, select: { id: true, name: true } })).map((v) => [v.id, v.name]),
+  )
+
+  // P1-1a (2.2): every "Transfer to a person" names a real, active person who isn't the
+  // deployment's own operator.
+  const transferLines = vehicles
+    .filter((d) => d.dispositionType === 'TRANSFER')
+    .map((d) => ({ toOperatorId: d.toOperatorId, name: names.get(d.vehicleId) ?? null }))
+  if (transferLines.length > 0) {
+    const problem = await transferRecipientProblem(transferLines, await getActivePrimaryForRig(id))
+    if (problem) return NextResponse.json({ error: problem.error }, { status: problem.status })
   }
 
   try {
     await prisma.$transaction(async (tx) => {
+      // P1-1a (2.5): the deployment first.
+      await claimActiveRig(tx, id)
+      // 2.7: every vehicle named must be on this deployment.
+      const here = new Set(
+        (await tx.rigVehicle.findMany({ where: { rigId: id, vehicleId: { in: vehicleIds }, removedAt: null }, select: { vehicleId: true } }))
+          .map((rv) => rv.vehicleId),
+      )
+      const gone = vehicleIds.find((vid) => !here.has(vid))
+      if (gone) {
+        const name = names.get(gone)
+        throw new ReferenceConflict(name ? `${name} isn't on this deployment any more.` : "This vehicle isn't on this deployment any more.")
+      }
+      // 2.8 (§0-s): a vehicle waiting on a transfer stays with it — every disposition is refused.
+      const waiting = await waitingTransfersForRig(id, tx)
+      for (const vid of vehicleIds) {
+        const w = waiting.vehicles.get(vid)
+        if (w) throw new WaitingConflict(waitingMessage(names.get(vid) ?? 'This vehicle', w.toName))
+      }
       for (const disp of vehicles) {
         if (disp.dispositionType === 'TRANSFER' && disp.toOperatorId) {
           // Keep the RigVehicle row open (removedAt: null) so the accept path's
@@ -197,7 +255,8 @@ async function _DELETE(req: NextRequest, { params }: { params: Promise<{ id: str
     })
   } catch (err: unknown) {
     // PR-3b: a "Retired" disposition on a vehicle something else still holds is refused.
-    const conflict = referenceConflictBody(err)
+    // P1-1a: so is a vehicle not on this deployment, one waiting on a transfer, or an ended deployment.
+    const conflict = deploymentWriteConflict(err)
     if (conflict) return NextResponse.json(conflict, { status: 409 })
     const msg = err instanceof Error ? err.message : 'Failed to remove vehicles'
     console.error('[DELETE /api/deployments/[id]/vehicles]', err)

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
+import { isUniqueViolationAnywhere } from '@/lib/api-errors'
 import { requireAdmin } from '@/lib/auth/session'
 import { getDeploymentRoster, getActivePrimaryForRig, ensureOpenAssignment, endAssignmentByRole, getRequiredPrimaryForRig } from '@/lib/deployment-assignments'
 
@@ -54,8 +55,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   } catch (err: unknown) {
     // W0-10 PR-2b: index D (one open SECONDARY per rig+operator) violation under a
     // concurrent double-add surfaces as P2002 / 23505 — friendly 409, not a raw 500.
-    const code = (err as { code?: string }).code
-    if (code === 'P2002' || code === '23505') {
+    // P1-1a (2.4): a raw insert's violation is P2010 with the code nested — check both.
+    if (isUniqueViolationAnywhere(err)) {
       return NextResponse.json({ error: 'That operator is already assigned to this deployment.' }, { status: 409 })
     }
     console.error('[POST /api/deployments/[id]/operators]', err)

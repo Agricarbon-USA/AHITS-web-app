@@ -21,7 +21,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
 
   const handoff = await getHandoff(id)
   if (!handoff) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (handoff.status !== 'PENDING') return NextResponse.json({ error: 'Handoff is no longer pending' }, { status: 409 })
+  if (handoff.status !== 'PENDING') return NextResponse.json({ error: 'Transfer is no longer pending' }, { status: 409 })
 
   const isRecipient = handoff.toOperatorId === session.userId
   const isAdmin = session.role === 'ADMIN'
@@ -40,7 +40,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
         UPDATE "deployment_handoffs"
         SET "status" = 'DECLINED', "respondedAt" = ${now}, "responseNote" = ${responseNote ?? null}, "updatedAt" = ${now}
         WHERE "id" = ${id} AND "status" = 'PENDING'`
-      if (Number(claim) === 0) throw new Error('Handoff is no longer pending')
+      if (Number(claim) === 0) throw new Error('Transfer is no longer pending')
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Decline failed'
@@ -55,8 +55,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
       data: {
         userId: handoff.initiatedById,
         type: 'HANDOFF_DECLINED',
-        title: 'Deployment handoff declined',
-        body: `${session.name} declined the deployment handoff${responseNote ? `: ${responseNote}` : ''}.`,
+        title: 'Transfer declined',
+        body: `${session.name} declined the deployment transfer${responseNote ? `: ${responseNote}` : ''}.`,
         link: '/operator/my-deployment',
       },
     }).catch(() => {})
