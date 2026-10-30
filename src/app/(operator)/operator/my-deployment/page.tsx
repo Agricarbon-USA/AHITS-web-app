@@ -86,7 +86,7 @@ interface TransferRow {
   status: string
   fromRig: { id: string; operator: { id: string; name: string } }
   toOperator: { id: string; name: string }
-  initiatedBy: { id: string; name: string }
+  initiatedById: string
   vehicles: { id: string; vehicle: { id: string; name: string; type: string } }[]
   items: { id: string; quantity: number | null; kitItem: { id: string; quantity: number; item: { id: string; name: string } } }[]
 }
@@ -868,7 +868,7 @@ export default function MyRigPage() {
         const summary = [vehicleNames, itemNames].filter(Boolean).join(', ')
         return (
           <Alert key={tr.id} severity="warning" icon={false} sx={{ mb: 1.5 }}
-            action={tr.initiatedBy.id === user?.userId && (
+            action={tr.initiatedById === user?.userId && (
               <Button size="small" color="error" onClick={() => setCancelTransferId(tr.id)}>
                 Cancel Transfer
               </Button>

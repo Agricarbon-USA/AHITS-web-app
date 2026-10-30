@@ -235,6 +235,13 @@ describe('3.3 · gear waiting on a transfer (§0-s)', () => {
     renderDisposition([legacy], { waiting: { items: { L: { qty: 1, toName: 'Xena Recipient' } }, vehicles: {} } })
     expect(screen.getByText('Waiting on transfer to Xena Recipient — answer or cancel that transfer before ending.')).toBeInTheDocument()
   })
+
+  it('in Return Items, the held legacy line reads the server words: cancel that transfer first', () => {
+    const legacy: KitItemSummary = { kitItemId: 'L', itemId: 'iL', name: 'Old flags', quantity: 4, itemType: 'SERIALIZED', inventoryUnit: null }
+    renderDisposition([legacy], { mode: 'remove-items', waiting: { items: { L: { qty: 1, toName: 'Xena Recipient' } }, vehicles: {} } })
+    expect(screen.getByText('Waiting on transfer to Xena Recipient — cancel that transfer first.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Return Items' })).toBeDisabled()
+  })
 })
 
 // ─── 3.4 · Scan ─────────────────────────────────────────────────────────────────────

@@ -342,9 +342,9 @@ export function DispositionDialog({
                 {held ? (
                   <Typography variant="body2" color="text.secondary">
                     {`Waiting on transfer to ${w.toName}`}
-                    {w.kind === 'held'
-                      ? ' — answer or cancel that transfer before ending.'
-                      : mode === 'remove-items' ? ' — cancel that transfer first.' : ''}
+                    {mode === 'remove-items'
+                      ? ' — cancel that transfer first.'
+                      : w.kind === 'held' ? ' — answer or cancel that transfer before ending.' : ''}
                   </Typography>
                 ) : (
                 <>
