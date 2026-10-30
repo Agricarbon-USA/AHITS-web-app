@@ -423,6 +423,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     const conflict = deploymentWriteConflict(err)
     if (conflict) return NextResponse.json(conflict, { status: 409 })
     if (err instanceof NoDisposition) return NextResponse.json({ error: err.message }, { status: 400 })
+    console.error('[POST /api/deployments/[id]/end]', err)
     throw err
   }
 

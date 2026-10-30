@@ -45,6 +45,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   // nullable, since a racing End may have closed the roster (the rule then says so).
   const primaryId = await getActivePrimaryForRig(id)
   const isPrimary = primaryId === session.userId
+  // P1-1a follow-up (A-3): no primary means End won the race — say so, not "Forbidden".
+  if (!primaryId) return NextResponse.json({ error: 'This deployment has already ended.' }, { status: 409 })
   if (!isAdmin && !isPrimary) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const body = await req.json()
