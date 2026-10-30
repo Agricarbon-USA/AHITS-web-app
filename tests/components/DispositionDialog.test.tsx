@@ -40,20 +40,28 @@ function renderDialog(extra: Partial<React.ComponentProps<typeof DispositionDial
   )
 }
 
+// P1-1b (D51): nothing is pre-picked — every return names its hub.
+function pickHub(name = 'Home Lab') {
+  fireEvent.mouseDown(screen.getByRole('combobox', { name: /Return hub/i }))
+  fireEvent.click(within(screen.getByRole('listbox')).getByText(new RegExp(name)))
+}
+
 describe('DispositionDialog — merged single-item remove (CC-24)', () => {
   beforeEach(() => mutate.mockClear())
 
-  it('pre-fills the one item with the confirm button live (2-tap parity)', () => {
+  it('pre-fills the one item; confirm waits for a hub pick (P1-1b: no pre-picked hub)', () => {
     renderDialog()
     expect(screen.getByText('Christie Drill')).toBeInTheDocument()
-    // Default disposition HUB + the one hub pre-selected → confirm is enabled on open,
-    // so a single-item removal is 2 taps (open ⊖ → Return Items). No extra input needed.
-    const confirm = screen.getByRole('button', { name: /Return Items/i })
-    expect(confirm).toBeEnabled()
+    // Default disposition HUB, but no hub is pre-picked (D51) — CC-24's 2-tap parity is
+    // now 3 taps: open ⊖ → pick the hub → Return Items.
+    expect(screen.getByRole('button', { name: /Pick a return hub/i })).toBeDisabled()
+    pickHub()
+    expect(screen.getByRole('button', { name: /Return Items/i })).toBeEnabled()
   })
 
   it('submits with an empty note by default (note is optional — no fake "Returned")', async () => {
     renderDialog()
+    pickHub()
     fireEvent.click(screen.getByRole('button', { name: /Return Items/i }))
     await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1))
     expect(mutate.mock.calls[0][0].body.note).toBe('')
@@ -62,6 +70,7 @@ describe('DispositionDialog — merged single-item remove (CC-24)', () => {
   it('fills the note from a one-tap preset', async () => {
     renderDialog({ presets: ['Picked up from hub', 'End of day return'] })
     fireEvent.click(screen.getByText('End of day return'))
+    pickHub()
     fireEvent.click(screen.getByRole('button', { name: /Return Items/i }))
     await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1))
     expect(mutate.mock.calls[0][0].body.note).toBe('End of day return')

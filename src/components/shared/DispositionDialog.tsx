@@ -399,7 +399,7 @@ export function DispositionDialog({
                     value={disp.toOperatorId ?? ''}
                     onChange={(v) => setDisp(item.kitItemId, { toOperatorId: v })}
                     options={people.map((o) => ({ value: o.id, label: o.name }))}
-                    helperText={people.length === 0 ? 'People didn’t load — you need a connection to pick a person.' : undefined}
+                    helperText={people.length === 0 ? "People didn't load — you need a connection to pick a person." : undefined}
                   />
                 )}
                 {disp.type === 'INOPERABLE' && (
