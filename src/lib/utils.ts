@@ -11,6 +11,23 @@ export function formatDateTime(date: string | Date | null | undefined): string {
   return dayjs(date).format('MMM D, YYYY h:mm A')
 }
 
+/**
+ * P1-1b (3.1): the leading `YYYY-MM-DD` of a date-only value (`@db.Date`, or an
+ * `<input type=date>` value), or ''. Sliced, never parsed, so a US time zone can't show
+ * the day before. Not for instants.
+ */
+export function toDay(v: string | Date | null | undefined): string {
+  if (!v) return ''
+  const s = typeof v === 'string' ? v : Number.isNaN(v.getTime()) ? '' : v.toISOString()
+  return /^\d{4}-\d{2}-\d{2}/.exec(s)?.[0] ?? ''
+}
+
+/** A date-only value as `MMM D, YYYY`, or '—'. Not for instants (use formatDate). */
+export function formatDay(v: string | Date | null | undefined): string {
+  const d = toDay(v)
+  return d ? dayjs(d).format('MMM D, YYYY') : '—'
+}
+
 // CC-33 (A6): removed dead fromNow / capitalize / snakeToTitle / generateQrData (0 importers).
 
 export function clamp(value: number, min: number, max: number): number {

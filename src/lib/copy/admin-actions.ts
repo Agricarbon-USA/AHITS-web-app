@@ -27,7 +27,7 @@ export const ADMIN_ACTIONS = {
   'deployment.reassignPrimary': { success: 'Primary operator reassigned.' },
   'deployment.addOperator': { success: 'Operator added.' },
   'deployment.removeOperator': { success: 'Operator removed.' },
-  'deployment.returnItem': { success: 'Item returned.' },
+  'deployment.returnItem': { success: (hub: string) => `Item returned to ${hub}.`, writtenOff: 'Item written off.' },
   'transfer.cancel': { success: 'Transfer cancelled.' },
   'transfer.accept': { success: 'Transfer accepted' },
   'transfer.decline': { success: 'Transfer declined' },
@@ -42,7 +42,7 @@ export const ADMIN_ACTIONS = {
     confirm: 'Deactivate',
     success: 'Hub deactivated',
   },
-  'hubReturn.receive': { success: 'Marked received.' },
+  'hubReturn.receive': { success: 'Marked received.', gone: 'Already received or dismissed — removed from the list.' },
   'hubReturn.receiveBulk': {
     success: (n: number) => `${n} item${n !== 1 ? 's' : ''} marked received.`,
     // PR-5 (U-6): bulk Receive now reads each result instead of assuming success.

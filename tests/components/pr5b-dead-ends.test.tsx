@@ -126,6 +126,9 @@ const inbound = (id: string, itemName: string) => ({
   issuedAt: '2026-10-08T12:00:00Z', viewedAt: null, expiresAt: '2026-10-20T12:00:00Z', discrepancy: null, allEvents: [],
 })
 let receiveStatus: Record<string, number> = {}
+// P1-1b (3.8): stateful — a link answered here (200) or elsewhere (409) drops out of the list.
+let answered = new Set<string>()
+let inboundOffline = false
 
 function stubHubs() {
   vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -135,12 +138,15 @@ function stubHubs() {
     const m = url.match(/^\/api\/status-links\/([^/]+)\/receive$/)
     if (m) {
       const status = receiveStatus[m[1]!] ?? 200
-      return jsonRes(status < 400 ? { ok: true } : { error: 'Already received by the hub.' }, status)
+      if (status < 400 || status === 409) answered.add(m[1]!)
+      return jsonRes(status < 400 ? { ok: true } : { error: status === 409 ? 'Already received by the hub.' : 'Something went wrong.' }, status)
     }
     if (url.startsWith('/api/hubs/inbound')) {
+      if (inboundOffline) return Promise.reject(new TypeError('Failed to fetch'))
+      const units = [inbound('sl1', 'GPS rover'), inbound('sl2', 'Corer')].filter((u) => !answered.has(u.statusLinkId))
       return jsonRes({
-        data: [{ hubId: 'h1', hubName: 'Toledo Hub', location: null, email: null, units: [inbound('sl1', 'GPS rover'), inbound('sl2', 'Corer')] }],
-        counts: { totalPending: 2, discrepancies: 0 },
+        data: units.length ? [{ hubId: 'h1', hubName: 'Toledo Hub', location: null, email: null, units }] : [],
+        counts: { totalPending: units.length, discrepancies: 0 },
       })
     }
     if (url === '/api/hubs') return jsonRes({ data: [HUB] })
@@ -149,7 +155,7 @@ function stubHubs() {
 }
 
 describe('hubs — red failures, honest bulk Receive, Deactivate says Deactivate', () => {
-  beforeEach(() => { calls = []; receiveStatus = {}; stubHubs() })
+  beforeEach(() => { calls = []; receiveStatus = {}; answered = new Set(); inboundOffline = false; stubHubs() })
 
   async function openInbound() {
     render(<ToastProvider><AdminHubsPage /></ToastProvider>)
@@ -157,12 +163,33 @@ describe('hubs — red failures, honest bulk Receive, Deactivate says Deactivate
     await screen.findByText('GPS rover')
   }
 
-  it('a failed Received is a red toast with the server message', async () => {
+  it('a Received that was already answered (409) is a red "gone" toast, and the row leaves without a reload', async () => {
     receiveStatus = { sl1: 409 }
     await openInbound()
     fireEvent.click(within(screen.getByText('GPS rover').closest('tr')!).getByRole('button', { name: 'Received' }))
-    const msg = await screen.findByText('Already received by the hub.')
+    const msg = await screen.findByText('Already received or dismissed — removed from the list.')
     expect(severityOf(msg)).toContain('MuiAlert-colorError')
+    await waitFor(() => expect(screen.queryByText('GPS rover')).not.toBeInTheDocument())
+    expect(screen.getByText('Corer')).toBeInTheDocument()
+  })
+
+  it('a failed Received (500) is a red toast with the server message; the row stays', async () => {
+    receiveStatus = { sl1: 500 }
+    await openInbound()
+    fireEvent.click(within(screen.getByText('GPS rover').closest('tr')!).getByRole('button', { name: 'Received' }))
+    const msg = await screen.findByText('Something went wrong.')
+    expect(severityOf(msg)).toContain('MuiAlert-colorError')
+    expect(screen.getByText('GPS rover')).toBeInTheDocument()
+  })
+
+  it('an offline reload keeps the rows and says so (never a false all-clear)', async () => {
+    receiveStatus = { sl1: 500 }
+    await openInbound()
+    inboundOffline = true
+    fireEvent.click(within(screen.getByText('GPS rover').closest('tr')!).getByRole('button', { name: 'Received' }))
+    expect(await screen.findByText("Couldn't load inbound — check your connection.")).toBeInTheDocument()
+    expect(screen.getByText('GPS rover')).toBeInTheDocument()
+    expect(screen.getByText('Corer')).toBeInTheDocument()
   })
 
   it('bulk Receive reads every result — one failure is reported, not counted as received', async () => {

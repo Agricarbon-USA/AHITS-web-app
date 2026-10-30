@@ -17,6 +17,7 @@ import { useDirtyState } from '@/hooks/useDirtyState'
 import { parseApiError, apiErrorMessage } from '@/lib/api-error-shape'
 import type { ProjectSelectOption } from '@/components/shared/ProjectSelect'
 import type { HubOption, UserOption } from '@/components/shared/DispositionDialog'
+import { hubLabel } from '@/lib/hub-label'
 
 // UXP-3 (3d): extracted move-only from app/(admin)/admin/deployments/page.tsx (the D10
 // demand-pull split: the first packet that materially touches the builder carves it out),
@@ -91,12 +92,6 @@ export interface StartedDeployment {
 }
 
 // ── Helpers (exported for the drawer's Add Items and for tests) ───
-
-/** One hub label everywhere: `name · city, state` (plan §2). */
-export function hubLabel(h: { name: string; city?: string | null; state?: string | null }): string {
-  if (!h.city) return h.name
-  return `${h.name} · ${h.city}${h.state ? `, ${h.state}` : ''}`
-}
 
 /** A vehicle the builder may offer: not on a rig, and Active (PR-3b — not in repair, out of service or retired; the server refuses anything else). */
 export function isPickableVehicle(v: VehicleOption): boolean {

@@ -167,7 +167,8 @@ export default function AdminHubsPage() {
       setCounts(d.counts ?? { totalPending: 0, discrepancies: 0 })
       multiSelect.clear()
     } catch {
-      setInboundData([])
+      // P1-1b (3.8): offline keeps the rows — an empty list would read as a false all-clear.
+      pushToast({ message: "Couldn't load inbound — check your connection.", severity: 'error' })
     }
   }, [multiSelect])  // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -187,10 +188,19 @@ export default function AdminHubsPage() {
 
   // ── Single-item actions ────────────────────────────────────────
 
+  // P1-1b (3.8): a row that was answered (200), is gone (404) or was already received or
+  // dismissed elsewhere (409) leaves the list at once, before the refetch.
+  const answered = (status: number) => status === 200 || status === 404 || status === 409
+  const dropRows = (ids: string[]) => setInboundData((prev) => prev
+    && prev.map((g) => ({ ...g, units: g.units.filter((u) => !ids.includes(u.statusLinkId)) })).filter((g) => g.units.length > 0))
+  const showGone = () => pushToast({ message: copy('hubReturn.receive').gone, severity: 'error' })
+
   const markReceived = async (statusLinkId: string) => {
     const res = await fetch(`/api/status-links/${statusLinkId}/receive`, { method: 'POST' })
     const d = await res.json().catch(() => ({}))
+    if (answered(res.status)) dropRows([statusLinkId])
     if (res.ok) showToast(copy('hubReturn.receive').success)
+    else if (res.status === 409) showGone()
     else showError(d, 'Could not mark received.')
     await loadInbound(inboundFilter)
   }
@@ -213,8 +223,10 @@ export default function AdminHubsPage() {
           }),
         ),
       )
-      const allOk = results.every((r) => r.ok)
-      if (allOk) showToast(copy('hubReturn.dismiss').success(dismissTarget.length))
+      dropRows(dismissTarget.filter((_, i) => answered(results[i].status)))
+      const failed = results.filter((r) => !r.ok)
+      if (failed.length === 0) showToast(copy('hubReturn.dismiss').success(dismissTarget.length))
+      else if (failed.every((r) => r.status === 409)) showGone()
       else pushToast({ message: copy('hubReturn.dismiss').partial, severity: 'warning' })
       setDismissTarget(null)
       await loadInbound(inboundFilter)
@@ -835,11 +847,15 @@ export default function AdminHubsPage() {
                 const ids = [...bulkSelectedInView]
                 multiSelect.clear()
                 // PR-5 (U-6): read every result — a failed receive is red, not counted as done.
-                const results = await Promise.all(ids.map((id) =>
-                  fetch(`/api/status-links/${id}/receive`, { method: 'POST' }).then((r) => r.ok).catch(() => false),
+                // P1-1b (3.8): keep each status; answered rows leave the list at once.
+                const statuses = await Promise.all(ids.map((id) =>
+                  fetch(`/api/status-links/${id}/receive`, { method: 'POST' }).then((r) => r.status).catch(() => 0),
                 ))
-                const ok = results.filter(Boolean).length
+                dropRows(ids.filter((_, i) => answered(statuses[i])))
+                const ok = statuses.filter((st) => st === 200).length
+                const failed = statuses.filter((st) => st !== 200)
                 if (ok === ids.length) showToast(copy('hubReturn.receiveBulk').success(ok))
+                else if (failed.every((st) => st === 409)) showGone()
                 else pushToast({ message: copy('hubReturn.receiveBulk').partial(ok, ids.length - ok), severity: ok === 0 ? 'error' : 'warning' })
                 await loadInbound('active')
               },

@@ -68,8 +68,10 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
   try {
     updatedTransfer = await prisma.$transaction(async (tx) => {
     // P1-1a (2.5): lock the source and destination deployments first (id order), before
-    // the transfer row.
-    await lockRigs(tx, [transfer.fromRig.id, await getActiveRigForOperator(toOperatorId, tx)])
+    // the transfer row. The recipient's active deployment is read once, here; the same id
+    // is used to find the destination below.
+    const destRigId = await getActiveRigForOperator(toOperatorId, tx)
+    await lockRigs(tx, [transfer.fromRig.id, destRigId])
     // Claim-first: atomically flip PENDING → ACCEPTED before doing any moves.
     // Two concurrent accepts (e.g. the destination operator and an admin) both
     // pass the pre-transaction status check at line 38; this conditional UPDATE
@@ -122,8 +124,8 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     }
 
     // Find or create destination rig (source rig stays active regardless)
-    // Read again after the lock, live only: if it ended in between, a new one is created.
-    const destRigId = await getActiveRigForOperator(toOperatorId, tx)
+    // The deployment locked above, live only: if it ended before the lock was taken, a new
+    // one is created, so gear never lands on an ended deployment.
     let destRig = destRigId ? await tx.rig.findFirst({ where: { id: destRigId, endedAt: null } }) : null
     if (!destRig) {
       destRig = await tx.rig.create({

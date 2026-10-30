@@ -30,6 +30,11 @@ export function checkTime(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
 }
 
+/** P1-1b (3.1): one "who checked it" line for Today and the daily check. */
+export function crewCheckLine(c: { operatorName: string; submittedAt: string; byMe?: boolean }): string {
+  return `Checked by ${c.byMe ? 'you' : c.operatorName} at ${checkTime(c.submittedAt)}`
+}
+
 export function VehicleChecks({ vehicles, checkedVehicleIds, checks, onCheck, onViewCheck }: Props) {
   if (vehicles.length === 0) return null
   const checked = new Set(checkedVehicleIds)
@@ -55,7 +60,7 @@ export function VehicleChecks({ vehicles, checkedVehicleIds, checks, onCheck, on
                   <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>{rv.vehicle.name}</Typography>
                   {isDone && who && (
                     <Typography variant="caption" color="text.secondary" display="block" sx={{ wordBreak: 'break-word' }}>
-                      {`Checked by ${who.byMe ? 'you' : who.operatorName} at ${checkTime(who.submittedAt)}`}
+                      {crewCheckLine(who)}
                       {!who.byMe && ` · ${CREW_CHECK_NOTE}`}
                     </Typography>
                   )}

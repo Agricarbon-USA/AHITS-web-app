@@ -308,6 +308,42 @@ describe('2.5 · transfer answers and Reassign race without a 500', () => {
     }
   })
 
+  it('the recipient starts and ends a deployment during the accept → the gear never lands on an ended deployment', async () => {
+    const source = await deploymentWithStock(2)
+    const x = await createOperator()
+    const mine = await createRig(x.id)
+    const t = await prisma.transferRequest.create({
+      data: { fromRigId: source.rig.id, toOperatorId: x.id, initiatedById: admin.id, note: '', status: 'PENDING', items: { create: [{ kitItemId: source.line.id }] } },
+    })
+    // Between accept's read of x's deployment and its lock: x's deployment ends and x starts
+    // another. Accept must use the deployment it locked (now ended → a new one), never the
+    // unlocked newcomer, which a racing End could close under it.
+    let started: string | null = null
+    hook.lock = async () => {
+      hook.lock = null
+      await endIt(mine.rig.id)
+      started = (await createRig(x.id)).rig.id
+    }
+    const res = await expectNamed(await accept(t.id))
+    // The newcomer ends (an End that never saw the accepted gear).
+    await endIt(started!)
+    const moved = await prisma.kitItem.findMany({
+      where: { inventoryItemId: source.item.id, removedAt: null, kit: { rigId: { not: source.rig.id } } },
+      select: { kit: { select: { rigId: true, rig: { select: { endedAt: true } } } } },
+    })
+    if (res.status === 200) {
+      expect(moved).toHaveLength(1)
+      expect(moved[0].kit.rig.endedAt).toBeNull()
+    } else {
+      expect(res.status).toBe(409)
+      expect(moved).toHaveLength(0)
+      expect((await prisma.transferRequest.findUniqueOrThrow({ where: { id: t.id } })).status).toBe('PENDING')
+    }
+    expect(moved.map((m) => m.kit.rigId)).not.toContain(started)
+    expect(moved.map((m) => m.kit.rigId)).not.toContain(mine.rig.id)
+    await expectNothingStranded()
+  })
+
   it('accept of everything ends the source, ends its assignments and cancels its waiting handoff', async () => {
     const { op, rig, line } = await deploymentWithStock(2)
     const x = await createOperator()
