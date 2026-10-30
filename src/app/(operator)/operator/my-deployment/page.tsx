@@ -18,7 +18,7 @@ import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner'
 import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline'
 import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
 import { TransferDialog } from '@/components/shared/TransferDialog'
-import { DispositionDialog, KitItemSummary } from '@/components/shared/DispositionDialog'
+import { DispositionDialog, toKitSummary, waitingFrom } from '@/components/shared/DispositionDialog'
 import { QrScannerDialog, type QrResolveResult } from '@/components/shared/QrScannerDialog'
 import { DeploymentVehiclesCard, DeploymentKitCard, VEHICLE_ICON } from '@/components/operator/DeploymentCards'
 import { TransferEntryDialog } from '@/components/operator/TransferEntryDialog' // CC-33 (D22)
@@ -61,6 +61,7 @@ interface KitItemRow {
     categoryRef: { name: string } | null
   }
   inventoryUnit: { id: string; qrCodeId: string; serialNumber: string | null; status: string } | null
+  drawnHubId?: string | null
 }
 
 interface KitRow {
@@ -162,6 +163,10 @@ export default function MyRigPage() {
   // Vehicle remove
   const [removingVehicles, setRemovingVehicles] = React.useState(false)
   const [selVehicles, setSelVehicles] = React.useState<Set<string>>(new Set())
+  // P1-1b (§0-s): gear waiting on this deployment's outgoing transfers stays with them.
+  const waiting = React.useMemo(() => waitingFrom(outgoingTransfers), [outgoingTransfers])
+  const setSelFreeVehicles = React.useCallback((s: Set<string>) =>
+    setSelVehicles(new Set([...s].filter((id) => !waiting.vehicles[id]))), [waiting])
 
   // Kit remove (bulk — DispositionDialog flow)
   const [removingItems, setRemovingItems] = React.useState(false)
@@ -572,9 +577,6 @@ export default function MyRigPage() {
         setAddItemOpen(false)
         break
       }
-      case 'end':
-        result = await mutate({ endpoint: `/api/deployments/${rig.id}/end`, method: 'POST', body: { note }, label: 'End deployment', invalidates: ['deployments', 'vehicles', 'inventory', 'today'] })
-        break
     }
     setActionLoading(false)
     setNoteDialog(null)
@@ -602,7 +604,7 @@ export default function MyRigPage() {
             <Typography variant="body2" fontWeight={600}>
               Incoming transfer — entire rig — from {h.fromOperatorName}
             </Typography>
-            <Typography variant="caption" color="text.secondary">&ldquo;{h.note}&rdquo;</Typography>
+            {h.note && <Typography variant="caption" color="text.secondary">&ldquo;{h.note}&rdquo;</Typography>}
             {/* CC-23: actions in the body (was the Alert `action` slot pulled up
                 with mt:-0.5, which cramped two buttons beside two text lines at 390px). */}
             <Stack direction="row" spacing={1} sx={{ mt: 1, '& .MuiButton-root': { minHeight: 44, fontSize: 16 } }}>
@@ -636,7 +638,7 @@ export default function MyRigPage() {
               </Typography>
               <Typography variant="body2">{summary}</Typography>
               <Typography variant="caption" color="text.secondary">
-                &ldquo;{tr.note}&rdquo; · Accepting starts a new deployment for you.
+                {tr.note && <>&ldquo;{tr.note}&rdquo; · </>}Accepting starts a new deployment for you.
               </Typography>
               {/* CC-23: actions in the body (was the Alert `action` slot + mt:-0.5). */}
               <Stack direction="row" spacing={1} sx={{ mt: 1, '& .MuiButton-root': { minHeight: 44, fontSize: 16 } }}>
@@ -772,7 +774,7 @@ export default function MyRigPage() {
           <Typography variant="body2" fontWeight={600}>
             Incoming transfer — entire rig — from {h.fromOperatorName}
           </Typography>
-          <Typography variant="caption" color="text.secondary">&ldquo;{h.note}&rdquo;</Typography>
+          {h.note && <Typography variant="caption" color="text.secondary">&ldquo;{h.note}&rdquo;</Typography>}
           {/* CC-23: actions in the body (was the Alert `action` slot + mt:-0.5). */}
           <Stack direction="row" spacing={1} sx={{ mt: 1, '& .MuiButton-root': { minHeight: 44, fontSize: 16 } }}>
             <Button size="small" color="error" variant="outlined"
@@ -805,7 +807,7 @@ export default function MyRigPage() {
               Incoming transfer — selected gear — from {tr.fromRig.operator.name}
             </Typography>
             <Typography variant="body2">{summary}</Typography>
-            <Typography variant="caption" color="text.secondary">&ldquo;{tr.note}&rdquo;</Typography>
+            {tr.note && <Typography variant="caption" color="text.secondary">&ldquo;{tr.note}&rdquo;</Typography>}
             {/* CC-23: actions in the body (was the Alert `action` slot + mt:-0.5). */}
             <Stack direction="row" spacing={1} sx={{ mt: 1, '& .MuiButton-root': { minHeight: 44, fontSize: 16 } }}>
               <Button size="small" color="error" variant="outlined"
@@ -839,7 +841,7 @@ export default function MyRigPage() {
           vehicles={rig.vehicles}
           removingVehicles={removingVehicles}
           selVehicles={selVehicles}
-          setSelVehicles={setSelVehicles}
+          setSelVehicles={setSelFreeVehicles}
           setRemovingVehicles={setRemovingVehicles}
           onAddVehicles={onAddVehicles}
           onRemoveSelected={onRemoveVehiclesSelected}
@@ -866,11 +868,11 @@ export default function MyRigPage() {
         const summary = [vehicleNames, itemNames].filter(Boolean).join(', ')
         return (
           <Alert key={tr.id} severity="warning" icon={false} sx={{ mb: 1.5 }}
-            action={
+            action={tr.initiatedBy.id === user?.userId && (
               <Button size="small" color="error" onClick={() => setCancelTransferId(tr.id)}>
                 Cancel Transfer
               </Button>
-            }
+            )}
           >
             <Typography variant="body2">
               ⏳ Waiting for <strong>{tr.toOperator.name}</strong> to accept your transfer of {summary}
@@ -891,7 +893,7 @@ export default function MyRigPage() {
           <Typography variant="body2">
             ⏳ Waiting for <strong>{h.toOperatorName}</strong> to accept your entire-rig transfer
           </Typography>
-          <Typography variant="caption" color="text.secondary">&ldquo;{h.note}&rdquo;</Typography>
+          {h.note && <Typography variant="caption" color="text.secondary">&ldquo;{h.note}&rdquo;</Typography>}
         </Alert>
       ))}
 
@@ -1258,16 +1260,8 @@ export default function MyRigPage() {
           operators={operators}
           hubs={hubs}
           presets={NOTE_PRESETS}
-          items={kitItems
-            .filter((ki) => selItems.has(ki.id))
-            .map<KitItemSummary>((ki) => ({
-              kitItemId: ki.id,
-              itemId: ki.item.id,
-              name: ki.item.name,
-              quantity: ki.quantity,
-              itemType: ki.item.itemType,
-              inventoryUnit: ki.inventoryUnit ?? null,
-            }))}
+          waiting={waiting}
+          items={kitItems.filter((ki) => selItems.has(ki.id)).map(toKitSummary)}
           onComplete={() => {
             setNoteDialog(null)
             setRemovingItems(false)
@@ -1288,14 +1282,8 @@ export default function MyRigPage() {
           operators={operators}
           hubs={hubs}
           presets={NOTE_PRESETS}
-          items={[{
-            kitItemId: singleRemoveItem.id,
-            itemId: singleRemoveItem.item.id,
-            name: singleRemoveItem.item.name,
-            quantity: singleRemoveItem.quantity,
-            itemType: singleRemoveItem.item.itemType,
-            inventoryUnit: singleRemoveItem.inventoryUnit ?? null,
-          }]}
+          waiting={waiting}
+          items={[toKitSummary(singleRemoveItem)]}
           onComplete={() => {
             setSingleRemoveItem(null)
             void load()
@@ -1312,14 +1300,8 @@ export default function MyRigPage() {
           operators={operators}
           hubs={hubs}
           presets={NOTE_PRESETS}
-          items={kitItems.map<KitItemSummary>((ki) => ({
-            kitItemId: ki.id,
-            itemId: ki.item.id,
-            name: ki.item.name,
-            quantity: ki.quantity,
-            itemType: ki.item.itemType,
-            inventoryUnit: ki.inventoryUnit ?? null,
-          }))}
+          waiting={waiting}
+          items={kitItems.map(toKitSummary)}
           onComplete={() => {
             setNoteDialog(null)
             void load()
@@ -1355,6 +1337,7 @@ export default function MyRigPage() {
           showToast={showToast}
           blockOffline
           resolvePhotos
+          waiting={waiting}
         />
       )}
 

@@ -10,13 +10,10 @@ import { useOfflineQueue } from '@/hooks/useOfflineQueue'
 import { PhotoCapture } from './PhotoCapture'
 import { SearchableSelect } from './SearchableSelect'
 import { FIXABLE_OPTIONS, type ReturnCondition } from '@/lib/status'
+import type { HubOption } from '@/lib/hub-label'
+import { ReturnHubSelect } from './ReturnHubSelect'
 
-export interface HubOption {
-  id: string
-  name: string
-  city: string
-  state: string
-}
+export type { HubOption }
 
 export interface UserOption {
   id: string
@@ -31,6 +28,52 @@ export interface KitItemSummary {
   quantity: number
   itemType: string
   inventoryUnit: { id: string; qrCodeId: string; serialNumber: string | null; status: string } | null
+  /** The hub a counted line's stock was drawn from (the "Came from" hint). */
+  drawnHubId?: string | null
+}
+
+/** P1-1b (3.1): a page's kit line as the dialog takes it. */
+export function toKitSummary(ki: {
+  id: string
+  quantity: number
+  item: { id: string; name: string; itemType: string }
+  inventoryUnit?: KitItemSummary['inventoryUnit']
+  drawnHubId?: string | null
+}): KitItemSummary {
+  return {
+    kitItemId: ki.id,
+    itemId: ki.item.id,
+    name: ki.item.name,
+    quantity: ki.quantity,
+    itemType: ki.item.itemType,
+    inventoryUnit: ki.inventoryUnit ?? null,
+    drawnHubId: ki.drawnHubId ?? null,
+  }
+}
+
+/**
+ * P1-1b (3.1, §0-s): what the deployment's outgoing waiting transfers hold — lines (with
+ * the quantity waiting; null = the whole line) and vehicles, each with who it waits on.
+ */
+export type WaitingMap = {
+  items: Record<string, { qty: number | null; toName: string }>
+  vehicles: Record<string, { toName: string }>
+}
+
+/** Build a WaitingMap from outgoing PENDING transfers. */
+export function waitingFrom(transfers: {
+  status?: string
+  toOperator: { name: string }
+  items: { quantity: number | null; kitItem: { id: string } }[]
+  vehicles: { vehicle: { id: string } }[]
+}[]): WaitingMap {
+  const w: WaitingMap = { items: {}, vehicles: {} }
+  for (const tr of transfers) {
+    if (tr.status && tr.status !== 'PENDING') continue
+    for (const ti of tr.items) w.items[ti.kitItem.id] = { qty: ti.quantity, toName: tr.toOperator.name }
+    for (const tv of tr.vehicles) w.vehicles[tv.vehicle.id] = { toName: tr.toOperator.name }
+  }
+  return w
 }
 
 type DispositionType = 'HUB' | 'TRANSFER' | 'INOPERABLE'
@@ -59,33 +102,58 @@ interface DispositionDialogProps {
   onClose: () => void
   /** CC-24: one-tap note presets shown above the (optional) overall note. */
   presets?: readonly string[]
+  /** P1-1b (§0-s): gear waiting on a transfer from this deployment. */
+  waiting?: WaitingMap
 }
 
+/** How a line stands against the deployment's waiting transfers (§0-s). */
+type Waiting =
+  | { kind: 'none' }
+  | { kind: 'whole'; toName: string }
+  | { kind: 'partial'; qty: number; free: number; toName: string }
+  /** A legacy serialized line with no unit (API-6), only partly waiting: held, End refuses. */
+  | { kind: 'held'; toName: string }
+
+function waitingOf(item: KitItemSummary, waiting?: WaitingMap): Waiting {
+  const w = waiting?.items[item.kitItemId]
+  if (!w) return { kind: 'none' }
+  if (w.qty == null || w.qty >= item.quantity) return { kind: 'whole', toName: w.toName }
+  if (item.itemType !== 'CONSUMABLE' && !item.inventoryUnit) return { kind: 'held', toName: w.toName }
+  return { kind: 'partial', qty: w.qty, free: item.quantity - w.qty, toName: w.toName }
+}
+
+/** A line that goes back to a hub (D51): Return to Hub, or damage that can be fixed. */
+function needsHub(d: ItemDisposition, item: { itemType: string }): boolean {
+  return d.type === 'HUB' || (d.type === 'INOPERABLE' && item.itemType !== 'CONSUMABLE' && d.canBeFixed === true)
+}
 
 /**
  * PR-3b (S-2): a unit that is not plainly checked out — reported "Out of service"
  * (In maintenance) or otherwise held — starts on "Mark Inoperable / Damaged" with
  * "can be fixed", so it is returned into repair rather than defaulted back to a hub
- * shelf as if it were fine. Everything else starts on "Return to Hub".
+ * shelf as if it were fine. Everything else starts on "Return to Hub". P1-1b (D51):
+ * no hub is pre-picked.
  */
-function initialDisposition(item: { kitItemId: string; itemType: string; inventoryUnit: { status: string } | null }, hubId?: string): ItemDisposition {
+function initialDisposition(item: { kitItemId: string; itemType: string; inventoryUnit: { status: string } | null }): ItemDisposition {
   // PR-6 (D-x): a consumable line (even one carrying a legacy unit, D-z) is never
   // pre-set to a damage disposition — for it that is a write-off.
   if (item.itemType !== 'CONSUMABLE' && item.inventoryUnit && item.inventoryUnit.status !== 'CHECKED_OUT') {
     return { kitItemId: item.kitItemId, type: 'INOPERABLE', canBeFixed: true, photoUrls: [] }
   }
-  return { kitItemId: item.kitItemId, type: 'HUB', hubId, photoUrls: [] }
+  return { kitItemId: item.kitItemId, type: 'HUB', photoUrls: [] }
 }
 export function DispositionDialog({
   open,
   mode,
   deploymentId,
+  currentOperatorId,
   operators,
   hubs,
   items,
   onComplete,
   onClose,
   presets,
+  waiting,
 }: DispositionDialogProps) {
   const [dispositions, setDispositions] = React.useState<Map<string, ItemDisposition>>(() => {
     const m = new Map<string, ItemDisposition>()
@@ -95,42 +163,48 @@ export function DispositionDialog({
   const [note, setNote] = React.useState('')
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
-  // G1: rig-level final destination. Every "Return to Hub" item must land in a
-  // real hub — otherwise the server skips the per-hub stock credit and the
-  // quantity vanishes from hub views ("disappeared"/"HQ"). Default to the first
-  // hub; the per-item picker can override.
-  const [finalHubId, setFinalHubId] = React.useState('')
+  // P1-1b (D51): "Return everything to" fills every line that goes to a hub, except the
+  // lines whose hub the person picked on the line itself. Nothing is pre-picked.
+  const [allHubId, setAllHubId] = React.useState('')
+  const [pickedOnLine, setPickedOnLine] = React.useState<Set<string>>(() => new Set())
   const { mutate, isOffline } = useOfflineQueue()
 
   // Reset state when dialog opens with new items
   React.useEffect(() => {
     if (open) {
-      const defaultHub = hubs[0]?.id ?? ''
       const m = new Map<string, ItemDisposition>()
-      for (const item of items) m.set(item.kitItemId, initialDisposition(item, defaultHub || undefined))
+      for (const item of items) m.set(item.kitItemId, initialDisposition(item))
       setDispositions(m)
-      setFinalHubId(defaultHub)
+      setAllHubId('')
+      setPickedOnLine(new Set())
       setNote('')
       setError(null)
     }
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Apply the rig-level destination to every HUB item (overridable per item below).
-  function applyFinalHub(hubId: string) {
-    setFinalHubId(hubId)
-    setDispositions((prev) => {
-      const next = new Map(prev)
-      for (const [k, d] of next) if (d.type === 'HUB') next.set(k, { ...d, hubId: hubId || undefined })
-      return next
-    })
-  }
+  const itemById = new Map(items.map((i) => [i.kitItemId, i]))
+  /** A line that newly goes to a hub takes the all-lines hub, unless picked on the line. */
+  const withAllHub = (d: ItemDisposition): ItemDisposition =>
+    allHubId && !pickedOnLine.has(d.kitItemId) && needsHub(d, itemById.get(d.kitItemId) ?? { itemType: '' })
+      ? { ...d, hubId: allHubId }
+      : d
 
   // Hotfix 2026-10-25: a re-read can change the kit while this dialog is open (signal
   // returning, a drained queue). A line added since opening gets its default; a line
   // that has left is not sent.
-  const current = items.map((i) => dispositions.get(i.kitItemId) ?? initialDisposition(i, finalHubId || undefined))
+  const current = items.map((i) => dispositions.get(i.kitItemId) ?? withAllHub(initialDisposition(i)))
+  const waits = new Map(items.map((i) => [i.kitItemId, waitingOf(i, waiting)]))
+  // §0-s: a wholly waiting (or held) line stays with its transfer — shown, never sent.
+  const sendable = current.filter((d) => {
+    const k = waits.get(d.kitItemId)?.kind
+    return k !== 'whole' && k !== 'held'
+  })
 
-  const missingHub = current.some((d) => d.type === 'HUB' && !d.hubId)
+  const missingHub = sendable.some((d) => needsHub(d, itemById.get(d.kitItemId)!) && !d.hubId)
+  const missingPerson = sendable.some((d) => d.type === 'TRANSFER' && !d.toOperatorId)
+  const nothingToSend = mode === 'remove-items' && sendable.length === 0
+  // D52: a transfer names someone other than the deployment's own operator.
+  const people = operators.filter((o) => o.id !== currentOperatorId)
   // UXP-3 (3g) / D36: an INOPERABLE disposition used to REQUIRE ≥1 damage photo (§11.10,
   // client + server). A denied/missing camera must never block a submit, so the photo is
   // now a nudge — the server-side clauses in /items and /end are gone too.
@@ -138,7 +212,27 @@ export function DispositionDialog({
   function setDisp(kitItemId: string, patch: Partial<ItemDisposition>) {
     setDispositions((prev) => {
       const next = new Map(prev)
-      next.set(kitItemId, { ...(prev.get(kitItemId) ?? current.find((d) => d.kitItemId === kitItemId)!), ...patch })
+      const before = prev.get(kitItemId) ?? current.find((d) => d.kitItemId === kitItemId)!
+      const after = { ...before, ...patch }
+      const item = itemById.get(kitItemId) ?? { itemType: '' }
+      next.set(kitItemId, !needsHub(before, item) && needsHub(after, item) ? withAllHub(after) : after)
+      return next
+    })
+  }
+
+  function pickLineHub(kitItemId: string, hubId: string) {
+    setPickedOnLine((prev) => new Set(prev).add(kitItemId))
+    setDisp(kitItemId, { hubId: hubId || undefined })
+  }
+
+  function applyAllHub(hubId: string) {
+    setAllHubId(hubId)
+    setDispositions((prev) => {
+      const next = new Map(prev)
+      for (const d of current) {
+        if (pickedOnLine.has(d.kitItemId) || !needsHub(d, itemById.get(d.kitItemId)!)) continue
+        next.set(d.kitItemId, { ...(prev.get(d.kitItemId) ?? d), hubId: hubId || undefined })
+      }
       return next
     })
   }
@@ -148,12 +242,17 @@ export function DispositionDialog({
     setError(null)
     // PR-6 (D-x): a consumable's Write off goes as `type: 'INOPERABLE'` with no
     // `canBeFixed` — the wire format is unchanged; the server writes it off.
-    const consumableLines = new Set(items.filter((i) => i.itemType === 'CONSUMABLE').map((i) => i.kitItemId))
-    const itemDispositions = current.map((d) => {
-      if (d.type !== 'INOPERABLE' || !consumableLines.has(d.kitItemId)) return d
-      const { canBeFixed, ...rest } = d
-      void canBeFixed
-      return rest
+    // P1-1b: `hubId` rides only on a line that shows a hub picker, so a stale pick never
+    // does (P1-1c relies on it); a partly waiting line returns at most its free part.
+    const itemDispositions = sendable.map((d) => {
+      const item = itemById.get(d.kitItemId)!
+      const { hubId, canBeFixed, ...rest } = d
+      const out: Omit<ItemDisposition, 'hubId' | 'canBeFixed'> & { hubId?: string; canBeFixed?: boolean } = { ...rest }
+      if (needsHub(d, item)) out.hubId = hubId
+      if (!(d.type === 'INOPERABLE' && item.itemType === 'CONSUMABLE') && canBeFixed !== undefined) out.canBeFixed = canBeFixed
+      const w = waits.get(d.kitItemId)
+      if (mode === 'remove-items' && w?.kind === 'partial') out.quantity = Math.min(d.quantity ?? w.free, w.free)
+      return out
     })
     const url = mode === 'end-deployment'
       ? `/api/deployments/${deploymentId}/end`
@@ -206,29 +305,26 @@ export function DispositionDialog({
           rows={2}
           sx={{ mb: 2, mt: 1 }}
         />
-        <TextField
-          select
-          label="Final destination (hub)"
-          value={finalHubId}
-          onChange={(e) => applyFinalHub(e.target.value)}
-          fullWidth
-          required
-          disabled={hubs.length === 0}
-          error={hubs.length > 0 && !finalHubId}
-          helperText={hubs.length === 0
-            ? 'No hubs available — add a hub before returning items here'
-            : 'Where the rig returns to. Applies to every item below (override per item if needed).'}
-          sx={{ mb: 3 }}
-        >
-          {hubs.map((h) => (
-            <MenuItem key={h.id} value={h.id}>{h.name} — {h.city}, {h.state}</MenuItem>
-          ))}
-        </TextField>
+        {items.length > 1 && (
+          <Stack sx={{ mb: 3 }}>
+            <ReturnHubSelect
+              hubs={hubs}
+              value={allHubId}
+              onChange={applyAllHub}
+              label="Return everything to"
+              required={false}
+              helperText="Pick the hub this equipment goes back to. Applies to every item below — change any line if needed."
+            />
+          </Stack>
+        )}
         <Stack spacing={2} divider={<Divider />}>
           {items.map((item) => {
             const disp = current.find((d) => d.kitItemId === item.kitItemId)!
             const isConsumable = item.itemType === 'CONSUMABLE'
-            const currentQty = disp.quantity ?? item.quantity
+            const w = waits.get(item.kitItemId)!
+            const held = w.kind === 'whole' || w.kind === 'held'
+            const maxQty = w.kind === 'partial' ? w.free : item.quantity
+            const currentQty = Math.min(disp.quantity ?? maxQty, maxQty)
             return (
               <Stack key={item.kitItemId} spacing={1}>
                 <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
@@ -243,6 +339,20 @@ export function DispositionDialog({
                     </Typography>
                   )}
                 </Stack>
+                {held ? (
+                  <Typography variant="body2" color="text.secondary">
+                    {`Waiting on transfer to ${w.toName}`}
+                    {w.kind === 'held'
+                      ? ' — answer or cancel that transfer before ending.'
+                      : mode === 'remove-items' ? ' — cancel that transfer first.' : ''}
+                  </Typography>
+                ) : (
+                <>
+                {w.kind === 'partial' && (
+                  <Typography variant="body2" color="text.secondary">
+                    {`${w.qty} waiting on transfer to ${w.toName} — the rest:`}
+                  </Typography>
+                )}
                 <TextField
                   select
                   label="Disposition"
@@ -251,51 +361,45 @@ export function DispositionDialog({
                   onChange={(e) => setDisp(item.kitItemId, { type: e.target.value as DispositionType })}
                 >
                   <MenuItem value="HUB">Return to Hub</MenuItem>
-                  <MenuItem value="TRANSFER">Transfer to Operator</MenuItem>
+                  {w.kind !== 'partial' && <MenuItem value="TRANSFER">Transfer to a person</MenuItem>}
                   {/* PR-6 (D-x): a damaged consumable is written off, not repaired. */}
                   <MenuItem value="INOPERABLE">{isConsumable ? 'Write off' : 'Mark Inoperable / Damaged'}</MenuItem>
                 </TextField>
-                {/* Partial quantity for consumables */}
-                {isConsumable && item.quantity > 1 && (
+                {/* Partial quantity for consumables — only mid-deployment; End returns whole lines (§0-u). */}
+                {mode === 'remove-items' && isConsumable && maxQty > 1 && (
                   <TextField
                     label="Quantity to remove"
                     type="number"
                     size="small"
                     value={currentQty}
                     onChange={(e) => {
-                      const v = Math.max(1, Math.min(item.quantity, parseInt(e.target.value) || 1))
+                      const v = Math.max(1, Math.min(maxQty, parseInt(e.target.value) || 1))
                       setDisp(item.kitItemId, { quantity: v })
                     }}
-                    inputProps={{ min: 1, max: item.quantity }}
+                    inputProps={{ min: 1, max: maxQty }}
                     helperText={currentQty < item.quantity
                       ? `${item.quantity - currentQty} will remain in kit`
                       : 'All will be removed'}
                   />
                 )}
-                {disp.type === 'HUB' && (
-                  <TextField
-                    select
-                    label="Return hub"
+                {needsHub(disp, item) && (
+                  <ReturnHubSelect
+                    hubs={hubs}
                     size="small"
-                    required
                     value={disp.hubId ?? ''}
-                    error={!disp.hubId}
-                    onChange={(e) => setDisp(item.kitItemId, { hubId: e.target.value || undefined })}
-                    helperText={!disp.hubId ? 'Pick a hub so this item isn’t lost' : undefined}
-                  >
-                    {hubs.map((h) => (
-                      <MenuItem key={h.id} value={h.id}>{h.name} — {h.city}, {h.state}</MenuItem>
-                    ))}
-                  </TextField>
+                    onChange={(v) => pickLineHub(item.kitItemId, v)}
+                    cameFromHubId={item.drawnHubId}
+                  />
                 )}
                 {disp.type === 'TRANSFER' && (
                   <SearchableSelect
-                    label="Destination operator"
+                    label="Person"
                     size="small"
-                    placeholder="Select operator…"
+                    placeholder="Pick a person"
                     value={disp.toOperatorId ?? ''}
                     onChange={(v) => setDisp(item.kitItemId, { toOperatorId: v })}
-                    options={operators.map((o) => ({ value: o.id, label: o.name }))}
+                    options={people.map((o) => ({ value: o.id, label: o.name }))}
+                    helperText={people.length === 0 ? 'People didn’t load — you need a connection to pick a person.' : undefined}
                   />
                 )}
                 {disp.type === 'INOPERABLE' && (
@@ -331,6 +435,8 @@ export function DispositionDialog({
                     />
                   </Stack>
                 )}
+                </>
+                )}
               </Stack>
             )
           })}
@@ -350,10 +456,10 @@ export function DispositionDialog({
           variant="contained"
           color={mode === 'end-deployment' ? 'error' : 'primary'}
           onClick={handleSubmit}
-          disabled={loading || missingHub}
+          disabled={loading || missingHub || missingPerson || nothingToSend}
           startIcon={loading ? <CircularProgress size={16} /> : undefined}
         >
-          {loading ? 'Working…' : missingHub ? 'Choose a return hub' : mode === 'end-deployment' ? 'End Deployment' : 'Return Items'}
+          {loading ? 'Working…' : missingHub ? 'Pick a return hub' : missingPerson ? 'Pick a person' : mode === 'end-deployment' ? 'End Deployment' : 'Return Items'}
         </Button>
       </DialogActions>
     </Dialog>

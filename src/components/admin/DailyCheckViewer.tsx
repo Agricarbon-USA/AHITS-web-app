@@ -13,7 +13,7 @@ import BuildIcon from '@mui/icons-material/Build'
 import { useRouter } from 'next/navigation'
 import { PhotoGallery } from '@/components/shared/PhotoGallery'
 import { useToast } from '@/components/shared/useToast'
-import { formatDate } from '@/lib/utils'
+import { formatDay } from '@/lib/utils'
 import { apiErrorMessage } from '@/lib/api-error-shape'
 import { copy } from '@/lib/copy/admin-actions'
 
@@ -75,7 +75,7 @@ export function DailyCheckDetails({ check }: { check: ViewerCheck }) {
           ? <Chip icon={<CheckCircleIcon />} label="Pass" color="success" size="small" />
           : <Chip icon={<CancelIcon />} label="Fail" color="error" size="small" />}
         <Typography variant="body2" color="text.secondary">
-          {check.vehicle?.name ?? 'Vehicle'} · {check.operator?.name ?? 'Unknown operator'} · {formatDate(check.date)}
+          {check.vehicle?.name ?? 'Vehicle'} · {check.operator?.name ?? 'Unknown operator'} · {formatDay(check.date)}
         </Typography>
       </Stack>
 

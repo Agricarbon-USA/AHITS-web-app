@@ -13,7 +13,8 @@ interface NotePhotoDialogProps {
   description?: string
   loading?: boolean
   onClose: () => void
-  onConfirm: (note: string, photoUrls: string[]) => void
+  /** P1-1b (3.2): return (or resolve) `false` to keep the note and photos — e.g. the write failed. */
+  onConfirm: (note: string, photoUrls: string[]) => void | boolean | Promise<void | boolean>
   confirmLabel?: string
   confirmColor?: 'primary' | 'error' | 'warning' | 'success' | 'inherit'
   /** CC-24: one-tap note presets shown above the (optional) note field. */
@@ -34,8 +35,10 @@ export function NotePhotoDialog({
   const [note, setNote] = React.useState('')
   const [photos, setPhotos] = React.useState<string[]>([])
 
-  function handleConfirm() {
-    onConfirm(note, photos)
+  async function handleConfirm() {
+    let r
+    try { r = await onConfirm(note, photos) } catch { return }
+    if (r === false) return
     setNote('')
     setPhotos([])
   }

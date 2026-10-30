@@ -30,7 +30,8 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }))
 
-import { NewDeploymentDialog, dropUnavailablePicks, droppedPicksMessage, hubLabel, type PickerData } from '@/components/admin/NewDeploymentDialog'
+import { NewDeploymentDialog, dropUnavailablePicks, droppedPicksMessage, type PickerData } from '@/components/admin/NewDeploymentDialog'
+import { hubLabel } from '@/lib/hub-label'
 import AdminDeploymentsPage from '@/app/(admin)/admin/deployments/page'
 import { toPickerOptions } from '@/lib/inventory-options'
 

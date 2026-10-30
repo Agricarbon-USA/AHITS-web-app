@@ -12,6 +12,8 @@ import AgricultureIcon from '@mui/icons-material/Agriculture'
 import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
 import { resolvePhotoRefs } from '@/lib/photoStore'
 import { dispatchInvalidate } from '@/lib/invalidation'
+import { apiErrorMessage } from '@/lib/api-error-shape'
+import type { WaitingMap } from '@/components/shared/DispositionDialog'
 
 const VEHICLE_ICON: Record<string, React.ElementType> = {
   TRUCK: LocalShippingIcon,
@@ -69,6 +71,7 @@ export function TransferDialog({
   blockOffline = false,
   resolvePhotos = false,
   excludeOperatorId,
+  waiting,
 }: {
   rig: TransferDialogRig
   operators: TransferOperator[]
@@ -78,12 +81,15 @@ export function TransferDialog({
   blockOffline?: boolean
   resolvePhotos?: boolean
   excludeOperatorId?: string
+  /** P1-1b (§0-s): gear already waiting on a transfer is neither shown nor sent. */
+  waiting?: WaitingMap
 }) {
-  const kitItems = rig.kits.flatMap((k) => k.items)
+  const kitItems = rig.kits.flatMap((k) => k.items).filter((ki) => !waiting?.items[ki.id])
+  const rigVehicles = rig.vehicles.filter((rv) => !waiting?.vehicles[rv.vehicle.id])
   const [step, setStep] = React.useState(0)
   const [toOperatorId, setToOperatorId] = React.useState('')
   const [selVehicles, setSelVehicles] = React.useState<Set<string>>(
-    new Set(rig.vehicles.map((rv) => rv.vehicle.id))
+    new Set(rigVehicles.map((rv) => rv.vehicle.id))
   )
   const [selKitItems, setSelKitItems] = React.useState<Set<string>>(
     new Set(kitItems.map((ki) => ki.id))
@@ -105,7 +111,7 @@ export function TransferDialog({
     // that surfaces a confusing generic "Network error".
     if (blockOffline && typeof navigator !== 'undefined' && !navigator.onLine) {
       showToast({ message: 'Transfers need an internet connection. Try again once you’re back online.', severity: 'warning' })
-      return
+      return false
     }
     setLoading(true)
     try {
@@ -131,15 +137,17 @@ export function TransferDialog({
       })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
-        showToast({ message: typeof d.error === 'string' ? d.error : 'Transfer failed. Please try again.', severity: 'error' })
-        return
+        showToast({ message: apiErrorMessage(d, 'Transfer failed. Please try again.'), severity: 'error' })
+        return false
       }
       showToast({ message: `Transfer request sent — waiting for ${destName} to accept.`, severity: 'success' })
       dispatchInvalidate(['transfers', 'deployments']) // PR-5 (U-10): every open transfer list re-reads
       onSuccess()
       onClose()
+      return true
     } catch {
       showToast({ message: 'Network error. Please try again.', severity: 'error' })
+      return false
     } finally {
       setLoading(false)
     }
@@ -171,7 +179,7 @@ export function TransferDialog({
 
         {step === 0 && (
           <SearchableSelect
-            label="Destination Operator"
+            label="Person"
             value={toOperatorId}
             onChange={setToOperatorId}
             options={destOperators.map((o) => ({ value: o.id, label: o.name }))}
@@ -180,11 +188,11 @@ export function TransferDialog({
 
         {step === 1 && (
           <Stack spacing={2}>
-            {rig.vehicles.length > 0 && (
+            {rigVehicles.length > 0 && (
               <Box>
                 <Typography variant="subtitle2" fontWeight={600} mb={1}>Vehicles</Typography>
                 <Stack spacing={0.5}>
-                  {rig.vehicles.map((rv) => {
+                  {rigVehicles.map((rv) => {
                     const Icon = VEHICLE_ICON[rv.vehicle.type] ?? LocalShippingIcon
                     return (
                       <Stack key={rv.vehicle.id} direction="row" alignItems="center" spacing={1}>
