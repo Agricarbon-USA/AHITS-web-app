@@ -246,11 +246,15 @@ describe('DispositionDialog preselect (S-2)', () => {
         onComplete={() => {}} onClose={() => {}}
       />,
     )
+    // P1-1b (D51): both lines go to a hub (fixable damage too); "Return everything to" fills both.
+    expect(screen.getByRole('button', { name: /Pick a return hub/i })).toBeDisabled()
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: /Return everything to/i }))
+    fireEvent.click(within(screen.getByRole('listbox')).getByText(/Home Lab/))
     fireEvent.click(screen.getByRole('button', { name: /Return Items/i }))
     await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1))
     const disps = (mutate.mock.calls[0][0].body as { itemDispositions: { kitItemId: string; type: string; canBeFixed?: boolean }[] }).itemDispositions
-    expect(disps.find((d) => d.kitItemId === 'k1')).toMatchObject({ type: 'INOPERABLE', canBeFixed: true })
-    expect(disps.find((d) => d.kitItemId === 'k2')).toMatchObject({ type: 'HUB' })
+    expect(disps.find((d) => d.kitItemId === 'k1')).toMatchObject({ type: 'INOPERABLE', canBeFixed: true, hubId: 'hub1' })
+    expect(disps.find((d) => d.kitItemId === 'k2')).toMatchObject({ type: 'HUB', hubId: 'hub1' })
   })
 })
 

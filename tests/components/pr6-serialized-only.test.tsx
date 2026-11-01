@@ -250,15 +250,18 @@ describe('PR-6 · DispositionDialog: a damaged consumable is written off (D-x)',
   const dispositionSelect = (name: string) =>
     within(screen.getByText(name).closest('div')!.parentElement!).getByRole('combobox', { name: /Disposition/ })
 
-  it('a consumable line offers Return to Hub · Transfer to Operator · Write off; Write off has no fixable question and goes without canBeFixed', async () => {
+  it('a consumable line offers Return to Hub · Transfer to a person · Write off; Write off has no fixable question and goes without canBeFixed', async () => {
     renderDialog()
     fireEvent.mouseDown(dispositionSelect('Sample bags'))
     const opts = (await screen.findAllByRole('option')).map((o) => o.textContent)
-    expect(opts).toEqual(['Return to Hub', 'Transfer to Operator', 'Write off'])
+    expect(opts).toEqual(['Return to Hub', 'Transfer to a person', 'Write off'])
     fireEvent.click(screen.getByRole('option', { name: 'Write off' }))
     expect(screen.queryByLabelText(/Can it be fixed/)).toBeNull()
     expect(screen.getByText('Damage photos — add at least one if you can')).toBeInTheDocument()
 
+    // P1-1b (D51): the GPS line still goes to a hub, and nothing is pre-picked.
+    fireEvent.mouseDown(within(screen.getByText('GPS rover').closest('div')!.parentElement!).getByRole('combobox', { name: /Return hub/ }))
+    fireEvent.click(within(screen.getByRole('listbox')).getByText(/Home Lab/))
     fireEvent.click(screen.getByRole('button', { name: 'End Deployment' }))
     await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1))
     const sent = mutate.mock.calls[0]![0].body.itemDispositions.find((d) => d.kitItemId === 'ki-bags')!
@@ -270,7 +273,7 @@ describe('PR-6 · DispositionDialog: a damaged consumable is written off (D-x)',
     renderDialog()
     fireEvent.mouseDown(dispositionSelect('GPS rover'))
     const opts = (await screen.findAllByRole('option')).map((o) => o.textContent)
-    expect(opts).toEqual(['Return to Hub', 'Transfer to Operator', 'Mark Inoperable / Damaged'])
+    expect(opts).toEqual(['Return to Hub', 'Transfer to a person', 'Mark Inoperable / Damaged'])
     fireEvent.click(screen.getByRole('option', { name: 'Mark Inoperable / Damaged' }))
     expect(screen.getByLabelText(/Can it be fixed/)).toBeInTheDocument()
   })
@@ -301,7 +304,8 @@ describe('PR-6 · Admin Return Item: a consumable offers Good · Write off', () 
     const itemRow = screen.getByText(itemName).closest('li') ?? screen.getByText(itemName).parentElement!.parentElement!
     fireEvent.click(within(itemRow as HTMLElement).getByRole('button', { name: 'Return item' }))
     const dlg = await screen.findByRole('dialog', { name: 'Return Item' })
-    fireEvent.mouseDown(within(dlg).getByRole('combobox'))
+    // P1-1b: the hub picker adds a second combobox; the Condition select comes first.
+    fireEvent.mouseDown(within(dlg).getAllByRole('combobox')[0])
     const opts = (await screen.findAllByRole('option')).map((o) => o.textContent)
     fireEvent.keyDown(screen.getByRole('listbox'), { key: 'Escape' })
     fireEvent.click(within(dlg).getByRole('button', { name: 'Cancel' }))

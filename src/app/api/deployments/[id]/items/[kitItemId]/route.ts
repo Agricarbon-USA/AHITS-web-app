@@ -223,6 +223,7 @@ async function _DELETE(
     // (terminal for the offline queue, message shown).
     const conflict = deploymentWriteConflict(err)
     if (conflict) return NextResponse.json(conflict, { status: 409 })
+    console.error('[DELETE /api/deployments/[id]/items/[kitItemId]]', err)
     throw err
   }
 

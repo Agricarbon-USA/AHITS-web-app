@@ -28,11 +28,13 @@ import { NotePhotoDialog } from '@/components/shared/NotePhotoDialog'
 import { TransferDialog } from '@/components/shared/TransferDialog'
 import { KitItemSelectRow, type AdminKitEntry } from '@/components/admin/KitItemSelectRow'
 import {
-  NewDeploymentDialog, hubLabel, isPickableItem, dropUnavailablePicks, droppedPicksMessage,
+  NewDeploymentDialog, isPickableItem, dropUnavailablePicks, droppedPicksMessage,
   type VehicleOption, type InventoryOption, type PickerData, type StartedDeployment,
 } from '@/components/admin/NewDeploymentDialog'
-import { DispositionDialog } from '@/components/shared/DispositionDialog'
+import { DispositionDialog, toKitSummary, waitingFrom } from '@/components/shared/DispositionDialog'
+import { ReturnHubSelect } from '@/components/shared/ReturnHubSelect'
 import type { HubOption, UserOption } from '@/components/shared/DispositionDialog'
+import { hubLabel } from '@/lib/hub-label'
 import { SearchableSelect } from '@/components/shared/SearchableSelect'
 import { useCanEdit, EditGuard, MutationButton, MutationIconButton } from '@/components/shared/ReadOnly'
 import { ConditionSelect } from '@/components/shared/ConditionSelect'
@@ -91,6 +93,7 @@ interface KitItemRow {
   quantity: number
   item: { id: string; name: string; itemType: string; categoryRef: { name: string } | null }
   inventoryUnit: { id: string; serialNumber: string | null; qrCodeId: string; status: string } | null
+  drawnHubId?: string | null
 }
 
 interface KitRow {
@@ -132,7 +135,7 @@ interface TransferRow {
   fromRig: { id: string; operator: { id: string; name: string } }
   toOperator: { id: string; name: string }
   vehicles: { id: string; vehicle: { id: string; name: string; type: string } }[]
-  items: { id: string; kitItem: { id: string; quantity: number; item: { id: string; name: string } } }[]
+  items: { id: string; quantity: number | null; kitItem: { id: string; quantity: number; item: { id: string; name: string } } }[]
 }
 
 // ── Helpers ───────────────────────────────────────────────────────
@@ -184,6 +187,7 @@ function DeploymentDrawer({
   const [removeDialog, setRemoveDialog] = React.useState<{ open: boolean; kitItem: KitItemRow | null }>({ open: false, kitItem: null })
   const [removeQty, setRemoveQty] = React.useState(1)
   const [removeCondition, setRemoveCondition] = React.useState<ReturnCondition>('GOOD')
+  const [removeHubId, setRemoveHubId] = React.useState('') // P1-1b (D51): picked, never pre-picked
   const [addVehicleOpen, setAddVehicleOpen] = React.useState(false)
   const [pendingVehicles, setPendingVehicles] = React.useState<Set<string>>(new Set())
   const [isRentalToggle, setIsRentalToggle] = React.useState(false)
@@ -266,6 +270,7 @@ function DeploymentDrawer({
   const { run } = useMutation()
 
   const outgoingTransfers = pendingTransfers.filter((t) => t.fromRig.id === rig.id)
+  const waiting = React.useMemo(() => waitingFrom(outgoingTransfers), [outgoingTransfers]) // P1-1b (§0-s)
   const kitItems = rig.kits.flatMap((k) => k.items)
   // PR-3b: Active only — the server refuses a vehicle in repair, out of service or retired.
   const unassignedVehicles = vehicles.filter((v) => (!v.assignedOperatorId || v.assignedOperatorId === rig.operator.id) && v.status === 'ACTIVE')
@@ -318,7 +323,7 @@ function DeploymentDrawer({
   }
 
   const handleReassignPrimary = async () => {
-    if (!reassignTargetId || !reassignNote.trim()) return
+    if (!reassignTargetId) return
     setReassignLoading(true)
     try {
       const res = await fetch(`/api/deployments/${rig.id}/handoff`, {
@@ -400,16 +405,24 @@ function DeploymentDrawer({
 
   const handleAddVehicles = async (note: string, photoUrls: string[]) => {
     setActionLoading(true)
-    const res = await fetch(`/api/deployments/${rig.id}/vehicles`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vehicleIds: Array.from(pendingVehicles), note, photoUrls }),
-    })
+    // P1-1b (3.2): a failed add returns false, so the note dialog keeps the note and photos.
+    let res: Response
+    try {
+      res = await fetch(`/api/deployments/${rig.id}/vehicles`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vehicleIds: Array.from(pendingVehicles), note, photoUrls }),
+      })
+    } catch {
+      setActionLoading(false)
+      showToast('Network error. Please try again.', 'error')
+      return false
+    }
     setActionLoading(false)
     if (!res.ok) {
       const d = await res.json().catch(() => ({}))
-      showToast(typeof d.error === 'string' ? d.error : 'Failed to add vehicles', 'error')
-      return
+      showToast(apiErrorMessage(d, 'Failed to add vehicles'), 'error')
+      return false
     }
     setNoteDialog(null)
     setAddVehicleOpen(false)
@@ -539,14 +552,17 @@ function DeploymentDrawer({
 
   const handleRemoveItem = async () => {
     if (!removeDialog.kitItem) return
+    const writeOff = removeIsWriteOff
+    setActionLoading(true) // B2-10: no double tap
     const res = await fetch(`/api/deployments/${rig.id}/items/${removeDialog.kitItem.id}`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ quantity: removeQty, returnCondition: removeCondition }),
-    })
+      body: JSON.stringify({ quantity: removeQty, returnCondition: removeCondition, ...(!writeOff && removeHubId && { hubId: removeHubId }) }),
+    }).finally(() => setActionLoading(false))
     if (res.ok) {
       setRemoveDialog({ open: false, kitItem: null })
-      showToast(copy('deployment.returnItem').success)
+      const hubName = hubs.find((h) => h.id === removeHubId)?.name ?? 'the hub'
+      showToast(writeOff ? copy('deployment.returnItem').writtenOff : copy('deployment.returnItem').success(hubName))
       await refresh()
     } else {
       // Q4: surface the failure — a swallowed error here looked like a successful return.
@@ -555,25 +571,9 @@ function DeploymentDrawer({
     }
   }
 
-  const selectedItems = kitItems
-    .filter((ki) => selItems.has(ki.id))
-    .map((ki) => ({
-      kitItemId: ki.id,
-      itemId: ki.item.id,
-      name: ki.item.name,
-      quantity: ki.quantity,
-      itemType: ki.item.itemType,
-      inventoryUnit: ki.inventoryUnit ?? null,
-    }))
-
-  const allKitItemSummaries = kitItems.map((ki) => ({
-    kitItemId: ki.id,
-    itemId: ki.item.id,
-    name: ki.item.name,
-    quantity: ki.quantity,
-    itemType: ki.item.itemType,
-    inventoryUnit: ki.inventoryUnit ?? null,
-  }))
+  const removeIsWriteOff = removeDialog.kitItem?.item.itemType === 'CONSUMABLE' && removeCondition === 'INOPERABLE'
+  const selectedItems = kitItems.filter((ki) => selItems.has(ki.id)).map(toKitSummary)
+  const allKitItemSummaries = kitItems.map(toKitSummary)
 
   return (
     <>
@@ -614,7 +614,7 @@ function DeploymentDrawer({
                   {outgoingTransfers.map((tr) => {
                     const summary = [
                       tr.vehicles.map((tv) => tv.vehicle.name).join(', '),
-                      tr.items.map((ti) => `${ti.kitItem.item.name} ×${ti.kitItem.quantity}`).join(', '),
+                      tr.items.map((ti) => `${ti.kitItem.item.name} ×${ti.quantity ?? ti.kitItem.quantity}`).join(', '),
                     ].filter(Boolean).join(', ')
                     return (
                       <Box key={tr.id} sx={{ p: 1.5, border: '1px solid', borderColor: 'warning.main', borderRadius: 1 }}>
@@ -622,7 +622,7 @@ function DeploymentDrawer({
                           <Box>
                             <Typography variant="body2" fontWeight={600}>→ {tr.toOperator.name}</Typography>
                             <Typography variant="caption" color="text.secondary">{summary}</Typography>
-                            <Typography variant="caption" color="text.secondary" display="block">{tr.note}</Typography>
+                            {tr.note && <Typography variant="caption" color="text.secondary" display="block">{tr.note}</Typography>}
                             <Typography variant="caption" color="text.secondary">{formatDate(tr.createdAt)}</Typography>
                           </Box>
                           <MutationButton size="small" color="error" onClick={() => setCancelTransferId(tr.id)}>Cancel</MutationButton>
@@ -670,7 +670,7 @@ function DeploymentDrawer({
                   const Icon = VEHICLE_ICON[rv.vehicle.type] ?? LocalShippingIcon
                   return (
                     <Stack key={rv.id} direction="row" alignItems="center" spacing={1}>
-                      {removingVehicles && (
+                      {removingVehicles && !waiting.vehicles[rv.vehicle.id] && (
                         <Checkbox size="small" checked={selVehicles.has(rv.vehicle.id)}
                           onChange={(e) => { const s = new Set(selVehicles); e.target.checked ? s.add(rv.vehicle.id) : s.delete(rv.vehicle.id); setSelVehicles(s) }} />
                       )}
@@ -759,6 +759,7 @@ function DeploymentDrawer({
                           setRemoveDialog({ open: true, kitItem: ki })
                           setRemoveQty(ki.quantity)
                           setRemoveCondition('GOOD')
+                          setRemoveHubId('')
                         }}>
                         <RemoveCircleOutlineIcon fontSize="small" />
                       </MutationIconButton>
@@ -1007,11 +1008,11 @@ function DeploymentDrawer({
                     <MenuItem value="AVAILABLE">Return to Fleet (Available)</MenuItem>
                     <MenuItem value="IN_MAINTENANCE">Send to Maintenance</MenuItem>
                     <MenuItem value="RETIRED">Retire Vehicle</MenuItem>
-                    <MenuItem value="TRANSFER">Transfer to Another Operator</MenuItem>
+                    <MenuItem value="TRANSFER">Transfer to a person</MenuItem>
                   </TextField>
                   {disp.dispositionType === 'TRANSFER' && (
                     <TextField
-                      select label="Destination operator" size="small"
+                      select label="Person" size="small"
                       value={disp.toOperatorId ?? ''}
                       onChange={(e) => {
                         const m = new Map(vehicleDispositions)
@@ -1019,7 +1020,7 @@ function DeploymentDrawer({
                         setVehicleDispositions(m)
                       }}
                     >
-                      <MenuItem value="" disabled>Select operator…</MenuItem>
+                      <MenuItem value="" disabled>Pick a person</MenuItem>
                       {operators.filter((o) => o.id !== rig.operator.id).map((o) => (
                         <MenuItem key={o.id} value={o.id}>{o.name}</MenuItem>
                       ))}
@@ -1035,7 +1036,7 @@ function DeploymentDrawer({
           <Button
             variant="contained" color="error"
             onClick={handleRemoveVehicles}
-            disabled={actionLoading}
+            disabled={actionLoading || Array.from(selVehicles).some((id) => vehicleDispositions.get(id)?.dispositionType === 'TRANSFER' && !vehicleDispositions.get(id)?.toOperatorId)}
             startIcon={actionLoading ? <CircularProgress size={16} /> : undefined}
           >
             {actionLoading ? 'Working…' : 'Confirm Remove'}
@@ -1075,10 +1076,18 @@ function DeploymentDrawer({
           {/* PR-6 (D-x): a damaged consumable is written off, not repaired — Good · Write off. */}
           <ConditionSelect label="Condition" value={removeCondition} onChange={setRemoveCondition}
             options={removeDialog.kitItem?.item.itemType === 'CONSUMABLE' ? CONSUMABLE_RETURN_CONDITIONS : undefined} />
+          {/* P1-1b (D51): every return names its hub; a write-off goes to none. */}
+          {!removeIsWriteOff && (
+            <Box sx={{ mt: 2 }}>
+              <ReturnHubSelect hubs={hubs} value={removeHubId} onChange={setRemoveHubId}
+                cameFromHubId={removeDialog.kitItem?.inventoryUnit ? null : removeDialog.kitItem?.drawnHubId} />
+            </Box>
+          )}
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => setRemoveDialog({ open: false, kitItem: null })}>Cancel</Button>
-          <MutationButton variant="contained" color="error" onClick={handleRemoveItem}>Return</MutationButton>
+          <MutationButton variant="contained" color="error" onClick={handleRemoveItem}
+            disabled={actionLoading || (!removeIsWriteOff && !removeHubId)}>Return</MutationButton>
         </DialogActions>
       </Dialog>
 
@@ -1093,6 +1102,7 @@ function DeploymentDrawer({
           hubs={hubs}
           presets={NOTE_PRESETS}
           items={selectedItems}
+          waiting={waiting}
           onComplete={() => {
             setNoteDialog(null)
             setRemovingItems(false)
@@ -1114,6 +1124,7 @@ function DeploymentDrawer({
           hubs={hubs}
           presets={NOTE_PRESETS}
           items={allKitItemSummaries}
+          waiting={waiting}
           onComplete={() => {
             setNoteDialog(null)
             void refresh().then(() => onClose())
@@ -1123,7 +1134,7 @@ function DeploymentDrawer({
       )}
 
       {transferOpen && (
-        <TransferDialog rig={rig} operators={operators} excludeOperatorId={rig.operator.id} onClose={() => setTransferOpen(false)} onSuccess={refresh} showToast={(t) => showToast(t.message, t.severity === 'error' ? 'error' : 'success')} />
+        <TransferDialog rig={rig} operators={operators} excludeOperatorId={rig.operator.id} waiting={waiting} onClose={() => setTransferOpen(false)} onSuccess={refresh} showToast={(t) => showToast(t.message, t.severity === 'error' ? 'error' : 'success')} />
       )}
 
       {/* Cancel transfer confirm */}
@@ -1159,7 +1170,7 @@ function DeploymentDrawer({
             ))}
           </TextField>
           <TextField
-            label="Reason (required)"
+            label="Reason (optional)"
             value={reassignNote}
             onChange={(e) => setReassignNote(e.target.value)}
             multiline rows={2} fullWidth
@@ -1169,7 +1180,7 @@ function DeploymentDrawer({
         <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button onClick={() => setReassignOpen(false)} disabled={reassignLoading}>Cancel</Button>
           <MutationButton variant="contained" color="warning"
-            disabled={!reassignTargetId || !reassignNote.trim() || reassignLoading}
+            disabled={!reassignTargetId || reassignLoading}
             onClick={handleReassignPrimary}
             startIcon={reassignLoading ? <CircularProgress size={16} color="inherit" /> : null}>
             {reassignLoading ? 'Reassigning…' : 'Reassign Primary'}
@@ -1247,7 +1258,7 @@ function AdminDeploymentsContent() {
   const [drawerAction, setDrawerAction] = React.useState<'transfer' | 'end' | null>(null)
   const [newOpen, setNewOpen] = React.useState(false)
 
-  // Pending transfers — admin can accept or decline on behalf of the destination operator
+  // Pending transfers — admin can accept or decline on behalf of the recipient
   const [pendingTransfers, setPendingTransfers] = React.useState<TransferRow[]>([])
   const [respondDialog, setRespondDialog] = React.useState<{ transfer: TransferRow; action: 'accept' | 'decline' } | null>(null)
   const [responseNote, setResponseNote] = React.useState('')
@@ -1392,7 +1403,7 @@ function AdminDeploymentsContent() {
           <Stack spacing={1}>
             {pendingTransfers.map((tr) => {
               const vehicleNames = tr.vehicles.map((tv) => tv.vehicle.name).join(', ')
-              const itemNames = tr.items.map((ti) => `${ti.kitItem.item.name} ×${ti.kitItem.quantity}`).join(', ')
+              const itemNames = tr.items.map((ti) => `${ti.kitItem.item.name} ×${ti.quantity ?? ti.kitItem.quantity}`).join(', ')
               const summary = [vehicleNames, itemNames].filter(Boolean).join(', ')
               return (
                 <Alert key={tr.id} severity="warning" icon={false}>

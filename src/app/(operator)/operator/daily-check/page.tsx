@@ -14,6 +14,7 @@ import { businessDate } from '@/lib/business-date'
 import { DEFAULT_DAILY_CHECKLIST } from '@/types'
 import { OdometerField } from '@/components/operator/OdometerField'
 import { saveDraft, loadDraft, loadLatestDraft, clearDraft, purgeDraftsNotOn, type DailyCheckDraft } from '@/lib/daily-check-draft'
+import { crewCheckLine, CREW_CHECK_NOTE } from '@/components/operator/today/VehicleChecks'
 
 // The full ~16-item inspection (PRD §11.4) is the single source of truth, shared
 // with the rest of the app via @/types. Items 15–16 (trailer hitch / load) are
@@ -116,6 +117,28 @@ async function fetchCheckedToday(date: string): Promise<Set<string>> {
   return new Set(ids)
 }
 
+// P1-1b (3.7): today's checks a crewmate filed, from Today's read (SW-cached), keyed by
+// vehicle. Trusted only when that read is from today's business date; anything else
+// (offline, stale cache, an odd payload) → an empty map, never a throw.
+type CrewCheck = { operatorName: string; submittedAt: string }
+async function fetchCrewChecksToday(): Promise<Map<string, CrewCheck>> {
+  const crew = new Map<string, CrewCheck>()
+  try {
+    const res = await fetch('/api/operator/today')
+    if (!res.ok) return crew
+    const json = (await res.json()) as { data?: { asOf?: unknown; vehicleChecks?: unknown } } | null
+    const d = json?.data
+    if (!d || typeof d.asOf !== 'string' || Number.isNaN(Date.parse(d.asOf)) || businessDate(new Date(d.asOf)) !== businessDate()) return crew
+    const checks = (Array.isArray(d.vehicleChecks) ? d.vehicleChecks : []) as Array<{ vehicleId?: unknown; operatorName?: unknown; submittedAt?: unknown; byMe?: unknown }>
+    for (const c of checks.filter((c) => c && !c.byMe)) {
+      if (typeof c.vehicleId === 'string' && typeof c.submittedAt === 'string') {
+        crew.set(c.vehicleId, { operatorName: typeof c.operatorName === 'string' ? c.operatorName : 'a crewmate', submittedAt: c.submittedAt })
+      }
+    }
+  } catch { /* offline or unreadable — no crew info */ }
+  return crew
+}
+
 // UXP-3 (F-05): the fields a validation reject can jump to. Keyed so one ref map and
 // one focus request serve both the per-item notes and the fail summary.
 const issuesFieldKey = 'issues'
@@ -195,6 +218,9 @@ export default function OperatorDailyCheckPage() {
   // an ok/queued submit so "Start New Check" advances to the next unchecked vehicle
   // without a refetch (a queued check is not on the server yet, but it IS filed).
   const [checkedToday, setCheckedToday] = React.useState<ReadonlySet<string>>(() => new Set())
+  // P1-1b (3.7): checks a crewmate filed today (not yours). The server lets only the filer
+  // open or redo a check, so such a vehicle can't be started here.
+  const [crewChecks, setCrewChecks] = React.useState<ReadonlyMap<string, CrewCheck>>(() => new Map())
   // UXP-3 (3h): a draft was restored at mount. The ref gates the 3j preselect (the
   // restored vehicle wins over the "first unchecked" pick); the state drives the
   // dismissible "Restored your in-progress check" notice.
@@ -309,9 +335,13 @@ export default function OperatorDailyCheckPage() {
       setRig(active)
       return active
     })
-    Promise.allSettled([rigPromise, fetchCheckedToday(today)]).then(([rigResult, checkedResult]) => {
-      const checked = checkedResult.status === 'fulfilled' ? checkedResult.value : new Set<string>()
-      setCheckedToday(checked)
+    Promise.allSettled([rigPromise, fetchCheckedToday(today), fetchCrewChecksToday()]).then(([rigResult, checkedResult, crewResult]) => {
+      const own = checkedResult.status === 'fulfilled' ? checkedResult.value : new Set<string>()
+      const crew = crewResult.status === 'fulfilled' ? crewResult.value : new Map<string, CrewCheck>()
+      setCheckedToday(own)
+      setCrewChecks(crew)
+      // P1-1b (3.7): the preselect skips your checks and your crewmates' alike.
+      const checked = new Set([...own, ...crew.keys()])
       const active = rigResult.status === 'fulfilled' ? rigResult.value : null
       // UXP-3 (3j, antagonist): the picker is live the moment the rig lands, and the
       // checks GET can land seconds later — by then the operator may have picked a
@@ -459,6 +489,10 @@ export default function OperatorDailyCheckPage() {
   // PRD §11.4 / §7.4: a reason is required on every failed item, not just an
   // overall summary. Enforced client-side here and again server-side.
   const missingItemNote = failingItems.some((item) => !item.note.trim())
+  // P1-1b (3.7): crew-checked = a crewmate's check today and none of your own (the
+  // server rule, rig-daily-checks.ts).
+  const crewCheckOf = (id: string) => (checkedToday.has(id) ? undefined : crewChecks.get(id))
+  const selectedCrewCheck = vehicleId ? crewCheckOf(vehicleId) : undefined
   const selectedVehicleName =
     vehicles.find((rv) => rv.vehicle.id === vehicleId)?.vehicle.name ?? ''
 
@@ -592,7 +626,7 @@ export default function OperatorDailyCheckPage() {
     // UXP-3 (3j): check #2 of the day goes to the next vehicle WITHOUT a check today
     // (the one just filed is in checkedToday), not back to the one just checked. All
     // checked → no preselect; the operator picks, and the notice says it replaces.
-    const nextVehicleId = pickPreselect(vehicles, checkedToday)
+    const nextVehicleId = pickPreselect(vehicles, new Set([...checkedToday, ...crewChecks.keys()]))
     setChecklist(DEFAULT_CHECKLIST.map((item) => ({ ...item, value: 'yes', note: '' })))
     setIssues('')
     setOdometer('')
@@ -714,6 +748,12 @@ export default function OperatorDailyCheckPage() {
           You already filed a check for {selectedVehicleName || 'this vehicle'} today — submitting replaces it.
         </Alert>
       )}
+      {selectedCrewCheck && (
+        <Alert severity="warning" sx={{ mb: 2 }}>{`${crewCheckLine(selectedCrewCheck)}. ${CREW_CHECK_NOTE}`}</Alert>
+      )}
+      {step === 0 && (rig?.vehicles.length ?? 0) > 0 && rig!.vehicles.every((rv) => checkedToday.has(rv.vehicle.id) || crewChecks.has(rv.vehicle.id)) && (
+        <Alert severity="info" sx={{ mb: 2 }}>Every vehicle on this deployment is checked today.</Alert>
+      )}
 
       {step === 0 && (
         <Stack spacing={2}>
@@ -760,9 +800,14 @@ export default function OperatorDailyCheckPage() {
           >
             {vehicles.length === 0
               ? <MenuItem value="" disabled>No vehicles in active deployment</MenuItem>
-              : vehicles.map((rv) => (
-                <MenuItem key={rv.vehicle.id} value={rv.vehicle.id}>{rv.vehicle.name}</MenuItem>
-              ))
+              : vehicles.map((rv) => {
+                const crew = crewCheckOf(rv.vehicle.id)
+                return (
+                  <MenuItem key={rv.vehicle.id} value={rv.vehicle.id} disabled={!!crew}>
+                    {crew ? <ListItemText primary={rv.vehicle.name} secondary={crewCheckLine(crew)} /> : rv.vehicle.name}
+                  </MenuItem>
+                )
+              })
             }
           </TextField>
           {/* CC-29 item 4a: the business date is stamped automatically at submit —
@@ -929,6 +974,7 @@ export default function OperatorDailyCheckPage() {
         {step < 2 ? (
           <Button
             variant="contained"
+            disabled={!!selectedCrewCheck}
             onClick={() => {
               if (step === 0 && !vehicleId) { setError('Select a vehicle'); return }
               // UXP-3 (F-05): the reject lands on the failing row, not just up top.
@@ -960,7 +1006,7 @@ export default function OperatorDailyCheckPage() {
           <Button
             variant="contained"
             onClick={handleSubmit}
-            disabled={submitting}
+            disabled={submitting || !!selectedCrewCheck}
             startIcon={submitting ? <CircularProgress size={16} color="inherit" /> : null}
           >
             {submitting ? 'Submitting…' : 'Submit Check'}

@@ -29,7 +29,10 @@ import { QrScanField } from '@/components/shared/QrScanField'
 import { useDirtyState } from '@/hooks/useDirtyState'
 import { parseApiError, apiErrorMessage } from '@/lib/api-error-shape'
 import { downloadQrLabel } from '@/lib/qr-label'
-import { groupBy, formatDate } from '@/lib/utils'
+import { groupBy, formatDate, formatDay, toDay } from '@/lib/utils'
+import { hubLabel } from '@/lib/hub-label'
+import { businessDate } from '@/lib/business-date'
+import { businessDayDiff } from '@/lib/deployment-map'
 import { uploadDocument } from '@/lib/photoStore'
 import { VEHICLE_TYPES, vehicleTypeLabel } from '@/lib/vehicle-types'
 import { DEFAULT_DAILY_CHECKLIST } from '@/types'
@@ -123,15 +126,13 @@ function isServiceSchedule(t: VehicleDetail['maintenanceTasks'][number]): boolea
 
 function expiryMeta(iso: string | null): { label: string; color: 'default' | 'warning' | 'error' } {
   if (!iso) return { label: '—', color: 'default' }
-  const d = new Date(iso)
-  const days = Math.ceil((d.getTime() - Date.now()) / 86_400_000)
-  const label = formatDate(d)
+  // P1-1b (3.6): a date-only value — count business days from today, never via new Date().
+  const days = businessDayDiff(businessDate(), toDay(iso))
+  const label = formatDay(iso)
   if (days < 0) return { label: `${label} · expired`, color: 'error' }
   if (days <= 30) return { label: `${label} · ${days}d`, color: 'warning' }
   return { label, color: 'default' }
 }
-
-const dateInput = (iso: string | null | undefined) => (iso ? iso.slice(0, 10) : '')
 
 // The `take: 10` in GET /api/vehicles/[id]. Named so the label can't drift from it.
 const VEHICLE_RECENT_CHECKS_CAP = 10
@@ -733,7 +734,7 @@ export default function AdminVehiclesPage() {
                     />
                     <Detail label="Rental dates" value={
                       detail.rentalStartDate || detail.rentalEndDate
-                        ? `${formatDate(detail.rentalStartDate)} → ${formatDate(detail.rentalEndDate)}`
+                        ? `${formatDay(detail.rentalStartDate)} → ${formatDay(detail.rentalEndDate)}`
                         : '—'
                     } />
                     <Detail label="Pickup location" value={detail.rentalLocation ?? '—'} />
@@ -853,7 +854,7 @@ export default function AdminVehiclesPage() {
                           color={c.passFail === false ? 'error' : 'success'}
                           variant="outlined"
                         />
-                        <Typography variant="body2">{formatDate(c.date)}</Typography>
+                        <Typography variant="body2">{formatDay(c.date)}</Typography>
                       </Stack>
                       <Typography variant="caption" color="text.secondary" noWrap>{c.operator?.name ?? 'Unknown'}</Typography>
                     </Box>
@@ -1092,15 +1093,15 @@ function vehicleFormValues(source: VehicleRow | null, duplicate: boolean): Vehic
     odometer: !duplicate && source?.odometer != null ? String(source.odometer) : '',
     hubId: source?.hubId ?? '',
     location: source?.location ?? '',
-    insuranceExpires: dateInput(source?.insuranceExpires),
-    registrationExpires: dateInput(source?.registrationExpires),
+    insuranceExpires: toDay(source?.insuranceExpires),
+    registrationExpires: toDay(source?.registrationExpires),
     notes: source?.notes ?? '',
     isRental: source?.isRental ?? false,
     rentalCompany: source?.rentalCompany ?? '',
     rentalAgreementNumber: own(source?.rentalAgreementNumber),
     rentalAgreementUrl: own(source?.rentalAgreementUrl),
-    rentalStartDate: dateInput(source?.rentalStartDate),
-    rentalEndDate: dateInput(source?.rentalEndDate),
+    rentalStartDate: toDay(source?.rentalStartDate),
+    rentalEndDate: toDay(source?.rentalEndDate),
     rentalLocation: source?.rentalLocation ?? '',
     rentalReturnLocation: source?.rentalReturnLocation ?? '',
     rentalCostAmount: source?.rentalCostAmount != null ? String(source.rentalCostAmount) : '',
@@ -1259,7 +1260,7 @@ function VehicleFormDialog({ vehicle, duplicateOf, hubs, onClose, onSaved, showT
   }
 
   const hubOptions = React.useMemo(
-    () => hubs.map((h) => ({ value: h.id, label: `${h.name}${h.city ? ` · ${h.city}${h.state ? `, ${h.state}` : ''}` : ''}` })),
+    () => hubs.map((h) => ({ value: h.id, label: hubLabel(h) })),
     [hubs],
   )
 

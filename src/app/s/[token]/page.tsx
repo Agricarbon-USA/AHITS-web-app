@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, use } from 'react'
-import { formatDate } from '@/lib/utils'
+import { formatDay } from '@/lib/utils'
 import { IDEMPOTENCY_IN_FLIGHT_ERROR } from '@/lib/shared-errors'
 import { FulfillmentChecklist, type ChecklistLine } from '@/components/shared/FulfillmentChecklist'
 import { color, font } from '@/theme/tokens'
@@ -227,7 +227,7 @@ export default function StatusLinkPage({ params }: { params: Promise<{ token: st
             Rig Reservation Request
           </div>
           <h2 style={{ margin: '6px 0 12px' }}>{s.label ?? ctx.label ?? 'Rig Reservation'}</h2>
-          {s.neededBy && <Row label="Needed by" value={formatDate(s.neededBy)} />}
+          {s.neededBy && <Row label="Needed by" value={formatDay(s.neededBy)} />}
           {s.requester && <Row label="Requester" value={s.requester} />}
           {s.project && <Row label="Project" value={s.project} />}
         </div>

@@ -17,6 +17,9 @@ import { ConditionSelect } from '@/components/shared/ConditionSelect'
 import { QrScannerDialog, type QrResolveResult } from '@/components/shared/QrScannerDialog'
 import { ReportProblemDialog, type ReportProblemSubject } from '@/components/shared/ReportProblemDialog'
 import type { ReturnCondition } from '@/lib/status'
+import { useFreshList } from '@/hooks/useFreshList'
+import { ReturnHubSelect } from '@/components/shared/ReturnHubSelect'
+import type { HubOption } from '@/lib/hub-label'
 
 interface UnitInfo {
   id: string
@@ -61,6 +64,9 @@ export default function OperatorScanPage() {
   const [activeRigId, setActiveRigId] = React.useState<string | null>(null)
   const [activeKitItems, setActiveKitItems] = React.useState<KitItemStub[]>([])
   const [returnCondition, setReturnCondition] = React.useState<ReturnCondition>('GOOD')
+  // P1-1b (3.4, D51): every return names its hub — a fresh pick for each unit.
+  const [returnHubId, setReturnHubId] = React.useState('')
+  const hubs = useFreshList<{ data: HubOption[] }>('/api/hubs').data?.data ?? []
   const [actionLoading, setActionLoading] = React.useState(false)
   const [addDialogOpen, setAddDialogOpen] = React.useState(false)
   // CC-10 field-fix dialog (now serves vehicles AND units — CC-34 (2b)).
@@ -95,6 +101,7 @@ export default function OperatorScanPage() {
         const json = await unitRes.json()
         setUnit({ ...json.unit, inventoryItem: json.item })
         setReturnCondition('GOOD')
+        setReturnHubId('')
         return { status: 'ok' }
       }
       // PR-3c (D-r): a deleted unit's sticker says what it was and how to get it back.
@@ -166,16 +173,17 @@ export default function OperatorScanPage() {
   const refetchActive = loadActive
 
   const handleReturn = async () => {
-    if (!activeRigId || !kitItemForUnit || !unit) return
+    if (!activeRigId || !kitItemForUnit || !unit || !returnHubId) return
     const itemName = unit.inventoryItem.name
+    const hubName = hubs.find((h) => h.id === returnHubId)?.name ?? 'the hub'
     const kitItemId = kitItemForUnit.id
     setActionLoading(true)
     setError('')
     const result = await mutate({
       endpoint: `/api/deployments/${activeRigId}/items/${kitItemId}`,
       method: 'DELETE',
-      body: { returnCondition },
-      label: `Return ${itemName} to hub`,
+      body: { returnCondition, hubId: returnHubId },
+      label: `Return ${itemName} to ${hubName}`,
       invalidates: ['deployments', 'inventory'],
     })
     if (result.ok && result.queued) {
@@ -185,7 +193,7 @@ export default function OperatorScanPage() {
       showToast({ message: `${itemName} — return queued, will sync when online.`, severity: 'info' })
     } else if (result.ok) {
       setUnit(null)
-      showToast({ message: `${itemName} returned to hub.`, severity: 'success' })
+      showToast({ message: `${itemName} returned to ${hubName}.`, severity: 'success' })
       await refetchActive()
     } else {
       setError(result.error || 'Return failed')
@@ -309,11 +317,12 @@ export default function OperatorScanPage() {
                   {canReturn && (
                     <>
                       <ConditionSelect value={returnCondition} onChange={setReturnCondition} />
+                      <ReturnHubSelect hubs={hubs} value={returnHubId} onChange={setReturnHubId} />
                       <Button
                         variant="contained"
                         color="success"
                         onClick={handleReturn}
-                        disabled={actionLoading}
+                        disabled={actionLoading || !returnHubId}
                       >
                         {actionLoading ? <CircularProgress size={20} /> : 'Return to Hub'}
                       </Button>

@@ -40,12 +40,14 @@ interface FetchOpts {
   checksReject?: boolean
   /** Hold the daily-check list GET until `releaseChecks()` — the late-GET race. */
   deferChecks?: boolean
+  /** P1-1b (3.7): today's checks as Today reports them (crewmates' have byMe false). */
+  todayChecks?: { vehicleId: string; operatorId: string; operatorName: string; submittedAt: string; byMe: boolean }[]
 }
 
 let templateFetchCount = 0
 let releaseChecks: (() => void) | null = null
 
-function mockFetch({ checked = [], checksReject = false, deferChecks = false }: FetchOpts = {}) {
+function mockFetch({ checked = [], checksReject = false, deferChecks = false, todayChecks = [] }: FetchOpts = {}) {
   return vi.fn((input: RequestInfo | URL) => {
     const url = String(input)
     // PR-5 (L-8): the page reads its rig from /api/deployments/mine ({ data: rig | null }).
@@ -57,6 +59,10 @@ function mockFetch({ checked = [], checksReject = false, deferChecks = false }: 
       return new Promise<Response>((resolve) => {
         releaseChecks = () => resolve({ ok: true, json: async () => body } as Response)
       })
+    }
+    // P1-1b (3.7): the page also reads Today's crew checks (no crewmate checks by default).
+    if (url.startsWith('/api/operator/today')) {
+      return jsonRes({ data: { asOf: new Date().toISOString(), vehicleChecks: todayChecks } })
     }
     if (url.startsWith('/api/checklist-templates')) {
       templateFetchCount += 1

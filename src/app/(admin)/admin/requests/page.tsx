@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { formatDate } from '@/lib/utils'
+import { formatDay } from '@/lib/utils'
 import {
   Box, Typography, Button, Card, CardContent, Stack, Chip, Alert, CircularProgress,
   MenuItem, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Collapse,
@@ -343,7 +343,7 @@ function RequestCard({ req, hubs, operators, onRefresh }: {
                 {req.forOperatorName && ` · for ${req.forOperatorName}`}
                 {req.projectName && ` · ${req.projectName}`}
                 {req.lineCount > 0 && ` · ${req.lineCount} line${req.lineCount !== 1 ? 's' : ''}`}
-                {req.neededBy && ` · Needed ${formatDate(req.neededBy)}`}
+                {req.neededBy && ` · Needed ${formatDay(req.neededBy)}`}
               </Typography>
               {req.decisionNote && (
                 <Typography variant="caption" display="block" color="text.secondary">

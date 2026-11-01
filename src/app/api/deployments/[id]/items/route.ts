@@ -289,6 +289,7 @@ async function _POST(req: NextRequest, { params }: { params: Promise<{ id: strin
     // RETRIES it. Returning 409 here would make the queue treat it as a
     // terminal client error and silently drop the write.
     const msg = err instanceof Error ? err.message : 'Checkout failed'
+    console.error('[POST /api/deployments/[id]/items]', err)
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 

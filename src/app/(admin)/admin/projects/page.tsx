@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { formatDate } from '@/lib/utils'
+import { formatDate, formatDay, toDay } from '@/lib/utils'
 import {
   Box, Typography, Paper, Stack, Button, IconButton, CircularProgress, Chip, Divider,
   Table, TableHead, TableBody, TableRow, TableCell, TableContainer,
@@ -51,7 +51,6 @@ interface ProjectDetail extends ProjectRow {
 }
 
 const fmt = (iso: string | null) => formatDate(iso)
-const dateInput = (iso: string | null | undefined) => (iso ? iso.slice(0, 10) : '')
 
 function StatusPill({ status }: { status: string }) {
   return <Chip size="small" label={status.replace(/_/g, ' ')} color={STATUS_COLOR[status] ?? 'default'} variant={status === 'PLANNED' ? 'outlined' : 'filled'} />
@@ -159,7 +158,7 @@ export default function AdminProjectsPage() {
                     <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>{p.location ?? '—'}</TableCell>
                     <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{p.sizeHa ?? '—'}</TableCell>
                     <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }} align="right">{p.sampleCount ?? '—'}</TableCell>
-                    <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>{p.startDate || p.endDate ? `${fmt(p.startDate)} – ${fmt(p.endDate)}` : '—'}</TableCell>
+                    <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }}>{p.startDate || p.endDate ? `${formatDay(p.startDate)} – ${formatDay(p.endDate)}` : '—'}</TableCell>
                     <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>{p.lead?.name ?? '—'}</TableCell>
                     <TableCell sx={{ display: { xs: 'none', sm: 'table-cell' } }} align="right">{p.activeDeployments ?? 0}</TableCell>
                     <TableCell align="right" onClick={(e) => e.stopPropagation()}>
@@ -194,8 +193,8 @@ export default function AdminProjectsPage() {
               <Row label="Size (ha)" value={detail.sizeHa != null ? String(detail.sizeHa) : '—'} />
               <Row label="# Samples" value={detail.sampleCount != null ? String(detail.sampleCount) : '—'} />
               <Row label="Lead" value={detail.lead?.name ?? '—'} />
-              <Row label="Start" value={fmt(detail.startDate)} />
-              <Row label="End" value={fmt(detail.endDate)} />
+              <Row label="Start" value={formatDay(detail.startDate)} />
+              <Row label="End" value={formatDay(detail.endDate)} />
             </Stack>
             {detail.notes && <Box><Typography variant="subtitle2" gutterBottom>Notes</Typography><Typography variant="body2" color="text.secondary">{detail.notes}</Typography></Box>}
 
@@ -274,8 +273,8 @@ function ProjectFormDialog({ project, onClose, onSaved, showToast }: {
   const [type, setType] = React.useState(project?.type ?? 'CROPLAND')
   const [status, setStatus] = React.useState(project?.status ?? 'PLANNED')
   const [location, setLocation] = React.useState(project?.location ?? '')
-  const [startDate, setStartDate] = React.useState(dateInput(project?.startDate))
-  const [endDate, setEndDate] = React.useState(dateInput(project?.endDate))
+  const [startDate, setStartDate] = React.useState(toDay(project?.startDate))
+  const [endDate, setEndDate] = React.useState(toDay(project?.endDate))
   const [notes, setNotes] = React.useState(project?.notes ?? '')
   const [customer, setCustomer] = React.useState(project?.customer ?? '')
   const [code, setCode] = React.useState(project?.code ?? '')

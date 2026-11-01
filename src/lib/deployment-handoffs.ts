@@ -82,7 +82,7 @@ export async function getPendingHandoffForRig(
     ORDER BY h."createdAt" ASC
     LIMIT 1`
   const r = rows[0]
-  return r ? { id: r.id, toOperatorName: r.toOperatorName ?? 'someone' } : null
+  return r ? { id: r.id, toOperatorName: r.toOperatorName || 'someone' } : null
 }
 
 /**
