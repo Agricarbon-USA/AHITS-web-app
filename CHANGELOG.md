@@ -2,7 +2,7 @@
 
 One line per merge to `development` (merging is the deploy), newest first: `date · #PR · what changed for users`. The line is written inside the PR and never edited afterwards. The live revision and the live-check result go in a comment on the PR, not here. Older lines keep their form. Starts Oct 22, 2026; earlier merges: `git log`.
 
-- 2026-11-11 · #PR (this one) · Docs clean-up: five living docs (README, STATUS, CHANGELOG, DECISIONS, CLAUDE.md); the old documents leave the repo folder and stay at git tag `docs-archive-2026-11-11`. No change to the app; phones show the "new version" prompt once
+- 2026-11-11 · #280 · Docs clean-up: five living docs (README, STATUS, CHANGELOG, DECISIONS, CLAUDE.md); the old documents leave the repo folder and stay at git tag `docs-archive-2026-11-11`. No change to the app; phones show the "new version" prompt once
 - 2026-11-01 · #279 · P1-1b: screens tell the truth — End and Return show what is waiting on a transfer and need a hub; Scan names its hub; Hub Inbound drops answered rows; the daily check knows when a crewmate already checked; four small P1-1a fixes · `ahits-web-app-staging-00461-nh9` · live check: owed (the owner's six rows are in a comment on PR #279; `/api/health` ok on 2026-11-11)
 - 2026-10-30 · #278 · docs: P1-1a (#277) recorded as merged and live; its checks 1–2 passed, 3–4 owed. No change to the app · revision not recorded (a docs merge redeploys the same code) · live check: none needed
 - 2026-10-27 · #277 · P1-1a: transfers and End are safe — every deployment write claims the deployment first, one rule for who a transfer may go to, waiting gear stays put and says who it waits on, named 409s instead of 500s · `ahits-web-app-staging-00459-jz4`
