@@ -40,6 +40,13 @@ export interface DeploymentRoster {
   projects: { id: string; name: string }[]
 }
 
+/** Project links a deployment shows: open ones; for an ended deployment, the ones its End closed. */
+export const SHOWN_PROJECT_LINK = Prisma.sql`(
+  dp."removedAt" IS NULL
+  OR ( NOT EXISTS (SELECT 1 FROM "deployment_assignments" o WHERE o."rigId" = dp."rigId" AND o."endedAt" IS NULL)
+       AND dp."removedAt" = (SELECT MAX(a."endedAt") FROM "deployment_assignments" a WHERE a."rigId" = dp."rigId") )
+)`
+
 export async function getDeploymentRosters(
   rigIds: string[],
   db: RawClient = prisma,
@@ -150,15 +157,16 @@ export async function getDeploymentRostersForDisplay(
     }
   }
 
-  // Projects unchanged from the active roster (deployment_projects is gated on its
-  // own removedAt, independent of assignment end).
+  // REQ-D: open project links; for an ended deployment, the links its End closed (End
+  // closes assignments and links in one transaction, so both carry the same now()). A
+  // link removed earlier (project changed or cleared) does not show.
   const projectRows = await db.$queryRaw<
     { rigId: string; projectId: string; name: string | null }[]
   >`
     SELECT dp."rigId", dp."projectId", p."name"
     FROM "deployment_projects" dp
     LEFT JOIN "projects" p ON p."id" = dp."projectId"
-    WHERE dp."rigId" IN (${Prisma.join(rigIds)}) AND dp."removedAt" IS NULL
+    WHERE dp."rigId" IN (${Prisma.join(rigIds)}) AND ${SHOWN_PROJECT_LINK}
   `
   for (const p of projectRows) {
     const r = map.get(p.rigId)
