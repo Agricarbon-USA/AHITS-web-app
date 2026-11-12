@@ -54,7 +54,7 @@ export const ADMIN_ACTIONS = {
     partial: 'Some items could not be dismissed.',
   },
   'hubReturn.reissueLink': {
-    success: 'New link copied to clipboard.',
+    success: 'New link copied. A link copied earlier for this unit no longer opens.',
     successNoClipboard: (url: string) => `New link: ${url}`,
   },
 
