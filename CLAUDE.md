@@ -70,7 +70,7 @@ The gate also enforces:
 4. Two deployment builders: `NewDeploymentDialog.tsx` in `src/components/operator/` and in `src/components/admin/`. They behave differently. A change usually needs both.
 5. Return logic is copied in three routes under `src/app/api/deployments/[id]/`: `end`, `items` (DELETE), `items/[kitItemId]`. Change all three or say why not.
 6. On the admin Users page, when you change an admin to Field Operator, set a Reset PIN in the same save. The PIN tab does not take the old password.
-7. The destructive-migration label is checked on the PR only. The deploy after the merge either fails (the next merge then applies the migration unchecked) or applies it at once: to confirm. Warn the owner before merging any drop. REQ-A2 fixes this.
+7. A data-deleting migration deploys only if its merged PR has the `destructive-migration-approved` label. A failed check blocks every deploy until fixed. Unproven on a real drop.
 8. After each deploy a check turns the run red unless the live service has `EMAIL_SANDBOX=true`, a non-empty `EMAIL_SANDBOX_TO` and 1 minimum instance. The new revision is already live by then. Change email settings in `Makefile` and that check in `deploy.yml` together.
 9. `held/`, `docs/prepared/` and the `.sql` files in `scripts/` are stale. Do not apply or run them. A later PR deletes them.
 10. In code, `Rig` (table `rigs`) is the deployment record.

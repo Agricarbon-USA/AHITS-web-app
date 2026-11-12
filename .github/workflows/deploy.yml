@@ -42,41 +42,44 @@ jobs:
     name: Backward-compatible migrations
     needs: verify
     runs-on: ubuntu-latest
+    permissions:
+      contents: read        # checkout
+      actions: read         # find the last successful deploy run
+      pull-requests: read   # read the labels of merged PRs
     steps:
       - uses: actions/checkout@v5
         with:
-          # The script fails closed when the base can't be resolved, and resolving
-          # `github.event.before` requires the full history.
+          # Full history: the check compares HEAD with the last deployed commit.
           fetch-depth: 0
 
-      - name: Check migrations added by this push
+      - name: Check every migration since the last successful deploy
         env:
-          # On a push event there is no base_ref and no PR labels. Derive the base
-          # ref from the branch being pushed (ref_name is `development` or
-          # `production` — this workflow has no other triggers) so a production push
-          # gets the production disposition. PR_LABELS is empty by construction: a
-          # push cannot carry a label, which is exactly what makes an acknowledged
-          # destructive migration fail here and pass only via a labelled PR.
-          GITHUB_BASE_REF: ${{ github.ref_name }}
-          PR_LABELS: ''
-          BEFORE_SHA: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TARGET_BRANCH: ${{ github.ref_name }}
         run: |
-          # Branch-create / force-push: `github.event.before` is the all-zeros SHA.
-          # NOTE (CC-30, verified empirically): the script does NOT fail closed on
-          # this input. `git rev-parse --verify --quiet 000…0` exits 0 (git accepts
-          # the null SHA syntactically), so the script's base-resolution guard passes;
-          # the subsequent `git diff 000…0...HEAD` then errors, but that error is
-          # swallowed by `2>/dev/null || true`, leaving the file list EMPTY and the
-          # script reporting a green "no migrations to check". Skipping explicitly
-          # with a loud warning is therefore strictly better than letting it run and
-          # silently pass. Branch protection on `development` (require a PR) removes
-          # this path altogether; until then the warning is the signal.
-          if [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ] || [ -z "$BEFORE_SHA" ]; then
-            echo "::warning::migration-safety: branch create or force-push detected (github.event.before is the null SHA) — cannot determine which migrations are new, so this gate is SKIPPED for this run. Land migrations through a PR so ci.yml can check them."
-            exit 0
+          set -euo pipefail
+          BASE="$(gh run list --workflow deploy.yml --branch "$TARGET_BRANCH" --status success --limit 1 --json headSha --jq '.[0].headSha // empty')"
+          if [ -z "$BASE" ]; then
+            echo "::error::migration-safety: no deploy from '$TARGET_BRANCH' has ever succeeded, so there is nothing to compare with. This check stops here on purpose. A first deploy from this branch needs the owner and a change to this step."
+            exit 1
           fi
-
-          bash scripts/check-migration-safety.sh "$BEFORE_SHA"
+          if ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            echo "::error::migration-safety: the last deployed commit ${BASE} is not in this checkout. Tell the owner."
+            exit 1
+          fi
+          # A label counts only when its merged PR changed prisma/migrations.
+          MIG=" $(git rev-list "${BASE}..HEAD" -- prisma/migrations | tr '\n' ' ')"
+          LABELS=""
+          for sha in $(git rev-list "${BASE}..HEAD"); do
+            FOUND="$(gh api "repos/${GH_REPO}/commits/${sha}/pulls" --jq '[.[] | select(.merged_at != null) | .labels[].name] | join(",")')"
+            case "$MIG" in
+              *" ${sha} "*) LABELS="${LABELS},${FOUND}"; echo "migration-safety: ${sha} changes migrations; PR labels counted: '${FOUND}'" ;;
+              *) echo "migration-safety: ${sha} changes no migration; PR labels not counted: '${FOUND}'" ;;
+            esac
+          done
+          echo "migration-safety: checking ${BASE}..$(git rev-parse HEAD)"
+          PR_LABELS="$LABELS" bash scripts/check-migration-safety.sh "$BASE"
 
   # Apply pending Prisma migrations to the target database BEFORE deploying.
   # The Supabase *direct* connection is IPv6-only (unreachable from IPv4-only GHA

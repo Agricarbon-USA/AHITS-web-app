@@ -19,7 +19,7 @@
 # Scoping: the waiver applies only to the single SQL statement it immediately precedes
 # (i.e. within the same ;-delimited chunk), NOT to the entire file.
 #
-# Live-branch hard-fail: when GITHUB_BASE_REF is `production` OR `development`, an
+# Live-branch hard-fail: when the target branch (TARGET_BRANCH on a deploy, GITHUB_BASE_REF on a PR) is `production` OR `development`, an
 # acknowledged destructive statement is still a HARD FAIL unless PR_LABELS contains
 # 'destructive-migration-approved'. This ensures the W0-10 DROP and any other
 # irreversible migration requires explicit human sign-off via a labelled PR (see
@@ -52,8 +52,8 @@ if [ "${#FILES[@]}" -eq 0 ]; then
   exit 0
 fi
 
-# Environment context (injected by ci.yml; safe defaults for local runs).
-BASE_REF="${GITHUB_BASE_REF:-}"
+# Environment context (set by ci.yml on a PR and by deploy.yml on a deploy; safe defaults for local runs).
+BASE_REF="${TARGET_BRANCH:-${GITHUB_BASE_REF:-}}"
 PR_LABELS="${PR_LABELS:-}"
 
 # Destructive SQL pattern — checked against comment-stripped, whitespace-normalized SQL
