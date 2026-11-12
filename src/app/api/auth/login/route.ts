@@ -8,7 +8,7 @@ import { pinSchema } from '@/lib/validation'
 
 const schema = z.discriminatedUnion('mode', [
   z.object({ mode: z.literal('pin'), email: z.string().email(), pin: pinSchema }),
-  z.object({ mode: z.literal('admin'), email: z.string().email(), password: z.string().min(8) }),
+  z.object({ mode: z.literal('admin'), email: z.string().email(), password: z.string().min(1) }),
 ])
 
 // First-layer abuse protection: cap login attempts per source IP. The

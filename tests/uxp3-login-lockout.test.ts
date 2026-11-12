@@ -172,3 +172,37 @@ describe('POST /api/auth/login — lockout tells the truth (UXP-3 3b)', () => {
     }
   })
 })
+
+describe('POST /api/auth/login — admin tab takes a 6-digit PIN (REQ-B fix 1)', () => {
+  it('admin with a reset 6-digit PIN and mustChangePin → 200 and lands on Change PIN', async () => {
+    rl.denied = false
+    const admin = await createAdminUser()
+    await prisma.user.update({ where: { id: admin.id }, data: { pinHash: await hashPin('482913'), mustChangePin: true } })
+    const res = await login(loginReq({ mode: 'admin', email: admin.email, password: '482913' }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ role: 'ADMIN', mustChangePin: true })
+  })
+
+  it('operator with a PIN, then made ADMIN → signs in on the admin tab with that PIN', async () => {
+    rl.denied = false
+    const op = await operatorWithPin('123456')
+    await prisma.user.update({ where: { id: op.id }, data: { role: 'ADMIN' } })
+    const res = await login(loginReq({ mode: 'admin', email: op.email, password: '123456' }))
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ role: 'ADMIN', mustChangePin: false })
+  })
+
+  it('five wrong 6-digit tries on the admin tab → the fifth answers locked', async () => {
+    rl.denied = false
+    const admin = await createAdminUser()
+    await prisma.user.update({ where: { id: admin.id }, data: { pinHash: await hashPin('482913') } })
+    for (let i = 0; i < 4; i++) {
+      const res = await login(loginReq({ mode: 'admin', email: admin.email, password: '000000' }))
+      expect(res.status).toBe(401)
+      expect(await res.json()).toEqual(GENERIC_401)
+    }
+    const fifth = await login(loginReq({ mode: 'admin', email: admin.email, password: '000000' }))
+    expect(fifth.status).toBe(401)
+    expect((await fifth.json()).locked).toBe(true)
+  })
+})
