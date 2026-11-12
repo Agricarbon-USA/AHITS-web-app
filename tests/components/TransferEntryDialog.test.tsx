@@ -19,7 +19,7 @@ describe('TransferEntryDialog (CC-33 D22)', () => {
     expect(screen.getByText('Entire rig')).toBeTruthy()
     expect(screen.getByText('Selected gear')).toBeTruthy()
     expect(screen.getByText(ENTIRE_RIG_SENTENCE)).toBeTruthy()
-    expect(screen.getByText('Send specific vehicles or kit items. You keep the deployment.')).toBeTruthy()
+    expect(screen.getByText('Send specific vehicles or kit items. If everything is sent and accepted, the deployment ends.')).toBeTruthy()
   })
 
   it('fires onEntireRig when "Entire rig" is chosen', () => {

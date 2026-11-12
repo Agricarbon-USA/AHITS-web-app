@@ -75,6 +75,7 @@ describe('3.2 · a failed transfer keeps the note and photos', () => {
     fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Person' }))
     fireEvent.click(await screen.findByRole('option', { name: 'Xena Recipient' }))
     fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    fireEvent.click(within(lineOf('GPS rover')).getByRole('checkbox'))
     fireEvent.click(screen.getByRole('button', { name: 'Continue to Note' }))
     fireEvent.change(await screen.findByRole('textbox', { name: /Note/ }), { target: { value: 'leaving at noon' } })
     fireEvent.click(screen.getByRole('button', { name: 'Photos: 0' }))
@@ -93,10 +94,41 @@ describe('3.2 · a failed transfer keeps the note and photos', () => {
     fireEvent.click(await screen.findByRole('option', { name: 'Owen Operator' }))
     fireEvent.click(screen.getByRole('button', { name: 'Next' }))
     expect(screen.queryByText('GPS rover')).toBeNull()
+    fireEvent.click(within(lineOf('Corer')).getByRole('checkbox'))
     fireEvent.click(screen.getByRole('button', { name: 'Continue to Note' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Transfer' }))
     await waitFor(() => expect(calls).toHaveLength(1))
     expect((calls[0]!.body!.items as { kitItemId: string }[]).map((i) => i.kitItemId)).toEqual(['k2'])
+  })
+
+  // REQ-B fix 4: Selected Gear opens with nothing ticked.
+  it('opens with nothing ticked and the button disabled; one tick enables it and only that item is sent', async () => {
+    const two = { ...RIG, kits: [{ items: [...RIG.kits[0]!.items, { id: 'k2', quantity: 1, item: { name: 'Corer', itemType: 'SERIALIZED' }, inventoryUnit: null }] }] }
+    vi.stubGlobal('fetch', vi.fn((i: RequestInfo | URL, init?: RequestInit) => { record(i, init); return jsonRes({ ok: true }, 201) }))
+    render(<TransferDialog rig={two} operators={PEOPLE} onClose={() => {}} onSuccess={() => {}} showToast={() => {}} />)
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Person' }))
+    fireEvent.click(await screen.findByRole('option', { name: 'Xena Recipient' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    for (const box of screen.getAllByRole('checkbox')) expect(box).not.toBeChecked()
+    expect(screen.getByRole('button', { name: 'Continue to Note' })).toBeDisabled()
+    expect(screen.getByText('Tick what to send. If everything is sent and accepted, this deployment ends.')).toBeInTheDocument()
+    fireEvent.click(within(lineOf('Corer')).getByRole('checkbox'))
+    expect(screen.getByRole('button', { name: 'Continue to Note' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to Note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Transfer' }))
+    await waitFor(() => expect(calls).toHaveLength(1))
+    expect((calls[0]!.body!.items as { kitItemId: string }[]).map((i) => i.kitItemId)).toEqual(['k2'])
+    expect(calls[0]!.body!.vehicleIds).toEqual([])
+  })
+
+  it('with every line waiting, the caption says there is nothing to send', async () => {
+    render(<TransferDialog rig={RIG} operators={PEOPLE} onClose={() => {}} onSuccess={() => {}} showToast={() => {}}
+      waiting={{ items: { k1: { qty: null, toName: 'Xena Recipient' } }, vehicles: {} }} />)
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Person' }))
+    fireEvent.click(await screen.findByRole('option', { name: 'Owen Operator' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByText('Nothing to send. Gear already waiting on a transfer is not listed.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Continue to Note' })).toBeDisabled()
   })
 })
 
