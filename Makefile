@@ -78,12 +78,13 @@ db-migrate: ## Apply pending migrations (production)
 	npx prisma migrate deploy
 
 db-migrate-dev: ## Create + apply migration (development)
+	$(GUARD_LOCAL_DB)
 	npx prisma migrate dev
 
 db-studio: ## Open Prisma Studio
 	npx prisma studio
 
-# CC-30 / D16 — live-database guard for the two destructive DB targets.
+# CC-30 / D16 — live-database guard for `db-seed` (`db-reset` uses GUARD_LOCAL_DB below).
 #
 # Why a SECOND layer when prisma/seed.ts already guards: `make db-reset` runs
 # `prisma migrate reset` (drop → re-create → reseed) and never reaches seed.ts's
@@ -118,12 +119,31 @@ define GUARD_LIVE_DB
 	fi
 endef
 
+# Local only: both addresses Prisma can use (shell env, then .env) must be on this computer.
+define GUARD_LOCAL_DB
+	@for V in DIRECT_URL DATABASE_URL; do \
+	  U="$$(printenv $$V || true)"; \
+	  [ -n "$$U" ] || [ ! -f .env ] || U="$$(grep -E "^$$V=" .env | head -1 | cut -d= -f2- | tr -d '\042\047\r')"; \
+	  H="$$(echo "$$U" | sed -E 's|^[A-Za-z0-9+.-]*://||; s|[/?#].*$$||; s|^.*@||; s|:[0-9]*$$||')"; \
+	  case "$$H" in localhost|127.0.0.1|"[::1]") ;; *[!A-Za-z0-9.-]*) H="an address it cannot read" ;; esac; \
+	  case "$$U" in *[?\&]host=*) H="a host= override" ;; esac; \
+	  case "$$H" in localhost|127.0.0.1|"[::1]") ;; \
+	    *) echo "✋ REFUSING: $$V points at '$${H:-nothing}'. '$@' runs only against a database on this computer (localhost or 127.0.0.1)."; exit 1 ;; \
+	  esac; \
+	done
+endef
+
+# Deploys and live migrations happen only in GitHub Actions.
+define GUARD_ACTIONS_ONLY
+	@[ "$$GITHUB_ACTIONS" = "true" ] || { echo "✋ REFUSING: '$@' runs only inside GitHub Actions. To ship: merge a PR into development. To repeat a deploy: re-run the last Deploy run on GitHub."; exit 1; }
+endef
+
 db-seed: ## Seed the database with sample data
 	$(GUARD_LIVE_DB)
 	npx tsx prisma/seed.ts
 
 db-reset: ## Reset DB and re-seed (DEV ONLY)
-	$(GUARD_LIVE_DB)
+	$(GUARD_LOCAL_DB)
 	npx prisma migrate reset
 
 # ── Testing (safe: isolated local DB, NEVER production) ───────────
@@ -191,6 +211,7 @@ docker-run: ## Run container locally
 # $(SECRET_NS)_MAPBOX_TOKEN (staging: AHITS_MAPBOX_TOKEN, prod: AHITS_PROD_MAPBOX_TOKEN):
 #   MAPBOX_TOKEN=$(SECRET_NS)_MAPBOX_TOKEN               (e.g. AHITS_MAPBOX_TOKEN)
 cloud-run-deploy: ## Deploy image to Cloud Run. Set SERVICE, TAG, MIN_INSTANCES.
+	$(GUARD_ACTIONS_ONLY)
 	gcloud run deploy $(SERVICE) \
 	  --image $(IMAGE):$(TAG) \
 	  --platform managed \
@@ -216,6 +237,7 @@ cloud-run-url: ## Print URL of a Cloud Run service. Set SERVICE.
 # have roles/secretmanager.secretAccessor on $(SECRET_NS)_MIGRATE_URL.
 # `@` suppresses command echo so the connection string is never printed.
 cloud-run-migrate: ## Apply pending migrations to the deployed DB. Set GCP_PROJECT.
+	$(GUARD_ACTIONS_ONLY)
 	@DB_URL="$$(gcloud secrets versions access latest --secret=$(SECRET_NS)_MIGRATE_URL --project=$(GCP_PROJECT))"; \
 	  if [ -z "$$DB_URL" ]; then echo "❌ Could not read $(SECRET_NS)_MIGRATE_URL from Secret Manager"; exit 1; fi; \
 	  echo "Applying migrations to the deployed database..."; \
@@ -226,11 +248,13 @@ cloud-run-migrate: ## Apply pending migrations to the deployed DB. Set GCP_PROJE
 # must not eat a Cloud Run cold start. A scale-to-zero service is fine for a scratch
 # environment and wrong for the one the crew depends on at the start of a shift.
 deploy-staging: ## Build, push, and deploy to staging. Override TAG as needed.
+	$(GUARD_ACTIONS_ONLY)
 	$(MAKE) docker-build
 	$(MAKE) docker-push
 	$(MAKE) cloud-run-deploy SERVICE=$(APP_NAME)-staging MIN_INSTANCES=1 SECRET_NS=AHITS EMAIL_SANDBOX=true
 
 deploy-prod: ## Build, push, and deploy to production (uses AHITS_PROD_* secrets).
+	$(GUARD_ACTIONS_ONLY)
 	$(MAKE) docker-build
 	$(MAKE) docker-push
 	$(MAKE) cloud-run-deploy SERVICE=$(APP_NAME) MIN_INSTANCES=1 SECRET_NS=AHITS_PROD EMAIL_SANDBOX=false

@@ -3,28 +3,28 @@
 Updated 2026-11-11. History: `CHANGELOG.md`.
 
 ## Live now
-- Last code change: PR #279 (P1-1b), merged Nov 1, 2026.
+- Last code change: PR #279 (P1-1b), merged Nov 1, 2026. It went live on Nov 11, 2026 with #280's deploy (revision `ahits-web-app-staging-00462-6ns`). Its own deploys on Nov 1 and Nov 3 failed because Google Cloud billing was off.
 - `/api/health` was ok on Nov 11, 2026.
+- REQ-A1 (#<PR>) is live. One check left: the next docs-only PR deletes this line and, once merged, confirms no Deploy run started for it (comment on #<PR>).
 - The only environment. It is named "staging" but is the real app.
 - Users: 4–9 field operators on phones, 2 admins (Max, the owner; Stewart).
 
 ## In flight
 1. Docs clean-up: five living docs; the rest leave the tree.
-2. REQ-A1: docs-only merges stop deploying; Makefile guards.
-3. REQ-B, quick fixes: admin lock-out, reservation confirm, pickup amounts, pre-ticked transfer.
-4. REQ-C: stay signed in for 4 idle days.
-5. REQ-A2: the check on data-deleting migrations; audited; merges alone.
+2. REQ-B, quick fixes: admin lock-out, reservation confirm, pickup amounts, pre-ticked transfer.
+3. REQ-C: stay signed in for 4 idle days.
+4. REQ-A2: the check on data-deleting migrations; audited; merges alone.
 
 ## Next, in order
-6. The owner's no-code safety jobs (below). Claude drafts the one-page "roll back and restore" note for Stewart from `docs/ROLLBACK.md`; the owner checks it.
-7. Email off. Tests use a database built like the live one.
-8. Quick fixes, second set: reopen re-reads Today; Hubs "Copy link"; the daily check uses the phone's own day; Reports dates, category, cost; a failed check stays open; project on ended deployments; remove four photo boxes.
-9. A unit's location accepts temporary places.
-10. The rest of "where is the gear": serial/QR search; holder and place on Scan and Inventory; hand-overs change at once, with "Not mine"; a place for vehicles at return; a "Missing" state.
-11. Finish the half-done data moves: old holder columns, categories, consumable counts, project link.
-12. The two field complaints: daily check opens in one load; one deployment builder.
-13. Re-cut the rest of the paused queue (`packets/paused/`).
-14. New features.
+5. The owner's no-code safety jobs (below). Claude drafts a short "in case of emergency" guide for Stewart (roll back, restore, who to call) from `docs/ROLLBACK.md`; the owner checks it.
+6. Email off. Tests use a database built like the live one.
+7. Quick fixes, second set: reopen re-reads Today; Hubs "Copy link"; the daily check uses the phone's own day; Reports dates, category, cost; a failed check stays open; project on ended deployments; remove four photo boxes.
+8. A unit's location accepts temporary places.
+9. The rest of "where is the gear": serial/QR search; holder and place on Scan and Inventory; hand-overs change at once, with "Not mine"; a place for vehicles at return; a "Missing" state.
+10. Finish the half-done data moves: old holder columns, categories, consumable counts, project link.
+11. The two field complaints: daily check opens in one load; one deployment builder.
+12. Re-cut the rest of the paused queue (`packets/paused/`).
+13. New features.
 
 ## Owed by the owner (date = when it became owed)
 - 2026-07-28: TOP PRIORITY · Backup restore test (never done). Restore into a new throwaway project, check the data, write the date in `docs/ROLLBACK.md`.
@@ -33,7 +33,7 @@ Updated 2026-11-11. History: `CHANGELOG.md`.
 - 2026-11-03: Accounts page: who owns and pays for Google Cloud, Supabase, GitHub, Sentry, Mapbox, Resend. Move billing and the database to Agricarbon accounts. Note why billing stopped on Nov 3.
 - 2026-07-28: Look in Cloud Run for the two July preview copies (`ahits-web-app-preview-cc31-pr2`, `-pr3`). Delete any found.
 - 2026-07-28: Fire the alarms once: heartbeat, "jobs stopped" banner, Sentry.
-- 2026-11-01: P1-1b live checks: the six rows in the PR #279 comment (to post), on a throwaway "ZZ" deployment.
+- 2026-11-11: P1-1b live checks: the six rows in the PR #279 comment, on a throwaway "ZZ" deployment. P1-1b went live this day.
 - 2026-10-28: Vehicles #101, #301, #302, #603 were used in a test. Check each shows its real operator.
 - 2026-10-22: 38 labelled units sit on count-only items. Look once (read-only) for tracked gear typed wrong.
 - 2026-10-22: July clean-up SQL: record which steps ran (C4 is not recorded).
@@ -42,9 +42,9 @@ Updated 2026-11-11. History: `CHANGELOG.md`.
 Closed by the owner's word on Nov 11, 2026: the operator PIN reset after Oct 22. Other old owed checks are written off by the planning Claude's proposal, which the owner accepted in the review ("write off the old rows in one go; keep a short list that is real"). Old list: `git show docs-archive-2026-11-11:STATUS.md`.
 
 ## Known hazards
+- Nobody is told when a deploy fails. After every merge, open the Deploy run and see it end green.
 - On the admin Users page, do not press Reset PIN on an admin and do not change anyone's role to Admin. Either locks that person out. Add admins by invite. Fix: REQ-B.
-- Until REQ-A1 lands, a docs-only merge redeploys the live app and phones show the "new version" prompt.
-- Never run a Prisma or `make db-*` command with `.env` pointing at the live database. Only `db-seed` and `db-reset` refuse it. Full list: `README.md`.
+- Never run a Prisma or `make db-*` command with `.env` pointing at the live database. Some have no guard. Full list: `README.md`.
 - The CI test database is built from the schema file, not the migrations. A migration first runs for real on the live database.
 - Email reaches no real recipient: the deploy forces test mode. Use copy-link.
 - The live database appears to sit in the contractor's Supabase organisation on a free plan, which can be paused (to confirm).

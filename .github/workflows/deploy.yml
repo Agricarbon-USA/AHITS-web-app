@@ -5,6 +5,12 @@ on:
     branches:
       - production # → production
       - development # → staging
+    # A push that changes only documents does not deploy. Never copy this to
+    # ci.yml: its checks are required on every PR and would hang as "Pending".
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+      - 'packets/**'
 
 # Never run two deploys to the same target at once; queue the newest instead of
 # racing them onto the same Cloud Run service.

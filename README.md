@@ -26,7 +26,7 @@ npm run test:ui       # screen tests
 
 `make dev` starts the app at http://localhost:3000. It needs a `.env` (copy `.env.example`) whose `DATABASE_URL` and `DIRECT_URL` point at a Postgres on your own machine. Never put the live Supabase addresses in a local `.env`.
 
-**Never run these against the live database.** Only `make db-seed` and `make db-reset` refuse a live address:
+**Never run these against the live database.** Most now refuse; `make db-migrate` and the `npm run` / `npx` ones do not:
 
 - `make setup`, `db-migrate-dev`, `db-migrate`, `db-reset`, `db-seed`
 - `npm run prisma:reset`, `prisma:migrate:dev`, `prisma:migrate`; any bare `npx prisma migrate …` or `npx prisma db push`
