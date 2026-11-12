@@ -10,21 +10,20 @@ Updated 2026-11-11. History: `CHANGELOG.md`.
 - Users: 4–9 field operators on phones, 2 admins (Max, the owner; Stewart).
 
 ## In flight
-1. Docs clean-up: five living docs; the rest leave the tree.
-2. REQ-B, quick fixes: admin lock-out, reservation confirm, pickup amounts, pre-ticked transfer.
-3. REQ-C: stay signed in for 4 idle days.
-4. REQ-A2: the check on data-deleting migrations; audited; merges alone.
+1. REQ-B, quick fixes: admin lock-out, reservation confirm, pickup amounts, pre-ticked transfer.
+2. REQ-C: stay signed in for 4 idle days.
+3. REQ-A2: the check on data-deleting migrations; audited; merges alone.
 
 ## Next, in order
-5. The owner's no-code safety jobs (below). Claude drafts a short "in case of emergency" guide for Stewart (roll back, restore, who to call) from `docs/ROLLBACK.md`; the owner checks it.
-6. Email off. Tests use a database built like the live one.
-7. Quick fixes, second set: reopen re-reads Today; Hubs "Copy link"; the daily check uses the phone's own day; Reports dates, category, cost; a failed check stays open; project on ended deployments; remove four photo boxes.
-8. A unit's location accepts temporary places.
-9. The rest of "where is the gear": serial/QR search; holder and place on Scan and Inventory; hand-overs change at once, with "Not mine"; a place for vehicles at return; a "Missing" state.
-10. Finish the half-done data moves: old holder columns, categories, consumable counts, project link.
-11. The two field complaints: daily check opens in one load; one deployment builder.
-12. Re-cut the rest of the paused queue (`packets/paused/`).
-13. New features.
+4. The owner's no-code safety jobs (below). Claude drafts a short "in case of emergency" guide for Stewart (roll back, restore, who to call) from `docs/ROLLBACK.md`; the owner checks it.
+5. Email off. Tests use a database built like the live one.
+6. Quick fixes, second set: reopen re-reads Today; Hubs "Copy link"; the daily check uses the phone's own day; Reports dates, category, cost; a failed check stays open; project on ended deployments; remove four photo boxes.
+7. A unit's location accepts temporary places.
+8. The rest of "where is the gear": serial/QR search; holder and place on Scan and Inventory; hand-overs change at once, with "Not mine"; a place for vehicles at return; a "Missing" state.
+9. Finish the half-done data moves: old holder columns, categories, consumable counts, project link.
+10. The two field complaints: daily check opens in one load; one deployment builder.
+11. Re-cut the rest of the paused queue (`packets/paused/`).
+12. New features.
 
 ## Owed by the owner (date = when it became owed)
 - 2026-07-28: TOP PRIORITY · Backup restore test (never done). Restore into a new throwaway project, check the data, write the date in `docs/ROLLBACK.md`.
