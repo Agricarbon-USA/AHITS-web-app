@@ -414,7 +414,7 @@ export async function getLineChecklist(
 ): Promise<{ lines: LineChecklistRow[]; progress: { checked: number; total: number } }> {
   const baseLines = await prisma.$queryRaw<Omit<LineChecklistRow, 'availableUnits' | 'substitutableItems'>[]>`
     SELECT l."id", l."lineType"::text AS "lineType", l."categoryId", c."name" AS "categoryName",
-           l."itemType", l."vehicleType"::text AS "vehicleType", l."requestedQty",
+           CASE WHEN ii."itemType" = 'SERIALIZED' THEN 'SERIALIZED' ELSE l."itemType" END AS "itemType", l."vehicleType"::text AS "vehicleType", l."requestedQty",
            l."fulfillmentStatus", l."fulfilledQty", l."denyReason",
            l."specificInventoryItemId", ii."name" AS "specificItemName",
            v."name" AS "specificVehicleName",
