@@ -22,7 +22,7 @@
 - Operators read "Transfer", never "handoff". (D22)
 
 ## People and sign-in
-- Operators sign in with a 6-digit PIN, admins with a password of 8 or more characters. (Oct 30)
+- Operators sign in with a 6-digit PIN. Admins sign in on the Admin tab with a password of 8 or more characters, or with a 6-digit PIN after a Reset PIN or a change of role. (Nov 11)
 - A phone stays signed in for 4 days without use, up to 14 days after the PIN was typed; an admin can cut it off at once. (D27, Nov 11) — not built yet, REQ-C (today: 24 hours; most crews sign in each morning)
 - Operator PINs are not reset after the Oct 22 leak fix; the risk is accepted. (Nov 11)
 - An admin may run a deployment; missed-check scans flag it as admin-run. (D3)

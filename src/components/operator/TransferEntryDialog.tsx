@@ -54,7 +54,7 @@ export function TransferEntryDialog({
                 <Typography variant="subtitle2" fontWeight={700}>Selected gear</Typography>
               </Stack>
               <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5, textTransform: 'none' }}>
-                Send specific vehicles or kit items. You keep the deployment.
+                Send specific vehicles or kit items. If everything is sent and accepted, the deployment ends.
               </Typography>
             </Box>
           </Button>

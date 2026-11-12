@@ -337,3 +337,60 @@ describe('F3 hub loading checklist', () => {
     expect(p2.total).toBe(2)
   })
 })
+
+// REQ-B fix 2: the request form saves kit lines with itemType null; the checklist
+// reads the kind from the item for serial-numbered items only.
+describe('getLineChecklist — a line saved without a kind (REQ-B fix 2)', () => {
+  it('a serial-numbered item sent as the form sends it → SERIALIZED, its free unit, and Confirm works', async () => {
+    const hub = await createHub()
+    const cat = await createCategory()
+    const operator = await createOperator()
+    const serialItem = await createInventoryItem(cat.id, { itemType: 'SERIALIZED', quantity: 1, name: 'Probe' })
+    const unit = await createInventoryUnit(serialItem.id)
+
+    const requestId = await createRequest(
+      {
+        requestType: 'RESERVATION',
+        status: 'REQUESTED',
+        fulfillerHubId: hub.id,
+        lines: [
+          { lineType: 'KIT_ITEM', itemType: null, requestedQty: 1, specificInventoryItemId: serialItem.id },
+        ],
+      },
+      operator.id,
+    )
+
+    const { lines } = await getLineChecklist(requestId, hub.id)
+    expect(lines).toHaveLength(1)
+    expect(lines[0].itemType).toBe('SERIALIZED')
+    expect(lines[0].availableUnits.some((u) => u.id === unit.id)).toBe(true)
+
+    const [lineId] = await getLineIds(requestId)
+    const res = await setLineFulfillment(lineId, { status: 'CONFIRMED', resolvedUnitId: unit.id, actor: { label: 'hub' } })
+    expect(res.ok).toBe(true)
+  })
+
+  it('a counted item sent the same way keeps itemType null (no Substitute item)', async () => {
+    const hub = await createHub()
+    const cat = await createCategory()
+    const operator = await createOperator()
+    const counted = await createInventoryItem(cat.id, { itemType: 'CONSUMABLE', quantity: 10 })
+    await seedInventoryStock(counted.id, hub.id, 10)
+
+    const requestId = await createRequest(
+      {
+        requestType: 'RESERVATION',
+        status: 'REQUESTED',
+        fulfillerHubId: hub.id,
+        lines: [
+          { lineType: 'KIT_ITEM', itemType: null, requestedQty: 3, specificInventoryItemId: counted.id },
+        ],
+      },
+      operator.id,
+    )
+
+    const { lines } = await getLineChecklist(requestId, hub.id)
+    expect(lines).toHaveLength(1)
+    expect(lines[0].itemType).toBeNull()
+  })
+})

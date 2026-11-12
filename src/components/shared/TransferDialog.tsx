@@ -88,12 +88,8 @@ export function TransferDialog({
   const rigVehicles = rig.vehicles.filter((rv) => !waiting?.vehicles[rv.vehicle.id])
   const [step, setStep] = React.useState(0)
   const [toOperatorId, setToOperatorId] = React.useState('')
-  const [selVehicles, setSelVehicles] = React.useState<Set<string>>(
-    new Set(rigVehicles.map((rv) => rv.vehicle.id))
-  )
-  const [selKitItems, setSelKitItems] = React.useState<Set<string>>(
-    new Set(kitItems.map((ki) => ki.id))
-  )
+  const [selVehicles, setSelVehicles] = React.useState<Set<string>>(new Set())
+  const [selKitItems, setSelKitItems] = React.useState<Set<string>>(new Set())
   const [transferQtys, setTransferQtys] = React.useState<Map<string, number>>(
     new Map(kitItems.map((ki) => [ki.id, ki.quantity]))
   )
@@ -252,6 +248,7 @@ export function TransferDialog({
                 </Stack>
               </Box>
             )}
+            <Typography variant="caption" color="text.secondary">{rigVehicles.length + kitItems.length === 0 ? 'Nothing to send. Gear already waiting on a transfer is not listed.' : 'Tick what to send. If everything is sent and accepted, this deployment ends.'}</Typography>
           </Stack>
         )}
       </DialogContent>
@@ -259,7 +256,7 @@ export function TransferDialog({
         <Button onClick={onClose}>Cancel</Button>
         {step > 0 && <Button onClick={() => setStep((s) => s - 1)}>Back</Button>}
         <Button variant="contained" onClick={() => setStep((s) => s + 1)}
-          disabled={step === 0 && !toOperatorId}>
+          disabled={(step === 0 && !toOperatorId) || (step === 1 && selVehicles.size + selKitItems.size === 0)}>
           {step < 1 ? 'Next' : 'Continue to Note'}
         </Button>
       </DialogActions>
