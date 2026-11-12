@@ -10,20 +10,19 @@ Updated 2026-11-11. History: `CHANGELOG.md`.
 - Users: 4–9 field operators on phones, 2 admins (Max, the owner; Stewart).
 
 ## In flight
-1. REQ-B, quick fixes: admin lock-out, reservation confirm, pickup amounts, pre-ticked transfer.
-2. REQ-C: stay signed in for 4 idle days.
-3. REQ-A2: the check on data-deleting migrations; audited; merges alone.
+1. REQ-C: stay signed in for 4 idle days.
+2. REQ-A2: the check on data-deleting migrations; audited; merges alone.
 
 ## Next, in order
-4. The owner's no-code safety jobs (below). Claude drafts a short "in case of emergency" guide for Stewart (roll back, restore, who to call) from `docs/ROLLBACK.md`; the owner checks it.
-5. Email off. Tests use a database built like the live one.
-6. Quick fixes, second set: reopen re-reads Today; Hubs "Copy link"; the daily check uses the phone's own day; Reports dates, category, cost; a failed check stays open; project on ended deployments; remove four photo boxes.
-7. A unit's location accepts temporary places.
-8. The rest of "where is the gear": serial/QR search; holder and place on Scan and Inventory; hand-overs change at once, with "Not mine"; a place for vehicles at return; a "Missing" state.
-9. Finish the half-done data moves: old holder columns, categories, consumable counts, project link.
-10. The two field complaints: daily check opens in one load; one deployment builder.
-11. Re-cut the rest of the paused queue (`packets/paused/`).
-12. New features.
+3. The owner's no-code safety jobs (below). Claude drafts a short "in case of emergency" guide for Stewart (roll back, restore, who to call) from `docs/ROLLBACK.md`; the owner checks it.
+4. Email off. Tests use a database built like the live one.
+5. Quick fixes, second set: reopen re-reads Today; Hubs "Copy link"; the daily check uses the phone's own day; Reports dates, category, cost; a failed check stays open; project on ended deployments; remove four photo boxes.
+6. A unit's location accepts temporary places.
+7. The rest of "where is the gear": serial/QR search; holder and place on Scan and Inventory; hand-overs change at once, with "Not mine"; a place for vehicles at return; a "Missing" state.
+8. Finish the half-done data moves: old holder columns, categories, consumable counts, project link.
+9. The two field complaints: daily check opens in one load; one deployment builder.
+10. Re-cut the rest of the paused queue (`packets/paused/`).
+11. New features.
 
 ## Owed by the owner (date = when it became owed)
 - 2026-07-28: TOP PRIORITY · Backup restore test (never done). Restore into a new throwaway project, check the data, write the date in `docs/ROLLBACK.md`.
@@ -42,7 +41,7 @@ Closed by the owner's word on Nov 11, 2026: the operator PIN reset after Oct 22.
 
 ## Known hazards
 - Nobody is told when a deploy fails. After every merge, open the Deploy run and see it end green.
-- On the admin Users page, do not press Reset PIN on an admin and do not change anyone's role to Admin. Either locks that person out. Add admins by invite. Fix: REQ-B.
+- When you make an admin a Field Operator, set a Reset PIN in the same save, or that person cannot sign in.
 - Never run a Prisma or `make db-*` command with `.env` pointing at the live database. Some have no guard. Full list: `README.md`.
 - The CI test database is built from the schema file, not the migrations. A migration first runs for real on the live database.
 - Email reaches no real recipient: the deploy forces test mode. Use copy-link.
