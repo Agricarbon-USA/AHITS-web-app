@@ -2,6 +2,7 @@
 
 One line per merge to `development` (merging is the deploy), newest first: `date · #PR · what changed for users`. The line is written inside the PR and never edited afterwards. The live revision and the live-check result go in a comment on the PR, not here. Older lines keep their form. Starts Oct 22, 2026; earlier merges: `git log`.
 
+- 2026-11-12 · #283 · Phones stay signed in for 4 days without use (was 24 hours), 14 days at most; a change of role signs that person out
 - 2026-11-12 · #282 · Quick fixes: an admin with a reset PIN, or an operator made Admin, can sign in; reservations with serial-numbered items can be confirmed; Pick Up keeps the reserved amount; Transfer — Selected Gear opens with nothing ticked; a cancelled transfer leaves the admin Pending Transfers card at once
 - 2026-11-11 · #281 · Docs-only merges no longer redeploy the app; risky make commands refuse outside a local database or GitHub Actions
 - 2026-11-11 · correction · #280's deploy also put P1-1b (#279) live for the first time, as revision `ahits-web-app-staging-00462-6ns`. #279's own deploys on Nov 1 and Nov 3 failed because Google Cloud billing was off, so the app ran P1-1a code until Nov 11. The #280 line's "No change to the app" and the #279 line's revision are wrong; both lines are left as written
