@@ -62,13 +62,13 @@ const pick = (combo: HTMLElement, option: RegExp | string) => {
 const lineOf = (name: string) => screen.getByText(name).closest('div')!.parentElement! as HTMLElement
 
 // ─── 3.2 · NotePhotoDialog keeps the work ───────────────────────────────────────────
-describe('3.2 · a failed transfer keeps the note and photos', () => {
+describe('3.2 · a failed transfer keeps the note', () => {
   const RIG = {
     id: 'rig1',
     vehicles: [],
     kits: [{ items: [{ id: 'k1', quantity: 1, item: { name: 'GPS rover', itemType: 'SERIALIZED' }, inventoryUnit: null }] }],
   }
-  it('a 400 shows the server words and the note and photos are still there', async () => {
+  it('a 400 shows the server words and the note is still there', async () => {
     vi.stubGlobal('fetch', vi.fn(() => jsonRes({ error: 'Pick a person to transfer to.' }, 400)))
     const showToast = vi.fn()
     render(<TransferDialog rig={RIG} operators={PEOPLE} onClose={() => {}} onSuccess={() => {}} showToast={showToast} />)
@@ -78,11 +78,10 @@ describe('3.2 · a failed transfer keeps the note and photos', () => {
     fireEvent.click(within(lineOf('GPS rover')).getByRole('checkbox'))
     fireEvent.click(screen.getByRole('button', { name: 'Continue to Note' }))
     fireEvent.change(await screen.findByRole('textbox', { name: /Note/ }), { target: { value: 'leaving at noon' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Photos: 0' }))
     fireEvent.click(screen.getByRole('button', { name: 'Transfer' }))
     await waitFor(() => expect(showToast).toHaveBeenCalledWith({ message: 'Pick a person to transfer to.', severity: 'error' }))
     expect(screen.getByRole('textbox', { name: /Note/ })).toHaveValue('leaving at noon')
-    expect(screen.getByRole('button', { name: 'Photos: 1' })).toBeInTheDocument()
+    expect(screen.queryByText('Photos (optional)')).toBeNull()
   })
 
   it('a waiting line is neither shown nor sent', async () => {

@@ -5,7 +5,6 @@ import {
   Dialog, DialogTitle, DialogContent, DialogActions,
   Button, TextField, Typography, Stack, Chip,
 } from '@mui/material'
-import { PhotoCapture } from './PhotoCapture'
 
 interface NotePhotoDialogProps {
   open: boolean
@@ -13,7 +12,7 @@ interface NotePhotoDialogProps {
   description?: string
   loading?: boolean
   onClose: () => void
-  /** P1-1b (3.2): return (or resolve) `false` to keep the note and photos — e.g. the write failed. */
+  /** P1-1b (3.2): return (or resolve) `false` to keep the note — e.g. the write failed. REQ-D: no photos are asked for here; `photoUrls` is always []. */
   onConfirm: (note: string, photoUrls: string[]) => void | boolean | Promise<void | boolean>
   confirmLabel?: string
   confirmColor?: 'primary' | 'error' | 'warning' | 'success' | 'inherit'
@@ -33,19 +32,16 @@ export function NotePhotoDialog({
   presets,
 }: NotePhotoDialogProps) {
   const [note, setNote] = React.useState('')
-  const [photos, setPhotos] = React.useState<string[]>([])
 
   async function handleConfirm() {
     let r
-    try { r = await onConfirm(note, photos) } catch { return }
+    try { r = await onConfirm(note, []) } catch { return }
     if (r === false) return
     setNote('')
-    setPhotos([])
   }
 
   function handleClose() {
     setNote('')
-    setPhotos([])
     onClose()
   }
 
@@ -74,10 +70,6 @@ export function NotePhotoDialog({
           fullWidth
           sx={{ mt: 1 }}
         />
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2, mb: 0.5 }}>
-          Photos (optional)
-        </Typography>
-        <PhotoCapture value={photos} onChange={setPhotos} disabled={loading} />
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
         <Button onClick={handleClose} disabled={loading}>Cancel</Button>
