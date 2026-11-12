@@ -115,9 +115,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (forceLogout) actions.push({ action: 'FORCE_LOGOUT' })
 
   // Bump tokenVersion to invalidate existing sessions whenever we suspend,
-  // reset the PIN, or explicitly force a logout. (Suspend is also enforced by
-  // the isActive re-check in getSession, but bumping covers reactivation too.)
-  if (forceLogout || pin || isActive === false) {
+  // reset the PIN, change the role, or explicitly force a logout. (Suspend is also
+  // enforced by the isActive re-check in getSession, but bumping covers reactivation too.)
+  if (forceLogout || pin || isActive === false || (role !== undefined && role !== target.role)) {
     data.tokenVersion = { increment: 1 }
   }
 

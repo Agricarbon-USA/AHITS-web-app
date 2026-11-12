@@ -178,4 +178,32 @@ describe('User management — last-admin guardrail + RBAC', () => {
     expect(after?.tokenVersion).toBe((before?.tokenVersion ?? 0) + 1)
     expect(after?.isActive).toBe(false)
   })
+
+  it('changing a role bumps tokenVersion (signs that person out)', async () => {
+    const admin = await createAdminUser({ email: 'keep-admin@test.example' })
+    const op = await createOperator()
+    mockSession = { userId: admin.id, role: 'ADMIN', name: admin.name, email: admin.email }
+    const before = await prisma.user.findUnique({ where: { id: op.id } })
+    const res = await patchUser(patchReq(op.id, { role: 'ADMIN' }), {
+      params: Promise.resolve({ id: op.id }),
+    })
+    expect(res.status).toBe(200)
+    const after = await prisma.user.findUnique({ where: { id: op.id } })
+    expect(after?.role).toBe('ADMIN')
+    expect(after?.tokenVersion).toBe((before?.tokenVersion ?? 0) + 1)
+  })
+
+  it('sending the same role again leaves tokenVersion unchanged (the Manage form always sends role)', async () => {
+    const admin = await createAdminUser({ email: 'keep-admin@test.example' })
+    const op = await createOperator()
+    mockSession = { userId: admin.id, role: 'ADMIN', name: admin.name, email: admin.email }
+    const before = await prisma.user.findUnique({ where: { id: op.id } })
+    const res = await patchUser(patchReq(op.id, { role: 'OPERATOR', name: 'ZZ Renamed' }), {
+      params: Promise.resolve({ id: op.id }),
+    })
+    expect(res.status).toBe(200)
+    const after = await prisma.user.findUnique({ where: { id: op.id } })
+    expect(after?.name).toBe('ZZ Renamed')
+    expect(after?.tokenVersion).toBe(before?.tokenVersion)
+  })
 })
