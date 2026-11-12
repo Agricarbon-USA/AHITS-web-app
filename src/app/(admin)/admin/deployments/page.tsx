@@ -41,6 +41,7 @@ import { ConditionSelect } from '@/components/shared/ConditionSelect'
 import { useToast } from '@/components/shared/useToast'
 import { useMutation } from '@/hooks/useMutation'
 import { useInvalidation } from '@/hooks/useInvalidation'
+import { dispatchInvalidate } from '@/lib/invalidation'
 import { apiErrorMessage } from '@/lib/api-error-shape'
 import { copy } from '@/lib/copy/admin-actions'
 import { fetchPickerOptions } from '@/lib/inventory-options'
@@ -340,6 +341,7 @@ function DeploymentDrawer({
       setReassignTargetId('')
       setReassignNote('')
       showToast(copy('deployment.reassignPrimary').success)
+      dispatchInvalidate(['transfers', 'deployments']) // REQ-B: the page's Pending Transfers card re-reads
       await refresh()
     } catch {
       showToast('Network error. Please try again.', 'error')

@@ -386,6 +386,27 @@ describe('3.5 · admin deployments', () => {
     expect(screen.queryByText(/Sample bags ×2/)).toBeNull()
   })
 
+  // REQ-B fix 5: Reassign Primary cancels the waiting transfer; the page card re-reads.
+  it('after Reassign Primary the page re-reads pending transfers and the card clears', async () => {
+    transfers = [{
+      id: 't1', note: '', createdAt: '2026-10-23T12:00:00Z', status: 'PENDING',
+      fromRig: { id: 'rig-1', operator: { id: 'op1', name: 'Owen Operator' } }, toOperator: { id: 'op2', name: 'Xena Recipient' },
+      vehicles: [], items: [{ id: 'ti1', quantity: 1, kitItem: { id: 'ki-bags', quantity: 2, item: { id: 'i-bags', name: 'Sample bags' } } }],
+    }]
+    render(<ToastProvider><AdminDeploymentsPage /></ToastProvider>)
+    expect(await screen.findByText('Pending Transfers (1)')).toBeInTheDocument()
+    fireEvent.click(screen.getAllByText('Owen Operator')[0]!)
+    await screen.findByText('Sample bags')
+    fireEvent.click(screen.getByRole('button', { name: /Reassign Primary…/ }))
+    const dlg = await screen.findByRole('dialog', { name: 'Reassign Primary Operator' })
+    pick(within(dlg).getByRole('combobox', { name: /Reassign to/ }), 'Xena Recipient')
+    transfers = [] // the handoff cancels the waiting transfer
+    const before = calls.length
+    fireEvent.click(within(dlg).getByRole('button', { name: 'Reassign Primary' }))
+    await waitFor(() => expect(calls.slice(before).some((c) => c.method === 'GET' && c.url === '/api/transfers?status=PENDING')).toBe(true))
+    await waitFor(() => expect(screen.queryByText(/Pending Transfers/)).toBeNull())
+  })
+
   it('Remove vehicles: a transfer needs a person', async () => {
     await openDrawer()
     fireEvent.click(screen.getAllByRole('button', { name: 'Remove' })[0]!) // the Rig section's (vehicles come first)
