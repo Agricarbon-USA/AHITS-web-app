@@ -30,7 +30,7 @@
 
 ## Daily check
 - Driven vehicles and trailers each get a daily check. (Oct 22)
-- Crews work in several time zones, so a check belongs to the day on the operator's own phone. (Nov 11) — not built yet (today: the US Central day)
+- Crews work in several time zones, so a check belongs to the day on the operator's own phone. Whether a check was missed is judged by that same clock. (Nov 11) — not built yet (today: the US Central day)
 - Items start on "Yes". (Nov 11)
 - A failed item stays open until someone marks it fixed. (Nov 11) — not built yet
 - One check per vehicle per day covers the whole crew; a second is refused, naming who checked. (D47)
@@ -98,14 +98,14 @@
 - Migrations only add; one that drops data needs a PR labelled `destructive-migration-approved`. (D16)
 - Email is switched off cleanly; the bell and copy-link are enough. (Nov 11) — not built yet
 - The owner owes, top priority, a backup restore test and switching the Supabase Data API off; after that a restore is practised once a quarter and dated. (Nov 11)
-- Stewart gets a one-page "roll back and restore" note instead of a backup developer. (Nov 11) — to write
+- Stewart gets a short "in case of emergency" guide (roll back, restore from a backup, who to call) instead of a backup developer. It also stands in for the admin guide (D20). (Nov 11) — to write
 
 ## How code ships
 - Code ships by the six-step loop in `CLAUDE.md`, one short request per PR. (Nov 11)
 - A PR merges when the owner says "go", at any time of day. Docs-only PRs may merge themselves once CI is green. (Nov 11)
-- Database migrations and app-update (service worker) changes wait for the evening or zero active deployments, and merge alone. (Nov 11)
+- Database migrations and app-update (service worker) changes wait until after 6 pm Eastern or zero active deployments, and merge alone. (Nov 11)
 - The safety rules in `CLAUDE.md` always hold (git, `.env`, SQL, the owner's PINs, reverts). (Nov 11)
-- Docs-only merges do not redeploy the live app. (Oct 22) — not built yet, REQ-A1
+- Docs-only merges do not redeploy the live app. (Oct 22)
 
 ## Decided for the paused packets (Oct 30) — none built yet
 - A PIN or password change signs out other devices; sign-ins are kept 12 months, for admins only.
@@ -142,8 +142,3 @@ Do not follow these from the history file.
 - D52's waiting-transfer parts — replaced by at-once hand-overs; in code until that PR.
 - Oct 22: "return hub becomes home hub" (see D51); "several projects, one per day" (see Nov 11); PIN rotation (closed).
 - Oct 30: Eastern business day and 19:00 cutoff; shared-phone rules; hiding repair and rental costs; email to the owner on a reset; late checks 7 days back.
-
-## Needs the owner
-1. With the phone's own day, which clock says a check was "missed", and may a phone's date run ahead of the server's (D26 refuses future dates)?
-2. Stewart's one-page admin guide (D20) was never written: still owed?
-3. Which hour and time zone is "the evening" for database and app-update merges, now that crews are in several time zones? (D48 said after 20:00 Central.)

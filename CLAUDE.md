@@ -14,7 +14,7 @@ What AHITS is and who uses it: `README.md`. One environment, the live one: `ahit
 2. **Build.** Fresh branch from the latest `development`: `feature/YYYYMMDD/<github-login>-<short-name>`. One PR at a time; never stack a PR on another branch (CI runs only for PRs into `development`). Everything goes in ONE PR (see PR shape).
 3. **CI green.** Run the gate (below) as far as you can. CI decides.
 4. **Audit, where it pays.** Write "needs audit" on a PR that touches gear movement or stock, the database, sign-in or permissions, or offline / the service worker. The planning Claude audits those. Others skip it.
-5. **Go.** The owner says "go" and it merges, any time. Database migrations and app-update changes (service worker: `src/app/sw.ts`, the Serwist block in `next.config.ts`) wait for the evening or 0 Active Deployments (admin dashboard), and merge alone. Merge with squash; never use `--admin` to pass a red or pending check.
+5. **Go.** The owner says "go" and it merges, any time. Database migrations and app-update changes (service worker: `src/app/sw.ts`, the Serwist block in `next.config.ts`) wait until after 6 pm Eastern or 0 Active Deployments (admin dashboard), and merge alone. Merge with squash; never use `--admin` to pass a red or pending check.
 6. **Check it live.** After a green deploy run, check the 1-3 things the request names, as admin, through the screens, in the browser tab the owner has signed in (never sign in as him or Stewart). The owner checks what needs his phone or PIN. One comment on the PR records the revision and the result of each check.
 
 Live checks: keep the tab visible (a hidden tab looks stuck). Before the first write, read Active Deployments (admin dashboard) and put the number in the PR comment. Make test data through the screens, never raw API calls. Name it "ZZ ...", use no real fleet vehicle, remove it after.
@@ -43,16 +43,17 @@ The gate also enforces:
 - No raw colour hex in `src/`; use `src/theme/tokens.ts` (lint).
 
 ## Database & migration rules
-- A schema change ships in a PR as a migration file. To create one: change `prisma/schema.prisma` and write the SQL by hand in `prisma/migrations/<YYYYMMDDHHMMSS>_<name>/migration.sql`. Say so in the PR. This is the only safe way until REQ-A1 guards `make db-migrate-dev`. The deploy applies the file before the new code serves.
+- A schema change ships in a PR as a migration file. To create one: change `prisma/schema.prisma` and write the SQL by hand in `prisma/migrations/<YYYYMMDDHHMMSS>_<name>/migration.sql`. Say so in the PR. `make db-migrate-dev` now refuses a database that is not on this computer. The deploy applies the file before the new code serves.
 - Additive first: new tables, nullable columns, columns with a default. Old code is still serving while it lands. Drops and renames come later, in their own PR.
 - CI enforces this (`scripts/check-migration-safety.sh`): DROP, TRUNCATE, RENAME, DELETE FROM, SET NOT NULL, a type change, or ADD COLUMN NOT NULL without DEFAULT fails. A needed one takes `-- migration-safety: acknowledged <reason>` on the line before it, plus the PR label `destructive-migration-approved`. Trust CI, not a local run of the script.
 - A new enum value passes the check, but an older revision fails when it reads one. Say so in the PR.
-- Never run the `make` or `npm run prisma:*` commands on the "never run" list in `README.md`, or a bare `npx prisma migrate …` / `db push`. Most have no live-database guard, and you cannot read `.env` to see where they point.
+- Never run the `make` or `npm run prisma:*` commands on the "never run" list in `README.md`, or a bare `npx prisma migrate …` / `db push`. Some have no live-database guard, and you cannot read `.env` to see where they point.
 
 ## Deploy facts
 - Merging to `development` deploys the live app (`.github/workflows/deploy.yml`): the gate, the migration check, migrate the live database, build and deploy to Cloud Run, a settings check. A failed step stops the rest.
-- A docs-only merge deploys too, and every deploy shows crews "A new version of AHITS is available". REQ-A1 ends this. Until then keep docs edits inside the code PR.
+- A merge that changes only root `*.md`, `docs/**` or `packets/**` does not deploy. Every other merge does, and crews see "A new version of AHITS is available".
 - `/api/health` answers 200 `{"status":"ok","db":"up"}` when the app reaches its database. It does not name the revision; the deploy run's log does (to confirm).
+- A merge is not live until its Deploy run ends green. Open the run after every merge. #279's deploy failed twice and nobody noticed for 10 days.
 - Rollback: `docs/ROLLBACK.md`. Traffic goes back to the previous revision, then a revert PR. Never undo a migration by hand.
 - A new secret must exist in Secret Manager before the deploy that mounts it, and be on the `--set-secrets` line in `Makefile`. Console-set settings are wiped by the next deploy. Never give a secret a `NEXT_PUBLIC_` name: browsers receive those values.
 
