@@ -1,169 +1,75 @@
 @AGENTS.md
 
-> **Before re-opening any settled "should we…" question, read `DECISIONS.md`.** If it's an ACTIVE decision you may not act against it — only propose a superseding entry with owner sign-off. First read for state: `STATUS.md` and `00_START_HERE.md`. If `git status` shows untracked `*.md`, commit before proceeding.
+# AHITS: how to build, test and ship
 
-# Deployment Workflow
+What AHITS is and who uses it: `README.md`. One environment, the live one: `ahits-web-app-staging`.
 
-When a user says **"make this change then deploy it to cloud"** (or any variation like "deploy to staging", "push this to staging", "ship it"), follow this exact sequence:
+## Read first
+1. `STATUS.md`: what is live, in flight, next, and known hazards.
+2. Your request in `packets/`. (`packets/paused/` is parked. Do not build from it.)
+3. `DECISIONS.md`: the live rules and the words to use. If a request conflicts with one, stop and ask the owner.
 
-## 1. Create a feature branch
+## The loop
+1. **Request.** A few lines in `packets/`. If it does not match the code you find, say so before you build.
+2. **Build.** Fresh branch from the latest `development`: `feature/YYYYMMDD/<github-login>-<short-name>`. One PR at a time; never stack a PR on another branch (CI runs only for PRs into `development`). Everything goes in ONE PR (see PR shape).
+3. **CI green.** Run the gate (below) as far as you can. CI decides.
+4. **Audit, where it pays.** Write "needs audit" on a PR that touches gear movement or stock, the database, sign-in or permissions, or offline / the service worker. The planning Claude audits those. Others skip it.
+5. **Go.** The owner says "go" and it merges, any time. Database migrations and app-update changes (service worker: `src/app/sw.ts`, the Serwist block in `next.config.ts`) wait for the evening or 0 Active Deployments (admin dashboard), and merge alone. Merge with squash; never use `--admin` to pass a red or pending check.
+6. **Check it live.** After a green deploy run, check the 1-3 things the request names, as admin, through the screens, in the browser tab the owner has signed in (never sign in as him or Stewart). The owner checks what needs his phone or PIN. One comment on the PR records the revision and the result of each check.
 
-Branch naming convention: `feature/YYYYMMDD/<github-username>-<FEATURE_DESCRIPTION>`
+Live checks: keep the tab visible (a hidden tab looks stuck). Before the first write, read Active Deployments (admin dashboard) and put the number in the PR comment. Make test data through the screens, never raw API calls. Name it "ZZ ...", use no real fleet vehicle, remove it after.
 
-- `YYYYMMDD` = today's date
-- `<github-username>` = the authenticated GitHub user (`gh api user --jq .login`)
-- `<FEATURE_DESCRIPTION>` = short kebab-case description of the change (3–5 words max)
+## Safety rules
+- Stage files by name. Never `git add -A` / `git add .`, `git stash`, `git reset`, or `git checkout <ref> -- .`.
+- Never read `.env` files.
+- Nobody types the owner's PINs or passwords. The owner signs in himself.
+- Nothing merges without the owner's go, except a PR that changes only `.md` files: it may merge itself on green CI.
+- No revert without the owner's go. A revert is a deploy. Before proposing one, see the fault again after the new revision has settled, on a screen the PR touched.
+- Live-database SQL runs only in the Supabase SQL Editor, by the owner. Hand him read-only SQL, or SQL with its undo.
+- Never deploy or migrate from a terminal (`make deploy-staging`, `deploy-prod`, `cloud-run-deploy`, `cloud-run-migrate`). Never run the preview workflow (`pr-staging-deploy.yml`): it uses the live database and secrets.
+- Never push or open a PR to `production`. There is no production, but the branch still starts the pipeline.
 
-```bash
-GH_USER=$(gh api user --jq .login)
-DATE=$(date +%Y%m%d)
-BRANCH="feature/${DATE}/${GH_USER}-<feature-description>"
-git checkout -b "$BRANCH"
-```
+## Build and test
+Node 24 (`.nvmrc`). `npm ci`, then `npx prisma generate`.
 
-## 2. Make the code change
+"The gate" is the five checks CI runs (`.github/workflows/verify.yml`): `npm run type-check`, `npm run lint`, `npm run test:ui` (screen tests, no database), `npm run build`, `npm test` (server tests, need Postgres).
 
-Apply the requested change. Commit when done:
+- For generate and build, use the placeholder env values in `verify.yml`, never real ones.
+- `npm test` needs `DATABASE_URL_TEST`; `make test` supplies a throwaway Postgres in Docker. Without Docker, say so in the PR: CI then checks the server tests.
+- `make verify` is not the gate: it skips the screen tests and the build.
 
-```bash
-git add -A
-git commit -m "<short description of change>"
-git push -u origin "$BRANCH"
-```
+The gate also enforces:
+- Only `src/lib/asset-status.ts` writes a vehicle or unit `status`. API code never returns a whole user row. (`tests/*-guard.test.ts`.)
+- No raw colour hex in `src/`; use `src/theme/tokens.ts` (lint).
 
-## 3. Regenerate the Prisma client and commit any new migration
+## Database & migration rules
+- A schema change ships in a PR as a migration file. To create one: change `prisma/schema.prisma` and write the SQL by hand in `prisma/migrations/<YYYYMMDDHHMMSS>_<name>/migration.sql`. Say so in the PR. This is the only safe way until REQ-A1 guards `make db-migrate-dev`. The deploy applies the file before the new code serves.
+- Additive first: new tables, nullable columns, columns with a default. Old code is still serving while it lands. Drops and renames come later, in their own PR.
+- CI enforces this (`scripts/check-migration-safety.sh`): DROP, TRUNCATE, RENAME, DELETE FROM, SET NOT NULL, a type change, or ADD COLUMN NOT NULL without DEFAULT fails. A needed one takes `-- migration-safety: acknowledged <reason>` on the line before it, plus the PR label `destructive-migration-approved`. Trust CI, not a local run of the script.
+- A new enum value passes the check, but an older revision fails when it reads one. Say so in the PR.
+- Never run the `make` or `npm run prisma:*` commands on the "never run" list in `README.md`, or a bare `npx prisma migrate …` / `db push`. Most have no live-database guard, and you cannot read `.env` to see where they point.
 
-If you changed the schema, regenerate the client and create the migration on a
-**disposable local/dev DB** (never a shared one — see the non-negotiable rules below):
+## Deploy facts
+- Merging to `development` deploys the live app (`.github/workflows/deploy.yml`): the gate, the migration check, migrate the live database, build and deploy to Cloud Run, a settings check. A failed step stops the rest.
+- A docs-only merge deploys too, and every deploy shows crews "A new version of AHITS is available". REQ-A1 ends this. Until then keep docs edits inside the code PR.
+- `/api/health` answers 200 `{"status":"ok","db":"up"}` when the app reaches its database. It does not name the revision; the deploy run's log does (to confirm).
+- Rollback: `docs/ROLLBACK.md`. Traffic goes back to the previous revision, then a revert PR. Never undo a migration by hand.
+- A new secret must exist in Secret Manager before the deploy that mounts it, and be on the `--set-secrets` line in `Makefile`. Console-set settings are wiped by the next deploy. Never give a secret a `NEXT_PUBLIC_` name: browsers receive those values.
 
-```bash
-make db-generate       # regenerate the Prisma client if schema changed
-make db-migrate-dev    # create the migration against a LOCAL/dev DB only
-```
+## PR shape
+- One PR, base `development`, holding the code, its tests and the doc lines. No follow-up docs PR. Title: what changes for users, in plain words.
+- Body: what changed for users; how it was tested (gate checks run, and any left to CI); the 1-3 live checks and who does each.
+- One `CHANGELOG.md` line, written inside the PR and never edited afterwards: `date · #PR · what changed for users`. Add it in a second commit, once the PR has its number. The live revision and the live-check result go in the PR comment (step 6), not in CHANGELOG.
+- `DECISIONS.md` / `STATUS.md` lines only when they change.
 
-Commit the generated `prisma/migrations/*` files as part of this branch.
-
-> **Migrations against staging/prod are applied by the CI `migrate` job in
-> `deploy.yml` (`make cloud-run-migrate`), not by hand.** You do **not** run
-> `make db-migrate` against the shared staging/prod database from a laptop — the
-> direct URL is IPv6-only from most networks and it duplicates the CI step. Just
-> make sure the committed migration is backward-compatible (see rules below), since
-> the migrate job runs **before** the new revision serves traffic.
-
-## 4. Open a pull request
-
-```bash
-gh pr create \
-  --title "<Short description>" \
-  --body "<What changed and why>" \
-  --base development
-```
-
-Capture the PR number from the output. Opening the PR runs the `CI` workflow
-(lint, type-check, build, tests via the shared `verify` workflow); it must pass
-before the PR is merged. There is **no `main` branch** — the integration branch
-is `development` (deploys to staging) and `production` is the release branch
-(deploys to prod).
-
-## 5. Get it reviewed and merged — that is the deploy
-
-**There is no way to push a branch onto staging. Merging is the deploy.**
-
-Under **D16 (staging is home)** the fleet operates on `ahits-web-app-staging`
-indefinitely, so it is production in everything but name. The ONLY path to it is:
-
-> **merge to `development` → `deploy.yml` runs `verify` → `migration-safety` →
-> `migrate` → `deploy`**
-
-Any failing job stops the deploy. So: get CI green, get the PR reviewed, merge it.
-The deploy runs itself.
-
-Watch the post-merge deploy:
-
-```bash
-gh run watch
-```
-
-Confirm what actually landed:
-
-```bash
-make cloud-run-url SERVICE=ahits-web-app-staging
-```
-
-If a deploy goes bad, **do not push a fix onto staging** — roll traffic back to the
-previous revision and open a revert PR. See `PILOT_ROLLBACK.md`.
-
-### Need a throwaway preview instead?
-
-`pr-staging-deploy.yml` still exists, but it is `workflow_dispatch`-only and **requires**
-an explicit `service` input that is **not** a live service — it hard-fails otherwise. It
-also applies **no migrations**, so a preview of a PR that adds a migration runs against an
-unmigrated schema (a deliberately degraded preview; see that workflow's header).
-
-```bash
-gh workflow run pr-staging-deploy.yml \
-  -f pr_number=$(gh pr view --json number --jq .number) \
-  -f service=ahits-web-app-preview-<topic>
-```
-
-## Notes
-
-- The staging service is `ahits-web-app-staging` on Cloud Run in `us-central1`. **D16: this is the service the fleet actually uses.** Treat it as production: the only way in is a reviewed merge to `development`. There is no label, no manual dispatch, and no local `make deploy-staging` that may legitimately target it.
-- **Auto-deploys (`deploy.yml`):** landing changes on `development` deploys to **staging**; landing changes on `production` deploys to **prod**. Each run is `verify` (lint, type-check, build, tests) → **`migration-safety`** → **`migrate`** (`make cloud-run-migrate`) → `deploy` → **env-drift check**, and will not deploy if an earlier job fails. Promote staging → prod by merging `development` into `production` (e.g. a PR with `--base production`).
-- **Reverts of `development` or `production` require the owner's explicit go in chat — a revert is a deploy of the fleet's app.** The only exception is a hard outage where `/api/health` is failing. Before proposing a revert, confirm the symptom reproduces after the revision has settled and on a surface the PR actually touched. *Why:* on 2026-10-07 #245 reverted PR-1b (#244) on a cold-start screenshot of `/admin/inventory`, a page #244 did not touch; the code was fine and was re-landed unchanged as #246.
-- **Docs-only PRs (no files outside `*.md`) may be merged by the session once CI is green. Any PR touching code, config or migrations needs the owner's explicit go.**
-- **Staging smoke: measure only with the tab visible; a hidden tab is throttled and will look stuck.** Before each measurement or on-screen judgement, check `document.visibilityState === 'visible'`; if it isn't, ask the owner to bring the tab to the front rather than read anything into a spinner. *Why:* on 2026-10-07/08 admin pages "sat on a spinner for 5–30 s" in automated smokes — it was the background tab being throttled, not the app (visible, Hubs renders in ~1.5 s).
-- **Staging smoke: throwaway data goes in through the app's own screens, never raw API calls.** Create test items, vehicles, rigs and requests with the admin/operator forms. The forms carry validation the API may not (for example, the item form requires a category; `POST /api/inventory` does not). *Why:* on 2026-10-09 a smoke item POSTed with no category made the picker data carry an object, and My Deployment crashed for every operator on staging for about 2¼ minutes (22:07:59–22:10:13 UTC; fixed by #261).
-- **Before any smoke on staging, read the admin dashboard's Active Deployments count and state it in the report.** Staging is the environment operators use (D16), so the count says who could be affected by smoke data or a bad deploy. Record it before the first write.
-- **Rolling back:** never hand-revert a schema. Roll traffic to the previous Cloud Run revision, then land a revert PR. Full play + lost-write reconciliation queries: `PILOT_ROLLBACK.md`.
-- Migrate-on-deploy **is live** (the `migrate` job in `deploy.yml`), superseding the old manual step. The Docker image itself still does not run migrations.
-- ✅ **Prod migrate-secret namespacing — FIXED.** `make cloud-run-migrate` reads `$(SECRET_NS)_MIGRATE_URL`, and `deploy.yml` passes `SECRET_NS=AHITS_PROD` on the `production` branch. **Prod cutover is deferred — see DECISIONS.md D1.** The real remaining work is the from-scratch Cloud Run + DB standup, not one secret. When you are ready for prod go-live, follow `PROD_CUTOVER_RUNBOOK.md`.
-- Do **not** deploy directly from a local machine to production; always go through the PR + GitHub Actions flow.
-
-## Database & migration rules (non-negotiable)
-
-These exist because a `db push` against a shared database previously caused a staging
-outage, and manual-migration/secret ordering has repeatedly stalled deploys.
-
-- **Never run `prisma db push` or `prisma migrate dev` against a shared database**
-  (staging or prod). Those are for a disposable local/dev DB only. Schema changes
-  ship as a **committed migration** in `prisma/migrations/` and are applied with
-  `prisma migrate deploy` (`make db-migrate` / `make cloud-run-migrate`).
-- **Ship migrations backward-compatible.** The `deploy.yml` `migrate` job runs
-  **before** the new revision serves traffic, but the two are not atomic: a revision
-  that references a table/column the migration hasn't added yet errors at runtime.
-  Additive (nullable columns, new tables) is safe; destructive drops must lag the
-  code that stopped using them. **This is enforced in CI** — the `migration-safety`
-  job (`scripts/check-migration-safety.sh`) fails any change
-  whose newly-added migrations contain `DROP TABLE`/`DROP COLUMN`/`TRUNCATE`/`RENAME`/
-  `SET NOT NULL`/`ADD COLUMN … NOT NULL` without a `DEFAULT`. A drop that legitimately
-  lags the code that stopped using it can opt out with a
-  `-- migration-safety: acknowledged <reason>` line in the migration.
-  **CC-30/D16:** the gate now runs in **both** `ci.yml` (on PRs) **and** `deploy.yml`
-  (on pushes to `development`/`production`, before the `migrate` job) — a direct push
-  no longer bypasses it. An *acknowledged* destructive migration is a hard fail on
-  **both** live branches unless the PR carries the `destructive-migration-approved`
-  label; since a push can't carry a label, such a migration can only land via a
-  labelled PR.
-- **A new secret must exist in Secret Manager _before_ the deploy that mounts it.**
-  Cloud Run validates `--set-secrets` references at deploy time; deploying first
-  fails the release. Create the `AHITS_*` secret, confirm an ENABLED version, then
-  deploy.
-- Adding a new env secret also means adding its `NAME=AHITS_NAME:latest` mapping to
-  the `--set-secrets` line in the `Makefile` (`cloud-run-deploy`) — otherwise the
-  next deploy silently drops it.
-- Migrate-on-deploy automation (the authenticated `migrate` job in `deploy.yml`) has
-  **shipped** and retires most of the old manual ceremony. The prod migrate-secret
-  namespacing is fixed (`$(SECRET_NS)_MIGRATE_URL`). Prod cutover is deferred — see
-  `DECISIONS.md` D1 and `PROD_CUTOVER_RUNBOOK.md` for the full from-scratch standup steps.
-
----
-
-## SESSION CLOSE — do all 6 (≈5 min). This is the durability contract.
-
-1. **`STATUS.md`** — update §1 state, §3 active work, §4 next actions, and the date line.
-2. **`DECISIONS.md`** — append any decision made this session (new `Dn`); mark superseded ones.
-3. **`00_START_HERE.md` / `docs/INDEX.md`** — if you added/superseded/moved a doc, fix the row.
-4. **Handoff** — write `AHITS_SESSION_HANDOFF_<date>.md`: what shipped + resume points; reference decisions by `Dn`, don't re-narrate them.
-5. **Commit + push** all docs to git. (`git add -A && git commit && git push`.)
-6. **Sanity:** `git status` clean, and confirm the docs you wrote appear in `git ls-files '*.md'`. **If a doc you wrote isn't tracked, it does not exist for the next session.**
+## Known traps
+1. `src/lib/deployment-auth.ts` says the old holder columns "were dropped". Wrong: `rigs.operatorId`, `vehicles.assignedOperatorId` and `rig_operators` are still in the schema and still written. Trust the code.
+2. The operator `my-deployment/page.tsx` is 1,450 lines. New dialogs go in new files; do not grow the page. No test enforces this.
+3. Hand-written SQL (`$queryRaw`) is in 39 files and is not type-checked. The test database is built from the schema file, not the migrations, so a query can pass tests and fail live.
+4. Two deployment builders: `NewDeploymentDialog.tsx` in `src/components/operator/` and in `src/components/admin/`. They behave differently. A change usually needs both.
+5. Return logic is copied in three routes under `src/app/api/deployments/[id]/`: `end`, `items` (DELETE), `items/[kitItemId]`. Change all three or say why not.
+6. On the admin Users page, never "Reset PIN" an admin and never change a role to Admin. Either locks that person out. Add admins by invite.
+7. The destructive-migration label is checked on the PR only. The deploy after the merge either fails (the next merge then applies the migration unchecked) or applies it at once: to confirm. Warn the owner before merging any drop. REQ-A2 fixes this.
+8. After each deploy a check turns the run red unless the live service has `EMAIL_SANDBOX=true`, a non-empty `EMAIL_SANDBOX_TO` and 1 minimum instance. The new revision is already live by then. Change email settings in `Makefile` and that check in `deploy.yml` together.
+9. `held/`, `docs/prepared/` and the `.sql` files in `scripts/` are stale. Do not apply or run them. A later PR deletes them.
+10. In code, `Rig` (table `rigs`) is the deployment record.
