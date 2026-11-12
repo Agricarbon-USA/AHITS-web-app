@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
-import { issueStatusLink } from '@/lib/status-links'
+import { generateStatusToken, hashToken, statusLinkUrl } from '@/lib/status-links'
 
-// W0-9: reissue a HUB_RETURN link — revoke the old one and mint a fresh link for
-// the same unit/hub, returning the URL so an admin can copy it to a hub that has no
-// contact email (raw tokens are unrecoverable after issuance by design). Mirrors the
-// reservation resend-link (UR-030) pattern.
+// W0-9 / REQ-D: "Copy link" on Hubs → Inbound. Raw tokens are unrecoverable after
+// issuance by design, so the same HUB_RETURN link gets a new address (a new token,
+// 14 days from now) and the URL comes back for an admin to copy to a hub that has no
+// contact email. The row, its state, its discrepancy flag and its history stay; an
+// address copied earlier stops opening. A received or dismissed link answers 409.
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await requireAdmin()
   if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
@@ -20,16 +21,14 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: 'Hub-return link not found.' }, { status: 404 })
   }
 
-  // Revoke the old link so only one live link exists per unit at a time.
-  await prisma.statusLink.updateMany({
-    where: { id, state: { notIn: ['COMPLETED', 'REVOKED'] } },
-    data: { state: 'REVOKED', revokedAt: new Date() },
+  // The same link gets a new address. Its row, state, discrepancy flag and history stay.
+  const rawToken = generateStatusToken()
+  const turned = await prisma.statusLink.updateMany({
+    where: { id, state: { in: ['ISSUED', 'VIEWED', 'ACTED'] } },
+    data: { tokenHash: hashToken(rawToken), expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000) }, // 14 days, as a new link
   })
-  const { url } = await issueStatusLink({
-    type: 'HUB_RETURN',
-    createdById: session.userId,
-    inventoryUnitId: old.inventoryUnitId,
-    hubId: old.hubId ?? undefined,
-  })
-  return NextResponse.json({ ok: true, url })
+  if (turned.count === 0) {
+    return NextResponse.json({ error: 'This return is already received or dismissed.' }, { status: 409 })
+  }
+  return NextResponse.json({ ok: true, url: statusLinkUrl(rawToken) })
 }

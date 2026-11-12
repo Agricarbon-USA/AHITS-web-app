@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { SWRConfig } from 'swr'
 import OperatorTodayPage from '@/app/(operator)/operator/dashboard/page'
@@ -40,6 +40,19 @@ describe('PR-5c · Today for a crew member (SECONDARY)', () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({ ok: true, status: 200, json: async () => ({ data: TODAY }) } as Response)))
   })
   afterEach(() => { vi.unstubAllGlobals() })
+
+  it('REQ-D fix 1: Today re-reads when the app comes back, so yesterday\'s checks do not stay "Done"', async () => {
+    let answer: TodayData = { ...TODAY, checkedVehicleIds: ['v1', 'v2'] }
+    const fetchMock = vi.fn(() => Promise.resolve({ ok: true, status: 200, json: async () => ({ data: answer }) } as Response))
+    vi.stubGlobal('fetch', fetchMock)
+    // focusThrottleInterval 0: SWR otherwise ignores focus for 5 seconds after the screen opens.
+    render(<SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0, focusThrottleInterval: 0 }}><OperatorTodayPage /></SWRConfig>)
+    expect(await screen.findByText("You're set.")).toBeInTheDocument()
+    answer = { ...TODAY, checkedVehicleIds: [], vehicleChecks: [] }
+    act(() => { window.dispatchEvent(new Event('focus')) })
+    expect(await screen.findByRole('button', { name: /Start daily check/i })).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
 
   it('renders the crew rig, its due checks, and a crewmate’s check as done with who and when', async () => {
     render(<SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}><OperatorTodayPage /></SWRConfig>)

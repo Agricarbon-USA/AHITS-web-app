@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 import { isUniqueViolationAnywhere } from '@/lib/api-errors'
 import { requireAuth } from '@/lib/auth/session'
-import { getDeploymentRostersForDisplay, ensureOpenAssignment, addProjectLink, getActiveRigForOperator, hydrateRigOperator } from '@/lib/deployment-assignments'
+import { getDeploymentRostersForDisplay, ensureOpenAssignment, addProjectLink, getActiveRigForOperator, hydrateRigOperator, SHOWN_PROJECT_LINK } from '@/lib/deployment-assignments'
 import { drawFromHub, getStockAtHub, totalStock, setStockAtHub, resyncItemTotal } from '@/lib/inventory-stock'
 import { claimHeldStock, releaseAllHeldForRequest } from '@/lib/deployment-requests'
 import { withIdempotency } from '@/lib/idempotency'
@@ -82,8 +82,8 @@ export async function GET(req: NextRequest) {
   let projectRigIds: string[] | undefined
   if (projectId) {
     const rows = await prisma.$queryRaw<{ rigId: string }[]>`
-      SELECT "rigId" FROM "deployment_projects"
-      WHERE "projectId" = ${projectId} AND "removedAt" IS NULL
+      SELECT dp."rigId" FROM "deployment_projects" dp
+      WHERE dp."projectId" = ${projectId} AND ${SHOWN_PROJECT_LINK}
     `
     projectRigIds = rows.map((r) => r.rigId)
   }

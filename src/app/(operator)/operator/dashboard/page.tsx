@@ -39,7 +39,7 @@ export default function OperatorTodayPage() {
   const [viewCheckVehicleId, setViewCheckVehicleId] = React.useState<string | null>(null)
 
   const { data, error, isValidating, isLoading, mutate, updatedAt } =
-    useFreshList<{ data: TodayData }>('/api/operator/today')
+    useFreshList<{ data: TodayData }>('/api/operator/today', { revalidateOnFocus: true })
   const today = data?.data ?? null
 
   const deployment = today?.deployment ?? null
