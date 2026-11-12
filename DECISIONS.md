@@ -41,7 +41,7 @@
 ## Deployments and gear
 - Everyone on a deployment sees it on Today. (D47)
 - A second crew member can do everything the lead can. (Oct 22) — not built yet
-- A deployment has one project at a time and can move between projects. The dated project links stay as history, the old single project column is dropped, and ended deployments show their projects. (Nov 11) — not built yet
+- A deployment has one project at a time and can move between projects. The dated project links stay as history, the old single project column is dropped, and ended deployments show their projects. (Nov 11) — partly built (ended deployments show their project; the old column is still there)
 - A project is required to start a deployment, with an "Internal / no project" choice. (Oct 22) — not built yet
 - The old "who holds it" columns go in one fresh PR, and the stale `held/` patches are deleted. (Nov 11) — not built yet
 - One Start deployment builder serves both entry points, with search, "start from my last kit" and scan to add. (Oct 22) — not built yet
@@ -49,7 +49,7 @@
 - "Returning" gear (sent back, not yet confirmed by the hub) counts as on hand and can go out again. (D40)
 - A "Missing" state marks gear that did not arrive. (Nov 11) — not built yet
 - Retire is for real gear you are done with; Delete is for mistakes and can be undone; neither works while something live points at the item. (D46)
-- No photos are asked for on Add vehicles, Remove vehicles, Add items or Transfer; problem reports keep them. (Nov 11) — not built yet
+- No photos are asked for on Add vehicles, Remove vehicles, Add items or Transfer; problem reports keep them. (Nov 11)
 - A photo may come from the camera or the library; a missing camera never blocks a submit. (D36)
 - Also decided, none built yet: a third "Auxiliary" gear type, an Equipment overview page, kit templates, boxes, a Project page, a Christie daily check, short checklists per vehicle type. (Oct 22)
 
