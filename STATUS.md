@@ -5,7 +5,7 @@ Updated 2026-11-11. History: `CHANGELOG.md`.
 ## Live now
 - Last code change: PR #279 (P1-1b), merged Nov 1, 2026. It went live on Nov 11, 2026 with #280's deploy (revision `ahits-web-app-staging-00462-6ns`). Its own deploys on Nov 1 and Nov 3 failed because Google Cloud billing was off.
 - `/api/health` was ok on Nov 11, 2026.
-- REQ-A1 (#<PR>) is live. One check left: the next docs-only PR deletes this line and, once merged, confirms no Deploy run started for it (comment on #<PR>).
+- REQ-A1 (#281) is live. One check left: the next docs-only PR deletes this line and, once merged, confirms no Deploy run started for it (comment on #281).
 - The only environment. It is named "staging" but is the real app.
 - Users: 4–9 field operators on phones, 2 admins (Max, the owner; Stewart).
 
