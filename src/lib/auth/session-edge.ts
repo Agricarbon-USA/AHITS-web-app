@@ -11,7 +11,8 @@ import type { UserRole } from '@prisma/client'
 // ─────────────────────────────────────────────────────────────────────────
 
 export const SESSION_COOKIE = 'ahits_session'
-export const SESSION_DURATION = 60 * 60 * 24 // 24h, in seconds
+export const SESSION_DURATION = 60 * 60 * 24 * 4 // idle sign-out: 4 days, in seconds
+export const RENEW_AFTER = 60 * 60 // renew a token more than 1 hour old
 // Absolute cap on a sliding session, measured from the original PIN entry (authAt).
 // Sliding renewal keeps an ACTIVELY-used token alive, but never past this — a stolen
 // token's usable life is bounded to ≤14 days since login, never infinite.
@@ -47,9 +48,12 @@ export function sessionCookieOptions() {
   }
 }
 
-// Sign a fresh 24h token carrying exactly these claims. `authAt` is required and
-// signed verbatim (createSession stamps it "now"; renewal carries it through).
+// Sign a fresh token carrying exactly these claims, valid for SESSION_DURATION (4 idle
+// days) but never past authAt + MAX_SESSION_LIFETIME. `authAt` is required and signed
+// verbatim (createSession stamps it "now"; renewal carries it through).
 export async function mintSessionToken(claims: RenewableClaims): Promise<string> {
+  const nowSec = Math.floor(Date.now() / 1000)
+  const exp = Math.min(nowSec + SESSION_DURATION, claims.authAt + MAX_SESSION_LIFETIME) // exact 14-day cap
   return new SignJWT({
     userId: claims.userId,
     role: claims.role,
@@ -60,16 +64,16 @@ export async function mintSessionToken(claims: RenewableClaims): Promise<string>
     authAt: claims.authAt,
   })
     .setProtectedHeader({ alg: 'HS256' })
-    .setIssuedAt()
-    .setExpirationTime('24h')
+    .setIssuedAt(nowSec)
+    .setExpirationTime(exp)
     .sign(getSecret())
 }
 
 /**
  * Given a VERIFIED JWT payload and the current epoch-seconds, decide whether to
- * re-mint. Returns the new token when the session is past half-life AND still within
- * MAX_SESSION_LIFETIME of authAt; otherwise null (no renewal — let it expire naturally
- * once past the cap, or ride the current token until half-life). The re-mint carries
+ * re-mint. Returns the new token when the token is more than RENEW_AFTER (1 hour) old
+ * AND still within MAX_SESSION_LIFETIME of authAt; otherwise null (no renewal — let it
+ * expire naturally once past the cap, or ride the current token). The re-mint carries
  * the SAME claims and the SAME authAt — only `exp` (and `iat`) move. Instant revocation
  * is unaffected: every API route still runs DB-backed getSession() (tokenVersion /
  * isActive / role), so suspend/force-logout kill a renewed token on its next request.
@@ -82,8 +86,8 @@ export async function maybeRenewSessionToken(
   if (iat == null) return null
   // A pre-CC-29 token has no authAt → anchor the cap to its iat (best available).
   const authAt = typeof payload.authAt === 'number' ? payload.authAt : iat
-  if (nowSec <= iat + SESSION_DURATION / 2) return null // not yet past half-life
-  if (nowSec - authAt > MAX_SESSION_LIFETIME) return null // past the absolute cap
+  if (nowSec <= iat + RENEW_AFTER) return null // renewed less than 1 hour ago
+  if (nowSec - authAt >= MAX_SESSION_LIFETIME) return null // at or past the absolute cap
   return mintSessionToken({
     userId: String(payload.userId),
     role: payload.role as UserRole,

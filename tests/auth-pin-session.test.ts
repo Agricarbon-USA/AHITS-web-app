@@ -1,6 +1,15 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
+import { NextRequest } from 'next/server'
+import { SignJWT, decodeJwt } from 'jose'
 import { hashPin, verifyPin, verifyPinDetailed } from '../src/lib/auth/pin'
 import { createSession, getSession, getSessionClaims } from '../src/lib/auth/session'
+import {
+  MAX_SESSION_LIFETIME,
+  SESSION_DURATION,
+  maybeRenewSessionToken,
+  mintSessionToken,
+} from '../src/lib/auth/session-edge'
+import { proxy } from '../src/proxy'
 import { prisma } from '../src/lib/prisma'
 import { createOperator } from './helpers/fixtures'
 
@@ -218,5 +227,83 @@ describe('Session — getSessionClaims (local verify) + mustChangePin (UR-004)',
     expect(await getSessionClaims()).toBeNull()
     cookieToken = 'not-a-jwt'
     expect(await getSessionClaims()).toBeNull()
+  })
+})
+
+// REQ-C: a phone stays signed in for 4 idle days. Use more than 1 hour after the last
+// renewal renews; a sign-in never outlives authAt + 14 days.
+describe('Session — 4-day idle sign-in, renewal after 1 hour, 14-day cap (REQ-C)', () => {
+  const HOUR = 60 * 60
+  const DAY = 24 * HOUR
+  const claims = {
+    userId: 'user-req-c',
+    role: 'OPERATOR' as const,
+    name: 'ZZ Operator',
+    email: 'zz-operator@test.example',
+    tokenVersion: 3,
+    mustChangePin: false,
+  }
+  const secret = () => new TextEncoder().encode(process.env.PIN_SESSION_SECRET)
+  const nowSec = () => Math.floor(Date.now() / 1000)
+
+  // mintSessionToken always stamps "now", so an old token is signed by hand.
+  function signOld(ageSec: number, authAt: number) {
+    const now = nowSec()
+    return new SignJWT({ ...claims, authAt })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setIssuedAt(now - ageSec)
+      .setExpirationTime(now + HOUR)
+      .sign(secret())
+  }
+
+  it('a fresh token lasts SESSION_DURATION (4 days)', async () => {
+    const token = await mintSessionToken({ ...claims, authAt: nowSec() })
+    const { iat, exp } = decodeJwt(token)
+    expect(exp! - iat!).toBe(SESSION_DURATION)
+    expect(SESSION_DURATION).toBe(4 * DAY)
+  })
+
+  it('does not renew a token 30 minutes old', async () => {
+    const payload = decodeJwt(await signOld(30 * 60, nowSec() - 30 * 60))
+    expect(await maybeRenewSessionToken(payload, nowSec())).toBeNull()
+  })
+
+  it('renews a token 61 minutes old with the same claims and authAt', async () => {
+    const authAt = nowSec() - 2 * DAY
+    const payload = decodeJwt(await signOld(61 * 60, authAt))
+    const renewed = await maybeRenewSessionToken(payload, nowSec())
+    expect(renewed).not.toBeNull()
+    const next = decodeJwt(renewed!)
+    expect(next).toMatchObject({ ...claims, authAt })
+    expect(next.iat).toBeGreaterThan(payload.iat!)
+    expect(next.exp! - next.iat!).toBe(SESSION_DURATION)
+  })
+
+  it('a renewal 13 days after the PIN ends exactly 14 days after it', async () => {
+    const authAt = nowSec() - 13 * DAY
+    const payload = decodeJwt(await signOld(2 * HOUR, authAt))
+    const renewed = await maybeRenewSessionToken(payload, nowSec())
+    expect(renewed).not.toBeNull()
+    expect(decodeJwt(renewed!).exp).toBe(authAt + MAX_SESSION_LIFETIME)
+  })
+
+  it('does not renew exactly 14 days after the PIN', async () => {
+    const now = nowSec()
+    const payload = decodeJwt(await signOld(2 * HOUR, now - MAX_SESSION_LIFETIME))
+    expect(await maybeRenewSessionToken(payload, now)).toBeNull()
+  })
+
+  it('proxy renews a 2-hour-old sign-in on /api/notifications, not on /api/auth/logout', async () => {
+    const token = await signOld(2 * HOUR, nowSec() - 2 * HOUR)
+    const req = (path: string) =>
+      new NextRequest(`http://localhost${path}`, { headers: { cookie: `ahits_session=${token}` } })
+
+    const renewedRes = await proxy(req('/api/notifications'))
+    const cookie = renewedRes.cookies.get('ahits_session')
+    expect(cookie?.value).toBeTruthy()
+    expect(cookie?.value).not.toBe(token)
+
+    const logoutRes = await proxy(req('/api/auth/logout'))
+    expect(logoutRes.cookies.get('ahits_session')).toBeUndefined()
   })
 })

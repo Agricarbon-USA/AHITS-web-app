@@ -152,16 +152,20 @@ async function handleRequest(request: NextRequest, requestId: string) {
     const { payload } = await jwtVerify(token, getSecret())
     const role = payload.role as string
 
-    // CC-29 item 5: sliding renewal. Past half-life (and within the 14-day cap since
-    // authAt), re-mint the token with the SAME claims + a fresh 24h exp so a shift-long
-    // session never hits the synchronized mid-shift JWT cliff. Computed here (the single
+    // CC-29 item 5: sliding renewal. More than 1 hour after the last renewal (and within
+    // the 14-day cap since authAt), re-mint the token with the SAME claims + a fresh
+    // 4-day exp, so a phone used yesterday opens today. Computed here (the single
     // authenticated chokepoint every page + API request crosses) and applied to the
-    // response ACTUALLY returned below. SECURITY TRADEOFF: fixed 24h bounds a stolen
-    // token to ≤24h; sliding renewal lets an ACTIVELY-used stolen token live longer,
+    // response ACTUALLY returned below. Never on /api/auth/*: those routes (Sign out,
+    // Change PIN) set their own cookie, which a renewal here would overwrite.
+    // SECURITY TRADEOFF: a 4-day idle limit bounds an unused stolen token to ≤4 days;
+    // sliding renewal lets an ACTIVELY-used stolen token live longer,
     // bounded to ≤14 days since PIN entry (never infinite). Instant revocation is
     // unaffected — every API route still runs DB-backed getSession() (tokenVersion /
     // isActive / role), so suspend/force-logout kill a renewed token on its next request.
-    const renewedToken = await maybeRenewSessionToken(payload as Record<string, unknown>, Math.floor(Date.now() / 1000))
+    const renewedToken = pathname.startsWith('/api/auth/')
+      ? null
+      : await maybeRenewSessionToken(payload as Record<string, unknown>, Math.floor(Date.now() / 1000))
 
     // UR-004: a forced-PIN-reset operator (mustChangePin, carried in the JWT)
     // must set a new PIN before doing anything else — enforced SERVER-SIDE here,

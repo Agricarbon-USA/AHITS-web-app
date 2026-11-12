@@ -460,8 +460,8 @@ export function useOfflineQueue() {
           // CC-12 PR1: surface the parked session so the UI can prompt a re-login,
           // rather than the queue silently reading "waiting to sync" forever.
           setSessionExpired(true)
-          // FND-14b: an expired/absent session (e.g. the 24h JWT lapsed while the
-          // operator was offline) is NOT a terminal failure — the queued write is
+          // FND-14b: an expired/absent session (e.g. the JWT lapsed after 4 idle days
+          // while the operator was offline) is NOT a terminal failure — the queued write is
           // still valid. Leave it pending (don't burn a retry, don't mark failed)
           // so it replays after re-authentication, and stop this pass rather than
           // 401-failing every remaining item. Prevents silent field-data loss.
