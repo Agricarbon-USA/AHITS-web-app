@@ -113,7 +113,8 @@ export async function fetchPickupPreset(requestId: string): Promise<PickupPreset
 export function presetItems(preset: PickupPreset | null | undefined): Map<string, PendingItemEntry> {
   const m = new Map<string, PendingItemEntry>()
   for (const line of preset?.lines ?? []) {
-    m.set(line.itemId, { itemType: 'CONSUMABLE', quantity: line.qty, inventoryUnitId: null, unitLabel: null })
+    const prev = m.get(line.itemId)?.quantity ?? 0
+    m.set(line.itemId, { itemType: 'CONSUMABLE', quantity: prev + line.qty, inventoryUnitId: null, unitLabel: null })
   }
   return m
 }
@@ -171,6 +172,11 @@ export function NewDeploymentDialog({
       return (homeHubId && hubs.some((h) => h.id === homeHubId) ? homeHubId : hubs[0]?.id) ?? ''
     },
   )
+  // REQ-B: this pick-up's held stock, at the reservation's hub only.
+  const heldFor = (itemId: string) =>
+    pickupPreset && sourceHubId === pickupPreset.hubId
+      ? pickupPreset.lines.filter((l) => l.itemId === itemId).reduce((n, l) => n + l.qty, 0)
+      : 0
 
   // When hub changes, re-cap consumable quantities that exceed the new hub's available.
   React.useEffect(() => {
@@ -182,7 +188,7 @@ export function NewDeploymentDialog({
         if (entry.itemType !== 'CONSUMABLE') continue
         const item = inventoryItems.find((i) => i.id === itemId)
         if (!item) continue
-        const hubAvail = item.hubStock?.find((s) => s.hubId === sourceHubId)?.available ?? 0
+        const hubAvail = (item.hubStock?.find((s) => s.hubId === sourceHubId)?.available ?? 0) + heldFor(itemId)
         if (hubAvail > 0 && entry.quantity > hubAvail) {
           m.set(itemId, { ...entry, quantity: hubAvail })
           changed = true
@@ -366,7 +372,7 @@ export function NewDeploymentDialog({
                         const checked = !!entry
                         // Gate consumable qty on the selected hub's available; fall back to total if no hub.
                         const hubRow = !isSerialized && sourceHubId ? item.hubStock?.find((s) => s.hubId === sourceHubId) : undefined
-                        const hubAvail = !isSerialized ? (hubRow?.available ?? (item.availableQuantity ?? 0)) : 0
+                        const hubAvail = !isSerialized ? (hubRow?.available ?? (item.availableQuantity ?? 0)) + heldFor(item.id) : 0
                         return (
                           <Box key={item.id}>
                             <Stack direction="row" alignItems="center" spacing={1}>
