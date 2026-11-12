@@ -10,18 +10,17 @@ Updated 2026-11-11. History: `CHANGELOG.md`.
 - Users: 4–9 field operators on phones, 2 admins (Max, the owner; Stewart).
 
 ## In flight
-1. REQ-A2: the check on data-deleting migrations; audited; merges alone.
 
 ## Next, in order
-2. The owner's no-code safety jobs (below). Claude drafts a short "in case of emergency" guide for Stewart (roll back, restore, who to call) from `docs/ROLLBACK.md`; the owner checks it.
-3. Email off. Tests use a database built like the live one.
-4. Quick fixes, second set: reopen re-reads Today; Hubs "Copy link"; the daily check uses the phone's own day; Reports dates, category, cost; a failed check stays open; project on ended deployments; remove four photo boxes; the two missing redirects after an admin Reset PIN; the Makefile's forced PATH line.
-5. A unit's location accepts temporary places.
-6. The rest of "where is the gear": serial/QR search; holder and place on Scan and Inventory; hand-overs change at once, with "Not mine"; a place for vehicles at return; a "Missing" state.
-7. Finish the half-done data moves: old holder columns, categories, consumable counts, project link.
-8. The two field complaints: daily check opens in one load; one deployment builder.
-9. Re-cut the rest of the paused queue (`packets/paused/`).
-10. New features.
+1. The owner's no-code safety jobs (below). Claude drafts a short "in case of emergency" guide for Stewart (roll back, restore, who to call) from `docs/ROLLBACK.md`; the owner checks it.
+2. Email off. Tests use a database built like the live one.
+3. Quick fixes, second set: reopen re-reads Today; Hubs "Copy link"; the daily check uses the phone's own day; Reports dates, category, cost; a failed check stays open; project on ended deployments; remove four photo boxes; the two missing redirects after an admin Reset PIN; the Makefile's forced PATH line.
+4. A unit's location accepts temporary places.
+5. The rest of "where is the gear": serial/QR search; holder and place on Scan and Inventory; hand-overs change at once, with "Not mine"; a place for vehicles at return; a "Missing" state.
+6. Finish the half-done data moves: old holder columns, categories, consumable counts, project link.
+7. The two field complaints: daily check opens in one load; one deployment builder.
+8. Re-cut the rest of the paused queue (`packets/paused/`).
+9. New features.
 
 ## Owed by the owner (date = when it became owed)
 - 2026-07-28: TOP PRIORITY · Backup restore test (never done). Restore into a new throwaway project, check the data, write the date in `docs/ROLLBACK.md`.
