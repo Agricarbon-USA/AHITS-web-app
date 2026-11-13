@@ -14,7 +14,7 @@ Updated 2026-11-11. History: `CHANGELOG.md`.
 ## Next, in order
 1. The owner's no-code safety jobs (below). Claude drafts a short "in case of emergency" guide for Stewart (roll back, restore, who to call) from `docs/ROLLBACK.md`; the owner checks it.
 2. Email off. Tests use a database built like the live one.
-3. Quick fixes, second set, the rest: REQ-D2 (Reports dates and category; the Makefile's forced PATH line); the daily check uses the phone's own day; Reports repair cost; a failed check stays open; the two missing redirects after an admin Reset PIN.
+3. Quick fixes, second set, the rest: the daily check uses the phone's own day; Reports repair cost; a failed check stays open; the two missing redirects after an admin Reset PIN; the Makefile's PATH line on GitHub Actions.
 4. A unit's location accepts temporary places.
 5. The rest of "where is the gear": serial/QR search; holder and place on Scan and Inventory; hand-overs change at once, with "Not mine"; a place for vehicles at return; a "Missing" state.
 6. Finish the half-done data moves: old holder columns, categories, consumable counts, project link.

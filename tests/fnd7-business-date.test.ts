@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { businessDate, businessDateTime } from '../src/lib/business-date'
+import { businessDate, businessDateTime, businessDayStart } from '../src/lib/business-date'
 
 // FND-7: the business date must be the APP_TIMEZONE (Central) calendar day, not
 // the UTC day. The bug observed live: a check submitted at 11:49pm Central was
@@ -33,5 +33,23 @@ describe('FND-7 businessDate — APP_TIMEZONE calendar day, not UTC', () => {
     const winterEvening = new Date('2026-01-16T00:30:00Z')
     expect(winterEvening.toISOString().slice(0, 10)).toBe('2026-01-16')
     expect(businessDate(winterEvening, TZ)).toBe('2026-01-15')
+  })
+})
+
+describe('REQ-D2 businessDayStart — the instant a Central business day starts', () => {
+  it('starts at Central midnight, in winter and in summer', () => {
+    expect(businessDayStart('2026-11-12', 0, TZ).toISOString()).toBe('2026-11-12T06:00:00.000Z')
+    expect(businessDayStart('2026-07-01', 0, TZ).toISOString()).toBe('2026-07-01T05:00:00.000Z')
+  })
+
+  it('is exact across the clock changes (23- and 25-hour days)', () => {
+    expect(businessDayStart('2026-03-08', 1, TZ).toISOString()).toBe('2026-03-09T05:00:00.000Z')
+    expect(businessDayStart('2026-11-01', 0, TZ).toISOString()).toBe('2026-11-01T05:00:00.000Z')
+    expect(businessDayStart('2026-11-01', 1, TZ).toISOString()).toBe('2026-11-02T06:00:00.000Z')
+    expect(businessDayStart('2027-03-14', 1, TZ).toISOString()).toBe('2027-03-15T05:00:00.000Z')
+  })
+
+  it('is an Invalid Date when the day is not a date', () => {
+    expect(Number.isNaN(businessDayStart('nope').getTime())).toBe(true)
   })
 })

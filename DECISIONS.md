@@ -83,6 +83,7 @@
 - Operators may see repair and rental costs. (Nov 11) — partly built (the repair list still hides costs from operators)
 - A list shows everything that matches, or says how much it is not showing. (D39)
 - Totals leave out retired and deleted gear; repair spend counts everything. (D41)
+- A report's date range includes its "To" day; a report day is the app's day (US Central today). (Nov 11)
 - An alert clears itself when its cause ends. (D45)
 - Admin pages work at phone width, and the dashboard leads with who is out, missed and failed checks, open repairs and due service, waiting requests and transfers. (Oct 22) — not built yet
 - Admin add and edit forms share one shape. (D38)
@@ -115,7 +116,6 @@
 - Any operator may close any repair (fixed means fixed); a unit in admin review stays until an admin acts or it is fixed; "Can it be fixed?" must be answered.
 - Admins get one bell per missed check day.
 - Saved actions keep 7 days (warning at 6); an offline End that meets new gear is refused by name; an offline morning shows "Start daily check".
-- Report date ranges include the "To" day. (kept Nov 11)
 
 ## Parked
 | Item | Why parked | What would reopen it |

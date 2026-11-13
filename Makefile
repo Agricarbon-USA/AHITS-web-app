@@ -3,7 +3,12 @@
 # Usage: make <target>
 # ============================================================
 
+# GitHub Actions only: keeps the Deploy run finding its tools as it has since Jun 2026
+# (/usr/local/bin first, so cloud-run-migrate runs Prisma on the runner's own Node).
+# On a laptop the line is skipped and make uses your shell's PATH (Node 24, .nvmrc).
+ifeq ($(GITHUB_ACTIONS),true)
 export PATH := /opt/homebrew/bin:/usr/local/bin:$(PATH)
+endif
 
 APP_NAME      := ahits-web-app
 GCP_PROJECT   ?= $(shell grep GCP_PROJECT_ID .env | cut -d= -f2)

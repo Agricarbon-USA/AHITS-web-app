@@ -17,6 +17,7 @@ import { GET as cronDispatch } from '../src/app/api/cron/dispatch/route'
 import { GET as dashboardGET } from '../src/app/api/dashboard/route'
 import { GET as inventoryGET } from '../src/app/api/inventory/route'
 import { prisma } from '../src/lib/prisma'
+import { businessDate } from '../src/lib/business-date'
 import {
   createAdminUser, createOperator, createCategory, createInventoryItem,
   createInventoryUnit, createVehicle, createHub, adminSession,
@@ -65,8 +66,18 @@ describe('equipment report populations (C-8, D-b)', () => {
     const ids = data.rows.map((r: { id: string }) => r.id)
     expect(ids).toContain(live.id)
     expect(ids).not.toContain(retired.id)
+    expect(data.rows.find((r: { id: string }) => r.id === live.id).kind).toBe(cat.name)
     expect(data.summary.assetCount).toBe(1)
     expect(data.summary.totalMaintenanceSpend).toBe(120)
+  })
+
+  it('REQ-D2: a unit of an item with no category record shows the old category as a label', async () => {
+    const item = await prisma.inventoryItem.create({
+      data: { name: 'Old Probe', itemType: 'SERIALIZED', quantity: 1, status: 'AVAILABLE', category: 'SAMPLING_EQUIPMENT' },
+    })
+    const unit = await createInventoryUnit(item.id)
+    const { data } = await (await equipmentReport(get('/api/reports/equipment'))).json()
+    expect(data.rows.find((r: { id: string }) => r.id === unit.id).kind).toBe('Sampling Equipment')
   })
 
   it('a deleted vehicle is not a row; a never-done schedule is not an event or downtime', async () => {
@@ -95,6 +106,40 @@ describe('equipment report populations (C-8, D-b)', () => {
     const { data } = await (await equipmentReport(get('/api/reports/equipment'))).json()
     expect(data.rows[0].maintenanceEvents).toBe(1)
     expect(data.summary.totalMaintenanceSpend).toBe(40)
+  })
+
+  it('REQ-D2: a date-only To counts the whole business day, so From = To works', async () => {
+    const truck = await createVehicle()
+    await prisma.maintenanceTask.create({
+      data: {
+        vehicleId: truck.id, taskName: 'Fix mirror', isDamageReport: true,
+        status: 'COMPLETED', completedAt: new Date(), actualCost: 75,
+      },
+    })
+    const d = businessDate()
+    const res = await equipmentReport(get(`/api/reports/equipment?from=${d}&to=${d}`))
+    expect(res.status).toBe(200)
+    expect((await res.json()).data.summary.totalMaintenanceSpend).toBe(75)
+
+    const dayBefore = new Date(Date.parse(`${d}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10)
+    expect((await equipmentReport(get(`/api/reports/equipment?from=${d}&to=${dayBefore}`))).status).toBe(400)
+  })
+
+  it('REQ-D2: rental cost counts the From day to the To day inclusive', async () => {
+    const truck = await createVehicle()
+    await prisma.vehicle.update({
+      where: { id: truck.id },
+      data: {
+        isRental: true, rentalCostAmount: 100, rentalCostPeriod: 'DAY',
+        rentalStartDate: new Date('2026-06-01'), rentalEndDate: new Date('2026-06-11'),
+      },
+    })
+    const rentalOf = async (url: string) => {
+      const { data } = await (await equipmentReport(get(url))).json()
+      return data.rows.find((r: { id: string }) => r.id === truck.id).rentalCost
+    }
+    expect(await rentalOf('/api/reports/equipment?from=2026-06-01&to=2026-06-30')).toBe(1000)
+    expect(await rentalOf('/api/reports/equipment?from=2026-06-01&to=2026-06-05')).toBe(500)
   })
 })
 
