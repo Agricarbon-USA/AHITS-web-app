@@ -2,6 +2,7 @@
 
 One line per merge to `development` (merging is the deploy), newest first: `date · #PR · what changed for users`. The line is written inside the PR and never edited afterwards. The live revision and the live-check result go in a comment on the PR, not here. Older lines keep their form. Starts Oct 22, 2026; earlier merges: `git log`.
 
+- 2026-11-12 · #286 · Reports count the "To" day, and From = To works; serial-numbered gear shows its real category. The Makefile no longer forces Homebrew's Node on a laptop
 - 2026-11-12 · #285 · Quick fixes: Today re-reads when the app is reopened; Hubs "Copy link" keeps the row and its Discrepancy flag; no photo box on Add vehicles, Remove vehicles, Add items or Transfer; ended deployments show their project
 - 2026-11-12 · #284 · The check on data-deleting migrations now holds on the deploy: an approved one passes, an unapproved one blocks every deploy until fixed. No change to the screens
 - 2026-11-12 · #283 · Phones stay signed in for 4 days without use (was 24 hours), 14 days at most; a change of role signs that person out
