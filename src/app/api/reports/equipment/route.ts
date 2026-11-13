@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
+import { businessDate, businessDayStart } from '@/lib/business-date'
 
 // ── Equipment Cost & Utilization report (E-R) ──────────────────────────────
 // The scoreboard for the PRD §7 "25% repair-spend reduction" metric. One row
@@ -140,12 +141,22 @@ export async function GET(req: NextRequest) {
   const now = new Date()
   const toParam = searchParams.get('to')
   const fromParam = searchParams.get('from')
-  const to = toParam ? new Date(toParam) : now
+  const DAY_ONLY = /^\d{4}-\d{2}-\d{2}$/
+  // A date-only To means the whole of that business day, never past now.
+  const to = !toParam ? now
+    : DAY_ONLY.test(toParam) ? new Date(Math.min(businessDayStart(toParam, 1).getTime(), now.getTime()))
+    : new Date(toParam)
   // Default window: trailing 180 days (≈ the PRD's 6-month repair-spend horizon).
-  const from = fromParam ? new Date(fromParam) : new Date(to.getTime() - 180 * MS_PER_DAY)
+  const from = !fromParam ? new Date(to.getTime() - 180 * MS_PER_DAY)
+    : DAY_ONLY.test(fromParam) ? businessDayStart(fromParam)
+    : new Date(fromParam)
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from >= to) {
     return NextResponse.json({ error: 'Invalid date range' }, { status: 400 })
   }
+  // Rental start and end are date-only columns (read back as midnight UTC), so for rental cost
+  // a date-only From and To are whole UTC days too: the From day to the To day inclusive.
+  const rentFrom = fromParam && DAY_ONLY.test(fromParam) ? new Date(`${fromParam}T00:00:00Z`) : from
+  const rentTo = toParam && DAY_ONLY.test(toParam) ? new Date(Date.parse(`${toParam}T00:00:00Z`) + MS_PER_DAY) : to
   const windowDays = (to.getTime() - from.getTime()) / MS_PER_DAY
 
   const taskSelect = {
@@ -179,7 +190,7 @@ export async function GET(req: NextRequest) {
     const tasks = v.maintenanceTasks.filter((t) => maintInWindow(t, from, to))
     const maintenanceSpend = tasks.reduce((sum, t) => sum + dec(t.actualCost), 0)
     const downtimeDays = downtimeIn(tasks, from, to, now)
-    const rentalCost = rentalCostInWindow(v, from, to, daysDeployed)
+    const rentalCost = rentalCostInWindow(v, rentFrom, rentTo, daysDeployed)
     allRows.push({
       // LIVE_VEHICLE, in memory.
       live: v.deletedAt == null && v.status !== 'RETIRED',
@@ -263,7 +274,7 @@ export async function GET(req: NextRequest) {
       ].map(csvCell).join(','))
     }
     const csv = lines.join('\n')
-    const stamp = to.toISOString().slice(0, 10)
+    const stamp = businessDate(new Date(to.getTime() - 1))
     return new NextResponse(csv, {
       headers: {
         'Content-Type': 'text/csv; charset=utf-8',

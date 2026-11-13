@@ -45,3 +45,14 @@ export function businessDateTime(
   const hour = Number(parts.hour) % 24
   return { date: `${parts.year}-${parts.month}-${parts.day}`, hour, minute: Number(parts.minute) }
 }
+
+/** The instant a business date (`YYYY-MM-DD`) starts in APP_TIMEZONE, moved on by `addDays`.
+ *  Invalid Date when `day` is not a date. Exact for US time zones, clock-change days included. */
+export function businessDayStart(day: string, addDays = 0, tz: string = appTimezone()): Date {
+  const utcMidnight = new Date(Date.parse(`${day}T00:00:00Z`) + addDays * 86_400_000)
+  if (Number.isNaN(utcMidnight.getTime())) return utcMidnight
+  const wall = businessDateTime(utcMidnight, tz)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const wallAsUtc = Date.parse(`${wall.date}T${pad(wall.hour)}:${pad(wall.minute)}:00Z`)
+  return new Date(2 * utcMidnight.getTime() - wallAsUtc)
+}

@@ -9,6 +9,7 @@ import {
 import DownloadIcon from '@mui/icons-material/Download'
 import { StatusChip } from '@/components/shared/StatusChip'
 import { useToast } from '@/components/shared/useToast'
+import { businessDate } from '@/lib/business-date'
 
 interface ReportRow {
   assetType: 'VEHICLE' | 'UNIT'
@@ -44,7 +45,7 @@ interface ReportSummary {
 
 type SortKey = keyof Pick<ReportRow, 'name' | 'deployments' | 'daysDeployed' | 'utilizationPct' | 'maintenanceEvents' | 'maintenanceSpend' | 'downtimeDays' | 'rentalCost'>
 
-const fmtDate = (d: Date) => d.toISOString().slice(0, 10)
+const fmtDate = (d: Date) => businessDate(d)
 const money = (n: number) => `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 function SummaryCard({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
