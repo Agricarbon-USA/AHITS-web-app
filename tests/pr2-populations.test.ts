@@ -66,8 +66,18 @@ describe('equipment report populations (C-8, D-b)', () => {
     const ids = data.rows.map((r: { id: string }) => r.id)
     expect(ids).toContain(live.id)
     expect(ids).not.toContain(retired.id)
+    expect(data.rows.find((r: { id: string }) => r.id === live.id).kind).toBe(cat.name)
     expect(data.summary.assetCount).toBe(1)
     expect(data.summary.totalMaintenanceSpend).toBe(120)
+  })
+
+  it('REQ-D2: a unit of an item with no category record shows the old category as a label', async () => {
+    const item = await prisma.inventoryItem.create({
+      data: { name: 'Old Probe', itemType: 'SERIALIZED', quantity: 1, status: 'AVAILABLE', category: 'SAMPLING_EQUIPMENT' },
+    })
+    const unit = await createInventoryUnit(item.id)
+    const { data } = await (await equipmentReport(get('/api/reports/equipment'))).json()
+    expect(data.rows.find((r: { id: string }) => r.id === unit.id).kind).toBe('Sampling Equipment')
   })
 
   it('a deleted vehicle is not a row; a never-done schedule is not an event or downtime', async () => {

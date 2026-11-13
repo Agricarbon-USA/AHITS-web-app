@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAdmin } from '@/lib/auth/session'
 import { businessDate, businessDayStart } from '@/lib/business-date'
+import { categoryDisplay } from '@/lib/inventory'
 
 // ── Equipment Cost & Utilization report (E-R) ──────────────────────────────
 // The scoreboard for the PRD §7 "25% repair-spend reduction" metric. One row
@@ -175,7 +176,7 @@ export async function GET(req: NextRequest) {
     prisma.inventoryUnit.findMany({
       where: { deletedAt: null },
       include: {
-        inventoryItem: { select: { name: true, category: true } },
+        inventoryItem: { select: { name: true, category: true, categoryRef: { select: { id: true, name: true } } } },
         kitItems: { select: { addedAt: true, removedAt: true } },
         maintenanceTasks: taskSelect,
       },
@@ -228,7 +229,7 @@ export async function GET(req: NextRequest) {
       id: u.id,
       name: u.inventoryItem.name,
       identifier: u.serialNumber ?? u.qrCodeId.slice(0, 8),
-      kind: u.inventoryItem.category,
+      kind: categoryDisplay(u.inventoryItem).name,
       status: u.status,
       deployments: assignments.length,
       daysDeployed: round(daysDeployed),
